@@ -13,6 +13,7 @@ import pytest
 from dinkster_api.v1 import (
     CORE_STRING,
     LOAD3D_CAMERA_TYPE,
+    LOAD3D_MODEL_INFO_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -46,6 +47,64 @@ ORTHOGRAPHIC = {
     "cameraType": "orthographic",
     "frustum": {"left": -2, "right": 2.0, "top": 3, "bottom": -3.0},
 }
+MODEL_INFO = [
+    {
+        "position": {"x": -3, "y": 2.5, "z": 8},
+        "quaternion": {"x": 0, "y": 0.5, "z": 0, "w": 1},
+        "scale": {"x": 2, "y": 0, "z": -1.5},
+        "extension": {"label": "first"},
+    },
+    {
+        "position": {"x": 7, "y": -4, "z": 1},
+        "quaternion": {"x": 0.5, "y": 0, "z": 0, "w": 0.5},
+        "scale": {"x": 1, "y": 3, "z": 4},
+    },
+]
+
+
+@pytest.mark.parametrize("value", ([], MODEL_INFO))
+def test_load3d_model_info_preserves_order_and_transform_values(value: list[object]) -> None:
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
+    register_inference_types(registry)
+    assert registry.spec(LOAD3D_MODEL_INFO_TYPE) is spec
+    payload = spec.encode(value)
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(payload, {})
+    assert spec.decode(payload) == value
+    assert spec.fingerprint is not None
+    assert spec.fingerprint(spec.decode(payload)) == spec.fingerprint(value)
+    if value:
+        assert spec.fingerprint(list(reversed(value))) != spec.fingerprint(value)
+    latent_fingerprint = registry.spec(LATENT_TYPE).fingerprint
+    assert latent_fingerprint is not None
+    assert spec.fingerprint(value) != latent_fingerprint({"samples": value})
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        {},
+        [None],
+        [{}],
+        [{**MODEL_INFO[0], "position": {"x": 0, "y": 1, "z": True}}],
+        [{**MODEL_INFO[0], "quaternion": {"x": 0, "y": 0, "z": 0}}],
+        [{**MODEL_INFO[0], "scale": [1, 2, 3]}],
+    ),
+)
+def test_load3d_model_info_rejects_malformed_transforms(value: object) -> None:
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
+    assert spec.validate_encoded is not None
+    payload = encode_latent({"samples": value})
+    with pytest.raises(ValueError):
+        spec.encode(value)
+    with pytest.raises(ValueError):
+        spec.decode(payload)
+    with pytest.raises(ValueError):
+        spec.validate_encoded(payload, {})
 
 
 @pytest.mark.parametrize("value", (PERSPECTIVE, ORTHOGRAPHIC))
@@ -115,6 +174,11 @@ def test_load3d_camera_public_registration_is_cold_and_shared() -> None:
             "payload = spec.encode(value)\n"
             "spec.validate_encoded(payload, {})\n"
             "assert spec.decode(payload) == value\n"
+            "from dinkster_api.v1 import LOAD3D_MODEL_INFO_TYPE\n"
+            "from dinkster_values.builtin_types import LOAD3D_MODEL_INFO_TYPE as model_type\n"
+            "assert LOAD3D_MODEL_INFO_TYPE is model_type\n"
+            "models = registry.spec(model_type)\n"
+            "assert models.decode(models.encode([])) == []\n"
             "assert not any(\n"
             "    name == 'torch' or name.startswith('torch.')\n"
             "    or name == 'dinkster_inference'\n"
@@ -131,12 +195,15 @@ class CameraSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-fixture.source",
-            outputs=(OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),),
+            outputs=(
+                OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                OutputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+            ),
         )
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(camera=PERSPECTIVE)
+        return cls.outputs(camera=PERSPECTIVE, model_info=MODEL_INFO)
 
 
 class CameraConsumer(Node):
@@ -144,13 +211,17 @@ class CameraConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-fixture.consumer",
-            inputs=(InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),),
+            inputs=(
+                InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                InputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+            ),
             outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
-    def execute(cls, *, camera: object) -> Mapping[str, object]:
+    def execute(cls, *, camera: object, model_info: object) -> Mapping[str, object]:
         assert camera == PERSPECTIVE
+        assert model_info == MODEL_INFO
         return cls.outputs(result="camera")
 
 
@@ -159,14 +230,21 @@ class CameraTransportConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-transport.consumer",
-            inputs=(InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),),
-            outputs=(OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),),
+            inputs=(
+                InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                InputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+            ),
+            outputs=(
+                OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
+                OutputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
+            ),
         )
 
     @classmethod
-    def execute(cls, *, camera: object) -> Mapping[str, object]:
+    def execute(cls, *, camera: object, model_info: object) -> Mapping[str, object]:
         assert camera == PERSPECTIVE
-        return cls.outputs(camera=camera)
+        assert model_info == MODEL_INFO
+        return cls.outputs(camera=camera, model_info=model_info)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -210,7 +288,11 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
                 nodes={
                     "source": GraphNode("load3d-camera-fixture.source"),
                     "consumer": GraphNode(
-                        "load3d-camera-fixture.consumer", {"camera": Link("source", "camera")}
+                        "load3d-camera-fixture.consumer",
+                        {
+                            "camera": Link("source", "camera"),
+                            "model_info": Link("source", "model_info"),
+                        },
                     ),
                 }
             )
@@ -275,16 +357,22 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(tmp_
                 nodes={
                     "source": GraphNode("load3d-camera-fixture.source"),
                     "consumer": GraphNode(
-                        "load3d-camera-transport.consumer", {"camera": Link("source", "camera")}
+                        "load3d-camera-transport.consumer",
+                        {
+                            "camera": Link("source", "camera"),
+                            "model_info": Link("source", "model_info"),
+                        },
                     ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             first = await engine.run(graph, ["consumer"])
             assert first.outputs["consumer"]["camera"].resolve() == PERSPECTIVE
+            assert first.outputs["consumer"]["model_info"].resolve() == MODEL_INFO
             assert set(first.executed) == {"source", "consumer"}
             replay = await engine.run(graph, ["consumer"])
             assert replay.outputs["consumer"]["camera"].resolve() == PERSPECTIVE
+            assert replay.outputs["consumer"]["model_info"].resolve() == MODEL_INFO
             assert set(replay.cached) == {"source", "consumer"}
         finally:
             await composer.close()
