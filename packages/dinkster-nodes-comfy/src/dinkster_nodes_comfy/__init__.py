@@ -207,6 +207,7 @@ from .triposplat import (
     TripoSplatConditioning,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
 )
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
@@ -462,6 +463,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
     TripoSplatConditioning,
+    VAEDecodeTripoSplat,
     LoadAudio,
     RecordAudio,
     PreviewAudio,
