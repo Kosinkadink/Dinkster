@@ -20,6 +20,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    schema_from_wire,
+    schema_to_wire,
 )
 from dinkster_assets.identity import AssetError
 from dinkster_graph import Graph, GraphNode, Link
@@ -86,7 +88,15 @@ def test_save_video_schema_exposes_native_format_controls() -> None:
     assert inputs["filename_prefix"].default == "video/ComfyUI"
     assert [option.key for option in format_combo.options] == ["auto", "mp4", "mkv", "webm"]
     assert legacy_codec.id == "codec" and not legacy_codec.required
+    assert legacy_codec.default == "auto"
     assert [option.key for option in legacy_codec.options] == ["auto", "h264", "av1"]
+    nested_codecs = [option.inputs[0] for option in format_combo.options]
+    assert all(codec.id == "codec" and codec.required for codec in nested_codecs)
+    assert all(codec.default is None for codec in nested_codecs)
+    wire = schema_to_wire(schema)
+    codec_wire = next(entry for entry in wire["interface"] if entry["id"] == "codec")
+    assert codec_wire["default"] == "auto"
+    assert schema_from_wire(wire) == schema
     effective = elaborate(
         schema,
         {"video": object(), "filename_prefix": "video/ComfyUI", "format.codec.encoding.crf": 18.0},

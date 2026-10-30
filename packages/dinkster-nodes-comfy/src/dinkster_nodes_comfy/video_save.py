@@ -80,6 +80,7 @@ def _codec_input(codecs: tuple[str, ...], *, required: bool = True) -> DynamicCo
     return DynamicComboSpec(
         "codec",
         tuple(options),
+        default="auto" if not required else None,
         required=required,
         doc=(
             "The output video codec. Auto preserves a compatible source stream. "
