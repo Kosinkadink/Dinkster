@@ -2,7 +2,7 @@ name: full-validation
 
 on:
   push:
-    branches: [main]
+    branches: [main, windows-sqlite-runtime-570]
   schedule:
     - cron: '0 6-22/2 * * *'
       timezone: America/Los_Angeles
@@ -112,28 +112,28 @@ jobs:
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
             run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 4"
             pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
             run_checks: false
@@ -159,6 +159,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: matrix.os == 'windows'
       - run: uv sync --all-packages
       - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'
@@ -293,9 +295,13 @@ jobs:
   windows-runtime:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    name: Windows environment and supervisor runtime
+    name: Windows environment and supervisor runtime (shard ${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).windows }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -322,6 +328,7 @@ jobs:
         shell: pwsh
         env:
           DINKSTER_SLOW_TESTS: "1"
+          COVERAGE_FILE: .coverage.windows-runtime-${{ matrix.shard }}
         run: |
           $files = Get-ChildItem tests -File | Where-Object {
             $_.Name -like 'test_environment_*.py' -or
@@ -330,19 +337,35 @@ jobs:
             $_.Name -like 'test_supervisor*.py'
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
-          uv run --no-sync python -m pytest -q @files
+          uv run --no-sync python -m pytest -q @files `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/2 --durations=20 `
+            --cov=dinkster_api --cov=dinkster_assets `
+            --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
+            --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
+            --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io `
+            --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values `
+            --cov=dinkster_workers --cov-branch --cov-report=
           exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-shard-windows-runtime-${{ matrix.shard }}
+          path: .coverage.windows-runtime-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
 
   coverage-gate:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
-    needs: [validation-plan, test]
+    needs: [validation-plan, test, windows-runtime]
     if: always() && needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 5
     steps:
       - name: Require every coverage shard to pass
-        run: test '${{ needs.test.result }}' = success
+        run: |
+          test '${{ needs.test.result }}' = success
+          test '${{ needs.windows-runtime.result }}' = success
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -363,7 +386,11 @@ jobs:
           for shard in 1 2 3 4; do
             test -f "coverage-data/.coverage.$shard"
           done
-          uv run coverage combine coverage-data
+          for shard in 1 2; do
+            test -f "coverage-data/.coverage.windows-runtime-$shard"
+          done
+          printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
+          uv run coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
           uv run coverage report --fail-under=80
 
   video-template-replay:

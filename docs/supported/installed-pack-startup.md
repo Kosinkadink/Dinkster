@@ -2,6 +2,9 @@
 
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
+- Windows isolated packs and catalog probes support native extensions beneath
+  ordinary user data roots, including Depth Anything v2/v3 environments at
+  roots of at least 59 UTF-16 code units. A shorter data directory is not required.
 - Pack dependency provisioning can consume per-variant hashed locks, reject
   shared-package conflicts and layer only extra wheels over an engine
   interpreter without copying torch or opencv into the pack venv.

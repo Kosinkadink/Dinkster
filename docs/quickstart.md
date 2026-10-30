@@ -33,6 +33,8 @@ The script installs the machine's verified Dinkster-Environments Python/torch
 bundle and locked workspace into `.venv`, builds the pinned frontend,
 creates local state, and opens the
 editor. It does not need the Desktop app or a separate frontend checkout.
+Windows checks the selected runtime's [SQLite mapped-shm recovery](install.md#windows-interpreter)
+and private-base identity before installing workspace dependencies.
 The first run downloads dependencies and can take several minutes.
 Windows NVIDIA machines select a bundle using its manifest's driver and
 compute-capability bounds; otherwise Windows uses its CPU bundle. Linux uses
