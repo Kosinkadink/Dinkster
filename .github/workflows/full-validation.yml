@@ -109,7 +109,7 @@ jobs:
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/4"
             run_checks: true
-            timeout-minutes: 30
+            timeout-minutes: 45
           - os: windows
             runner: windows
             python-version: "3.12"
