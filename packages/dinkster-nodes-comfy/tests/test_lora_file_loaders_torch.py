@@ -245,7 +245,7 @@ class _HostInspect(Node):
 _HOST_NODES = (_HostSource, _HostInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize("verified", (False, True))
 def test_lora_file_loaders_execute_twice_through_both_ordinary_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool

@@ -1,11 +1,11 @@
 [project]
 name = "dinkster-server"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster server: job queue (policy above the engine), native protocol, WS events (DESIGN 3.5)"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
-    "dinkster-token-verifier @ https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl#sha256=b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae",
+    "dinkster-token-verifier==0.1.2",
     "dinkster-schema",
     "dinkster-values",
     "dinkster-graph",
@@ -24,9 +24,6 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dinkster_server"]

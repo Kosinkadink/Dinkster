@@ -1,4 +1,4 @@
-"""Supervisor ingress limits that protect the version-independent proxy process.
+"""Supervisor ingress and environment acquisition byte limits.
 
 Buffered job submissions and accepted responses are bounded so routing facts
 can be validated without unbounded memory. WebSocket frames and the fan-out
@@ -13,3 +13,6 @@ INGRESS_CLIENT_MAX_SIZE_BYTES = 16 * MEBIBYTE
 INGRESS_JOB_SUBMISSION_LIMIT_BYTES = 4 * MEBIBYTE
 INGRESS_EVENT_FRAME_LIMIT_BYTES = 4 * MEBIBYTE
 INGRESS_EVENT_QUEUE_LIMIT_BYTES = 8 * MEBIBYTE
+
+ENVIRONMENT_STREAM_CHUNK_BYTES = MEBIBYTE
+ENVIRONMENT_METADATA_LIMIT_BYTES = 8 * MEBIBYTE

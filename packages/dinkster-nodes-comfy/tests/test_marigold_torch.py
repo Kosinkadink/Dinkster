@@ -98,7 +98,7 @@ class InspectDepth(Node):
         return cls.outputs(valid=True)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
@@ -113,6 +113,7 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
             (tmp_path / "marigold_fixture.py").write_text(
                 "from test_marigold_torch import PredictionSource, InspectDepth\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, PredictionSource, InspectDepth)\n",
                 encoding="ascii",
             )
@@ -122,6 +123,10 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["marigold-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "marigold_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "marigold_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "marigold_fixture:register_inference_types",

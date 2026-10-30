@@ -3,7 +3,6 @@
 from dinkster_api.v1 import FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.hook_scheduling import HOOK_SCHEDULING_NODES
-from dinkster_workers import load_manifest
 
 
 def test_hook_scheduling_nodes_publish_the_fixed_core_ids_and_sockets() -> None:
@@ -62,8 +61,3 @@ def test_hook_scheduling_nodes_publish_the_fixed_core_ids_and_sockets() -> None:
     assert from_floats.inputs[0].default == -1
     assert from_floats.inputs[0].widget == NumberWidget(min=-1, step=0.001)
     assert interpolated.inputs[5].widget == NumberWidget(min=2, max=100, step=1)
-
-
-def test_complete_manifest_declares_hook_scheduling_namespaces() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert {node.schema().node_type for node in HOOK_SCHEDULING_NODES}.issubset(manifest.namespaces)

@@ -170,6 +170,7 @@ def test_color_conversion_ordinary_manifest_twice(tmp_path: Path, in_process: bo
             (tmp_path / "color_fixture.py").write_text(
                 "from test_image_color_conversion_torch import ColorSource, ColorInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, ColorSource, ColorInspect)\n",
                 encoding="ascii",
             )
@@ -178,6 +179,10 @@ def test_color_conversion_ordinary_manifest_twice(tmp_path: Path, in_process: bo
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["color-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "color_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "color_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "color_fixture:register_inference_types",

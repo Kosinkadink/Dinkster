@@ -10,6 +10,7 @@ from typing import Protocol
 
 from dinkster_assets import AssetRef
 from dinkster_protocol import (
+    AssetFolderContext,
     AttentionCapabilityEvidence,
     AttentionPolicy,
     AttentionPolicyConfig,
@@ -23,9 +24,12 @@ from dinkster_protocol import (
     derive_attention_route_token,
     is_extension_snapshot_digest,
     resolve_attention_runtime_status,
+    use_export_snapshot,
+    use_sampling_model_preparer,
     validate_preview_animation,
     validate_preview_mode,
 )
+from dinkster_values.asset_folders import use_asset_folders
 
 
 def _not_cancelled() -> bool:
@@ -79,6 +83,7 @@ class ExecutionContext:
     cancelled: Callable[[], bool] = _not_cancelled
     node_id: str | None = None
     export_snapshot: ExportSnapshot | None = None
+    asset_folders: AssetFolderContext | None = None
     materialize_source: SourceMaterializer | None = None
     artifact_sink: ArtifactSink | None = None
     started_at_ns: int = 0
@@ -135,8 +140,21 @@ def current_execution_context() -> ExecutionContext | None:
 
 @contextmanager
 def use_execution_context(context: ExecutionContext) -> Generator[None]:
+    def prepare_model(model: object) -> object:
+        prepare = getattr(context.attention_runtime, "prepare_sampling_model", None)
+        if not callable(prepare):
+            raise RuntimeError("worker attention runtime cannot prepare a sampling model")
+        return prepare(model, context.attention_route_token)
+
     token = _execution_context.set(context)
     try:
-        yield
+        with (
+            use_export_snapshot(context.export_snapshot),
+            use_asset_folders(context.asset_folders),
+            use_sampling_model_preparer(
+                prepare_model if context.attention_route_token is not None else None
+            ),
+        ):
+            yield
     finally:
         _execution_context.reset(token)

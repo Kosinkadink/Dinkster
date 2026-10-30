@@ -67,6 +67,16 @@ def test_loop_wire_inputs_preserve_v3_declaration_order(
     interface = cast(list[dict[str, object]], schema_to_wire(schema)["interface"])
     inputs = [(item["id"], item["required"]) for item in interface if item["role"] == "input"]
     assert inputs == expected
+    if node_type == "EndLoop":
+        family = next(item for item in interface if item["role"] == "inputFamily")
+        assert family["id"] == "terminations"
+        assert family["required"] is False
+        assert family["minMembers"] == 0
+        assert family["maxMembers"] == 50
+        assert family["memberPrefix"] == "termination"
+        assert family["template"] == [
+            {"role": "input", "id": "termination", "required": False, "type": {"kind": "wildcard"}}
+        ]
 
 
 def make_engine() -> Engine:

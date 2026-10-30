@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+from contextlib import AbstractAsyncContextManager
 from importlib import import_module
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from dinkster_schema import ComboWidget, NumberWidget, TypeExpr
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import IsolatedWorker
 
-from dinkster.compose import compose_serving
+from dinkster.compose import Composition
 
 CAPABILITIES = (
     (DetectObjects, "dinkster.detection.detect", DETECT_PROVIDER_CHOICE),
@@ -110,9 +111,10 @@ def test_native_rtdetr_schemas_register_without_torch_or_inference() -> None:
             "from dinkster_nodes_comfy import COMFY_NODES\n"
             "from dinkster_nodes_comfy.rtdetr import RTDETR_detect, DrawBBoxes\n"
             "from dinkster_nodes_comfy.sam3 import SAM3_TRACKING_NODES\n"
+            "from dinkster_nodes_comfy.sam3_detection import SAM3_Detect\n"
             "from dinkster_workers import load_manifest\n"
             "manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')\n"
-            "for node in (RTDETR_detect, DrawBBoxes, *SAM3_TRACKING_NODES):\n"
+            "for node in (RTDETR_detect, DrawBBoxes, *SAM3_TRACKING_NODES, SAM3_Detect):\n"
             "    schema = node.define_schema()\n"
             "    assert node in COMFY_NODES and schema.node_type in manifest.namespaces\n"
             "    assert schema.category == 'image/detection'\n"
@@ -228,10 +230,13 @@ def test_capability_schemas_share_detection_value_contract() -> None:
     assert track.outputs[1].type == mask
 
 
-def test_default_composition_serves_standard_capability_choices() -> None:
+def test_default_composition_serves_standard_capability_choices(
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
+    runner, defaults = shared_default_composition
+
     async def scenario() -> None:
-        composition = await compose_serving()
-        try:
+        async with defaults as composition:
             expected = {
                 DETECT_PROVIDER_CHOICE: (
                     "dinkster-vision-detr",
@@ -256,10 +261,8 @@ def test_default_composition_serves_standard_capability_choices() -> None:
             )
             for choice in MODEL_EDGE_PROVIDER_CHOICES:
                 assert composition.choices[choice] == ("dinkster-vision-hed",)
-        finally:
-            await composition.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 @pytest.mark.parametrize(

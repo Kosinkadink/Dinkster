@@ -3,25 +3,44 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_VISION_TYPE,
+    CONDITIONING_TYPE,
     CORE_STRING,
     IMAGE_TYPE,
+    LATENT_TYPE,
     MASK_TYPE,
+    MODEL_TYPE,
+    SPLAT_TYPE,
+    VAE_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_image,
+    materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.triposplat import TripoSplatPreprocessImage
+from dinkster_nodes_comfy.triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
+)
+from dinkster_schema import use_reporter
+from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -179,3 +198,625 @@ def test_native_manifest_preprocesses_twice(tmp_path: Path, in_process: bool) ->
             await composer.close()
 
     asyncio.run(scenario())
+
+
+class ConditioningVision:
+    patcher = None
+    load_device = torch.device("cpu")
+
+    def __init__(self) -> None:
+        self.model = self
+
+    def __call__(self, *, pixel_values: Any) -> tuple[Any]:
+        assert pixel_values.dtype == torch.float32
+        return (pixel_values.movedim(1, -1).flatten(1, 2),)
+
+
+class ConditioningVAE:
+    def __init__(self, first_only: bool = False) -> None:
+        self.first_only = first_only
+
+    def encode(self, image: Any) -> Any:
+        return (image[:1] if self.first_only else image)[..., :2] * 7 + 3
+
+
+def _conditioning_image(dtype: Any = torch.float32) -> Any:
+    return torch.arange(36, dtype=dtype).reshape(2, 2, 3, 3) / 35
+
+
+def _assert_conditioning(positive: Any, negative: Any, latent: Any, first_only: bool) -> None:
+    # Hand-derived: fixture pixel i is i/35. Apply ImageNet normalization,
+    # then population-variance normalization with epsilon1e-5 in Python floats.
+    # Source constants: TripoSplatConditioning F bc5f880d, image arange(36)/35
+    # shaped(2,2,3,3), mean(.485,.456,.406), std(.229,.224,.225), shape8192x16/camera1x5.
+    expected = []
+    for pixel in range(12):
+        rgb = [
+            ((pixel * 3 + channel) / 35 - mean) / std
+            for channel, (mean, std) in enumerate(
+                zip((0.485, 0.456, 0.406), (0.229, 0.224, 0.225), strict=True)
+            )
+        ]
+        average = sum(rgb) / 3
+        denominator = math.sqrt(sum((channel - average) ** 2 for channel in rgb) / 3 + 1e-5)
+        expected.append([(channel - average) / denominator for channel in rgb])
+    expected = torch.tensor(expected).reshape(2, 6, 3)
+    torch.testing.assert_close(positive[0][0], expected, rtol=1e-5, atol=2e-6)
+    reference = _conditioning_image()[..., :2] * 7 + 3
+    reference = reference[:1] if first_only else reference
+    torch.testing.assert_close(
+        positive[0][1]["reference_latents"][0], reference, rtol=1e-6, atol=1e-6, check_dtype=False
+    )
+    assert torch.count_nonzero(negative[0][0]) == 0
+    assert negative[0][0].shape == (2, 6, 3)
+    assert torch.equal(negative[0][1]["reference_latents"][0], torch.zeros_like(reference))
+    samples = latent["samples"]
+    assert samples.roles == ("shape", "camera")
+    batch = 1 if first_only else 2
+    assert samples.by_role("shape").shape == (batch, 8192, 16)
+    assert samples.by_role("camera").shape == (batch, 1, 5)
+    assert torch.count_nonzero(samples.by_role("shape")) == 0
+    assert torch.count_nonzero(samples.by_role("camera")) == 0
+
+
+@pytest.mark.parametrize("first_only", (False, True))
+@pytest.mark.parametrize("dtype", (torch.float32, torch.float64))
+def test_conditioning_normalization_reference_batch_and_zero_streams(
+    monkeypatch: pytest.MonkeyPatch, first_only: bool, dtype: Any
+) -> None:
+    initialize_inference_process()
+    import dinkster_inference.model_management as management
+
+    monkeypatch.setattr(management, "load_model_gpu", lambda *_args: None)
+    monkeypatch.setattr(management, "intermediate_device", lambda: torch.device("cpu"))
+    image = _conditioning_image(dtype)
+    original = image.clone()
+    result = TripoSplatConditioning.execute(
+        image=image.numpy(), clip_vision=ConditioningVision(), vae=ConditioningVAE(first_only)
+    )
+    _assert_conditioning(result["positive"], result["negative"], result["latent"], first_only)
+    assert torch.equal(image, original)
+    # Hand-derived independence: writing the negative reference does not
+    # change the positive reference or original input.
+    result["negative"][0][1]["reference_latents"][0].fill_(99)
+    assert not torch.any(result["positive"][0][1]["reference_latents"][0] == 99)
+    assert torch.equal(image, original)
+
+
+class ConditioningSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.conditioning-source",
+            outputs=tuple(
+                OutputSpec(name, TypeExpr.concrete(kind))
+                for name, kind in (
+                    ("image", IMAGE_TYPE),
+                    ("vision", CLIP_VISION_TYPE),
+                    ("vae", VAE_TYPE),
+                )
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        initialize_inference_process()
+        import dinkster_inference.model_management as management
+
+        management.load_model_gpu = lambda *_args: None
+        management.intermediate_device = lambda: torch.device("cpu")
+        return cls.outputs(
+            image=_conditioning_image().numpy(), vision=ConditioningVision(), vae=ConditioningVAE()
+        )
+
+
+class ConditioningInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.conditioning-inspect",
+            inputs=(
+                InputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, positive: Any, negative: Any, latent: Any) -> Any:
+        _assert_conditioning(
+            materialize_latent(positive),
+            materialize_latent(negative),
+            materialize_latent(latent),
+            False,
+        )
+        return cls.outputs(summary="conditioning and ordered noise targets transported")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_manifest_conditions_twice(tmp_path: Path, in_process: bool) -> None:
+    initialize_inference_process()
+    import dinkster_inference.model_management as management
+
+    original_load = management.load_model_gpu
+    original_device = management.intermediate_device
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        (tmp_path / "conditioning_fixture.py").write_text(
+            "from test_triposplat_torch import ConditioningSource, ConditioningInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (ConditioningSource, ConditioningInspect)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "conditioning.toml"
+        fixture.write_text(
+            '[pack]\nname="conditioning-fixture"\npublisher="dinkster"\n'
+            'namespaces=["triposplat-fixture"]\n[pack.entry]\n'
+            'nodes="conditioning_fixture:NODES"\ntypes="conditioning_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                )
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "conditioning-fixture",
+                        group_manifests=() if in_process else (native, fixture),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("triposplat-fixture.conditioning-source"),
+                    "conditioning": GraphNode(
+                        "TripoSplatConditioning",
+                        {
+                            "image": Link("source", "image"),
+                            "clip_vision": Link("source", "vision"),
+                            "vae": Link("source", "vae"),
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "triposplat-fixture.conditioning-inspect",
+                        {
+                            name: Link("conditioning", name)
+                            for name in ("positive", "negative", "latent")
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "conditioning and ordered noise targets transported"
+                )
+        finally:
+            await composer.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        management.load_model_gpu = original_load
+        management.intermediate_device = original_device
+
+
+class SplatDecoder:
+    gaussians_per_point = 96
+    gs = SimpleNamespace(model_channels=7)
+
+    def decode(self, latent: Any, *, num_gaussians: int, generator: Any) -> list[Any]:
+        # Hand-derived fixture: each field exposes a distinct input to detect
+        # dropped/reordered batch rows, camera selection, count and RNG mistakes.
+        parts = []
+        for row in latent:
+            positions = row[:2, :3].clone()
+            tensors = (
+                positions,
+                torch.full_like(positions, num_gaussians),
+                torch.arange(8, dtype=latent.dtype).reshape(2, 4),
+                torch.rand(2, 1, generator=generator, dtype=latent.dtype),
+                torch.full((2, 1, 3), 0.25, dtype=latent.dtype),
+            )
+            parts.append(SimpleNamespace(render_tensors=lambda tensors=tensors: tensors))
+        return parts
+
+
+def _decoder_vae() -> Any:
+    return SimpleNamespace(
+        first_stage_model=SplatDecoder(),
+        patcher=object(),
+        vae_dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+
+
+@pytest.mark.parametrize("requested, expected", ((1, 32736), (32816, 32832), (2000000, 1048608)))
+@pytest.mark.parametrize("streams", (False, True))
+def test_decode_count_stream_selection_batch_and_rng(
+    monkeypatch: pytest.MonkeyPatch, requested: int, expected: int, streams: bool
+) -> None:
+    initialize_inference_process()
+    import dinkster_inference.model_management as management
+
+    monkeypatch.setattr(management, "load_models_gpu", lambda *_args, **_kwargs: None)
+    # Hand-derived clamp then nearest-96 rounding: 32768 -> 32736,
+    # 32816 -> 32832, 1048576 -> 1048608 (rounding follows clamping).
+    latent = torch.arange(24, dtype=torch.float64).reshape(2, 3, 4)
+    before = latent.clone()
+    payload = (
+        MultiStreamLatent.from_pairs((("shape", latent), ("camera", torch.full((2, 1, 5), -500.0))))
+        if streams
+        else latent
+    )
+    samples = {"samples": payload}
+    rng = torch.random.get_rng_state().clone()
+    outputs = [
+        VAEDecodeTripoSplat.execute(
+            samples=samples, vae=_decoder_vae(), num_gaussians=requested, seed=123
+        )["splat"]
+        for _ in range(2)
+    ]
+    left, right = outputs
+    for name in ("positions", "scales", "rotations", "opacities", "sh"):
+        assert torch.equal(left[name], right[name])
+        assert left[name].dtype == torch.float32
+    assert torch.equal(left["positions"], latent[:, :2, :3].float())
+    assert torch.equal(left["scales"], torch.full((2, 2, 3), float(expected)))
+    assert torch.equal(left["rotations"], torch.arange(8).reshape(1, 2, 4).expand(2, 2, 4))
+    assert torch.equal(left["sh"], torch.full((2, 2, 1, 3), 0.25))
+    other = VAEDecodeTripoSplat.execute(
+        samples=samples, vae=_decoder_vae(), num_gaussians=requested, seed=124
+    )["splat"]
+    assert not torch.equal(left["opacities"], other["opacities"])
+    assert torch.equal(torch.random.get_rng_state(), rng)
+    assert torch.equal(latent, before)
+
+
+class SplatSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.splat-source",
+            outputs=(
+                OutputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        initialize_inference_process()
+        import dinkster_inference.model_management as management
+
+        management.load_models_gpu = lambda *_args, **_kwargs: None
+        latent = torch.arange(24, dtype=torch.float64).reshape(2, 3, 4)
+        return cls.outputs(
+            samples={
+                "samples": MultiStreamLatent.from_pairs(
+                    (("shape", latent), ("camera", torch.full((2, 1, 5), -500.0)))
+                )
+            },
+            vae=_decoder_vae(),
+        )
+
+
+class SplatInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.splat-inspect",
+            inputs=(InputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, splat: Any) -> Any:
+        # Hand-derived from SplatSource: shape stream's first two rows, not
+        # the camera stream; default density 262144 rounds to 262176 at gpp96.
+        splat = materialize_latent(splat)
+        assert torch.equal(splat["positions"], torch.arange(24).reshape(2, 3, 4)[:, :2, :3].float())
+        assert torch.equal(splat["scales"], torch.full((2, 2, 3), 262176.0))
+        assert splat["rotations"].shape == (2, 2, 4)
+        assert splat["opacities"].shape == (2, 2, 1)
+        assert torch.equal(splat["sh"], torch.full((2, 2, 1, 3), 0.25))
+        return cls.outputs(summary="splat batch transported")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_manifest_decodes_splats_twice(tmp_path: Path, in_process: bool) -> None:
+    initialize_inference_process()
+    import dinkster_inference.model_management as management
+
+    original_load = management.load_models_gpu
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        (tmp_path / "splat_fixture.py").write_text(
+            "from test_triposplat_torch import SplatSource, SplatInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (SplatSource, SplatInspect)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "splat.toml"
+        fixture.write_text(
+            '[pack]\nname="splat-fixture"\npublisher="dinkster"\n'
+            'namespaces=["triposplat-fixture"]\n[pack.entry]\n'
+            'nodes="splat_fixture:NODES"\ntypes="splat_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                )
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "splat-fixture",
+                        group_manifests=() if in_process else (native, fixture),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("triposplat-fixture.splat-source"),
+                    "decode": GraphNode(
+                        "VAEDecodeTripoSplat",
+                        {"samples": Link("source", "samples"), "vae": Link("source", "vae")},
+                    ),
+                    "inspect": GraphNode(
+                        "triposplat-fixture.splat-inspect", {"splat": Link("decode", "splat")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["summary"].resolve() == "splat batch transported"
+        finally:
+            await composer.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        management.load_models_gpu = original_load
+
+
+class PreviewModel:
+    def __init__(self) -> None:
+        self.model = SimpleNamespace(diffusion_model=SimpleNamespace(q_token_length=7))
+        self.wrapper: Any = None
+
+    def clone(self) -> PreviewModel:
+        return PreviewModel()
+
+    def add_wrapper_with_key(self, kind: Any, key: str, wrapper: Any) -> None:
+        self.wrapper = wrapper
+
+
+def _preview_vae() -> Any:
+    return SimpleNamespace(
+        first_stage_model=SimpleNamespace(
+            gaussians_per_point=6, gs=SimpleNamespace(model_channels=3)
+        ),
+        patcher="fixture-vae",
+        vae_dtype=torch.float32,
+    )
+
+
+@pytest.mark.parametrize("positional", (False, True))
+@pytest.mark.parametrize("fail_after", (None, 0, 1))
+def test_sampling_preview_preserves_callbacks_and_disables_only_this_run(
+    monkeypatch: pytest.MonkeyPatch, positional: bool, fail_after: int | None
+) -> None:
+    initialize_inference_process()
+    import dinkster_inference.ldm.triposplat.preview as preview
+    import dinkster_inference.model_management as management
+
+    loads: list[Any] = []
+    decodes: list[Any] = []
+    original_calls: list[Any] = []
+    monkeypatch.setattr(management, "loaded_models", lambda **kwargs: ["existing"])
+    monkeypatch.setattr(
+        management, "load_models_gpu", lambda models, **kwargs: loads.append((models, kwargs))
+    )
+
+    def decode(vae: Any, x0: Any, config: Any) -> Any:
+        decodes.append((x0, config))
+        if fail_after is not None and len(decodes) > fail_after:
+            raise RuntimeError("fixture preview failure")
+        return Image.new("RGB", (37, 19), (30, 90, 150))
+
+    monkeypatch.setattr(preview, "decode_x0_to_image", decode)
+    model = PreviewModel()
+    patched = TripoSplatSamplingPreview.execute(
+        model=model,
+        vae=_preview_vae(),
+        num_gaussians=1030,
+        octree_level=3,
+        yaw=-27.0,
+        pitch=41.0,
+        point_size=4,
+    )["model"]
+    assert model.wrapper is None and patched is not model
+
+    def executor(*args: Any, **kwargs: Any) -> str:
+        callback = args[5] if positional else kwargs["callback"]
+        for step in range(3):
+            callback(step, "shape", "noisy", 3)
+        return "sampler result"
+
+    def original(*args: Any) -> None:
+        original_calls.append(args)
+
+    events: list[Any] = []
+    for _ in range(2):
+        decodes.clear()
+        events.clear()
+        with use_reporter(lambda name, data, blob: events.append((name, data, blob))):
+            result = (
+                patched.wrapper(executor, 0, 1, 2, 3, 4, original)
+                if positional
+                else patched.wrapper(executor, callback=original)
+            )
+        assert result == "sampler result"
+        expected = 3 if fail_after is None else fail_after
+        previews = [item for item in events if item[0] == "preview"]
+        assert len(previews) == expected
+        assert len(decodes) == (3 if fail_after is None else fail_after + 1)
+        # Hand-derived fixture memory: (7*4 + floor(1030/6)*10)*3*4 = 20856.
+        assert loads[-1] == (["existing", "fixture-vae"], {"memory_required": 20856})
+        for _, data, blob in previews:
+            # TripoSplatSamplingPreview F bc5f880d sends JPEG/max512 to server.py.
+            # For fixture RGB 37x19, contain gives 512 x round(19/37*512) = 263.
+            assert data == {"mime": "image/jpeg", "width": 512, "height": 263}
+            assert Image.open(BytesIO(blob)).size == (512, 263)
+        assert [item[1]["step"] for item in events if item[0] == "progress"] == list(
+            range(1, expected + 1)
+        )
+        assert decodes[0] == (
+            "shape",
+            {"gaussians": 1030, "level": 3, "yaw": -27.0, "pitch": 41.0, "point_size": 4},
+        )
+    assert len(loads) == 2
+    assert original_calls == [(step, "shape", "noisy", 3) for step in range(3)] * 2
+
+
+class SamplingPreviewSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.preview-source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        initialize_inference_process()
+        import dinkster_inference.ldm.triposplat.preview as preview
+        import dinkster_inference.model_management as management
+
+        management.loaded_models = lambda **kwargs: []
+        management.load_models_gpu = lambda *_args, **_kwargs: None
+        preview.decode_x0_to_image = lambda *_args: Image.new("RGB", (37, 19), (30, 90, 150))
+        return cls.outputs(model=PreviewModel(), vae=_preview_vae())
+
+
+class SamplingPreviewInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.preview-inspect",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any) -> Any:
+        calls: list[Any] = []
+
+        def executor(*args: Any, **kwargs: Any) -> str:
+            kwargs["callback"](0, "shape", "noise", 2)
+            kwargs["callback"](1, "shape", "noise", 2)
+            return "sampling continued"
+
+        assert (
+            model.wrapper(executor, callback=lambda *args: calls.append(args))
+            == "sampling continued"
+        )
+        assert len(calls) == 2
+        return cls.outputs(summary="patched model and sampler previews transported")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_manifest_sampling_preview_twice(tmp_path: Path, in_process: bool) -> None:
+    initialize_inference_process()
+    import dinkster_inference.ldm.triposplat.preview as preview
+    import dinkster_inference.model_management as management
+
+    originals = management.loaded_models, management.load_models_gpu, preview.decode_x0_to_image
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        (tmp_path / "sampling_preview_fixture.py").write_text(
+            "from test_triposplat_torch import SamplingPreviewSource, SamplingPreviewInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (SamplingPreviewSource, SamplingPreviewInspect)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "sampling-preview.toml"
+        fixture.write_text(
+            '[pack]\nname="preview-fixture"\npublisher="dinkster"\n'
+            'namespaces=["triposplat-fixture"]\n[pack.entry]\n'
+            'nodes="sampling_preview_fixture:NODES"\ntypes="sampling_preview_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                )
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "preview-fixture",
+                        group_manifests=() if in_process else (native, fixture),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("triposplat-fixture.preview-source"),
+                    "preview": GraphNode(
+                        "TripoSplatSamplingPreview",
+                        {"model": Link("source", "model"), "vae": Link("source", "vae")},
+                    ),
+                    "inspect": GraphNode(
+                        "triposplat-fixture.preview-inspect", {"model": Link("preview", "model")}
+                    ),
+                }
+            )
+            events: list[Any] = []
+            for _ in range(2):
+                events.clear()
+                engine = composer.composition.make_engine(events.append)
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "patched model and sampler previews transported"
+                )
+                previews = [
+                    event
+                    for event in events
+                    if event.kind == "node_event" and event.detail["name"] == "preview"
+                ]
+                assert len(previews) == 2
+        finally:
+            await composer.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        management.loaded_models, management.load_models_gpu, preview.decode_x0_to_image = originals

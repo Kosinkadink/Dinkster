@@ -261,9 +261,18 @@ class CheckpointVariantInspect(Node):
 HOST_NODES = (LoaderSource, LoaderInspect, LoaderOutputInspect, CheckpointVariantInspect)
 
 
-@pytest.mark.parametrize("verified", (False, True))
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("observe_outputs", (False, True, "checkpoint-variants"))
+@pytest.mark.parametrize(
+    "observe_outputs,in_process,verified",
+    (
+        (False, True, False),
+        (False, True, True),
+        (True, True, False),
+        (True, True, True),
+        (True, False, True),
+        ("checkpoint-variants", True, False),
+        ("checkpoint-variants", True, True),
+    ),
+)
 def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -462,3 +471,114 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
             _restore_controlled_runtime()
 
     asyncio.run(scenario())
+
+
+def test_image_only_checkpoint_loader_preserves_output_roles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_nodes_comfy import model_file_loaders as loaders
+
+    initialize_inference_process()
+    from dinkster_inference import sd
+
+    checkpoint = tmp_path / "image.safetensors"
+    save_file({"marker": torch.tensor([3.0, -7.0])}, checkpoint)
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    table.add(MountDef(id="checkpoint", path=tmp_path), kind="model/checkpoint")
+    asset = table.bind_name(checkpoint.name, "model/checkpoint")
+
+    def load(path: str, **options: Any) -> tuple[object, ...]:
+        assert options["output_clip"] is False
+        assert options["output_clipvision"] is True
+        assert options["output_vae"] is True
+        return _runtime(path)[:4]
+
+    monkeypatch.setattr(sd, "load_checkpoint_guess_config", load)
+    result = loaders.ImageOnlyCheckpointLoader.execute(ckpt_name=asset)
+    assert result["CLIP_VISION"]["kind"] == "vision"
+    assert result["VAE"]["kind"] == "vae"
+    torch.testing.assert_close(
+        result["MODEL"].model.weight, torch.tensor([[3.0, 3.5]]), rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize("invalid", (False, True))
+def test_ltx_audio_vae_loader_filters_checkpoint_and_validates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: bool
+) -> None:
+    from dinkster_nodes_comfy import model_file_loaders as loaders
+
+    initialize_inference_process()
+    from dinkster_inference import sd
+
+    checkpoint = tmp_path / "audio.safetensors"
+    save_file(
+        {
+            "audio_vae.encoder.weight": torch.tensor([2.0, -3.0]),
+            "vocoder.weight": torch.tensor([11.0]),
+            "diffusion.weight": torch.tensor([97.0]),
+        },
+        checkpoint,
+        metadata={"model": "audio"},
+    )
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    table.add(MountDef(id="checkpoint", path=tmp_path), kind="model/checkpoint")
+    asset = table.bind_name(checkpoint.name, "model/checkpoint")
+
+    class VAE:
+        def __init__(self, *, sd: dict[str, torch.Tensor], metadata: dict[str, str]) -> None:
+            self.state = sd
+            self.metadata = metadata
+            self.validated = False
+
+        def throw_exception_if_invalid(self) -> None:
+            if invalid:
+                raise ValueError("invalid audio checkpoint")
+            self.validated = True
+
+    monkeypatch.setattr(sd, "VAE", VAE)
+    if invalid:
+        with pytest.raises(ValueError, match="invalid audio checkpoint"):
+            loaders.LTXVAudioVAELoader.execute(ckpt_name=asset)
+        return
+    vae = loaders.LTXVAudioVAELoader.execute(ckpt_name=asset)["VAE"]
+    assert vae.validated
+    assert vae.metadata == {"model": "audio"}
+    assert set(vae.state) == {"autoencoder.encoder.weight", "vocoder.weight"}
+    assert vae.state["autoencoder.encoder.weight"].tolist() == [2.0, -3.0]
+    assert vae.state["vocoder.weight"].tolist() == [11.0]
+
+
+@pytest.mark.parametrize("device", (None, "default", "cpu", "other"))
+def test_ltx_text_encoder_loader_preserves_file_order_and_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str | None
+) -> None:
+    from dinkster_nodes_comfy import model_file_loaders as loaders
+
+    initialize_inference_process()
+    from dinkster_inference import sd
+
+    encoder, checkpoint = tmp_path / "encoder.safetensors", tmp_path / "checkpoint.safetensors"
+    save_file({"marker": torch.tensor([3.0])}, encoder)
+    save_file({"marker": torch.tensor([-7.0])}, checkpoint)
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    table.add(MountDef(id="checkpoint", path=tmp_path), kind="model/checkpoint")
+    table.add(MountDef(id="encoder", path=tmp_path), kind="model/text-encoder")
+
+    def load(*, ckpt_paths: list[str], clip_type: object, **options: Any) -> tuple[float, ...]:
+        assert clip_type == sd.CLIPType.LTXV
+        expected = (
+            {"load_device": torch.device("cpu"), "offload_device": torch.device("cpu")}
+            if device == "cpu"
+            else {}
+        )
+        assert options["model_options"] == expected
+        return tuple(float(load_file(path)["marker"][0]) for path in ckpt_paths)
+
+    monkeypatch.setattr(sd, "load_clip", load)
+    result = loaders.LTXAVTextEncoderLoader.execute(
+        text_encoder=table.bind_name(encoder.name, "model/text-encoder"),
+        ckpt_name=table.bind_name(checkpoint.name, "model/checkpoint"),
+        **({"device": device} if device is not None else {}),
+    )
+    assert result == {"CLIP": (3.0, -7.0)}

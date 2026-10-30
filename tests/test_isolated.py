@@ -6,7 +6,6 @@ is visible as diagnostics (DESIGN 3.9)."""
 from __future__ import annotations
 
 import asyncio
-import glob
 import importlib
 import json
 import logging
@@ -15,6 +14,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -92,6 +92,7 @@ from dinkster_workers import (
 from dinkster_workers import host as host_module
 from dinkster_workers.boundary import (
     DEFAULT_SHM_THRESHOLD,
+    PROTOCOL_VERSION,
     ValueCodec,
     encode_invocation,
     read_frame,
@@ -542,6 +543,59 @@ async def stop_test_host(
     await server.wait_closed()
 
 
+@pytest.mark.parametrize("worker_protocol", (PROTOCOL_VERSION, PROTOCOL_VERSION + 1))
+def test_separately_shipped_worker_negotiates_protocol(
+    monkeypatch: pytest.MonkeyPatch, worker_protocol: int
+) -> None:
+    monkeypatch.setattr(host_module, "PROTOCOL_VERSION", worker_protocol)
+
+    async def scenario() -> None:
+        registry = core_registry()
+        accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
+
+        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            accepted.set_result(task)
+            await host_module.serve_connection(
+                reader,
+                writer,
+                pack_name="own-environment",
+                worker=InProcessWorker({}, registry),
+                schemas={},
+                planner=None,
+                consumers={},
+                codec=ValueCodec(registry),
+            )
+
+        server = await asyncio.start_server(accept, "127.0.0.1", 0)
+        address = server.sockets[0].getsockname()
+        reader, writer = await asyncio.open_connection(address[0], address[1])
+        host_task = await accepted
+        session = BoundarySession(
+            registry,
+            role="isolated worker",
+            pack="own-environment",
+            codec=ValueCodec(registry),
+        )
+        try:
+            if worker_protocol == PROTOCOL_VERSION:
+                await session.begin(reader, writer, timeout=2)
+                assert session.alive
+                await session.send({"type": "shutdown"}, [])
+            else:
+                with pytest.raises(RuntimeError, match="protocol mismatch"):
+                    await session.begin(reader, writer, timeout=2)
+                assert not session.alive
+        finally:
+            await session.close()
+            await asyncio.wait_for(host_task, 2)
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
 def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> None:
     async def negotiate(
         raw_token: object | None, raw_capabilities: object | None = None
@@ -552,6 +606,7 @@ def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> N
             accepted.set_result(writer)
             hello: dict[str, object] = {
                 "type": "hello",
+                "protocol": PROTOCOL_VERSION,
                 "pack": "attention-test",
                 "schemas": {},
             }
@@ -1771,8 +1826,17 @@ def test_worker_conversion_refusal_is_distinct_from_transport_failure(
 
 
 def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) -> None:
+    (tmp_path / "torch.py").write_text(
+        "raise ModuleNotFoundError('No module named torch', name='torch')\n",
+        encoding="utf-8",
+    )
+
     async def scenario() -> None:
-        worker = IsolatedWorker(DEV_MANIFEST, core_registry())
+        worker = IsolatedWorker(
+            DEV_MANIFEST,
+            core_registry(),
+            extra_env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
+        )
         await worker.start()
         try:
             assert worker.can_convert_legacy_checkpoint is False
@@ -2125,7 +2189,13 @@ def test_opaque_value_relays_back_across_the_boundary(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires POSIX signals")
-def test_isolated_close_cancellation_still_kills_reaps_and_cleans(tmp_path: Path) -> None:
+def test_isolated_close_cancellation_still_kills_reaps_and_cleans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_workers.isolated as isolated_module
+
+    monkeypatch.setattr(isolated_module, "_CHILD_SHUTDOWN_GRACE", 0.05)
+
     async def scenario() -> None:
         worker = iso_worker(tmp_path, core_registry())
         await worker.start()
@@ -2135,8 +2205,19 @@ def test_isolated_close_cancellation_still_kills_reaps_and_cleans(tmp_path: Path
         assert cleanup_dir is not None
         os.kill(process.pid, _SIGSTOP)
 
+        waiting = asyncio.Event()
+        original_wait = process.wait
+
+        async def wait_for_exit() -> int:
+            if asyncio.current_task() is not worker._process_watch:
+                waiting.set()
+            return await original_wait()
+
+        monkeypatch.setattr(process, "wait", wait_for_exit)
         close = asyncio.create_task(worker.close())
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(waiting.wait(), 5)
+        assert worker._close_task is not None and not worker._close_task.done()
+        assert process.returncode is None
         close.cancel()
         with pytest.raises(asyncio.CancelledError):
             await close
@@ -2193,7 +2274,22 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_isolated_host_supplies_export_snapshot(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("prompt", "extra_pnginfo"),
+    [
+        (
+            {"save": {"class_type": "Save", "inputs": {"seed": 4}}},
+            {"workflow": {"nodes": [4, 2]}},
+        ),
+        ({}, None),
+        (None, {"workflow": {"nodes": [4, 2]}}),
+    ],
+)
+def test_isolated_host_supplies_export_snapshot(
+    tmp_path: Path,
+    prompt: Mapping[str, object] | None,
+    extra_pnginfo: Mapping[str, object] | None,
+) -> None:
     async def scenario() -> None:
         registry = core_registry()
         worker = iso_worker(tmp_path, registry)
@@ -2207,8 +2303,8 @@ def test_isolated_host_supplies_export_snapshot(tmp_path: Path) -> None:
             )
             graph = Graph(nodes={"submitted-node-29": GraphNode("iso.execution_context", {})})
             snapshot = ExportSnapshot(
-                prompt={"save": {"class_type": "Save", "inputs": {"seed": 4}}},
-                extra_pnginfo={"workflow": {"nodes": [4, 2]}},
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
             )
             result = await engine.run(graph, ["submitted-node-29"], export_snapshot=snapshot)
             assert result.outputs["submitted-node-29"]["snapshot"].resolve() == (
@@ -2220,7 +2316,7 @@ def test_isolated_host_supplies_export_snapshot(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_shm_transport_for_large_payloads_and_cleanup() -> None:
+def test_shm_transport_for_large_payloads_and_cleanup(shm_segments: set[str]) -> None:
     if not sys.platform.startswith(("linux",)):
         pytest.skip("shm leftovers check relies on /dev/shm")
 
@@ -2258,8 +2354,8 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
-        # Single-hop handoff (hazard H14): nothing left in /dev/shm.
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
 
     asyncio.run(scenario())
 
@@ -2374,7 +2470,12 @@ def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
     asyncio.run(scenario())
 
 
-def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
+def test_isolated_lazy_hook_protocol_and_attribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = tmp_path / "lazy-cancel-entered"
+    monkeypatch.setenv("ISOPACK_LAZY_CANCEL_ENTERED", str(entered))
+
     async def scenario() -> None:
         registry = core_registry()
         worker = iso_worker(tmp_path, registry)
@@ -2461,7 +2562,9 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
             cancelling = asyncio.create_task(
                 worker.check_lazy_status(lazy_invocation("lazy-cancel", "awaitable-cancel"))
             )
-            await asyncio.sleep(0.1)
+            async with asyncio.timeout(5):
+                while not entered.exists():
+                    await asyncio.sleep(0.005)
             cancelling.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await cancelling
@@ -2473,11 +2576,12 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
             slow = lazy_graph("request", seconds=30.0)
             events.clear()
             task = asyncio.create_task(engine.run(slow, ["lazy"]))
-            while not any(
-                event.kind == "node_event" and event.detail.get("name") == "lazy_demand"
-                for event in events
-            ):
-                await asyncio.sleep(0.01)
+            async with asyncio.timeout(5):
+                while not any(
+                    event.kind == "node_event" and event.detail.get("name") == "lazy_demand"
+                    for event in events
+                ):
+                    await asyncio.sleep(0.01)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -2565,15 +2669,22 @@ def test_cancellation_reaches_the_worker(tmp_path: Path) -> None:
         worker = iso_worker(tmp_path, registry)
         await worker.start()
         try:
+            entered = asyncio.Event()
+
+            def on_event(event: EngineEvent) -> None:
+                if event.kind == "node_event" and event.detail.get("name") == "progress":
+                    entered.set()
+
             engine = Engine(
                 schemas=dict(worker.schemas),
                 registry=registry,
                 worker=worker,
                 cache=MemoryLRUCache(),
+                on_event=on_event,
             )
-            slow = Graph(nodes={"s": GraphNode("iso.sleepy", {"value": "never", "seconds": 30.0})})
+            slow = Graph(nodes={"s": GraphNode("iso.chatty", {"value": "never", "seconds": 30.0})})
             task = asyncio.create_task(engine.run(slow, ["s"]))
-            await asyncio.sleep(0.5)  # let the invocation reach the child
+            await asyncio.wait_for(entered.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -3087,7 +3198,9 @@ def test_pack_venv_ignores_workspace_only_source_metadata(
     assert "--no-sources" in install
     assert install.index("--no-sources") < install.index("-e")
     assert install.count(str(pack)) == 1
-    assert "dinkster-workers" in install
+    assert install.count(str(api)) == 1
+    assert "dinkster-api" not in install
+    assert "dinkster-workers" not in install
 
 
 def test_pack_venv_reuse_requires_matching_provisioning_inputs(

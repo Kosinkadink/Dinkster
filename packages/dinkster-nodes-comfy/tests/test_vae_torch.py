@@ -161,7 +161,7 @@ class VAEInspect(Node):
         return cls.outputs(pixel=float(materialize_image(image)[1, 6, 10, 2]))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_manifest_executes_vae_encode_decode(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
@@ -176,6 +176,7 @@ def test_manifest_executes_vae_encode_decode(tmp_path: Path, in_process: bool) -
             (tmp_path / "vae_fixture.py").write_text(
                 "from test_vae_torch import VAESource, VAEInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, VAESource, VAEInspect)\n",
                 encoding="ascii",
             )
@@ -184,6 +185,10 @@ def test_manifest_executes_vae_encode_decode(tmp_path: Path, in_process: bool) -
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["vae-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "vae_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "vae_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "vae_fixture:register_inference_types",

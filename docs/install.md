@@ -5,7 +5,7 @@ package index. A GitHub 404 can mean that your account does not have access.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
-22 or newer with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
+26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
 `.\run.ps1` on Windows. The scripts install uv user-locally if missing;
 Python 3.12 is obtained by uv when needed. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
@@ -91,6 +91,16 @@ runtime when the native or compatibility worker is provisioned.
 
 ## Model folders
 
+An environment-managed generation initializes a selected writable `output`
+mount under its library root on first serve, so the first run can save files.
+With the default library location this is `<project-root>/dinkster-library/output`;
+`DINKSTER_LIBRARY_ROOT` or `--library-root` can select another location.
+The grant persists in `mounts.toml` and is reported by `GET /api/mounts` as
+`outputMount: "output"` with a `readwrite` mount. Existing output selections,
+read-only grants, and deliberately removed defaults are preserved. This does
+not enable runtime mount editing. A deliberately unconfigured library can
+still report `outputMount: null`.
+
 `dinkster setup` creates `<DINKSTER_HOME>/library/mounts.toml`, which defaults
 to `~/.dinkster/library/mounts.toml` on Linux and macOS and
 `%USERPROFILE%\.dinkster\library\mounts.toml` on Windows. Download model files
@@ -122,6 +132,22 @@ for the folder scan. Mounted files then appear under **Browse** in asset
 pickers such as `Load Checkpoint`.
 
 ## Release maintainers
+
+The frontend pin in `scripts/release_sources.json` names a landed
+`Dinkster-Frontend` commit and the SHA-256 of its published `bundle.zip`.
+The release job downloads the `dinkster-frontend-<sha256>` CI artifact from
+a successful frontend CI run and verifies its commit, hash and size. It
+packages the verified files under `dinkster_frontend/static`, with the
+original manifest alongside them; `bundle_path()` still returns `static`.
+No Node or pnpm toolchain builds the frontend during release packaging.
+The wheel version follows the engine release; the manifest retains the
+independently pinned frontend package version and commit.
+
+To bump the frontend, update the commit and sha256 together. Public CI
+artifacts expire after 90 days. A missing or expired artifact fails the
+release with its required name and commit, never a rebuild fallback. Bump
+the pin to a landed commit with a live artifact, or ask the repository owner
+to re-run frontend CI for the pinned commit before releasing.
 
 The source ZIP is for maintainers and excludes tests, tools, and benchmarks. It
 is not the Desktop installation input. To publish the first release after this
