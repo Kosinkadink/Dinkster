@@ -1,5 +1,7 @@
 ## CPU and Apple Silicon hosts
 
+- Contributor setup supports Apple Silicon on macOS 14+ using the `mac-arm64`
+  Python/torch bundle with MPS. Intel macOS is unsupported.
 - GPU-less compatibility workers use CPU automatically.
   `DINKSTER_ACCELERATOR=cpu` also forces CPU on GPU-equipped workers without
   changing the engine or transport.

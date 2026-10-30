@@ -43,6 +43,8 @@ def bootstrap(root: Path) -> Path:
 def select_base(bases: list[dict], variant: str | None = None) -> dict:
     host = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     arch = {"AMD64": "x86_64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+    if host == "macos" and arch == "x86_64":
+        raise RuntimeError("Intel macOS is unsupported; mac-arm64 requires Apple Silicon.")
     compatible = [base for base in bases if base["platform"] == {"os": host, "arch": arch}]
     mask = os.environ.get("CUDA_VISIBLE_DEVICES", "unset").strip()
     devices = []
@@ -84,8 +86,7 @@ def select_base(bases: list[dict], variant: str | None = None) -> dict:
     ]
     if not candidates:
         raise RuntimeError(
-            "No published base supports this machine/selection; see Dinkster-Environments. "
-            "macOS bundle support: https://github.com/Kosinkadink/comfy-vibe-station/issues/575"
+            "No published base supports this machine/selection; see Dinkster-Environments."
         )
     return max(
         candidates,
@@ -155,6 +156,17 @@ def setup(
             root=root,
         )
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if os.name == "nt":
+            command(
+                str(python),
+                "-I",
+                str(
+                    root / "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
+                ),
+                "--base",
+                str((base_root / base["interpreter"]["executable"]).parent),
+                root=root,
+            )
         command(
             "uv",
             "pip",
