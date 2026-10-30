@@ -2,7 +2,7 @@ name: full-validation
 
 on:
   push:
-    branches: [main]
+    branches: [main, windows-sqlite-runtime-570]
   schedule:
     - cron: '0 6-22/2 * * *'
       timezone: America/Los_Angeles
@@ -112,28 +112,28 @@ jobs:
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
             run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 4"
             pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
             run_checks: false
@@ -159,6 +159,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: matrix.os == 'windows'
       - run: uv sync --all-packages
       - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'

@@ -71,6 +71,23 @@ jobs:
           suite: comfy
           comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
 
+  windows-runtime:
+    name: Windows SQLite runtime and durable delegations
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+      - run: uv sync --locked --all-packages
+      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py
+
   fast:
     needs: [changes, torch-cpu]
     if: always()

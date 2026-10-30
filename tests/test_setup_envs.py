@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -136,3 +137,60 @@ def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
     assert Path(observed["cwd"]) == root
     assert observed["args"] == ["sync", "--locked", "--package", "dinkster-supervisor", "--no-dev"]
     assert not (tmp_path / "wrong-environment").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows runtime admission")
+@pytest.mark.parametrize("matching_base", [False, True])
+def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, matching_base):
+    from dinkster_supervisor import environment_artifacts, environment_downloads
+
+    from scripts import build_release
+
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/base_bundles.json").write_text('{"win-cpu": "identity"}')
+    gate = "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
+    (root / gate).parent.mkdir(parents=True)
+    shutil.copyfile(Path(setup_envs.__file__).resolve().parents[1] / gate, root / gate)
+    base_root = Path(sys.base_prefix).parent if matching_base else tmp_path / "other-base"
+    base = {
+        "id": "sha256:identity",
+        "variant": "win-cpu",
+        "python": sys.version.split()[0],
+        "interpreter": {"executable": Path(sys.base_prefix).name + "/python.exe"},
+        "wheels": [
+            {
+                "name": "fixture",
+                "version": "1.0",
+                "filename": "fixture-1.0-py3-none-any.whl",
+                "sha256": "a" * 64,
+            }
+        ],
+        "replaces": ["fixture"],
+    }
+    environment = root / ".venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(environment)], check=True)
+    (root / ".run").mkdir()
+    receipt = root / ".run/environment-base.json"
+    receipt.write_text(json.dumps(base))
+    monkeypatch.setattr(environment_downloads, "read_metadata", lambda *args: b"")
+    monkeypatch.setattr(environment_artifacts, "validate_manifest", lambda *args: base)
+    monkeypatch.setattr(environment_artifacts, "acquire_base", lambda *args: base_root)
+    monkeypatch.setattr(setup_envs, "select_base", lambda *args: base)
+    monkeypatch.setattr(build_release, "workspace_projects", lambda *args: {})
+    run = setup_envs.command
+
+    def fixture_command(*args, **kwargs):
+        if args[:2] == ("uv", "export"):
+            (root / ".run/workspace-requirements.txt").write_text("")
+        elif args[0] != "uv":
+            run(*args, **kwargs)
+
+    monkeypatch.setattr(setup_envs, "command", fixture_command)
+    if matching_base:
+        assert setup_envs.setup(root) == environment / "Scripts/python.exe"
+    else:
+        before = receipt.read_bytes()
+        with pytest.raises(subprocess.CalledProcessError):
+            setup_envs.setup(root)
+        assert receipt.read_bytes() == before

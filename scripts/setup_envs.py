@@ -155,6 +155,17 @@ def setup(
             root=root,
         )
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if os.name == "nt":
+            command(
+                str(python),
+                "-I",
+                str(
+                    root / "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
+                ),
+                "--base",
+                str((base_root / base["interpreter"]["executable"]).parent),
+                root=root,
+            )
         command(
             "uv",
             "pip",
