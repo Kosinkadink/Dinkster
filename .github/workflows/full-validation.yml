@@ -301,7 +301,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -338,7 +338,8 @@ jobs:
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/2 --durations=20 `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=20 `
+            --case-shard-file tests/test_environment_generations.py `
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
             --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
@@ -386,7 +387,7 @@ jobs:
           for shard in 1 2 3 4; do
             test -f "coverage-data/.coverage.$shard"
           done
-          for shard in 1 2; do
+          for shard in 1 2 3; do
             test -f "coverage-data/.coverage.windows-runtime-$shard"
           done
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
