@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .interpreter import interpreter_command
+
 HOST_OWNED_ENVIRONMENT: frozenset[str] = frozenset(
     {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH"}
 )
@@ -69,4 +71,6 @@ class SubprocessLauncher:
             name: value for name, value in os.environ.items() if name not in HOST_OWNED_ENVIRONMENT
         }
         environment.update(spec.env)
-        return await asyncio.create_subprocess_exec(*spec.command, env=environment)
+        return await asyncio.create_subprocess_exec(
+            interpreter_command(spec.command[0]), *spec.command[1:], env=environment
+        )

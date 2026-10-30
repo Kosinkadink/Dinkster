@@ -47,7 +47,7 @@ from dinkster_schema import claim_covers, reserved_root
 from packaging.requirements import InvalidRequirement, Requirement
 
 from .accelerator import detect_accelerator
-from .interpreter import InterpreterPreflightError, preflight_interpreter
+from .interpreter import InterpreterPreflightError, interpreter_command, preflight_interpreter
 from .manifest import (
     BLUEPRINT_PACK_MAX_BYTES,
     TEMPLATE_PACK_MAX_BYTES,
@@ -835,7 +835,7 @@ def _run_probe(
     interpreter: Path | str | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | Finding:
-    python = str(interpreter) if interpreter is not None else sys.executable
+    python = interpreter_command(interpreter) if interpreter is not None else sys.executable
     try:
         preflight_interpreter(python)
     except InterpreterPreflightError as exc:

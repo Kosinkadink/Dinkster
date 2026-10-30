@@ -1,17 +1,76 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import venv
 from pathlib import Path
 
 import pytest
 from dinkster_workers import interpreter
 from dinkster_workers.interpreter import InterpreterPreflightError, preflight_interpreter
+from dinkster_workers.launch import LaunchSpec, SubprocessLauncher
 
 
 def test_preflight_accepts_current_supported_interpreter() -> None:
     assert preflight_interpreter(sys.executable) == sys.version_info[:2]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native extension loader contract")
+@pytest.mark.parametrize("long_root", [False, True])
+@pytest.mark.parametrize(
+    "pack", ["dinkster-vision-depth-anything-v2", "dinkster-vision-depth-anything-v3"]
+)
+def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
+    long_root: bool, pack: str
+) -> None:
+    import sqlalchemy
+    import typing_extensions
+
+    with tempfile.TemporaryDirectory(prefix="pack-path-", dir=Path.home()) as temporary:
+        root = Path(temporary)
+        if long_root:
+            root = root / ("data" + "x" * max(0, 59 - len(str(root)) - 5))
+        root.mkdir(exist_ok=True)
+        venv_root = root / "library/venvs/win-nvidia" / ("a" * 64) / pack
+        venv.EnvBuilder(with_pip=False).create(venv_root)
+        site = venv_root / "Lib/site-packages"
+        shutil.copytree(Path(sqlalchemy.__file__).parent, site / "sqlalchemy")
+        shutil.copy2(typing_extensions.__file__, site / "typing_extensions.py")
+        python = venv_root / "Scripts/python.exe"
+        result_path = root / "result.json"
+        script = (
+            "import json, sys; from pathlib import Path; "
+            "import sqlalchemy.util._collections_cy as native; "
+            "Path(sys.argv[1]).write_text(json.dumps("
+            "{'prefix': sys.prefix, 'native': native.__file__}))"
+        )
+
+        async def scenario() -> None:
+            process = await SubprocessLauncher().launch(
+                LaunchSpec(
+                    command=(str(python), "-I", "-c", script, str(result_path)),
+                    env={},
+                    endpoint_dir=root,
+                    pack_root=root,
+                    python=str(python),
+                    use_shm=False,
+                )
+            )
+            assert await asyncio.wait_for(process.wait(), timeout=30) == 0
+
+        asyncio.run(scenario())
+        result = json.loads(result_path.read_text())
+        assert Path(result["prefix"]).samefile(venv_root)
+        extension = Path(result["native"])
+        assert extension.suffix == ".pyd"
+        assert extension.samefile(next((site / "sqlalchemy/util").glob("_collections_cy*.pyd")))
+        if long_root:
+            assert len(str(root).encode("utf-16-le")) // 2 >= 59
+            assert len(str(extension).removeprefix("\\\\?\\").encode("utf-16-le")) // 2 >= 251
 
 
 def test_version_script_requires_no_additional_imports() -> None:

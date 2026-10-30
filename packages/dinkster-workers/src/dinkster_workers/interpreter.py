@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import cast
@@ -17,9 +19,24 @@ class InterpreterPreflightError(Exception):
     """The selected child interpreter cannot satisfy Dinkster's Python contract."""
 
 
+def interpreter_command(interpreter: Path | str) -> str:
+    """Preserve extended Windows paths in the child's prefix and native imports."""
+    selected = str(interpreter)
+    if os.name != "nt" or selected.startswith("\\\\?\\"):
+        return selected
+    executable = shutil.which(selected)
+    if executable is None or Path(executable).suffix.lower() in {".bat", ".cmd"}:
+        return selected
+    # Do not resolve symlinks: the selected venv, not its base, owns site-packages.
+    absolute = os.path.abspath(executable)
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def preflight_interpreter(interpreter: Path | str) -> tuple[int, int]:
     """Require a runnable Python >=3.12 without importing the child target."""
-    selected = str(interpreter)
+    selected = interpreter_command(interpreter)
     selected_display = repr(selected)
     if len(selected_display) > _INTERPRETER_DISPLAY_LIMIT:
         selected_display = f"{selected_display[: _INTERPRETER_DISPLAY_LIMIT - 3]}..."
