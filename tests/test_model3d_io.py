@@ -17,6 +17,7 @@ from dinkster_assets import (
     MountSnapshotResolver,
     digest_bytes,
     register_asset_type,
+    register_file3d_types,
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
@@ -197,3 +198,70 @@ def test_schemas_declare_upload_save_and_preview_intent() -> None:
     assert preview.output_node
     preview_output = preview.output("model")
     assert preview_output is not None and preview_output.preview
+
+
+def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
+    tmp_path: Path,
+) -> None:
+    from dinkster_api.v1 import FILE_3D_GLB_TYPE, FILE_3D_GLTF_TYPE
+
+    source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
+    resource = b"\x00\x01\xfe\xff"
+    vault = AssetVault(tmp_path / "file3d")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        digest = digest_bytes(data)
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest, name, len(data), resolver=vault)
+
+    model = publish(source, "source.gltf")
+    buffer = publish(resource, "data.bin")
+    sender = TypeRegistry()
+    receiver = TypeRegistry()
+    assert len(register_file3d_types(sender, vault)) == 13
+    register_file3d_types(receiver, vault)
+    obj = {"format": "gltf", "source": model, "resources": {"mesh/data.bin": buffer}}
+    value = sender.wrap(FILE_3D_GLTF_TYPE, obj)
+    payload = sender.spec(FILE_3D_GLTF_TYPE).encode(obj)
+    assert len(payload) < 1000 and source not in payload and resource not in payload
+    spec = receiver.spec(FILE_3D_GLTF_TYPE)
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(payload, value.meta.entries)
+    restored = cast("dict[str, object]", spec.decode(payload))
+    assert cast(AssetRef, restored["source"]).read_bytes() == source
+    assert (
+        cast("dict[str, AssetRef]", restored["resources"])["mesh/data.bin"].read_bytes() == resource
+    )
+    assert receiver.wrap(FILE_3D_GLTF_TYPE, restored).fingerprint == value.fingerprint
+    altered = {**obj, "resources": {"mesh/other.bin": buffer}}
+    assert sender.wrap(FILE_3D_GLTF_TYPE, altered).fingerprint != value.fingerprint
+    with pytest.raises(AssetError, match="does not accept"):
+        sender.wrap(FILE_3D_GLB_TYPE, obj)
+    with pytest.raises(AssetError, match="metadata"):
+        spec.validate_encoded(payload, {**value.meta.entries, "asset_refs": []})
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "../mesh.bin",
+        "/mesh.bin",
+        "a/../b",
+        "a//b",
+        ".",
+        "C:/b",
+        "a\\b",
+        "%2e%2e/b",
+        "https://host/b",
+    ),
+)
+def test_file3d_resources_cannot_grant_paths(name: str) -> None:
+    from dinkster_api.v1 import FILE_3D_TYPE
+
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"source"), "source.gltf", 6)
+    with pytest.raises(AssetError, match="contained relative"):
+        registry.wrap(FILE_3D_TYPE, {"format": "gltf", "source": ref, "resources": {name: ref}})
