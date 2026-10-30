@@ -5,6 +5,7 @@ from dinkster_api.v1 import (
     AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
+    Node,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -241,7 +242,7 @@ from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
-COMFY_NODES = (
+COMFY_NODES: tuple[type[Node], ...] = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     SaveText,
