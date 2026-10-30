@@ -540,6 +540,7 @@ namespaces = [
     "MoGePanoramaInference",
     "MoGeInference",
     "MoGeRender",
+    "MoGePointMapToMesh",
     "TripoSplatPreprocessImage",
     "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
