@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -31,6 +32,41 @@ from scripts.build_release import (
 from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+def test_source_distribution_rebuilds_the_complete_direct_wheel(
+    tmp_path: Path, project: str
+) -> None:
+    direct = tmp_path / "direct"
+    subprocess.run(
+        ["uv", "build", "--package", project, "--wheel", "--out-dir", str(direct)],
+        cwd=ROOT,
+        check=True,
+    )
+    source = tmp_path / "source"
+    subprocess.run(
+        ["uv", "build", "--package", project, "--sdist", "--out-dir", str(source)],
+        cwd=ROOT,
+        check=True,
+    )
+    extracted = tmp_path / "isolated"
+    with tarfile.open(next(source.glob("*.tar.gz"))) as archive:
+        archive.extractall(extracted, filter="data")
+    [package] = extracted.iterdir()
+    rebuilt = tmp_path / "rebuilt"
+    subprocess.run(
+        ["uv", "build", str(package), "--wheel", "--out-dir", str(rebuilt)],
+        cwd=extracted,
+        check=True,
+    )
+    with (
+        zipfile.ZipFile(next(direct.glob("*.whl"))) as expected,
+        zipfile.ZipFile(next(rebuilt.glob("*.whl"))) as actual,
+    ):
+        assert set(actual.namelist()) == set(expected.namelist())
+        for name in expected.namelist():
+            assert actual.read(name) == expected.read(name), name
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
