@@ -19,9 +19,11 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EventListener, ExecutionSelection, PlanExecution
+from dinkster_engine import Engine, EventListener, ExecutionSelection, PlanExecution, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -34,7 +36,15 @@ from dinkster_schema import (
 from dinkster_server import HistoryRecord, HistoryStore, PathRedactor, Principal, create_app
 from dinkster_server.history import record_from_job
 from dinkster_server.queue import Job, JobKey, JobQueue
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import (
+    EncodedPayload,
+    TypeRegistry,
+    Value,
+    ValueMeta,
+    make_list_value,
+    make_tuple_value,
+    register_core_types,
+)
 from dinkster_workers import InProcessWorker
 
 STRING = TypeExpr.concrete("STRING")
@@ -281,6 +291,39 @@ def test_store_survives_reopen(tmp_path: Path) -> None:
     reopened.close()
 
 
+def test_history_asset_roots_cover_accepted_terminal_and_other_scopes(tmp_path: Path) -> None:
+    path = tmp_path / "history.sqlite"
+    other = "blake3:" + "cd" * 32
+    store = HistoryStore(path)
+    store.put(make_record("finished", scope="private", source_document=SOURCE_DIGEST))
+    store.job_accepted(make_job("queued", scope="another", source_document=other))
+    store.put(make_record("no-document"))
+    store.close()
+    store = HistoryStore(path)
+    try:
+        with store.hold_asset_references() as roots:
+            assert roots == {SOURCE_DIGEST, other}
+            with sqlite3.connect(path, timeout=0) as connection:
+                with pytest.raises(sqlite3.OperationalError, match="locked"):
+                    connection.execute("BEGIN IMMEDIATE")
+        store.recover_interrupted()
+        with pytest.raises(AssetError, match="unavailable"):
+            with store.hold_asset_references():
+                pytest.fail("an interrupted run was assumed to have no output references")
+        assert store.delete("another", "queued")
+        with store.hold_asset_references() as roots:
+            assert roots == {SOURCE_DIGEST}
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "UPDATE history SET source_document = 'broken' WHERE run_id = 'finished'"
+            )
+        with pytest.raises(AssetError):
+            with store.hold_asset_references():
+                pytest.fail("unreadable history roots were ignored")
+    finally:
+        store.close()
+
+
 def test_store_migrates_old_schema_with_attempt_default(tmp_path: Path) -> None:
     path = tmp_path / "history.sqlite"
     connection = sqlite3.connect(path)
@@ -308,10 +351,98 @@ def test_store_migrates_old_schema_with_attempt_default(tmp_path: Path) -> None:
     assert old.attempt == 1
     assert old.node_receipts == ()
     assert old.to_wire()["attemptId"] == 1
+    assert old.asset_digests is None
+    with pytest.raises(AssetError, match="unavailable"):
+        with store.hold_asset_references():
+            pytest.fail("legacy history was assumed to have no output references")
     new = make_record("new", attempt=1)
     store.put(new)
     assert store.get("local", "new") == new
     store.close()
+
+
+def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_path: Path) -> None:
+    path = tmp_path / "history.sqlite"
+    media = AssetRef(digest_bytes(b"source clip"), "clip", 11)
+    asset = AssetRef(digest_bytes(b"typed asset"), "data", 11)
+    saved_digest = digest_bytes(b"saved output")
+    preview_digest = digest_bytes(b"saved output preview")
+    decoy = digest_bytes(b"payload fingerprint, not an external identity")
+    leaf = Value(
+        "VIDEO",
+        decoy,
+        ValueMeta({"asset_refs": [media.to_wire()]}),
+        EncodedPayload("VIDEO", b"opaque payload", None),
+    )
+    typed = Value(
+        "asset<file>",
+        asset.digest,
+        ValueMeta(asset.to_wire()),
+        EncodedPayload("asset<file>", b"opaque identity", None),
+    )
+    nested = make_tuple_value([make_list_value("VIDEO", [leaf, leaf]), typed])
+    store = HistoryStore(path)
+    try:
+        for run, scope, value in [("one", "private", nested), ("two", "other", leaf)]:
+            job = make_job(run, scope=scope, source_document=SOURCE_DIGEST)
+            store.job_accepted(job)
+            job.result = RunResult(
+                run,
+                {"target": {"out": value}},
+                (),
+                ("target",),
+                (),
+                artifacts=(
+                    SavedArtifact(
+                        "save",
+                        saved_digest,
+                        "kept.txt",
+                        12,
+                        "text/plain",
+                        "out/kept.txt",
+                        preview=SavedArtifact(
+                            "save",
+                            preview_digest,
+                            "preview.mp4",
+                            20,
+                            "video/mp4",
+                            f"previews/{preview_digest[7:]}/preview.mp4",
+                        ),
+                    ),
+                ),
+            )
+            job.state = "completed"
+            store.job_terminal(job)
+        store.close()
+        store = HistoryStore(path)
+        record = store.get("private", "one")
+        assert record is not None
+        assert record.asset_digests == tuple(
+            sorted((media.digest, asset.digest, saved_digest, preview_digest))
+        )
+        assert "assetDigests" not in record.to_wire()
+        with store.hold_asset_references() as roots:
+            assert roots == {
+                SOURCE_DIGEST,
+                media.digest,
+                asset.digest,
+                saved_digest,
+                preview_digest,
+            }
+        assert store.delete("private", "one")
+        with store.hold_asset_references() as roots:
+            assert roots == {SOURCE_DIGEST, media.digest, saved_digest, preview_digest}
+        assert store.delete_where("other") == 1
+        with store.hold_asset_references() as roots:
+            assert roots == set()
+        store.put(make_record("corrupt"))
+        with sqlite3.connect(path) as connection:
+            connection.execute("UPDATE history SET asset_digests = '[\"broken\"]'")
+        with pytest.raises(AssetError):
+            with store.hold_asset_references():
+                pytest.fail("corrupt output identities were assumed empty")
+    finally:
+        store.close()
 
 
 def test_record_from_job_requires_terminal() -> None:
