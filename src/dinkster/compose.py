@@ -2465,6 +2465,7 @@ class ServingComposer:
         self,
         *,
         worker_env: Mapping[str, str] | None = None,
+        saved_file_previews_enabled: bool = True,
         sandbox_policy: SandboxPolicy | None = None,
         sandbox_gpu_grants: Iterable[str] = (),
         sandbox_network_grants: Mapping[str, Iterable[str]] | None = None,
@@ -2555,6 +2556,7 @@ class ServingComposer:
             self._diagnostic_listener = fan_out
         self._worker_env = dict(worker_env or {})
         vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+        self._saved_file_previews_enabled = saved_file_previews_enabled and bool(vault_root)
         self._preview_artifacts = PreviewArtifactPublisher(
             AssetVault(vault_root) if vault_root else None
         )
@@ -2655,6 +2657,8 @@ class ServingComposer:
             worker=self._routing,
             publish_preview_artifacts=self._preview_artifacts,
             validate_saved_artifacts=self._validate_saved_artifacts,
+            saved_file_previews_enabled=self._saved_file_previews_enabled,
+            publish_saved_file_previews=self._preview_artifacts.saved_files,
             plan_execution=plan_core,
             owner_alive=self._owner_alive,
             extension_snapshot=ExtensionSnapshot(frontend_api=FRONTEND_API_VERSION),
@@ -2705,6 +2709,7 @@ class ServingComposer:
         )
         return ServingComposer(
             worker_env=worker_env,
+            saved_file_previews_enabled=self._saved_file_previews_enabled,
             sandbox_policy=self._sandbox_policy,
             sandbox_gpu_grants=self._sandbox_gpu_grants,
             sandbox_network_grants=self._sandbox_network_grants,
@@ -3946,6 +3951,8 @@ class ServingComposer:
                 worker=worker,
                 publish_preview_artifacts=self._preview_artifacts,
                 validate_saved_artifacts=self._validate_saved_artifacts,
+                saved_file_previews_enabled=self._saved_file_previews_enabled,
+                publish_saved_file_previews=self._preview_artifacts.saved_files,
                 plan_execution=plan_execution,
                 resolve_providers=resolve_providers,
                 preflight_provider_assets=preflight_provider_assets,
