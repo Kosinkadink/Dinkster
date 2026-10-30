@@ -23,7 +23,6 @@ from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 PUBLISHED_PROJECTS = ("dinkster", "dinkster-api", "dinkster-supervisor")
-TARGET_PYTHON = "3.14.10"
 LINUX_PLATFORMS = [f"manylinux_2_{n}_x86_64" for n in range(28, 4, -1)] + [
     "manylinux2014_x86_64",
     "manylinux2010_x86_64",
@@ -195,36 +194,55 @@ def write_constraints(
     return constraints
 
 
-def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
-    """Fetch the locked CPython 3.14 Windows/Linux closure without resolving."""
+def download_external_wheels(
+    root: Path, output: Path, uv: str, base_manifests: list[Path]
+) -> list[Path]:
+    """Fetch the locked wheel closure for the selected published bases without resolving."""
     from packaging.requirements import Requirement
     from packaging.tags import compatible_tags, cpython_tags
     from packaging.utils import canonicalize_name, parse_wheel_filename
+    from packaging.version import Version
 
     lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+    if not base_manifests:
+        raise ValueError("select at least one published base manifest before downloading wheels")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-export-") as directory:
         requirements = write_constraints(root, Path(directory), [], uv).read_text()
     selected: dict[str, tuple[str, int, str]] = {}
-    for windows in (True, False):
-        platforms = ["win_amd64"] if windows else LINUX_PLATFORMS
-        tags = list(cpython_tags((3, 14), platforms=platforms)) + list(
-            compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
+    for path in base_manifests:
+        manifest = read_base_manifest(path)
+        python = Version(manifest["python"])
+        platform = manifest["platform"]
+        if platform == {"os": "windows", "arch": "x86_64"}:
+            windows = True
+            platforms = ["win_amd64"]
+        elif platform == {"os": "linux", "arch": "x86_64"}:
+            windows = False
+            platforms = LINUX_PLATFORMS
+        else:
+            raise ValueError(f"unsupported published base platform: {platform!r}")
+        tags = list(cpython_tags((python.major, python.minor), platforms=platforms)) + list(
+            compatible_tags(
+                (python.major, python.minor),
+                interpreter=f"cp{python.major}{python.minor}",
+                platforms=platforms,
+            )
         )
         priority = {}
         for index, tag in enumerate(tags):
             priority.setdefault(tag, index)
         environment = {
             "implementation_name": "cpython",
-            "implementation_version": TARGET_PYTHON,
+            "implementation_version": manifest["python"],
             "os_name": "nt" if windows else "posix",
             "platform_machine": "AMD64" if windows else "x86_64",
             "platform_release": "",
             "platform_system": "Windows" if windows else "Linux",
             "platform_version": "",
-            "python_full_version": TARGET_PYTHON,
+            "python_full_version": manifest["python"],
             "platform_python_implementation": "CPython",
-            "python_version": "3.14",
+            "python_version": f"{python.major}.{python.minor}",
             "sys_platform": "win32" if windows else "linux",
             "extra": "",
         }
@@ -262,7 +280,10 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
                     if ranks and wheel.get("hash", "").removeprefix("sha256:") in hashes:
                         candidates.append((min(ranks), name, package, wheel))
             if not candidates:
-                raise ValueError(f"no locked cp314 wheel for {requirement.name} on {platforms[0]}")
+                raise ValueError(
+                    f"no locked cp{python.major}{python.minor} wheel for "
+                    f"{requirement.name} on {platforms[0]}"
+                )
             _, name, package, wheel = min(candidates, key=lambda item: (item[0], item[1]))
             size = wheel["size"]
             identity = (wheel["url"], size, wheel["hash"].removeprefix("sha256:"))
@@ -431,7 +452,9 @@ def build(
     with tempfile.TemporaryDirectory(prefix="dinkster-external-wheels-") as directory:
         candidates = list(external_wheels or [])
         if download_external:
-            candidates.extend(download_external_wheels(root, Path(directory), uv))
+            candidates.extend(
+                download_external_wheels(root, Path(directory), uv, base_manifests or [])
+            )
         external = stage_external_wheels(
             root, output, candidates, base_manifests or [], target_variants or set()
         )

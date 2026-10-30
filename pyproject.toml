@@ -46,8 +46,6 @@ supervisor = ["dinkster-supervisor"]
 
 [dependency-groups]
 engine-base = [
-    "torch==2.14.1",
-    "torchvision==0.29.1",
     "numpy==2.5.1",
     "opencv-contrib-python-headless==5.0.0.93",
 ]
