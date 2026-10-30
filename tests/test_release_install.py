@@ -114,6 +114,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert set(workflow["jobs"]) == {
         "validation",
         "build",
+        "pack-locks",
         "tools",
         "finalize",
         "install",
@@ -127,12 +128,34 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["tools"]["needs"] == "build"
-    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools"]
+    assert workflow["jobs"]["pack-locks"]["needs"] == "build"
+    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools", "pack-locks"]
     assert workflow["jobs"]["install"]["needs"] == "finalize"
     assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
         {"os": "linux", "runner": "ubuntu-latest"},
         {"os": "windows", "runner": "windows-latest"},
     ]
+    locks = workflow["jobs"]["pack-locks"]
+    assert locks["runs-on"] == "${{ matrix.runner }}"
+    assert locks["strategy"]["matrix"] == "${{ fromJSON(needs.build.outputs.lock-matrix) }}"
+    assert locks["strategy"]["fail-fast"] is False
+    assert [
+        step["with"]["name"]
+        for step in locks["steps"]
+        if step.get("uses") == "actions/download-artifact@v4"
+    ] == ["wheel-release", "selected-base-manifests"]
+    resolve = [step for step in locks["steps"] if "run" in step]
+    assert {step["if"] for step in resolve} == {
+        "runner.os == 'Windows'",
+        "runner.os != 'Windows'",
+    }
+    for step in resolve:
+        assert "-m scripts.build_release_pack_locks --release dist --base-manifest" in step["run"]
+        assert step["env"] == {"VARIANT": "${{ matrix.variant }}"}
+    admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
+    assert "for artifact in .release/pack-locks/*.pack-lock.json" in admission
+    assert 'arguments+=(--artifact "$artifact")' in admission
+    assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
     for job in ("install", "release", "publish", "publish-api", "publish-supervisor"):
         downloads = [
             step["with"]["name"]
