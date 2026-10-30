@@ -30,7 +30,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.hunyuan3d import VAEDecodeHunyuan3D
-from dinkster_nodes_comfy.mesh import GetMeshInfo, RotateMesh
+from dinkster_nodes_comfy.mesh import GetMeshInfo, MergeMeshes, RotateMesh
 from dinkster_nodes_comfy.voxel_mesh import VoxelToMesh, VoxelToMeshBasic
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -141,6 +141,79 @@ def test_mesh_info_uses_real_counts_not_padding() -> None:
         "  [1]           2 verts  \u00b7           1 faces\nAttributes: texture 3\u00d75"
     )
     assert math.isfinite(value.vertices.sum().item())
+
+
+@pytest.mark.parametrize("portable", [False, True])
+@pytest.mark.parametrize("attributes", [False, True])
+def test_merge_first_items_excludes_padding_offsets_faces_and_fills_attributes(
+    portable: bool, attributes: bool
+) -> None:
+    first = TriangleMeshBatch(
+        torch.arange(24, dtype=torch.float64).reshape(2, 4, 3),
+        torch.tensor([[[2, 0, 1], [99, 99, 99]], [[3, 2, 1], [1, 0, 2]]]),
+        vertex_counts=torch.tensor([3, 4]),
+        face_counts=torch.tensor([1, 2]),
+        vertex_colors=torch.full((2, 4, 3), 0.25) if attributes else None,
+        normals=torch.ones(2, 4, 3),
+        material={"roughnessFactor": 0.4},
+    )
+    second = TriangleMeshBatch(
+        torch.tensor([[[21.0, 22.0, 23.0], [31.0, 32.0, 33.0]]]),
+        torch.tensor([[[1, 0, 1]]]),
+        uvs=torch.tensor([[[0.2, 0.3], [0.7, 0.8]]]) if attributes else None,
+        vertex_colors=torch.full((1, 2, 4), 0.75) if attributes else None,
+        texture=torch.full((1, 2, 3, 3), 0.5) if attributes else None,
+    )
+    third = TriangleMeshBatch(
+        torch.tensor([[[41.0, 42.0, 43.0]]]),
+        torch.tensor([[[0, 0, 0]]]),
+        texture=torch.ones(1, 1, 1, 3) if attributes else None,
+    )
+    sources = (first, second, third)
+    snapshots = [(value.vertices.clone(), value.faces.clone()) for value in sources]
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(MESH_TYPE)
+    values = [spec.decode(spec.encode(value)) if portable else value for value in sources]
+    result = materialize_mesh(
+        MergeMeshes.execute(meshes=dict(zip(("mesh10", "mesh2", "mesh7"), values, strict=True)))[
+            "mesh"
+        ]
+    )
+    torch.testing.assert_close(
+        result.vertices,
+        torch.tensor(
+            [[[0, 1, 2], [3, 4, 5], [6, 7, 8], [21, 22, 23], [31, 32, 33], [41, 42, 43]]],
+            dtype=torch.float64,
+        ),
+        rtol=0,
+        atol=0,
+    )
+    assert result.faces.tolist() == [[[2, 0, 1], [4, 3, 4], [5, 5, 5]]]
+    assert result.vertices.device.type == "cpu" and result.faces.device.type == "cpu"
+    assert result.vertex_counts is None and result.face_counts is None
+    assert result.normals is None and result.material is None and not result.unlit
+    if attributes:
+        torch.testing.assert_close(
+            result.uvs,
+            torch.tensor([[[0, 0], [0, 0], [0, 0], [0.2, 0.3], [0.7, 0.8], [0, 0]]]).double(),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(
+            result.vertex_colors,
+            torch.tensor([[[0.25, 0.25, 0.25, 1]] * 3 + [[0.75] * 4] * 2 + [[1] * 4]]),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(result.texture, torch.full((1, 2, 3, 3), 0.5), rtol=0, atol=0)
+    else:
+        assert result.uvs is None and result.vertex_colors is None and result.texture is None
+    for value, (vertices, faces) in zip(sources, snapshots, strict=True):
+        torch.testing.assert_close(value.vertices, vertices, rtol=0, atol=0)
+        torch.testing.assert_close(value.faces, faces, rtol=0, atol=0)
+    with pytest.raises(ValueError, match="MergeMeshes: need at least one mesh"):
+        MergeMeshes.execute(meshes={})
 
 
 @pytest.mark.parametrize("portable", [False, True])
@@ -261,6 +334,7 @@ class GeometryInspect(Node):
                 InputSpec("rotated", TypeExpr.concrete(MESH_TYPE)),
                 InputSpec("basic_info", TypeExpr.concrete(CORE_STRING)),
                 InputSpec("surface_info", TypeExpr.concrete(CORE_STRING)),
+                InputSpec("merged", TypeExpr.concrete(MESH_TYPE)),
             ),
             outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
         )
@@ -275,6 +349,7 @@ class GeometryInspect(Node):
         rotated: object,
         basic_info: str,
         surface_info: str,
+        merged: object,
     ) -> dict[str, object]:
         voxel = materialize_voxel(voxel)
         basic, surface, rotated = (materialize_mesh(value) for value in (basic, surface, rotated))
@@ -292,6 +367,20 @@ class GeometryInspect(Node):
         torch.testing.assert_close(rotated.faces, basic.faces, rtol=0, atol=0)
         assert "Vertices:   48 total" in basic_info and "Faces:      24 total" in basic_info
         assert "Vertices:   16 total" in surface_info and "Faces:      24 total" in surface_info
+        merged = materialize_mesh(merged)
+        torch.testing.assert_close(
+            merged.vertices,
+            torch.cat((rotated.vertices[0], surface.vertices[0])).unsqueeze(0),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(
+            merged.faces,
+            torch.cat((rotated.faces[0], surface.faces[0] + 24)).unsqueeze(0),
+            rtol=0,
+            atol=0,
+        )
+        assert merged.vertices.shape == (1, 32, 3) and merged.faces.shape == (1, 24, 3)
         return cls.outputs(summary="voxel to mesh to rotation and inspection")
 
 
@@ -364,6 +453,13 @@ def test_ordinary_geometry_sequence_in_both_hosts_twice(tmp_path: Path, in_proce
                     ),
                     "basic-info": GraphNode("GetMeshInfo", {"mesh": Link("rotate", "mesh")}),
                     "surface-info": GraphNode("GetMeshInfo", {"mesh": Link("surface", "MESH")}),
+                    "merge": GraphNode(
+                        "MergeMeshes",
+                        {
+                            "meshes.mesh0": Link("rotate", "mesh"),
+                            "meshes.mesh1": Link("surface", "MESH"),
+                        },
+                    ),
                     "inspect": GraphNode(
                         "geometry-fixture.inspect",
                         {
@@ -373,6 +469,7 @@ def test_ordinary_geometry_sequence_in_both_hosts_twice(tmp_path: Path, in_proce
                             "rotated": Link("basic-info", "MESH"),
                             "basic_info": Link("basic-info", "STRING"),
                             "surface_info": Link("surface-info", "STRING"),
+                            "merged": Link("merge", "mesh"),
                         },
                     ),
                 }

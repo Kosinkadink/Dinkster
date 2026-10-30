@@ -594,6 +594,7 @@ namespaces = [
     "Trellis2Conditioning",
     "RotateMesh",
     "GetMeshInfo",
+    "MergeMeshes",
     "VoxelToMeshBasic",
     "VoxelToMesh",
     "VAEDecodeHunyuan3D",
