@@ -258,6 +258,10 @@
 - Native Transform Splat translates, rotates, and scales canonical SPLAT
   batches. Nonuniform scaling reshapes Gaussian covariance; opacity,
   spherical harmonics, and per-item counts are preserved.
+- Native Merge Splats concatenates valid Gaussian rows in input order, pads
+  spherical harmonics to the highest degree, and retains unequal batch-item
+  counts with zero-padded rows. Its first two splat sockets are required;
+  additional authored sockets are optional.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate

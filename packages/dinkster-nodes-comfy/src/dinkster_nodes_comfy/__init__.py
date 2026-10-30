@@ -5,6 +5,7 @@ from dinkster_api.v1 import (
     AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
+    Node,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -60,7 +61,7 @@ from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
-from .gaussian_splat import GetSplatCount, TransformSplat
+from .gaussian_splat import GetSplatCount, MergeSplat, TransformSplat
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -199,8 +200,14 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_conditioning import Trellis2Conditioning
 from .trellis_upsample import Trellis2UpsampleStage
-from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
+)
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
@@ -240,7 +247,7 @@ from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
-COMFY_NODES = (
+COMFY_NODES: tuple[type[Node], ...] = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     SaveText,
@@ -447,11 +454,14 @@ COMFY_NODES = (
     CreateCameraInfo,
     GetSplatCount,
     TransformSplat,
+    MergeSplat,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
     TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
     TripoSplatConditioning,
+    VAEDecodeTripoSplat,
     LoadAudio,
     RecordAudio,
     PreviewAudio,
@@ -496,6 +506,7 @@ COMFY_NODES = (
     CheckpointSave,
     ModelSave,
     SaveImageAdvanced,
+    Trellis2Conditioning,
 )
 
 

@@ -533,11 +533,14 @@ namespaces = [
     "CreateCameraInfo",
     "GetSplatCount",
     "TransformSplat",
+    "MergeSplat",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
     "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
+    "VAEDecodeTripoSplat",
     "LoadAudio",
     "RecordAudio",
     "PreviewAudio",
@@ -585,6 +588,7 @@ namespaces = [
     "CheckpointSave",
     "ModelSave",
     "SaveImageAdvanced",
+    "Trellis2Conditioning",
 ]
 
 [pack.sandbox]

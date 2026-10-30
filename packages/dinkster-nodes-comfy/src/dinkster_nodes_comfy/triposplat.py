@@ -1,18 +1,22 @@
-"""Native image preprocessing and vision conditioning for TripoSplat."""
+"""Native image preprocessing, conditioning and gaussian decoding for TripoSplat."""
 
 from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from io import BytesIO
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CLIP_VISION_TYPE,
     CONDITIONING_TYPE,
+    CORE_FLOAT,
     CORE_INT,
     IMAGE_TYPE,
     LATENT_TYPE,
     MASK_TYPE,
+    MODEL_TYPE,
+    SPLAT_TYPE,
     VAE_TYPE,
     InputSpec,
     MultiStreamLatent,
@@ -23,6 +27,10 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
     materialize_image,
+    materialize_latent,
+    pack_logger,
+    report_preview,
+    report_progress,
 )
 
 
@@ -187,3 +195,220 @@ class TripoSplatConditioning(Node):
             )
         )
         return cls.outputs(positive=positive, negative=negative, latent={"samples": samples})
+
+
+class VAEDecodeTripoSplat(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="VAEDecodeTripoSplat",
+            display_name="TripoSplat Decode",
+            category="model/latent/triposplat",
+            description=(
+                "Decode the sampled TripoSplat latent into a 3D gaussian splat. "
+                "Modify the number of gaussians to vary the density."
+            ),
+            inputs=(
+                InputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE), doc="TripoSplat VAE decoder"),
+                InputSpec(
+                    "num_gaussians",
+                    TypeExpr.concrete(CORE_INT),
+                    default=262144,
+                    widget=NumberWidget(min=32768, max=1048576, step=32),
+                    doc=(
+                        "Number of gaussians to produce (rounded to a multiple of 32). "
+                        "262144 matches the octree's point density; higher oversamples "
+                        "the same points (denser, but no new detail) and costs "
+                        "proportionally more VRAM/time."
+                    ),
+                ),
+                InputSpec(
+                    "seed",
+                    TypeExpr.concrete(CORE_INT),
+                    default=0,
+                    widget=NumberWidget(min=0, max=0xFFFFFFFFFFFFFFFF),
+                    doc="Seeds the octree point sampler (global RNG) for deterministic decodes.",
+                ),
+            ),
+            outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, samples: object, vae: Any, num_gaussians: int, seed: int
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        streams = materialize_latent(samples)["samples"]
+        if isinstance(streams, MultiStreamLatent):
+            latent = cast("MultiStreamLatent[Any]", streams).streams[0].payload
+        else:
+            latent = streams.unbind()[0] if getattr(streams, "is_nested", False) else streams
+        decoder = vae.first_stage_model
+        per_point = decoder.gaussians_per_point
+        count = max(32768, min(1048576, int(num_gaussians)))
+        if count % per_point != 0:
+            count = round(count / per_point) * per_point
+        memory = (
+            (latent.shape[1] * 4 + (count // per_point) * 10)
+            * decoder.gs.model_channels
+            * management.dtype_size(vae.vae_dtype)
+        )
+        management.load_models_gpu([vae.patcher], memory_required=memory)
+        latent = latent.to(device=vae.device, dtype=vae.vae_dtype)
+        generator = torch.Generator(device="cpu").manual_seed(seed)
+        parts = [
+            gaussian.render_tensors()
+            for gaussian in decoder.decode(latent, num_gaussians=count, generator=generator)
+        ]
+        return cls.outputs(
+            splat=dict(
+                zip(
+                    ("positions", "scales", "rotations", "opacities", "sh"),
+                    (torch.stack(tensors) for tensors in zip(*parts, strict=False)),
+                    strict=True,
+                )
+            )
+        )
+
+
+class TripoSplatSamplingPreview(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="TripoSplatSamplingPreview",
+            display_name="TripoSplat Sampling Preview",
+            category="model/latent/triposplat",
+            description=(
+                "Patch the TripoSplat model for the standard Ksampler node to show a live decoded "
+                "gaussian splat preview at each step."
+            ),
+            inputs=(
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE), doc="TripoSplat VAE decoder"),
+                InputSpec(
+                    "octree_level",
+                    TypeExpr.concrete(CORE_INT),
+                    default=5,
+                    widget=NumberWidget(min=2, max=8),
+                    advanced=True,
+                    doc="Octree depth for the preview decode (lower = cheaper/coarser).",
+                ),
+                InputSpec(
+                    "num_gaussians",
+                    TypeExpr.concrete(CORE_INT),
+                    default=16384,
+                    widget=NumberWidget(min=1024, max=262144, step=32),
+                    doc=(
+                        "Number of gaussians to produce for the preview "
+                        "(rounded to a multiple of 32)."
+                    ),
+                ),
+                InputSpec(
+                    "yaw",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=90.0,
+                    widget=NumberWidget(min=-360.0, max=360.0, step=1.0),
+                    advanced=True,
+                    doc="Preview camera yaw in degrees.",
+                ),
+                InputSpec(
+                    "pitch",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=15.0,
+                    widget=NumberWidget(min=-89.0, max=89.0, step=1.0),
+                    advanced=True,
+                    doc="Preview camera pitch in degrees.",
+                ),
+                InputSpec(
+                    "point_size",
+                    TypeExpr.concrete(CORE_INT),
+                    default=3,
+                    widget=NumberWidget(min=1, max=16),
+                    doc=(
+                        "Maximum splat radius in pixels. Each gaussian is sized from its scale "
+                        "and capped here; lower = finer/pointier, higher = chunkier."
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("model", TypeExpr.concrete(MODEL_TYPE), display_name="MODEL"),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: Any,
+        vae: Any,
+        octree_level: int = 5,
+        num_gaussians: int = 16384,
+        yaw: float = 90.0,
+        pitch: float = 15.0,
+        point_size: int = 3,
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        management = importlib.import_module("dinkster_inference.model_management")
+        patcher = importlib.import_module("dinkster_inference.patcher_extension")
+        preview = importlib.import_module("dinkster_inference.ldm.triposplat.preview")
+        image_ops = importlib.import_module("PIL.ImageOps")
+        pil_image = importlib.import_module("PIL.Image")
+        config = {
+            "gaussians": num_gaussians,
+            "level": octree_level,
+            "yaw": yaw,
+            "pitch": pitch,
+            "point_size": point_size,
+        }
+        stage = vae.first_stage_model
+        tokens = model.model.diffusion_model.q_token_length
+        memory = (tokens * 4 + (num_gaussians // stage.gaussians_per_point) * 10) * (
+            stage.gs.model_channels * management.dtype_size(vae.vae_dtype)
+        )
+
+        def outer_sample_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
+            arguments = list(args)
+            callback_index = 5
+            original = (
+                arguments[callback_index]
+                if len(arguments) > callback_index
+                else kwargs.get("callback")
+            )
+            enabled, loaded = True, False
+
+            def callback(step: int, x0: Any, x: Any, total_steps: int) -> None:
+                nonlocal enabled, loaded
+                if original is not None:
+                    original(step, x0, x, total_steps)
+                if not enabled:
+                    return
+                try:
+                    if not loaded:
+                        models = management.loaded_models(only_currently_used=True)
+                        models.append(vae.patcher)
+                        management.load_models_gpu(models, memory_required=memory)
+                        loaded = True
+                    image = preview.decode_x0_to_image(vae, x0, config)
+                    image = image_ops.contain(image, (512, 512), pil_image.Resampling.BILINEAR)
+                    buffer = BytesIO()
+                    image.save(buffer, format="JPEG", quality=95, compress_level=1)
+                    report_progress(step + 1, total_steps)
+                    report_preview(buffer.getvalue(), width=image.width, height=image.height)
+                except Exception as error:
+                    pack_logger("dinkster-nodes-comfy").warning(
+                        "TripoSplatSamplingPreview: preview failed, disabling (%s)", error
+                    )
+                    enabled = False
+
+            if len(arguments) > callback_index:
+                arguments[callback_index] = callback
+            else:
+                kwargs["callback"] = callback
+            return executor(*arguments, **kwargs)
+
+        patched = model.clone()
+        patched.add_wrapper_with_key(
+            patcher.WrappersMP.OUTER_SAMPLE, "triposplat_sampling_preview", outer_sample_wrapper
+        )
+        return cls.outputs(model=patched)
