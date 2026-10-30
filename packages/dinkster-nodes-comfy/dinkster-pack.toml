@@ -538,6 +538,7 @@ namespaces = [
     "MoGePanoramaInference",
     "MoGeInference",
     "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
     "VAEDecodeTripoSplat",
     "LoadAudio",

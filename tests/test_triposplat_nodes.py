@@ -84,3 +84,30 @@ def test_decode_schema_is_cold_and_registered() -> None:
         capture_output=True,
         text=True,
     )
+
+
+def test_sampling_preview_schema_is_cold_and_registered() -> None:
+    # Source contract: TripoSplatSamplingPreview F bc5f880d, define_schema().
+    # These declarations are not executed ComfyUI output constants or goldens.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "sys.modules['torch'] = None\n"
+            "sys.modules['dinkster_inference'] = None\n"
+            "from dinkster_nodes_comfy import COMFY_NODES\n"
+            "from dinkster_nodes_comfy.triposplat import TripoSplatSamplingPreview\n"
+            "from dinkster_workers import load_manifest\n"
+            "schema = TripoSplatSamplingPreview.define_schema()\n"
+            "manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')\n"
+            "assert TripoSplatSamplingPreview in COMFY_NODES\n"
+            "assert schema.node_type in manifest.namespaces\n"
+            "assert [i.id for i in schema.inputs] == "
+            "['model','vae','octree_level','num_gaussians','yaw','pitch','point_size']\n"
+            "assert [o.id for o in schema.outputs] == ['model']\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
