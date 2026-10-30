@@ -93,7 +93,13 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "comfy-aimdo==0.6.0",
         "triton-windows==3.7.1.post27",
     ]
-    assert '"3.12"' in setup
+    assert '"run", "--no-project", "--python", "3.14.10"' in setup
+    assert '"scripts/prepare_windows_python.py", "--output", $RuntimeDirectory' in setup
+    assert '$BasePython = Join-Path $RuntimeDirectory "python\\python.exe"' in setup
+    assert '"venv", $TorchEnvironment, "--python", $BasePython' in setup
+    assert '"venv", $GpuEnvironment, "--python", $BasePython' in setup
+    assert 'Invoke-Native $TorchPython @("-I", $SqliteGate)' in setup
+    assert 'Invoke-Native $GpuPython @("-I", $SqliteGate)' in setup
     assert '"torch==2.14.1+cpu", "torchvision==0.29.1+cpu"' in setup
     assert '"--torch-backend", "cpu"' in setup
     assert "assert torch.__version__ == '2.14.1+cpu'" in setup
@@ -186,7 +192,7 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
 
     assert '[Environment]::SetEnvironmentVariable("UV_PROJECT", $null, "Process")' in sync
     assert '"UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"' in sync
-    assert '"sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"' in sync
+    assert '"sync", "--project", $RepoRoot, "--python", $BasePython, "--all-packages"' in sync
     assert "$PreviousProject" not in sync
     cleanup = setup.rsplit("finally {", 1)[1]
     assert '"UV_PROJECT", $PreviousProject, "Process"' in cleanup
@@ -208,6 +214,7 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
     uv = bin_dir / "uv.cmd"
     uv.write_text(
         "@echo off\r\n"
+        'if "%1"=="run" exit /b 0\r\n'
         '> "%SYNC_PROBE%" echo project=%UV_PROJECT%\r\n'
         '>> "%SYNC_PROBE%" echo environment=%UV_PROJECT_ENVIRONMENT%\r\n'
         '>> "%SYNC_PROBE%" echo args=%*\r\n'
@@ -248,7 +255,10 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
         "project=",
         f"environment={REPO_ROOT / '.venv'}",
     ]
-    assert lines[2].startswith(f"args=sync --project {REPO_ROOT} --python 3.12 --all-packages")
+    base_python = REPO_ROOT / ".run/windows-python/python/python.exe"
+    assert lines[2].startswith(
+        f"args=sync --project {REPO_ROOT} --python {base_python} --all-packages"
+    )
     assert restore_probe.read_text().splitlines() == [
         str(tmp_path / "wrong-project"),
         str(tmp_path / "wrong-environment"),
