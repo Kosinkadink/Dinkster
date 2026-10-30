@@ -11,6 +11,7 @@ on:
       - scripts/build_release.py
       - scripts/build_official_packs.py
       - scripts/acquire_engine_bases.py
+      - scripts/base_bundles.json
       - scripts/prune_engine_prereleases.py
       - scripts/download_frontend.py
       - scripts/release_sources.json
@@ -55,6 +56,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
+      - name: Acquire the selected published base manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-project --python 3.12 --with packaging==26.2 python - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.acquire_engine_bases import acquire
+
+          root = Path.cwd()
+          selections = json.loads((root / 'scripts/base_bundles.json').read_text())
+          acquire(root, [f'base-{variant}-{identity}' for variant, identity in selections.items()],
+                  root / '.release/base-manifests')
+          PY
       - name: Build the complete release contract
         env:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
@@ -74,6 +89,9 @@ jobs:
           build(root, root / '.release/official-packs', version=version.split('+', 1)[0])
           PY
           for payload in .release/official-packs/*; do arguments+=(--artifact "$payload"); done
+          for manifest in .release/base-manifests/*/manifest.json; do
+            arguments+=(--base-manifest "$manifest" --target-variant "$(basename "$(dirname "$manifest")")")
+          done
           uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release \
             "${arguments[@]}" \
             --download-external-wheels \
