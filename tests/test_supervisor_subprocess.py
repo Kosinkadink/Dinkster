@@ -72,7 +72,7 @@ def test_nested_child_state_and_stack_at_timeout(
         "print('nested stderr', file=sys.stderr)\n"
         "sys.exit(7)\n"
     )
-    arguments = ["prepare-catalogs"] if module_name == "dinkster.manager" else []
+    arguments = ["--root", "", "prepare-catalogs"] if module_name == "dinkster.manager" else []
     (tmp_path / "diagnostic_parent.py").write_text(
         "import subprocess, sys, threading\n"
         f"result = subprocess.run([sys.executable, '-B', '-m', {module_name!r}, "

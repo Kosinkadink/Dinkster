@@ -147,7 +147,7 @@ def _trace_nested_commands(directory: Path) -> None:
                 module = args[index + 1]
                 if module == "dinkster.generation_packs" or (
                     module == "dinkster.manager"
-                    and args[index + 2 : index + 3] == ["prepare-catalogs"]
+                    and args[index + 2 : index + 5] == ["--root", "", "prepare-catalogs"]
                 ):
                     self.trace_path = directory / f"nested-{uuid4().hex}.json"
                     args = [
