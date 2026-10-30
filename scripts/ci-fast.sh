@@ -8,6 +8,7 @@ uv run --locked python scripts/check_builtin_type_spellings.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
+uv run --locked pyright --pythonplatform Windows
 uv run --locked python -m pytest -q \
   tests/test_disabled_features.py \
   tests/test_settings.py \

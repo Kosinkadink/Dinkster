@@ -31,6 +31,7 @@ from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .background_removal import BACKGROUND_REMOVAL_NODES
 from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
@@ -68,7 +69,7 @@ from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
-from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES, VAEDecodeHunyuan3D
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -129,6 +130,7 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mesh import MESH_NODES
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -201,6 +203,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .trellis_conditioning import Trellis2Conditioning
+from .trellis_shape import Trellis2ShapeStage
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -226,6 +229,7 @@ from .void_conditioning import (
 )
 from .void_sampler import VOIDSampler
 from .void_warped_noise import VOIDWarpedNoise
+from .voxel_mesh import VOXEL_MESH_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -449,6 +453,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    *BACKGROUND_REMOVAL_NODES,
     CropByBBoxes,
     CameraAngle,
     CreateCameraInfo,
@@ -507,6 +512,10 @@ COMFY_NODES: tuple[type[Node], ...] = (
     ModelSave,
     SaveImageAdvanced,
     Trellis2Conditioning,
+    *MESH_NODES,
+    *VOXEL_MESH_NODES,
+    VAEDecodeHunyuan3D,
+    Trellis2ShapeStage,
 )
 
 
