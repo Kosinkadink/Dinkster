@@ -16,6 +16,8 @@ import textwrap
 import time
 from pathlib import Path
 
+import aiohttp
+import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_supervisor import (
@@ -23,8 +25,12 @@ from dinkster_supervisor import (
     STATUS_PATH,
     EngineLink,
     EngineProcess,
+    IngressMember,
+    LeaseStore,
+    create_ingress_app,
     create_supervisor_app,
 )
+from multidict import CIMultiDict
 
 
 def make_engine_app() -> web.Application:
@@ -211,6 +217,112 @@ def test_proxy_is_transparent_when_ready() -> None:
             # The supervisor's status route is never proxied.
             status = await (await client.get(STATUS_PATH)).json()
             assert status["state"] == "ready"
+        finally:
+            await client.close()
+            await engine_server.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("listener_kind", ("supervisor", "ingress"))
+def test_dns_rebinding_cannot_grant_folders_or_open_websockets(
+    tmp_path: Path, listener_kind: str
+) -> None:
+    async def scenario() -> None:
+        grant = tmp_path / "grant.json"
+        upstream_requests: list[str] = []
+        upstream = make_engine_app()
+
+        async def add_mount(request: web.Request) -> web.Response:
+            upstream_requests.append(request.path)
+            grant.write_text(await request.text())
+            return web.json_response({"created": True}, status=201)
+
+        upstream.router.add_post("/api/mounts", add_mount)
+        engine_server = TestServer(upstream)
+        await engine_server.start_server()
+        link = EngineLink(state="ready", base_url=str(engine_server.make_url("")))
+        if listener_kind == "ingress":
+            store = LeaseStore(tmp_path / "leases.sqlite3")
+            await store.initialize()
+            app = create_ingress_app(
+                {"primary": IngressMember("primary", link)},
+                "primary",
+                store,
+                host="configured.example",
+                allow_hosts=("additional.example",),
+                allow_origins=("http://untrusted.example:3639",),
+            )
+        else:
+            app = create_supervisor_app(
+                link,
+                host="configured.example",
+                allow_hosts=("additional.example",),
+                allow_origins=("http://untrusted.example:3639",),
+            )
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            rebinding = {
+                "Host": "untrusted.example:3639",
+                "Origin": "http://untrusted.example:3639",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            rejected = await client.post(
+                "/api/mounts", headers=rebinding, json={"mode": "readwrite"}
+            )
+            assert rejected.status == 421
+            assert await rejected.json() == {
+                "error": "host-not-allowed",
+                "message": "the request Host is not allowed by this server",
+            }
+            assert not grant.exists()
+            assert not upstream_requests
+            preflight = await client.options(
+                "/api/mounts",
+                headers={**rebinding, "Access-Control-Request-Method": "POST"},
+            )
+            assert preflight.status == 421
+            for path in ("/api/queue", STATUS_PATH):
+                assert (await client.get(path, headers=rebinding)).status == 421
+            with pytest.raises(aiohttp.WSServerHandshakeError) as handshake:
+                await client.ws_connect("/api/events", headers=rebinding)
+            assert handshake.value.status == 421
+
+            for authority in (
+                "127.0.0.1:invalid",
+                "user@127.0.0.1",
+                "[::1]extra",
+                "configured.example.untrusted",
+                "additional.example.untrusted",
+            ):
+                assert (await client.get(STATUS_PATH, headers={"Host": authority})).status == 421
+            duplicate = CIMultiDict([("Host", "127.0.0.1"), ("Host", "untrusted.example")])
+            assert (await client.get(STATUS_PATH, headers=duplicate)).status == 421
+
+            async with asyncio.timeout(5):
+                reader, writer = await asyncio.open_connection(client.host, client.port)
+                try:
+                    writer.write(b"GET /supervisor/status HTTP/1.0\r\n\r\n")
+                    await writer.drain()
+                    missing_host = await reader.read()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+            assert missing_host.startswith(b"HTTP/1.0 421 ")
+
+            for authority in (
+                "127.0.0.2:3639",
+                "[::1]:3639",
+                "Configured.Example.:3639",
+                "Additional.Example:3639",
+            ):
+                accepted = await client.post(
+                    "/api/mounts", headers={**rebinding, "Host": authority}, json={"mode": "read"}
+                )
+                assert accepted.status == 201
+                assert grant.read_text() == '{"mode": "read"}'
+            assert upstream_requests == ["/api/mounts"] * 4
         finally:
             await client.close()
             await engine_server.close()
