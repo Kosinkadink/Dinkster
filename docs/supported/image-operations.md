@@ -8,6 +8,8 @@
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
   extracts basic or surface-net meshes, retaining variable per-item lengths
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
+- Native `Trellis2ShapeStage` converts dense structure occupancy to batch-grouped
+  sparse coordinates and an empty shape latent, with stage-specific conditioning.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
