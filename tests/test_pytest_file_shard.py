@@ -48,9 +48,14 @@ def test_file_shards_are_stable_disjoint_and_complete() -> None:
     assert first | second == set(expected)
 
 
-@pytest.mark.parametrize("count", (4, 8))
+@pytest.mark.parametrize("count", (3, 4, 8))
 def test_file_shards_support_extended_counts(count: int) -> None:
     expected = {
+        3: {
+            "tests/test_environment_archives.py": 1,
+            "tests/test_environment_cli.py": 2,
+            "tests/test_environment_transactions.py": 3,
+        },
         4: {
             "tests/test_serve.py": 2,
             "tests/test_compose.py": 1,
