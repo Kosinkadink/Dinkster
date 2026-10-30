@@ -882,6 +882,8 @@ async def serve_many(
                 )
             )
 
+    connected = asyncio.Barrier(len(loaded))
+
     async def one(endpoint: str, item: tuple[Any, ...]) -> None:
         (
             manifest,
@@ -898,6 +900,14 @@ async def serve_many(
             schemas,
         ) = item
         reader, writer = await connect_endpoint(endpoint)
+        try:
+            # Capability imports must not delay another peer's authentication.
+            await connected.wait()
+        except BaseException:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            raise
         with use_declared_asset_pack(manifest.name):
             await serve_connection(
                 reader,
