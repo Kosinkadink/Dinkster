@@ -49372,7 +49372,9 @@
       "file": "comfy_extras/nodes_bg_removal.py",
       "source": "comfy_extras",
       "display_name": "Load Background Removal Model",
-      "file_inputs": [],
+      "file_inputs": [
+        "bg_removal_name"
+      ],
       "engine_semantics": [],
       "input_types": {
         "required": {
@@ -49381,7 +49383,8 @@
             {
               "tooltip": "The model used to remove backgrounds from images",
               "multiselect": false,
-              "options": []
+              "options": [],
+              "file_input": true
             }
           ]
         }
