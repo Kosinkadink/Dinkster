@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
+from typing import cast
 
 from dinkster_assets import (
     AssetError,
+    AssetRef,
     AssetVault,
     classify_media,
     digest_bytes,
+    resolver_from_env,
 )
 from dinkster_assets.declared import produced_output_scratch
 from dinkster_assets.vault import VaultWriter
@@ -120,6 +124,48 @@ class PreviewArtifactPublisher:
     def __init__(self, vault: AssetVault | None) -> None:
         self._vault = vault
         self._lock = asyncio.Lock()
+
+    async def saved_files(
+        self, artifacts: Sequence[SavedArtifact], claims: Sequence[Mapping[str, object]]
+    ) -> tuple[SavedArtifact, ...]:
+        """Associate optional media only with an exact host-authorized saved file."""
+        from .blobs import await_file_operation
+        from .boundary import decode_saved_file_previews
+
+        by_ref = {
+            (item.digest, item.name, item.size, item.media_type, item.virtual_path): index
+            for index, item in enumerate(artifacts)
+        }
+        result = list(artifacts)
+        for claim in decode_saved_file_previews({"savedFilePreviews": list(claims)}):
+            try:
+                saved = AssetRef.from_wire(cast("Mapping[str, object]", claim["saved"]))
+                index = by_ref.get(
+                    (saved.digest, saved.name, saved.size, saved.media_type, saved.virtual_path)
+                )
+                if index is None:
+                    raise AssetError("preview does not match an authorized saved file")
+                preview = AssetRef.from_wire(
+                    cast("Mapping[str, object]", claim["preview"]), resolver_from_env()
+                )
+
+                def read(ref: AssetRef = preview) -> bytes:
+                    with ref.open() as source:
+                        data = source.read(SAVED_FILE_PREVIEW_LIMIT_BYTES + 1)
+                    if len(data) != ref.size:
+                        raise AssetError("saved-file preview bytes do not match declared size")
+                    return data
+
+                data = await await_file_operation(asyncio.create_task(asyncio.to_thread(read)))
+                published = await self(
+                    artifacts[index].node_id,
+                    (EncodedPreviewArtifact(data, preview.name, preview.media_type),),
+                )
+                result[index] = replace(artifacts[index], preview=published[0])
+                del data
+            except Exception as exc:
+                logging.getLogger(__name__).warning("saved-file preview unavailable: %s", exc)
+        return tuple(result)
 
     def _stage(self, node_id: str, claims: Sequence[EncodedPreviewArtifact]) -> _StagedPreviews:
         if self._vault is None:

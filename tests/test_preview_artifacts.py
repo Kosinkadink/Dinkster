@@ -74,7 +74,7 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "from pathlib import Path\n"
         "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, InputSpec, Node, NodeSchema, "
         "OutputSpec, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
-        "attach_saved_artifact)\n"
+        "attach_saved_artifact, AssetWriter, MountSnapshotWriter, SaveTarget)\n"
         f"DATA = base64.b64decode({payload!r})\n"
         f"FAILED_DATA = base64.b64decode({failed_payload!r})\n"
         "class Preview(Node):\n"
@@ -86,6 +86,21 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         " @classmethod\n"
         " def execute(cls, *, mode: str) -> Mapping[str, object]:\n"
         "  data = FAILED_DATA if mode == 'fail' else DATA\n"
+        "  if mode.startswith('mounted'):\n"
+        "   writer = MountSnapshotWriter(os.environ['DINKSTER_MOUNTS_SNAPSHOT'])\n"
+        "   for index in range(65 if mode == 'mounted-batch' else 2):\n"
+        "    ref = AssetWriter(writer).save_bytes(SaveTarget('renders', f'saved-{index}'), "
+        "b'duplicate saved bytes', suffix='.exr', media_type='image/x-exr')\n"
+        "    claim = ref.to_wire()\n"
+        "    if mode == 'mounted-forged': claim['digest'] = 'blake3:' + 'a'*64\n"
+        "    attach_saved_artifact(claim)\n"
+        "    if mode == 'mounted-mismatch': claim = {**claim, 'size': ref.size + 1}\n"
+        "    def encode():\n"
+        "     if mode == 'mounted-encode-fail': raise RuntimeError('encoder failed')\n"
+        "     return DATA\n"
+        "    publish_saved_file_preview(claim, encode, name='preview.mp4', "
+        "media_type='video/mp4')\n"
+        "   return cls.outputs(out='saved')\n"
         "  if mode == 'saved':\n"
         "   ref = dict(digest='blake3:' + 'a'*64, name='saved.exr', size=7, "
         "mediaType='image/x-exr', virtualPath='mounts/output/saved.exr')\n"
@@ -311,6 +326,100 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
             finally:
                 await restarted.close()
                 reopened.store.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", [True, False])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_optional_previews_associate_only_with_authorized_files_and_survive_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mp4: bytes,
+    in_process: bool,
+    enabled: bool,
+) -> None:
+    import json
+
+    from dinkster_caches import DiskCacheStore
+    from dinkster_protocol import CachedResult
+    from dinkster_server.app import job_to_wire
+
+    manifest = _write_preview_pack(tmp_path, mp4)
+    vault = AssetVault(tmp_path / "vault")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    output = tmp_path / "output"
+    output.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps({"mounts": [{"id": "renders", "root": str(output), "mode": "readwrite"}]}),
+        "ascii",
+    )
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    env = {"PYTHONPATH": str(tmp_path), "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env, saved_file_previews_enabled=enabled)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
+            engine = composer.composition.make_engine(lambda _event: None)
+            for mode in ("mounted", "mounted-batch", "mounted-mismatch", "mounted-encode-fail"):
+                graph = Graph(nodes={"save": GraphNode("preview-fixture.emit", {"mode": mode})})
+                result = await engine.run(graph, ["save"])
+                count = 65 if mode == "mounted-batch" else 2
+                assert len(result.artifacts) == count
+                assert len({item.virtual_path for item in result.artifacts}) == count
+                assert {item.digest for item in result.artifacts} == {
+                    digest_bytes(b"duplicate saved bytes")
+                }
+                expected = enabled and mode in ("mounted", "mounted-batch")
+                assert all((item.preview is not None) == expected for item in result.artifacts)
+                cached = await engine.run(graph, ["save"])
+                assert cached.cached == ("save",)
+                assert cached.artifacts == result.artifacts
+                disk = DiskCacheStore(tmp_path / ("cache-" + mode), composer.composition._registry)
+                await disk.put(
+                    "saved-result", CachedResult(result.outputs["save"], artifacts=result.artifacts)
+                )
+                restored = await disk.get("saved-result")
+                assert restored is not None and restored.artifacts == result.artifacts
+                job = Job(JobKey("client", mode), graph, ("save",), 0, mode, "fixture")
+                job.result = result
+                serialized = job_to_wire(job, None, composer.composition._registry)
+                rows = serialized["artifacts"]
+                assert isinstance(rows, list)
+                assert all(("preview" in row) == expected for row in rows)
+                mounts = MountTable()
+                mounts.add(MountDef("renders", output, "readwrite"))
+                mounts.scan("renders")
+                library = ServerLibrary(
+                    vault=vault,
+                    store=LibraryStore(tmp_path / (mode + ".sqlite")),
+                    resolver=mounts,
+                    local_resolver=mounts,
+                    upload_writer=AssetWriter(mounts),
+                    project_folders_for=lambda _project: AssetFolderContext(
+                        ("renders",), "renders"
+                    ),
+                )
+                try:
+                    retained = library.record_saved_outputs(job, result)
+                    assert retained.artifacts == result.artifacts
+                    if expected:
+                        assert vault.resolve(digest_bytes(mp4)) is not None
+                finally:
+                    library.store.close()
+            with pytest.raises(ExecutionError):
+                await engine.run(
+                    Graph(
+                        nodes={
+                            "save": GraphNode("preview-fixture.emit", {"mode": "mounted-forged"})
+                        }
+                    ),
+                    ["save"],
+                )
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 
