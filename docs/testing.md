@@ -86,15 +86,20 @@ workspace-member tests. The selections and setup commands in
 | Lane | Required execution |
 | --- | --- |
 | Linux CPython 3.12 root | All four `test` file shards, with the workflow's branch-coverage sources and exclusions |
-| Windows CPython 3.12 root | All four `test` file shards in a native Windows checkout |
-| CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in `.venv-torch` |
+| Windows CPython 3.14.10 root | All four `test` file shards in a native Windows checkout, using the patched SQLite runtime |
+| CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Coverage gate | All four Linux coverage files combined; `coverage report --fail-under=80` |
 
-Build CPU Torch environments with `scripts/setup_envs.sh` or
-`scripts/setup_envs.ps1`, including the action's subsequent root/comfy install.
-Do not substitute the all-workspace environment: editable workspace members can
-hide missing dependencies in the selected runtime. Pin CPU dispatch with
+Build the CPU runtime with
+`uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
+or `--variant win-cpu` on Windows. The same Python implementation serves the
+launcher and CPU action; its receipt is `.run/environment-base.json`.
+Contributor setup acceptance runs the root and pack checks with the bundle's
+Python version. The Linux CPython 3.12 row describes its separate full-validation
+root jobs; it does not override the selected bundle interpreter.
+Keep isolated pack-install tests: workspace editables are not evidence that a
+published pack declares its complete dependencies. Pin CPU dispatch with
 `ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.
 Prepare the pinned validation inputs before running evidence-tooling tests.
 
@@ -235,7 +240,7 @@ integration:
 
 ```bash
 uv run --no-sync python scripts/prepare_validation_inputs.py
-./scripts/setup_envs.sh
+uv run --no-project python scripts/setup_envs.py --variant linux-cpu
 .venv/bin/python -m pytest -q
 ```
 
@@ -247,10 +252,11 @@ evidence revision, so local and hosted full validation execute the same benchmar
 and acceptance sources. Access to the private evidence repository is required
 only for the full maintainer suite, not to install or run Dinkster.
 
-On Windows, `scripts\setup_envs.ps1` creates the equivalent root, CPU Torch,
-and NVIDIA CUDA environments. Run the gates it prints with native Windows
-paths; rerunning the script reasserts the environments, while `-Force` rebuilds
-only the environments it owns.
+On Windows, run the same Python entry point with `--variant win-cpu` for CPU
+checks or omit the variant to select the compatible NVIDIA bundle. Use native
+`.venv\Scripts\python.exe` paths. Rerunning setup reasserts the selected
+environment; `--force` rebuilds `.venv` without deleting the verified base store.
+Run tools with `uv run --no-sync` to retain the manifest's binary wheels.
 
 MediaRecorder WebM upload tests generate local samples only for the writable
 `libopus` and `libvorbis` encoders present in the installed PyAV wheel. The
@@ -258,10 +264,10 @@ fixture gate always requires `libopus`; decode-side admission separately keeps
 Vorbis WebM coverage when the wheel cannot generate it through `libvorbis`.
 
 Run each vision package's full `tests` directory and the benchmark selector
-above with `.venv-torch/bin/python -m pytest -q` too. Supply the real-artifact
+above with `.venv/bin/python -m pytest -q` too. Supply the real-artifact
 environment variables documented in the provider READMEs and composite
 action; an absent artifact's skip is not real-model validation. Training and
-GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
+GPU checks in the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 

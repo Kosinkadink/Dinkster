@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-schema"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster node schema model: the single source of truth (hazard H1)"
 requires-python = ">=3.12"
 dependencies = ["dinkster-values"]

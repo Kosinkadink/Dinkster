@@ -10,6 +10,13 @@ model patcher.
 loading the tensor runtime during schema discovery. Selecting Kitchen attention
 uses its kernel when available and falls back to PyTorch attention otherwise.
 
+`LoraSave` extracts standard low-rank or full-difference LoRA checkpoints from
+model and text-encoder differences, optionally includes bias differences, and
+saves a safetensors file to the selected writable mount.
+Its filename prefix explicitly requests a single-line string editor.
+Filenames retain the source trailing underscore before `.safetensors`.
+The saved file is attached as a validated run artifact within shared result limits.
+
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
 `FluxKVCache` reuses reference-image attention keys and values independently

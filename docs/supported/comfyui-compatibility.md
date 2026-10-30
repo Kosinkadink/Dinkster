@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native EmptyImage supports CPU-only execution as the first image node in a
+  fresh worker, preserving its dimensions, batch size and RGB color values.
 - Native POSE_KEYPOINT values preserve frame canvas dimensions, people and flat
   body, foot, face and hand keypoints across isolated hosts, including absent
   and empty optional fields. This is distinct from the existing POSE format.
@@ -216,3 +218,47 @@
   prompt/workflow metadata in source-compatible CDATA blocks. Invalid UTF-8 fails
   rather than being replaced. Saved files appear as host-validated run artifacts;
   the unchanged SVG value remains available downstream.
+- Native animated PNG and WebP outputs retain frame order, alpha, timing,
+  compression controls and source images while writing to the selected mount.
+  Each saved animation is attached as a validated run artifact on every execution.
+  SaveImage, SaveAnimatedPNG and SaveAnimatedWEBP retain submitted prompt and
+  workflow metadata unless metadata is disabled. Animated PNG omits empty prompts.
+- Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
+  on the selected output mount. CLIP weights split by encoder prefix.
+  Filenames retain the source trailing underscore before `.safetensors`.
+  Submitted prompt and workflow metadata are retained unless metadata is disabled.
+  Exported files are attached as validated run artifacts within the shared result limits.
+- Native latent files load verified safetensors, convert samples to float32,
+  and apply legacy scaling only when the format marker is absent. Saving
+  writes contiguous samples and the format marker to the selected output mount.
+  SaveLatent retains submitted prompt and workflow metadata unless disabled;
+  an absent prompt remains an empty string, distinct from an empty prompt object.
+  Saved latent filenames retain the source trailing underscore before `.latent`.
+  Each saved latent is attached as a validated run artifact on every execution.
+- Native image file schemas expose bound assets and adjacent output mounts;
+  PNG output truncates channel values and preview outputs retain source images.
+  PNG batches retain source counter progression and the trailing filename underscore.
+  Every saved PNG in a SaveImage batch is attached as a validated run artifact,
+  including batches larger than 64 images, within the shared result limits.
+  File operations reject oversized image batches and encoded outputs.
+  Image loading retains decoded frame precision, straight alpha and frame order;
+  animated WebP uses a bounded Pillow fallback because FFmpeg cannot decode it.
+- Native CheckpointSave and ModelSave export model weights through the selected
+  output mount, retaining architecture and prediction metadata, auxiliary sampling
+  tensors, and the reserved filename in supported model-spec titles. Submitted prompt
+  and workflow fields are included unless disabled; architecture metadata remains.
+  Submitted extra fields override matching metadata keys. Tiny CPU
+  checks use controlled model state, not full-model or GPU execution.
+  Saved checkpoints and models are attached as validated run artifacts within the
+  shared result limits.
+- Native SaveImageAdvanced writes 8/16-bit PNG and half/full-float EXR through
+  the selected output mount, preserving source counters and straight alpha.
+  EXR exports retain extended range and convert sRGB or HLG input to scene light.
+  When saved-file previews are enabled by the host, each EXR gets an optional
+  sRGB preview: JPEG at quality 85, or WebP at quality 80 for straight alpha.
+  Previews fit within one million pixels and WebP's side limit; preview failure
+  does not invalidate the saved EXR. Disabled previews perform no encoding.
+  PNG, EXR and AVIF exports retain submitted prompt and workflow metadata unless
+  metadata is disabled.
+  Every published file, including each still image or complete AVIF animation,
+  is attached as a validated run artifact within the shared result limits.

@@ -15,6 +15,7 @@ from dinkster_schema.replace import rule_from_wire, rule_to_wire
 
 ROOT = Path(__file__).parent.parent
 ALIAS_PATH = ROOT / "packages" / "dinkster-nodes-image" / "comfy-aliases.json"
+MODEL_TEST_REFERENCE_COMMIT = "e1c0e72eab86e9fd7ee794f623ebf0b8984ab7b6"
 DYNAMIC_ALIAS_IDS = frozenset(
     {
         "comfy_alias:comfy-core/AdjustBrightness",
@@ -759,10 +760,16 @@ def test_image_comfy_alias_confidence_has_pinned_evidence() -> None:
         assert confidence["tier"] in allowed_tiers
         assert confidence["evidence"]
         for selector in confidence["evidence"]:
+            historical = selector.startswith("git:")
+            if historical:
+                revision, separator, selector = selector.removeprefix("git:").partition(":")
+                assert separator and revision == MODEL_TEST_REFERENCE_COMMIT
             path_text, _, test_name = selector.partition("::")
+            assert path_text and test_name
             path = ROOT / path_text
             assert path.is_file()
-            assert test_name and f"def {test_name}(" in path.read_text(encoding="utf-8")
+            present = f"def {test_name}(" in path.read_text(encoding="utf-8")
+            assert present is not historical
         tolerances = confidence.get("tolerances")
         if confidence["tier"] == "equivalent":
             assert tolerances

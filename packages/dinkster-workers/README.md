@@ -227,7 +227,9 @@ collection consumes this list to retain pack wheels independently of engine
 constraints.
 
 Nodes declaring `input_values=True` receive a read-only `input_values`
-mapping of input envelopes alongside ordinary decoded arguments. This permits
+mapping of input envelopes alongside ordinary decoded arguments. They may omit
+input parameters from `execute` to forward those envelopes without decoding
+their payloads; a `**kwargs` parameter requests all decoded arguments. This permits
 metadata-preserving forwarding without live run-control access and retains
 result caching keyed by input metadata as well as payload fingerprints.
 `execution_context=True` remains the separate opt-in

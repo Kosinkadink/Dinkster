@@ -23,7 +23,6 @@ from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 PUBLISHED_PROJECTS = ("dinkster", "dinkster-api", "dinkster-supervisor")
-TARGET_PYTHON = "3.14.10"
 LINUX_PLATFORMS = [f"manylinux_2_{n}_x86_64" for n in range(28, 4, -1)] + [
     "manylinux2014_x86_64",
     "manylinux2010_x86_64",
@@ -195,36 +194,55 @@ def write_constraints(
     return constraints
 
 
-def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
-    """Fetch the locked CPython 3.14 Windows/Linux closure without resolving."""
+def download_external_wheels(
+    root: Path, output: Path, uv: str, base_manifests: list[Path]
+) -> list[Path]:
+    """Fetch the locked wheel closure for the selected published bases without resolving."""
     from packaging.requirements import Requirement
     from packaging.tags import compatible_tags, cpython_tags
     from packaging.utils import canonicalize_name, parse_wheel_filename
+    from packaging.version import Version
 
     lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+    if not base_manifests:
+        raise ValueError("select at least one published base manifest before downloading wheels")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-export-") as directory:
         requirements = write_constraints(root, Path(directory), [], uv).read_text()
     selected: dict[str, tuple[str, int, str]] = {}
-    for windows in (True, False):
-        platforms = ["win_amd64"] if windows else LINUX_PLATFORMS
-        tags = list(cpython_tags((3, 14), platforms=platforms)) + list(
-            compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
+    for path in base_manifests:
+        manifest = read_base_manifest(path)
+        python = Version(manifest["python"])
+        platform = manifest["platform"]
+        if platform == {"os": "windows", "arch": "x86_64"}:
+            windows = True
+            platforms = ["win_amd64"]
+        elif platform == {"os": "linux", "arch": "x86_64"}:
+            windows = False
+            platforms = LINUX_PLATFORMS
+        else:
+            raise ValueError(f"unsupported published base platform: {platform!r}")
+        tags = list(cpython_tags((python.major, python.minor), platforms=platforms)) + list(
+            compatible_tags(
+                (python.major, python.minor),
+                interpreter=f"cp{python.major}{python.minor}",
+                platforms=platforms,
+            )
         )
         priority = {}
         for index, tag in enumerate(tags):
             priority.setdefault(tag, index)
         environment = {
             "implementation_name": "cpython",
-            "implementation_version": TARGET_PYTHON,
+            "implementation_version": manifest["python"],
             "os_name": "nt" if windows else "posix",
             "platform_machine": "AMD64" if windows else "x86_64",
             "platform_release": "",
             "platform_system": "Windows" if windows else "Linux",
             "platform_version": "",
-            "python_full_version": TARGET_PYTHON,
+            "python_full_version": manifest["python"],
             "platform_python_implementation": "CPython",
-            "python_version": "3.14",
+            "python_version": f"{python.major}.{python.minor}",
             "sys_platform": "win32" if windows else "linux",
             "extra": "",
         }
@@ -262,7 +280,10 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
                     if ranks and wheel.get("hash", "").removeprefix("sha256:") in hashes:
                         candidates.append((min(ranks), name, package, wheel))
             if not candidates:
-                raise ValueError(f"no locked cp314 wheel for {requirement.name} on {platforms[0]}")
+                raise ValueError(
+                    f"no locked cp{python.major}{python.minor} wheel for "
+                    f"{requirement.name} on {platforms[0]}"
+                )
             _, name, package, wheel = min(candidates, key=lambda item: (item[0], item[1]))
             size = wheel["size"]
             identity = (wheel["url"], size, wheel["hash"].removeprefix("sha256:"))
@@ -431,30 +452,16 @@ def build(
     with tempfile.TemporaryDirectory(prefix="dinkster-external-wheels-") as directory:
         candidates = list(external_wheels or [])
         if download_external:
-            candidates.extend(download_external_wheels(root, Path(directory), uv))
+            candidates.extend(
+                download_external_wheels(root, Path(directory), uv, base_manifests or [])
+            )
         external = stage_external_wheels(
             root, output, candidates, base_manifests or [], target_variants or set()
         )
         constraints = write_constraints(root, output, wheels, uv)
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
-    reserved = {path.name.casefold() for path in artifacts} | {
-        "release-manifest.json",
-        "sha256sums",
-    }
-    for candidate in payload_artifacts or []:
-        name = candidate.name
-        if (
-            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
-            or name.casefold() in reserved
-            or candidate.suffix.casefold() == ".whl"
-        ):
-            raise ValueError(f"invalid or duplicate release payload name: {name}")
-        target = output / name
-        shutil.copyfile(candidate, target)
-        artifacts.append(target)
-        reserved.add(name.casefold())
-    artifacts.sort(key=lambda path: path.name)
+    stage_payloads(output, artifacts, payload_artifacts or [])
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
@@ -467,24 +474,81 @@ def build(
         "version": version,
         "workerProtocol": int(protocol[1]),
         "workspaceWheels": [wheel.name for wheel in wheels],
-        "artifacts": [
-            {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
-            for path in artifacts
-        ],
     }
+    write_manifest(output, manifest, artifacts)
+    return manifest
+
+
+def stage_payloads(output: Path, artifacts: list[Path], candidates: list[Path]) -> None:
+    reserved = {path.name.casefold() for path in artifacts} | {
+        "release-manifest.json",
+        "sha256sums",
+    }
+    for candidate in candidates:
+        name = candidate.name
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
+            or name.casefold() in reserved
+            or candidate.suffix.casefold() == ".whl"
+        ):
+            raise ValueError(f"invalid or duplicate release payload name: {name}")
+        reserved.add(name.casefold())
+    for candidate in candidates:
+        target = output / candidate.name
+        shutil.copyfile(candidate, target)
+        artifacts.append(target)
+    artifacts.sort(key=lambda path: path.name)
+
+
+def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Path]) -> None:
+    manifest["artifacts"] = [
+        {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
+        for path in artifacts
+    ]
     manifest_path = output / "release-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     checksummed = [*artifacts, manifest_path]
     (output / "SHA256SUMS").write_text(
         "".join(f"{sha256(path)}  {path.name}\n" for path in checksummed), encoding="utf-8"
     )
+
+
+def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
+    """Finalize an existing release only after checking every original asset."""
+    manifest_path = output / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("format") != "dinkster.engine/1":
+        raise ValueError("unsupported engine manifest format")
+    artifacts: list[Path] = []
+    names = {"release-manifest.json", "sha256sums"}
+    for row in manifest["artifacts"]:
+        name = row["name"]
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None or name.casefold() in names:
+            raise ValueError(f"invalid or duplicate release artifact: {name}")
+        names.add(name.casefold())
+        path = output / name
+        if path.stat().st_size != row["size"] or sha256(path) != row["sha256"]:
+            raise ValueError(f"release artifact size or SHA256 mismatch: {name}")
+        artifacts.append(path)
+    checksummed = [*artifacts, manifest_path]
+    expected = {path.name: sha256(path) for path in checksummed}
+    lines = (output / "SHA256SUMS").read_text(encoding="ascii").splitlines()
+    if len(lines) != len(expected) or dict(line.split("  ", 1)[::-1] for line in lines) != expected:
+        raise ValueError("release SHA256SUMS mismatch")
+    if {path.name for path in output.iterdir()} != {*expected, "SHA256SUMS"}:
+        raise ValueError("release contains unlisted artifacts")
+    stage_payloads(output, artifacts, candidates)
+    write_manifest(output, manifest, artifacts)
     return manifest
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="vX.Y.Z; omit for a commit-identified development build")
-    parser.add_argument("--frontend-artifact", type=Path, required=True)
+    parser.add_argument("--frontend-artifact", type=Path)
+    parser.add_argument(
+        "--extend", action="store_true", help="Verify and extend an existing release"
+    )
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--external-wheel", type=Path, action="append", default=[])
@@ -493,15 +557,20 @@ if __name__ == "__main__":
     parser.add_argument("--artifact", type=Path, action="append", default=[])
     parser.add_argument("--download-external-wheels", action="store_true")
     args = parser.parse_args()
-    build(
-        Path(__file__).resolve().parent.parent,
-        args.output.resolve(),
-        args.tag,
-        args.frontend_artifact.resolve(),
-        uv=args.uv,
-        external_wheels=args.external_wheel,
-        base_manifests=args.base_manifest,
-        target_variants=set(args.target_variant),
-        payload_artifacts=args.artifact,
-        download_external=args.download_external_wheels,
-    )
+    if args.extend:
+        extend_release(args.output.resolve(), args.artifact)
+    elif args.frontend_artifact is None:
+        parser.error("--frontend-artifact is required when building a release")
+    else:
+        build(
+            Path(__file__).resolve().parent.parent,
+            args.output.resolve(),
+            args.tag,
+            args.frontend_artifact.resolve(),
+            uv=args.uv,
+            external_wheels=args.external_wheel,
+            base_manifests=args.base_manifest,
+            target_variants=set(args.target_variant),
+            payload_artifacts=args.artifact,
+            download_external=args.download_external_wheels,
+        )

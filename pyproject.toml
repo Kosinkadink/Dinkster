@@ -1,6 +1,6 @@
 [project]
 name = "dinkster"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster - a clean-slate ComfyUI backend (umbrella dev package + demo CLI)"
 requires-python = ">=3.12"
 dependencies = [
@@ -46,8 +46,6 @@ supervisor = ["dinkster-supervisor"]
 
 [dependency-groups]
 engine-base = [
-    "torch==2.14.1",
-    "torchvision==0.29.1",
     "numpy==2.5.1",
     "opencv-contrib-python-headless==5.0.0.93",
 ]
@@ -57,6 +55,7 @@ angle = [
 ]
 dev = [
     "hypothesis>=6",
+    "onnxruntime==1.29.0",
     "pytest>=8",
     "pytest-cov>=6",
     "pyyaml>=6",

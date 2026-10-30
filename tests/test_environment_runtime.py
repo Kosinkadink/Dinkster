@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import signal
@@ -7,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+import venv
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -73,6 +75,11 @@ def make_generation(root: Path, number: int = 1) -> None:
     python.parent.mkdir(parents=True)
     if os.name == "nt":
         python.write_bytes(Path(sys.executable).read_bytes())
+        if sys.prefix != sys.base_prefix:
+            # Windows venv executables redirect through their adjacent configuration.
+            (python.parent / "pyvenv.cfg").write_bytes(
+                (Path(sys.prefix) / "pyvenv.cfg").read_bytes()
+            )
     else:
         python.symlink_to(sys.executable)
     (generation / "generation.json").write_text(
@@ -99,13 +106,29 @@ def make_generation(root: Path, number: int = 1) -> None:
         (root / "current").write_text(f"{number}\n")
 
 
-@pytest.mark.parametrize("redirecting_launcher", [False, True])
+@pytest.mark.parametrize(
+    ("redirecting_launcher", "health_body_timeout"),
+    [(False, False), (True, False), (False, True)],
+)
 def test_start_status_idempotence_and_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, redirecting_launcher: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    redirecting_launcher: bool,
+    health_body_timeout: bool,
 ) -> None:
     monkeypatch.setattr(
         "dinkster_supervisor.environment_runtime.secrets.token_urlsafe", lambda _: "-token"
     )
+    if health_body_timeout:
+        original_read = http.client.HTTPResponse.read
+
+        def read(response, *args, **kwargs):
+            if response.geturl().endswith("/api/health"):
+                monkeypatch.setattr(http.client.HTTPResponse, "read", original_read)
+                raise TimeoutError("health response body stalled")
+            return original_read(response, *args, **kwargs)
+
+        monkeypatch.setattr(http.client.HTTPResponse, "read", read)
     if redirecting_launcher:
         launcher = tmp_path / "launcher.py"
         launcher.write_text(
@@ -121,8 +144,8 @@ def test_start_status_idempotence_and_stop(
         monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     make_generation(tmp_path)
     port = free_port()
-    row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
     try:
+        row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
         assert row == {
             "name": "main",
             "generation": 1,
@@ -145,6 +168,38 @@ def test_start_status_idempotence_and_stop(
     finally:
         stop_engine(tmp_path, "main")
     assert engine_status(tmp_path)[0]["state"] == "stopped"
+
+
+def test_start_engine_uses_generation_built_from_a_virtual_environment(tmp_path: Path) -> None:
+    launcher = tmp_path / "launcher"
+    venv.EnvBuilder(with_pip=False, symlinks=os.name != "nt").create(launcher)
+    python = launcher / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    root = tmp_path / "project"
+    subprocess.run(
+        [
+            str(python),
+            "-c",
+            "import sys; from pathlib import Path; "
+            "from test_environment_runtime import make_generation; "
+            "make_generation(Path(sys.argv[1]))",
+            str(root),
+        ],
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(str(Path(path).resolve()) for path in sys.path if path),
+        },
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    start_engine(root, 1, "main", free_port())
+    try:
+        assert engine_status(root)[0]["state"] == "ready"
+        with urlopen(str(engine_status(root)[0]["url"]) + "/api/generation") as response:  # noqa: S310
+            assert json.loads(response.read()) == {"generation": str(root / "generations/1")}
+    finally:
+        stop_engine(root, "main")
+    assert engine_status(root)[0]["state"] == "stopped"
 
 
 def test_stop_refuses_wrong_instance(tmp_path: Path) -> None:
