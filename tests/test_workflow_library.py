@@ -1529,14 +1529,16 @@ def test_asset_catalog_persists_aliases_and_pages_identities(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("tied_time", (False, True))
 def test_asset_catalog_retains_scoped_origin_events_and_redacts_download_leads(
     tmp_path: Path,
+    tied_time: bool,
 ) -> None:
     path = tmp_path / "library.sqlite"
     ref = AssetRef(digest_bytes(b"weights"), "weights.bin", 7)
     store = LibraryStore(path)
     try:
-        for name, origin in (
+        events = (
             (
                 "download.bin",
                 {
@@ -1546,8 +1548,18 @@ def test_asset_catalog_retains_scoped_origin_events_and_redacts_download_leads(
             ),
             ("remote.bin", {"kind": "transfer", "machine": "workstation"}),
             ("render.bin", {"kind": "produced", "job": "job-7", "node": "Save"}),
-        ):
-            store.record_asset("a", ref, original_name=name, kind="asset/file", origin=origin)
+        )
+        for index in (2, 0, 1):
+            name, origin = events[index]
+            store.record_asset(
+                "a",
+                ref,
+                original_name=name,
+                kind="asset/file",
+                origin=origin,
+                created=100.0 if tied_time else 100.0 + index,
+                observation_id=f"{index + 1 if tied_time else 3 - index:032x}",
+            )
         store.record_asset(
             "b", ref, original_name="private.bin", kind="asset/file", origin={"kind": "upload"}
         )

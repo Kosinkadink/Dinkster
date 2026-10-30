@@ -151,6 +151,8 @@ userinfo, query strings and fragments. `query_assets` pages digest identities
 within one scope/project and retains all their aliases and origin events even
 when only one event matches the name, kind, origin or date filter. Dates are
 observation times, not claims about a file's original creation time.
+Each digest's observations are ordered by ascending observation time, then by
+observation ID for tied times, not by insertion order.
 Publication callers can supply an observation ID and time for idempotent
 recovery; a repeated ID must describe the identical event.
 Startup and catalog recovery backfill verified vault bytes already named by
