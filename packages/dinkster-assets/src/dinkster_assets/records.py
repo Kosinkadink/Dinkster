@@ -216,13 +216,45 @@ class AssetRetention:
     revision: int
     digests: tuple[str, ...]
     complete: bool = False
+    source_token: str | None = None
 
     def to_wire(self) -> dict[str, object]:
-        return {
+        wire: dict[str, object] = {
             "scope": self.scope,
             "ownerKind": self.owner_kind,
             "ownerId": self.owner_id,
             "revision": self.revision,
+            "digests": list(self.digests),
+            "complete": self.complete,
+        }
+        if self.source_token is not None:
+            wire["sourceToken"] = self.source_token
+        return wire
+
+
+@dataclass(frozen=True)
+class ResultAssetOffer:
+    """An immutable identity snapshot, independent of cache and job retirement."""
+
+    token: str
+    scope: str
+    job_ref: str
+    attempt: int
+    node_id: str
+    output_id: str
+    publication: int
+    digests: tuple[str, ...]
+    complete: bool
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "token": self.token,
+            "scope": self.scope,
+            "jobRef": self.job_ref,
+            "attemptId": self.attempt,
+            "nodeId": self.node_id,
+            "outputId": self.output_id,
+            "publication": self.publication,
             "digests": list(self.digests),
             "complete": self.complete,
         }
@@ -269,7 +301,44 @@ def _retention_from_row(row: sqlite3.Row) -> AssetRetention:
         digests = _retention_digests(json.loads(row["digests"]))
     except (TypeError, ValueError) as exc:
         raise AssetError("asset retention state is unreadable") from exc
-    return AssetRetention(*key, row["revision"], digests, bool(row["complete"]))
+    token = row["source_token"]
+    if token is not None:
+        _result_offer_token(token)
+    return AssetRetention(*key, row["revision"], digests, bool(row["complete"]), token)
+
+
+def _result_offer_token(token: object) -> str:
+    if not isinstance(token, str) or re.fullmatch("[0-9a-f]{32}", token) is None:
+        raise AssetError("invalid result offer token")
+    return token
+
+
+def _result_offer_from_row(row: sqlite3.Row) -> ResultAssetOffer:
+    token = _result_offer_token(row["token"])
+    for name in ("job_ref", "node_id", "output_id"):
+        if not isinstance(row[name], str) or not row[name]:
+            raise AssetError("result offer source identity is invalid")
+    for name in ("attempt", "publication"):
+        if type(row[name]) is not int or row[name] < 1:
+            raise AssetError("result offer source version is invalid")
+    for name in ("complete", "claimed"):
+        if type(row[name]) is not int or row[name] not in (0, 1):
+            raise AssetError("result offer ownership state is invalid")
+    try:
+        digests = _canonical_digests(json.loads(row["digests"]))
+    except (TypeError, ValueError) as exc:
+        raise AssetError("result offer identities are unreadable") from exc
+    return ResultAssetOffer(
+        token,
+        _clean_scope(row["scope"]),
+        row["job_ref"],
+        row["attempt"],
+        row["node_id"],
+        row["output_id"],
+        row["publication"],
+        digests,
+        bool(row["complete"]),
+    )
 
 
 class LibraryStore:
@@ -368,23 +437,126 @@ class LibraryStore:
             raise AssetError("asset retention completeness must be a boolean")
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
-            row = self._conn.execute(
-                "SELECT * FROM asset_retentions "
-                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
-                key,
-            ).fetchone()
-            current = _retention_from_row(row) if row is not None else None
-            if revision != (current.revision if current is not None else 0):
-                raise StaleRevision("retained asset values changed")
-            retained = AssetRetention(*key, revision + 1, cleaned, complete)
+            retained = self._retain_assets_locked(key, cleaned, revision, complete)
+        return retained
+
+    def _retain_assets_locked(
+        self,
+        key: tuple[str, str, str],
+        digests: tuple[str, ...],
+        revision: int,
+        complete: bool,
+        source_token: str | None = None,
+    ) -> AssetRetention:
+        row = self._conn.execute(
+            "SELECT * FROM asset_retentions WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+            key,
+        ).fetchone()
+        current = _retention_from_row(row) if row is not None else None
+        if revision != (current.revision if current is not None else 0):
+            raise StaleRevision("retained asset values changed")
+        retained = AssetRetention(*key, revision + 1, digests, complete, source_token)
+        self._conn.execute(
+            "INSERT INTO asset_retentions "
+            "(scope, owner_kind, owner_id, revision, digests, complete, source_token) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(scope, owner_kind, owner_id) DO UPDATE SET "
+            "revision = excluded.revision, digests = excluded.digests, "
+            "complete = excluded.complete, source_token = excluded.source_token",
+            (*key, retained.revision, json.dumps(digests), int(complete), source_token),
+        )
+        return retained
+
+    def offer_result_assets(
+        self,
+        scope: str,
+        job_ref: str,
+        attempt: int,
+        node_id: str,
+        output_id: str,
+        publication: int,
+        digests: list[str],
+        *,
+        complete: bool,
+    ) -> ResultAssetOffer:
+        """Persist the source's roots before exposing its token to a consumer."""
+        scope = _clean_scope(scope)
+        if any(not name for name in (job_ref, node_id, output_id)):
+            raise AssetError("result offer source identity is invalid")
+        if any(type(version) is not int or version < 1 for version in (attempt, publication)):
+            raise AssetError("result offer source version is invalid")
+        if type(complete) is not bool:
+            raise AssetError("result offer completeness must be a boolean")
+        roots = _canonical_digests(digests)
+        offer = ResultAssetOffer(
+            uuid.uuid4().hex,
+            scope,
+            job_ref,
+            attempt,
+            node_id,
+            output_id,
+            publication,
+            roots,
+            complete and len(roots) <= 4096,
+        )
+        with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO asset_retentions "
-                "(scope, owner_kind, owner_id, revision, digests, complete) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(scope, owner_kind, owner_id) DO UPDATE SET "
-                "revision = excluded.revision, digests = excluded.digests, "
-                "complete = excluded.complete",
-                (*key, retained.revision, json.dumps(cleaned), int(complete)),
+                "INSERT INTO asset_result_offers "
+                "(token, scope, job_ref, attempt, node_id, output_id, "
+                "publication, digests, complete) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    offer.token,
+                    scope,
+                    job_ref,
+                    attempt,
+                    node_id,
+                    output_id,
+                    publication,
+                    json.dumps(roots),
+                    int(offer.complete),
+                ),
+            )
+        return offer
+
+    def result_asset_offer(self, scope: str, token: str) -> ResultAssetOffer | None:
+        scope, token = _clean_scope(scope), _result_offer_token(token)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
+                (scope, token),
+            ).fetchone()
+        return _result_offer_from_row(row) if row is not None else None
+
+    def claim_result_assets(
+        self,
+        scope: str,
+        token: str,
+        owner_kind: str,
+        owner_id: str,
+    ) -> AssetRetention | None:
+        """Transfer offer protection to a fresh generation in one write transaction.
+
+        A repeated or lost request must reconcile the durable source binding,
+        not replace a generation that may already have different consumers.
+        """
+        key = _retention_key(scope, owner_kind, owner_id)
+        if owner_kind not in ("shown-result", "preview"):
+            raise AssetError("result offers require a shown-result or preview owner")
+        token = _result_offer_token(token)
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
+                (key[0], token),
+            ).fetchone()
+            if row is None:
+                return None
+            offer = _result_offer_from_row(row)
+            roots = _retention_digests(list(offer.digests))
+            retained = self._retain_assets_locked(key, roots, 0, offer.complete, token)
+            self._conn.execute(
+                "UPDATE asset_result_offers SET claimed = 1 WHERE token = ?", (token,)
             )
         return retained
 
@@ -419,7 +591,8 @@ class LibraryStore:
             # Retain the revision even when empty so reusing an owner cannot
             # let a stale tab release its newer values.
             self._conn.execute(
-                "UPDATE asset_retentions SET revision = ?, digests = '[]', complete = 1 "
+                "UPDATE asset_retentions "
+                "SET revision = ?, digests = '[]', complete = 1, source_token = NULL "
                 "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
                 (retained.revision, *key),
             )
@@ -442,6 +615,13 @@ class LibraryStore:
                 if any(not owner.complete for owner in retained):
                     raise AssetError("retained owner manifest is incomplete")
                 roots = set(digest for owner in retained for digest in owner.digests)
+                for row in self._conn.execute("SELECT * FROM asset_result_offers"):
+                    offer = _result_offer_from_row(row)
+                    if row["claimed"]:
+                        continue
+                    if not offer.complete:
+                        raise AssetError("result offer manifest is incomplete")
+                    roots.update(offer.digests)
                 roots.update(require_digest(digest) for digest in additional_roots)
                 for table in ("records", "media_grants", "asset_observations"):
                     for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):

@@ -161,7 +161,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0006_cleanup_policy (head)" in current.stdout
+    assert "0007_result_offers (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -638,6 +638,91 @@ def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> 
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_result_offers_keep_exact_roots_across_claims_and_restart(tmp_path: Path) -> None:
+    path = tmp_path / "library.sqlite"
+    store = LibraryStore(path)
+    try:
+        older = store.offer_result_assets(
+            "one", "run-a", 1, "r[3]/node", "image", 7, [DIGEST_A], complete=True
+        )
+        newer = store.offer_result_assets(
+            "one", "run-b", 1, "r[3]/node", "image", 1, [DIGEST_B], complete=True
+        )
+        assert older.token != newer.token
+        assert store.result_asset_offer("two", older.token) is None
+        assert store.claim_result_assets("two", older.token, "shown-result", "view") is None
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+        claimed = store.claim_result_assets("one", older.token, "shown-result", "view")
+        assert claimed is not None
+        assert claimed.digests == (DIGEST_A,) and claimed.revision == 1 and claimed.complete
+        assert claimed.to_wire()["sourceToken"] == older.token
+        with pytest.raises(StaleRevision):
+            store.claim_result_assets("one", newer.token, "shown-result", "view")
+        assert store.retained_assets("one", "shown-result", "view") == claimed
+    finally:
+        store.close()
+    store = LibraryStore(path)
+    try:
+        restored_offer = store.result_asset_offer("one", older.token)
+        assert restored_offer == older
+        assert restored_offer is not None
+        assert store.retained_assets("one", "shown-result", "view") == claimed
+        assert restored_offer.to_wire() == {
+            "token": older.token,
+            "scope": "one",
+            "jobRef": "run-a",
+            "attemptId": 1,
+            "nodeId": "r[3]/node",
+            "outputId": "image",
+            "publication": 7,
+            "digests": [DIGEST_A],
+            "complete": True,
+        }
+        other_view = store.claim_result_assets("one", older.token, "preview", "frozen")
+        assert other_view is not None and other_view.digests == (DIGEST_A,)
+        store.release_assets("one", "shown-result", "view", revision=1)
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+        store.release_assets("one", "preview", "frozen", revision=1)
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_B}
+        released = store.retained_assets("one", "shown-result", "view")
+        assert released is not None and released.source_token is None
+        assert store.result_asset_offer("one", older.token) == older
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_result_offers_never_certify_unknown_or_truncated_roots(
+    tmp_path: Path, oversized: bool
+) -> None:
+    store = LibraryStore(tmp_path / "library.sqlite")
+    try:
+        digests = [f"blake3:{index:064x}" for index in range(4097)] if oversized else []
+        offered = store.offer_result_assets(
+            "one", "run", 1, "node", "value", 1, digests, complete=oversized
+        )
+        assert not offered.complete
+        assert set(offered.digests) == set(digests)
+        with pytest.raises(AssetError, match="incomplete"):
+            with store.hold_asset_references():
+                pytest.fail("unknown or oversized offer was treated as complete")
+        if oversized:
+            with pytest.raises(AssetError, match="4096"):
+                store.claim_result_assets("one", offered.token, "shown-result", "candidate")
+            assert store.retained_assets("one", "shown-result", "candidate") is None
+        else:
+            claimed = store.claim_result_assets("one", offered.token, "preview", "candidate")
+            assert claimed is not None and not claimed.complete
+            with pytest.raises(AssetError, match="incomplete"):
+                with store.hold_asset_references():
+                    pytest.fail("an incomplete claim enabled collection")
+    finally:
+        store.close()
 
 
 def test_legacy_retention_migration_preserves_unknown_ownership(tmp_path: Path) -> None:

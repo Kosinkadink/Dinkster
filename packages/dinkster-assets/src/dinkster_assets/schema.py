@@ -75,6 +75,7 @@ sa.Table(
     sa.Column("revision", sa.Integer, nullable=False),
     sa.Column("digests", sa.Text, nullable=False),
     sa.Column("complete", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("source_token", sa.Text, nullable=True),
 )
 sa.Table(
     "asset_cleanup_policy",
@@ -83,6 +84,25 @@ sa.Table(
     sa.Column("limit_bytes", sa.Integer, nullable=True),
     sa.CheckConstraint("singleton = 1"),
     sa.CheckConstraint("limit_bytes IS NULL OR limit_bytes > 0"),
+)
+sa.Table(
+    "asset_result_offers",
+    metadata,
+    sa.Column("token", sa.Text, primary_key=True),
+    sa.Column("scope", sa.Text, nullable=False),
+    sa.Column("job_ref", sa.Text, nullable=False),
+    sa.Column("attempt", sa.Integer, nullable=False),
+    sa.Column("node_id", sa.Text, nullable=False),
+    sa.Column("output_id", sa.Text, nullable=False),
+    sa.Column("publication", sa.Integer, nullable=False),
+    sa.Column("digests", sa.Text, nullable=False),
+    sa.Column("complete", sa.Integer, nullable=False),
+    sa.Column("claimed", sa.Integer, nullable=False, server_default="0"),
+)
+sa.Index(
+    "asset_result_offers_source",
+    metadata.tables["asset_result_offers"].c.scope,
+    metadata.tables["asset_result_offers"].c.job_ref,
 )
 
 
