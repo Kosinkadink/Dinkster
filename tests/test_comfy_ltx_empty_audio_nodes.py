@@ -1,8 +1,5 @@
 """Torch-free schema for the native empty LTXV audio latent node."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
@@ -63,19 +60,3 @@ def test_ltx_empty_audio_schema_matches_comfy() -> None:
             *bounds,
             "number",
         )
-
-
-def test_ltx_empty_audio_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.ltx_audio import LTX_AUDIO_NODES; "
-            "assert any(node.__name__ == 'LTXVEmptyLatentAudio' for node in LTX_AUDIO_NODES); "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference.model_management' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

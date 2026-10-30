@@ -89,6 +89,7 @@ from dinkster_values import (
 
 from .blobs import BlobTransfer, attribute_moved, await_file_operation
 from .boundary import (
+    PROTOCOL_VERSION,
     BoundaryError,
     TransferStat,
     ValueCodec,
@@ -828,6 +829,12 @@ class BoundarySession:
         if frame[0].get("type") != "hello":
             raise RuntimeError(f"{self._role} '{self._pack}' failed to start: no hello handshake")
         header, _ = frame
+        protocol = header.get("protocol")
+        if type(protocol) is not int or protocol != PROTOCOL_VERSION:
+            raise RuntimeError(
+                f"{self._role} '{self._pack}' protocol mismatch: "
+                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}"
+            )
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)
         self._schemas = declarations.schemas
@@ -1586,15 +1593,17 @@ class BoundarySession:
             handoff: list[str] = []
             if self._release_guard is not None:
                 handoff = [rid for rid in refs if self._release_guard.pins.pin(rid)]
-            try:
-                adoption = asyncio.create_task(
-                    asyncio.to_thread(
-                        self._produced_assets.capture,
-                        outputs,
-                        self._blob_store,
-                        invocation.inputs,
-                    )
+            saved_file_previews = decoded.saved_file_previews
+
+            def adopt() -> None:
+                nonlocal saved_file_previews
+                self._produced_assets.capture(outputs, self._blob_store, invocation.inputs)
+                saved_file_previews = self._produced_assets.capture_previews(
+                    saved_file_previews, self._blob_store
                 )
+
+            try:
+                adoption = asyncio.create_task(asyncio.to_thread(adopt))
                 self._asset_adoptions.add(adoption)
                 adoption.add_done_callback(self._asset_adoptions.discard)
                 await await_file_operation(adoption)
@@ -1654,7 +1663,14 @@ class BoundarySession:
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, str(exc))
             )
-        return InvocationResult(outputs=outputs, artifacts=artifacts, expansion=decoded.expansion)
+        return InvocationResult(
+            outputs=outputs,
+            artifacts=artifacts,
+            expansion=decoded.expansion,
+            preview_artifacts=decoded.preview_artifacts,
+            saved_artifact_claims=decoded.saved_artifact_claims,
+            saved_file_previews=saved_file_previews,
+        )
 
     async def validate_admission(
         self,
@@ -1743,6 +1759,7 @@ class BoundarySession:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            asset_folders=invocation.asset_folders,
         )
         future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
             asyncio.get_running_loop().create_future()

@@ -48,9 +48,9 @@ def test_pack_declares_isolated_cpu_provider_and_pinned_fp16_model() -> None:
     assert manifest.sandbox.network is False
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
-        "numpy==2.5.1",
+        "numpy",
         "safetensors==0.8.0",
-        "torch==2.13.0",
+        "torch",
     )
     assert len(manifest.vision_providers) == 1
     provider = manifest.vision_providers[0]

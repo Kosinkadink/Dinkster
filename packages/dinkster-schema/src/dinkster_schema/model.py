@@ -1562,6 +1562,7 @@ class InputFamilySpec:
     member_prefix: str | None = None
     member_names: tuple[str, ...] | None = None
     independent_types: bool = False
+    optional_after_minimum: bool = False
 
     def __init__(
         self,
@@ -1575,6 +1576,7 @@ class InputFamilySpec:
         member_prefix: str | None = None,
         member_names: tuple[str, ...] | None = None,
         independent_types: bool = False,
+        optional_after_minimum: bool = False,
     ) -> None:
         if member_names is not None and max_members is not None:
             raise ValueError(f"family {id}: max_members is derived from member_names")
@@ -1596,12 +1598,24 @@ class InputFamilySpec:
         object.__setattr__(self, "member_prefix", member_prefix)
         object.__setattr__(self, "member_names", member_names)
         object.__setattr__(self, "independent_types", independent_types)
+        object.__setattr__(self, "optional_after_minimum", optional_after_minimum)
         self.__post_init__()
 
     def __post_init__(self) -> None:
         _validate_structural_id(self.id, "input family id")
         if type(self.independent_types) is not bool:
             raise ValueError(f"family {self.id}: independent_types must be a bool")
+        if type(self.optional_after_minimum) is not bool:
+            raise ValueError(f"family {self.id}: optional_after_minimum must be a bool")
+        if self.optional_after_minimum and (
+            len(self.template) != 1
+            or not isinstance(self.template[0], InputSpec)
+            or (self.member_prefix is None and self.member_names is None)
+        ):
+            raise ValueError(
+                f"family {self.id}: optional_after_minimum needs one input template "
+                "and member_prefix or member_names"
+            )
         if not self.template:
             raise ValueError(f"family {self.id}: template must not be empty")
         _validate_dynamic_entries(self.template, f"family '{self.id}' template")
@@ -2377,6 +2391,7 @@ class NodeSchema:
     observe live run state and therefore never use invocation-result caches."""
     input_values: bool = False
     """Inject read-only input envelopes without live run-control access.
+    Execute may omit decoded input parameters to handle only their envelopes.
     Caching includes metadata throughout each input value tree."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see

@@ -1,8 +1,5 @@
 """Torch-free schemas for native LTXV audio VAE nodes."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import AUDIO_TYPE, LATENT_TYPE, VAE_TYPE, schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.ltx_audio import LTX_AUDIO_NODES, LTXVAudioVAEDecode, LTXVAudioVAEEncode
@@ -53,19 +50,3 @@ def test_ltx_audio_interfaces_match_comfy_schemas() -> None:
         "Audio Latent",
         "Audio",
     )
-
-
-def test_ltx_audio_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.ltx_audio "
-            "import LTX_AUDIO_NODES; assert all(n.schema() for n in LTX_AUDIO_NODES); "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference.model_management' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

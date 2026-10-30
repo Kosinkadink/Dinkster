@@ -135,8 +135,8 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_workers",
     },
     # The door (DESIGN 3.6): re-exports the pack-author surface from the
-    # bottom layers and the RPC-clean protocol leaf - never engine, workers,
-    # caches, or server.
+    # bottom layers, the RPC-clean protocol leaf and the worker's task-local
+    # invocation reader. No scheduler or server access crosses the door.
     "dinkster_api": {
         "dinkster_schema",
         "dinkster_values",
@@ -145,15 +145,14 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_inference_wire",
         "dinkster_memory",
         "dinkster_assets",
+        "dinkster_image_document",
+        "dinkster_workers",
     },
-    # The install suite contains metadata only; component packs author
-    # through the door exclusively and never import one another.
-    "dinkster_nodes_std": set(),
     "dinkster_nodes_comfy": {"dinkster_api"},
     "dinkster_nodes_foundation": {"dinkster_api"},
-    "dinkster_nodes_media_io": {"dinkster_api", "dinkster_image_document"},
-    "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
-    "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
+    "dinkster_nodes_media_io": {"dinkster_api"},
+    "dinkster_nodes_image": {"dinkster_api"},
+    "dinkster_nodes_remote": {"dinkster_api"},
     "dinkster_nodes_generation": {"dinkster_api"},
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
@@ -266,24 +265,20 @@ def test_one_way_dependencies() -> None:
 
 
 def test_server_uses_the_published_token_verifier_wheel() -> None:
-    wheel_url = (
-        "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/"
-        "v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl"
-    )
-    wheel_hash = "sha256:b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae"
-    pinned_url = f"{wheel_url}#sha256={wheel_hash.removeprefix('sha256:')}"
     server_project = tomllib.loads(
         (REPO_ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
     )
-    assert f"dinkster-token-verifier @ {pinned_url}" in server_project["project"]["dependencies"]
+    assert "dinkster-token-verifier==0.1.2" in server_project["project"]["dependencies"]
     assert "dinkster-token-verifier" not in server_project["tool"]["uv"]["sources"]
     assert "dinkster-identity" not in server_project["tool"]["uv"]["sources"]
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     verifier = packages["dinkster-token-verifier"]
-    assert verifier["source"] == {"url": wheel_url}
-    assert verifier["wheels"] == [{"url": wheel_url, "hash": wheel_hash}]
+    assert verifier["version"] == "0.1.2"
+    assert verifier["source"] == {"registry": "https://pypi.org/simple"}
+    assert verifier["wheels"]
+    assert all(wheel["hash"].startswith("sha256:") for wheel in verifier["wheels"])
     assert "dinkster-identity" not in packages
     server = packages["dinkster-server"]
     assert {dependency["name"] for dependency in server["dependencies"]} >= {
@@ -349,14 +344,14 @@ def test_umbrella_optional_packages_are_locked() -> None:
     assert root_project["optional-dependencies"] == {
         "default": [
             "dinkster-supervisor",
-            "dinkster-collab",
         ],
-        "collab": ["dinkster-collab"],
+        "collab": [],
         "supervisor": ["dinkster-supervisor"],
     }
-    assert {"dinkster-collab", "dinkster-supervisor"} <= {
+    assert {"dinkster-api", "dinkster-supervisor"} <= {
         dependency for dependency in root_project["dependencies"]
     }
+    assert "dinkster-collab" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -370,10 +365,8 @@ def test_umbrella_optional_packages_are_locked() -> None:
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
         "default": [
-            {"name": "dinkster-collab"},
             {"name": "dinkster-supervisor"},
         ],
-        "collab": [{"name": "dinkster-collab"}],
         "supervisor": [{"name": "dinkster-supervisor"}],
     }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}

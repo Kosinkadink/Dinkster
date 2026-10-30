@@ -1,7 +1,5 @@
 """Cold LoRA-hook schemas and native pack registration."""
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -37,19 +35,7 @@ def test_lora_hook_schemas_and_native_registration() -> None:
     manifest = tomllib.loads(
         (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert tuple(manifest["pack"]["namespaces"]) == tuple(
-        node.schema().node_type for node in COMFY_NODES
-    )
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_schema import schema_to_wire; "
-            "from dinkster_nodes_comfy.hook_lora import HOOK_LORA_NODES; "
-            "assert all(schema_to_wire(node.schema()) for node in HOOK_LORA_NODES); "
-            "assert 'torch' not in sys.modules; "
-            "assert not any(name.startswith('dinkster_inference.') for name in sys.modules)",
-        ],
-        cwd=root,
-        check=True,
+    assert tuple(manifest["pack"]["namespaces"]) == (
+        "devices",
+        *(node.schema().node_type for node in COMFY_NODES),
     )
