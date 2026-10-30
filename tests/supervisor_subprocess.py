@@ -6,6 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any, cast
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -38,10 +39,8 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
                 )
                 process.kill()
                 if os.name == "nt":
-                    stdout, stderr = process.communicate()
                     # Windows subprocess.run retains text despite the bytes-only exception stubs.
-                    setattr(exc, "stdout", stdout)
-                    setattr(exc, "stderr", stderr)
+                    cast(Any, exc).stdout, cast(Any, exc).stderr = process.communicate()
                 else:
                     process.wait()
                 raise
