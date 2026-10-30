@@ -295,9 +295,10 @@ claim and deletion. Offered scratch-journal identities remain roots until
 scratch removal retires their rows, so Clear cannot break an interrupted
 handoff's retry. Its frontend integration gate is disabled in source, not exposed
 as a request option. Behind that gate, only verified adoption rows are candidates,
-in original adoption order. A supplied byte target stops collection once canonical vault
-bytes meet the target; Clear has no target. Untracked bytes and retained digests
-are excluded. Pending inventory blocks collection. Corrupt bytes or unsafe
+in original adoption order. A supplied byte target stops collection once the
+produced canonical blobs meet the target; untracked downloads do not consume the
+produced limit. Clear has no target. Untracked bytes and retained digests are
+excluded from candidates. Pending inventory blocks collection. Corrupt bytes or unsafe
 sidecars fail the item without dropping its recovery record. The adoption row
 is removed only after vault deletion, so an interrupted deletion can finish on
 the next pass. Reports count deleted blobs and sidecars separately as files and
@@ -318,6 +319,15 @@ closing stores. Production starts no policy loop while the gate remains false.
 `adoptedBytes` sums recorded verified adoption sizes. Either is null when its
 state is unavailable. These byte totals are observations, not an atomic
 publication snapshot or evidence that bytes are eligible for deletion.
+When all ownership is known and the integration gate is enabled,
+`reclaimableBytes` measures the remaining eligible produced blobs and their
+sidecars under the same held reference, scratch and vault claims as deletion.
+Accounting uses the collector's digest/size and safe-sidecar checks without
+deleting bytes or retiring inventory rows. A failed candidate makes that total
+null with `candidate_accounting_unavailable`, not a zero or partial estimate.
+After collection, vault/adoption totals are refreshed before releasing ownership;
+reclaimable bytes describe what remains, not what was already reclaimed. Unknown
+frontend ownership or any other blocked inspection keeps reclaimability null.
 `knownRetainedAssets` counts the union of held memory/disk cache, all-scope
 history and library roots plus transitive dependencies. It is null when root
 inspection refuses. A partial known set is not a complete owner census.

@@ -345,17 +345,20 @@ def _vault_bytes(vault: AssetVault) -> int:
 
 
 def _collect_vault(
-    vault: AssetVault, references: frozenset[str], limit_bytes: int | None
-) -> dict[str, int]:
-    """Delete only verified adoptions under the caller's held roots and vault claim."""
+    vault: AssetVault, references: frozenset[str], limit_bytes: int | None, *, collect: bool
+) -> dict[str, int | None]:
+    """Measure or delete verified adoptions under held roots and the vault claim."""
     inventory = ProducedAssetInventory(vault.root)
     entries = inventory.entries()
     if any(row.adopted_at_ns is None for row in entries):
         raise AssetError("produced adoption is pending")
-    remaining = _vault_bytes(vault)
-    reclaimed_bytes = reclaimed_files = failed = 0
+    _vault_bytes(vault)
+    remaining = sum(
+        path.stat().st_size for row in entries if (path := vault.resolve(row.digest)) is not None
+    )
+    reclaimed_bytes = reclaimed_files = reclaimable_bytes = failed = 0
     for row in entries:
-        if row.digest in references or (limit_bytes is not None and remaining <= limit_bytes):
+        if row.digest in references:
             continue
         hexpart = row.digest.split(":", 1)[1]
         path = vault.root / hexpart[:2] / hexpart
@@ -372,6 +375,9 @@ def _collect_vault(
                     raise AssetError("produced bytes disagree with adoption")
                 removed.append((path, row.size))
             removed.extend((p, p.stat().st_size) for p in siblings)
+            if not collect or (limit_bytes is not None and remaining <= limit_bytes):
+                reclaimable_bytes += sum(size for _, size in removed)
+                continue
             vault.delete(row.digest)
             inventory.forget_adoption(row)
         except (AssetError, OSError):
@@ -386,6 +392,7 @@ def _collect_vault(
     return {
         "reclaimedBytes": reclaimed_bytes,
         "reclaimedFiles": reclaimed_files,
+        "reclaimableBytes": None if failed else reclaimable_bytes,
         "retainedFiles": sum(row.digest in references for row in entries),
         "failedItems": failed,
     }
@@ -405,9 +412,10 @@ def _inspect(
     temporary_bytes: int | None = None
     vault_bytes: int | None = None
     adopted_bytes: int | None = None
+    reclaimable_bytes: int | None = None
     retained_assets: int | None = None
     vault_ownership_available: bool | None = None
-    collection: dict[str, int] = {"reclaimedBytes": 0, "reclaimedFiles": 0}
+    collection: dict[str, int | None] = {"reclaimedBytes": 0, "reclaimedFiles": 0}
     try:
         if scratch_root is None:
             raise AssetError("scratch root is not configured")
@@ -448,8 +456,18 @@ def _inspect(
                 )
                 if not vault_ownership_available:
                     blocked.append("vault_in_use")
-                elif collect and not blocked:
-                    collection = _collect_vault(vault, references, limit_bytes)
+                elif not blocked:
+                    collection = _collect_vault(vault, references, limit_bytes, collect=collect)
+                    reclaimable_bytes = collection.pop("reclaimableBytes")
+                    if reclaimable_bytes is None:
+                        blocked.append("candidate_accounting_unavailable")
+                    # A deletion response describes the remaining store, not its old snapshot.
+                    vault_bytes = _vault_bytes(vault)
+                    adopted_bytes = sum(
+                        row.size
+                        for row in ProducedAssetInventory(vault.root).entries()
+                        if row.adopted_at_ns is not None
+                    )
             except (AssetError, OSError):
                 blocked.append("vault_ownership_state_unavailable")
     except (AssetError, OSError):
@@ -458,7 +476,7 @@ def _inspect(
         "temporaryBytes": temporary_bytes,
         "vaultBytes": vault_bytes,
         "adoptedBytes": adopted_bytes,
-        "reclaimableBytes": None,
+        "reclaimableBytes": None if blocked else reclaimable_bytes,
         "knownRetainedAssets": retained_assets,
         "vaultOwnershipAvailable": vault_ownership_available,
         "blocked": sorted(set(blocked)),

@@ -1018,7 +1018,7 @@ def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("limit", [None, 17])
+@pytest.mark.parametrize("limit", [None, 16, 19])
 @pytest.mark.parametrize("owner", ["catalog", "document", "history", "cache"])
 def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: int | None, owner: str
@@ -1064,6 +1064,23 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             )
         before = {p: p.stat().st_size for p in vault.root.rglob("*") if p.is_file()}
         try:
+            eligible_names = {digest.split(":", 1)[1] for digest in digests[:2]}
+            eligible_bytes = sum(
+                size
+                for path, size in before.items()
+                if path.name.split(".", 1)[0] in eligible_names
+            )
+            accounting = await inspect_cleanup(
+                vault, store, history, memory, scratch_root=tmp_path / "scratch"
+            )
+            assert accounting["collectionEnabled"]
+            assert accounting["reclaimableBytes"] == eligible_bytes
+            assert accounting["vaultBytes"] == 20
+            assert accounting["adoptedBytes"] == 19
+            assert [entry.digest for entry in inventory.entries()] == digests[:3]
+            for digest, value in zip(digests, data, strict=True):
+                path = vault.resolve(digest)
+                assert path is not None and path.read_bytes() == value
             path = vault.resolve(digests[0])
             assert path is not None
             with open_verified(path, digests[0]):
@@ -1071,6 +1088,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                     vault, store, history, memory, scratch_root=tmp_path / "scratch", collect=True
                 )
                 assert busy["reclaimedBytes"] == 0
+                assert busy["reclaimableBytes"] is None
                 assert "vault_in_use" in cast(list[str], busy["blocked"])
                 assert path.read_bytes() == data[0]
             result = await inspect_cleanup(
@@ -1085,9 +1103,12 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             assert result["collectionEnabled"]
             deleted = {p: size for p, size in before.items() if not p.exists()}
             assert result["reclaimedBytes"] == sum(deleted.values())
-            assert result["reclaimedFiles"] == (4 if limit is None else 2)
+            assert result["reclaimableBytes"] == eligible_bytes - sum(deleted.values())
+            assert result["vaultBytes"] == (5 if limit is None else 17 if limit == 16 else 20)
+            assert result["adoptedBytes"] == (4 if limit is None else limit)
+            assert result["reclaimedFiles"] == (4 if limit is None else 2 if limit == 16 else 0)
             assert result["failedItems"] == 0
-            assert not vault.has(digests[0])
+            assert vault.has(digests[0]) == (limit == 19)
             assert vault.has(digests[1]) == (limit is not None)
             for digest, value in zip(digests[2:], data[2:], strict=True):
                 kept = vault.resolve(digest)
@@ -1105,7 +1126,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             )
             assert again["reclaimedBytes"] == again["reclaimedFiles"] == 0
             assert [entry.digest for entry in inventory.entries()] == (
-                [digests[2]] if limit is None else [digests[1], digests[2]]
+                [digests[2]] if limit is None else digests[1:3] if limit == 16 else digests[:3]
             )
         finally:
             history.close()
@@ -1258,6 +1279,7 @@ def test_collection_refuses_unsafe_adoptions(
                 collect=True,
             )
             assert result["reclaimedBytes"] == result["reclaimedFiles"] == 0
+            assert result["reclaimableBytes"] is None
             if damage == "pending":
                 assert not result["collectionEnabled"]
                 assert "adoption_pending" in cast(list[str], result["blocked"])
