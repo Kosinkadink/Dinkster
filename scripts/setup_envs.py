@@ -78,7 +78,8 @@ def select_base(bases: list[dict], variant: str | None = None) -> dict:
     ]
     if not candidates:
         raise RuntimeError(
-            "No published base supports this machine/selection; see Dinkster-Environments"
+            "No published base supports this machine/selection; see Dinkster-Environments. "
+            "macOS bundle support: https://github.com/Kosinkadink/comfy-vibe-station/issues/575"
         )
     return max(
         candidates,

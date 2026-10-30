@@ -78,6 +78,9 @@ def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Linux")
     with pytest.raises(RuntimeError, match="No published base"):
         setup_envs.select_base(bases)
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
+    with pytest.raises(RuntimeError, match="issues/575"):
+        setup_envs.select_base(bases)
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Windows")
     monkeypatch.setattr(setup_envs.platform, "machine", lambda: "aarch64")
     with pytest.raises(RuntimeError, match="No published base"):
