@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
+  resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
   into the shared `UPSCALE_MODEL` value.
 - Native `FrameInterpolationModelLoader` loads granted FILM and five-block

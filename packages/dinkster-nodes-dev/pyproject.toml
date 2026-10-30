@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-nodes-dev"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster dev node pack: test/demo scaffolding, never a user surface"
 requires-python = ">=3.12"
 classifiers = ["Private :: Do Not Upload"]
