@@ -312,9 +312,10 @@ jobs:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14.10"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
       - name: Set up Windows runtime environment
         run: uv sync --locked --all-packages
       - name: Install and verify published Windows engine dependencies
