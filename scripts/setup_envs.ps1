@@ -62,6 +62,10 @@ $CpuEditablePackages = @(
     "packages/dinkster-engine",
     "packages/dinkster-native",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-foundation",
+    "packages/dinkster-nodes-image",
+    "packages/dinkster-nodes-media-io",
+    "packages/dinkster-nodes-remote",
     "packages/dinkster-compat-comfy",
     "packages/dinkster-nodes-vision",
     "packages/dinkster-workers"
@@ -81,6 +85,10 @@ $GpuEditablePackages = @(
     "packages/dinkster-native",
     "packages/dinkster-workers",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-foundation",
+    "packages/dinkster-nodes-image",
+    "packages/dinkster-nodes-media-io",
+    "packages/dinkster-nodes-remote",
     "packages/dinkster-compat-comfy"
 )
 $KitchenCpuWheel = "comfy-kitchen@https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl#sha256=e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099"
