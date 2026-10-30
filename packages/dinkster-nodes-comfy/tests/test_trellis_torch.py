@@ -13,6 +13,7 @@ from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_STRING,
     LATENT_TYPE,
+    VOXEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -126,13 +127,47 @@ class TextureSource(Node):
             outputs=(
                 OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
                 OutputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
-                OutputSpec("shape_latent", TypeExpr.concrete(LATENT_TYPE)),
+                OutputSpec("voxel", TypeExpr.concrete(VOXEL_TYPE)),
             ),
         )
 
     @classmethod
     def execute(cls) -> Any:
-        return cls.outputs(**stage_inputs())
+        occupancy = torch.zeros(2, 3, 4, 8)
+        occupancy[0, 0, 3, 1] = 5
+        occupancy[0, 2, 1, 3] = -2
+        occupancy[1, 1, 0, 2] = 1
+        return cls.outputs(
+            positive=[[torch.ones(1, 2, 3), {"keep": "positive"}]],
+            negative=[[torch.zeros(1, 2, 3), {"keep": "negative"}]],
+            voxel={"data": occupancy},
+        )
+
+
+class ShapeFeatures(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="trellis-fixture.features",
+            inputs=(InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+            outputs=(OutputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: Any) -> Any:
+        latent = materialize_latent(latent)
+        torch.testing.assert_close(
+            latent["coords"],
+            torch.tensor([[0, 0, 3, 1], [0, 2, 1, 3], [1, 1, 0, 2]], dtype=torch.int32),
+        )
+        torch.testing.assert_close(latent["coord_counts"], torch.tensor([2, 1]))
+        assert latent["samples"].shape == (2, 32, 2, 1)
+        assert torch.count_nonzero(latent["samples"]) == 0
+        samples = torch.full_like(latent["samples"], 9999)
+        samples[0, :, 0, 0] = torch.arange(32) + 11
+        samples[0, :, 1, 0] = torch.arange(32) + 101
+        samples[1, :, 0, 0] = torch.arange(32) + 1001
+        return cls.outputs(latent={**latent, "samples": samples})
 
 
 class TextureInspect(Node):
@@ -154,13 +189,25 @@ class TextureInspect(Node):
         assert latent["samples"].shape == (2, 32, 2, 1)
         assert torch.count_nonzero(latent["samples"]) == 0
         assert torch.equal(latent["coord_counts"], torch.tensor([2, 1]))
+        expected_coords = torch.tensor(
+            [[0, 0, 3, 1], [0, 2, 1, 3], [1, 1, 0, 2]], dtype=torch.int32
+        )
+        torch.testing.assert_close(latent["coords"], expected_coords, rtol=0, atol=0)
+        expected_features = torch.arange(32)[None] + torch.tensor([[11], [101], [1001]])
         for name, conditioning in (("positive", positive), ("negative", negative)):
+            conditioning = materialize_latent(conditioning)
             assert conditioning[0][1]["keep"] == name
-            assert torch.equal(
+            torch.testing.assert_close(
                 conditioning[0][1]["trellis2_shape_slat"],
-                torch.tensor([[0.0, 3.0], [1.0, 4.0], [6.0, 9.0]]),
+                expected_features.float(),
+                rtol=0,
+                atol=0,
             )
-        return cls.outputs(summary="sparse texture batch transported")
+            torch.testing.assert_close(
+                conditioning[0][1]["trellis2_coords"], expected_coords, rtol=0, atol=0
+            )
+            assert conditioning[0][1]["trellis2_generation_mode"] == "texture_generation"
+        return cls.outputs(summary="native shape coordinates retain sampled feature association")
 
 
 @pytest.mark.parametrize("in_process", (False, True))
@@ -168,9 +215,9 @@ def test_native_manifest_texture_stage_twice(tmp_path: Path, in_process: bool) -
     async def scenario() -> None:
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "trellis_fixture.py").write_text(
-            "from test_trellis_torch import TextureSource, TextureInspect\n"
+            "from test_trellis_torch import TextureSource, ShapeFeatures, TextureInspect\n"
             "from dinkster_nodes_comfy import register_inference_types\n"
-            "NODES = (TextureSource, TextureInspect)\n",
+            "NODES = (TextureSource, ShapeFeatures, TextureInspect)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "trellis.toml"
@@ -200,9 +247,20 @@ def test_native_manifest_texture_stage_twice(tmp_path: Path, in_process: bool) -
             graph = Graph(
                 nodes={
                     "source": GraphNode("trellis-fixture.source"),
+                    "shape": GraphNode(
+                        "Trellis2ShapeStage",
+                        {name: Link("source", name) for name in ("positive", "negative", "voxel")},
+                    ),
+                    "features": GraphNode(
+                        "trellis-fixture.features", {"latent": Link("shape", "LATENT")}
+                    ),
                     "texture": GraphNode(
                         "Trellis2TextureStage",
-                        {name: Link("source", name) for name in stage_inputs()},
+                        {
+                            "positive": Link("shape", "positive"),
+                            "negative": Link("shape", "negative"),
+                            "shape_latent": Link("features", "latent"),
+                        },
                     ),
                     "inspect": GraphNode(
                         "trellis-fixture.inspect",
@@ -219,7 +277,7 @@ def test_native_manifest_texture_stage_twice(tmp_path: Path, in_process: bool) -
                 result = await engine.run(graph, ["inspect"])
                 assert (
                     result.outputs["inspect"]["summary"].resolve()
-                    == "sparse texture batch transported"
+                    == "native shape coordinates retain sampled feature association"
                 )
         finally:
             await composer.close()
