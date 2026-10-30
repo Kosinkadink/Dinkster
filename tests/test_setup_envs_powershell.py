@@ -98,8 +98,13 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
     assert '$BasePython = Join-Path $RuntimeDirectory "python\\python.exe"' in setup
     assert '"venv", $TorchEnvironment, "--python", $BasePython' in setup
     assert '"venv", $GpuEnvironment, "--python", $BasePython' in setup
-    assert 'Invoke-Native $TorchPython @("-I", $SqliteGate)' in setup
-    assert 'Invoke-Native $GpuPython @("-I", $SqliteGate)' in setup
+    assert (
+        'Invoke-Native $TorchPython @("-I", $SqliteGate, "--base", (Split-Path $BasePython))'
+        in setup
+    )
+    assert (
+        'Invoke-Native $GpuPython @("-I", $SqliteGate, "--base", (Split-Path $BasePython))' in setup
+    )
     assert '"torch==2.14.1+cpu", "torchvision==0.29.1+cpu"' in setup
     assert '"--torch-backend", "cpu"' in setup
     assert "assert torch.__version__ == '2.14.1+cpu'" in setup
@@ -203,6 +208,25 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
         ".venv\\Scripts\\python.exe -m pytest -q",
     ):
         assert command in setup
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="mapped-shm admission requires Windows")
+def test_windows_runtime_admission_rejects_another_base(tmp_path: Path) -> None:
+    gate = REPO_ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
+    for base, accepted in ((Path(sys.base_prefix), True), (tmp_path, False)):
+        result = subprocess.run(
+            [sys.executable, "-I", str(gate), "--base", str(base)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if accepted:
+            assert result.returncode == 0, result.stderr
+            assert "released: persisted; integrity_check=ok" in result.stdout
+        else:
+            assert result.returncode != 0
+            assert "does not use the verified private base" in result.stderr
+            assert "-Force" in result.stderr
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native PowerShell execution requires Windows")

@@ -124,14 +124,14 @@ try {
     Invoke-Native "uv" @(
         "sync", "--project", $RepoRoot, "--python", $BasePython, "--all-packages"
     )
-    Invoke-Native (Join-Path $RootEnvironment "Scripts\python.exe") @("-I", $SqliteGate)
+    Invoke-Native (Join-Path $RootEnvironment "Scripts\python.exe") @("-I", $SqliteGate, "--base", (Split-Path $BasePython))
     [Environment]::SetEnvironmentVariable("UV_PROJECT_ENVIRONMENT", $null, "Process")
 
     Write-Host "==> .venv-torch (CPU torch test env)"
     if (-not (Test-Path $TorchPython)) {
         Invoke-Native "uv" @("venv", $TorchEnvironment, "--python", $BasePython)
     }
-    Invoke-Native $TorchPython @("-I", $SqliteGate)
+    Invoke-Native $TorchPython @("-I", $SqliteGate, "--base", (Split-Path $BasePython))
     # Both OpenCV distributions own cv2; restore contrib's files after removing the old one.
     Invoke-Native "uv" @("pip", "uninstall", "--python", $TorchPython, "opencv-python-headless")
     Invoke-Native "uv" @(
@@ -188,7 +188,7 @@ try {
         if (-not (Test-Path $GpuPython)) {
             Invoke-Native "uv" @("venv", $GpuEnvironment, "--python", $BasePython)
         }
-        Invoke-Native $GpuPython @("-I", $SqliteGate)
+        Invoke-Native $GpuPython @("-I", $SqliteGate, "--base", (Split-Path $BasePython))
         Invoke-Native "uv" @(
             "pip", "install", "--python", $GpuPython,
             "--index-url", "https://download.pytorch.org/whl/cu130",

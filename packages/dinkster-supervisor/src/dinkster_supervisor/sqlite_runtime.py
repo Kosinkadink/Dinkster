@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import mmap
 import sqlite3
 import sys
@@ -9,12 +10,16 @@ import tempfile
 from pathlib import Path
 
 
-def check() -> None:
+def check(expected_base: Path | None = None) -> None:
     """Read a WAL database while its old 64 KiB shared-memory mapping survives."""
     if sys.platform != "win32":
         raise RuntimeError("The mapped-shm gate requires native Windows")
     print(f"CPython {sys.version}; SQLite {sqlite3.sqlite_version}", flush=True)
     try:
+        if expected_base is not None and Path(sys.base_prefix).resolve() != expected_base.resolve():
+            raise RuntimeError(
+                "Environment does not use the verified private base; rerun setup with -Force"
+            )
         with tempfile.TemporaryDirectory(prefix="dinkster-sqlite-") as temporary:
             path = Path(temporary) / "wal.sqlite"
             db = sqlite3.connect(path)
@@ -53,4 +58,6 @@ def check() -> None:
 
 
 if __name__ == "__main__":
-    check()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", type=Path)
+    check(parser.parse_args().base)

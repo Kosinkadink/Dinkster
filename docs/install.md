@@ -84,8 +84,9 @@ the mapping held open, followed by a released-mapping control.
 
 `scripts/setup_envs.ps1` prepares this runtime in `.run/windows-python` and
 uses it for the root, CPU and optional GPU environments. Existing CPU/GPU
-environments must also pass the check; use `-Force` to recreate incompatible
-environments. For manual root-only setup from the checkout:
+environments must use that private base and pass the check; use `-Force` to
+recreate environments backed by a different interpreter, even if their SQLite
+predates the regression. For manual root-only setup from the checkout:
 
 ```powershell
 uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py --output .run/windows-python
