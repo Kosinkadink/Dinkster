@@ -37,7 +37,7 @@ from dinkster_nodes_comfy.reference_conditioning import (
     ReferenceLatent,
     ReferenceMultiLatent,
 )
-from dinkster_schema import elaborate
+from dinkster_schema import ElaborationError, elaborate
 
 
 def test_reference_conditioning_interfaces_and_manifest() -> None:
@@ -161,6 +161,9 @@ def test_reference_image_families_keep_required_initial_positions(
     assert [
         (port.id, port.required) for port in absent.inputs if port.id.startswith("images.")
     ] == ([("images.image_0", True)] if moss else [])
+    if moss:
+        with pytest.raises(ElaborationError, match="member 'image_10' exceeds its maximum"):
+            elaborate(schema, (*stored, *members, "images.image_10"))
     assert family.optional_after_minimum
     source = NodeSchema(
         "test.source",
