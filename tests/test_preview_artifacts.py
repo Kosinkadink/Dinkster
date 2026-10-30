@@ -7,7 +7,7 @@ import os
 import shutil
 import sqlite3
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -73,7 +73,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "from collections.abc import Mapping\n"
         "from pathlib import Path\n"
         "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, InputSpec, Node, NodeSchema, "
-        "OutputSpec, TypeExpr, publish_preview_artifact)\n"
+        "OutputSpec, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
+        "attach_saved_artifact)\n"
         f"DATA = base64.b64decode({payload!r})\n"
         f"FAILED_DATA = base64.b64decode({failed_payload!r})\n"
         "class Preview(Node):\n"
@@ -85,6 +86,13 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         " @classmethod\n"
         " def execute(cls, *, mode: str) -> Mapping[str, object]:\n"
         "  data = FAILED_DATA if mode == 'fail' else DATA\n"
+        "  if mode == 'saved':\n"
+        "   ref = dict(digest='blake3:' + 'a'*64, name='saved.exr', size=7, "
+        "mediaType='image/x-exr', virtualPath='mounts/output/saved.exr')\n"
+        "   attach_saved_artifact(ref)\n"
+        "   publish_saved_file_preview(ref, lambda: DATA, name='preview.mp4', "
+        "media_type='video/mp4')\n"
+        "   return cls.outputs(out='saved')\n"
         "  staged = Path(os.environ['DINKSTER_PACK_SCRATCH']) / ('encoded-' + mode + '.mp4')\n"
         "  staged.write_bytes(data)\n"
         "  publish_preview_artifact(staged.read_bytes(), "
@@ -307,6 +315,53 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
     asyncio.run(scenario())
 
 
+def test_saved_file_preview_transport_adopts_bytes_before_worker_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes
+) -> None:
+    from dinkster_protocol import Invocation
+    from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
+    from dinkster_workers import IsolatedWorker
+
+    manifest = _write_preview_pack(tmp_path, mp4)
+    vault = AssetVault(tmp_path / "host-vault")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    scratch = tmp_path / "worker-scratch"
+    scratch.mkdir()
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker = IsolatedWorker(
+            manifest,
+            registry,
+            extra_env={"PYTHONPATH": str(tmp_path), "DINKSTER_PACK_SCRATCH": str(scratch)},
+        )
+        try:
+            await worker.start()
+            schema = worker.schemas["preview-fixture.emit"]
+            result = await worker.invoke(
+                Invocation(
+                    "transport",
+                    "save",
+                    schema.node_type,
+                    {"mode": registry.wrap(CORE_STRING, "saved")},
+                    schema,
+                    saved_file_previews_enabled=True,
+                )
+            )
+            assert result.error is None
+            assert len(result.saved_file_previews) == 1
+            assert len(result.saved_artifact_claims) == 1
+            assert result.preview_artifacts == ()
+        finally:
+            await worker.close()
+        shutil.rmtree(scratch)
+        path = vault.resolve(digest_bytes(mp4))
+        assert path is not None and path.read_bytes() == mp4
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("count,enabled", [(65, True), (4096, True), (65, False)])
 def test_saved_file_previews_are_lazy_file_backed_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int, enabled: bool, mp4: bytes
@@ -342,7 +397,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
             )
 
         @classmethod
-        def execute(cls) -> object:
+        def execute(cls) -> Mapping[str, object]:
             for index in range(count):
                 ref = {
                     "digest": digest_bytes(b"duplicate saved bytes"),
