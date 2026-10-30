@@ -30,6 +30,8 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "TriangleMeshBatch",
+    "materialize_mesh",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -902,6 +904,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_image_document.interchange as document_interchange
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
+    import dinkster_inference_wire.sparse as sparse_values
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
@@ -938,6 +941,7 @@ def test_reexports_are_the_internal_objects() -> None:
     sources = (
         latent_values,
         inference_process,
+        sparse_values,
         inference_types,
         dinkster_schema,
         dinkster_values,

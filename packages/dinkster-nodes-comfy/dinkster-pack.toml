@@ -540,6 +540,7 @@ namespaces = [
     "TripoSplatPreprocessImage",
     "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
+    "VAEDecodeTripoSplat",
     "LoadAudio",
     "RecordAudio",
     "PreviewAudio",
@@ -588,6 +589,11 @@ namespaces = [
     "ModelSave",
     "SaveImageAdvanced",
     "Trellis2Conditioning",
+    "RotateMesh",
+    "GetMeshInfo",
+    "VoxelToMeshBasic",
+    "VoxelToMesh",
+    "VAEDecodeHunyuan3D",
 ]
 
 [pack.sandbox]

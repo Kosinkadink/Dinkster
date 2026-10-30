@@ -9,6 +9,8 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/build_environment_tools.py
+      - scripts/build_native_tools.py
       - scripts/build_official_packs.py
       - scripts/acquire_engine_bases.py
       - scripts/prune_engine_prereleases.py
@@ -18,6 +20,7 @@ on:
       - packages/dinkster-supervisor/**
       - src/dinkster/frontend.py
       - tests/test_environment_archives.py
+      - tests/test_environment_tools.py
       - tests/test_environment_generations.py
       - tests/test_release_install.py
       - tests/test_frontend_artifact.py
@@ -85,9 +88,133 @@ jobs:
           name: wheel-release
           path: dist/
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tools-supervisor-wheel
+          path: dist/dinkster_supervisor-*.whl
+          if-no-files-found: error
+
+  tools:
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: windows
+            runner: windows-latest
+    steps:
+      - name: Expose Git Bash on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+          if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+            throw 'Git Bash is required for the native tools build'
+          }
+          $bashDirectory >> $env:GITHUB_PATH
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/Dinkster-Environments
+          ref: e80a7240f6a6e835ffa724f43c36552f58e73b5e
+          path: .release/environments
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: tools-supervisor-wheel
+          path: .release/supervisor
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Build the native environment client
+        shell: bash
+        run: |
+          wheels=(.release/supervisor/*.whl)
+          test "${#wheels[@]}" = 1
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_native_tools \
+            --environments .release/environments \
+            --supervisor-wheel "${wheels[0]}" --output .release/tools
+      - name: Verify relocation without host tools
+        shell: bash
+        run: |
+          uv run --no-project --python 3.12 python - <<'PY'
+          import json, os, subprocess, tempfile, zipfile
+          from pathlib import Path
+          [artifact] = Path('.release/tools').glob('*.zip')
+          with tempfile.TemporaryDirectory(prefix='relocated tools with spaces ') as temporary:
+              root = Path(temporary)
+              with zipfile.ZipFile(artifact) as archive:
+                  archive.extractall(root)
+                  if os.name != 'nt':
+                      for member in archive.infolist():
+                          (root / member.filename).chmod((member.external_attr >> 16) & 0o777)
+              python = root / ('python/python.exe' if os.name == 'nt' else 'python/bin/python3')
+              scripts = python.parent / 'Scripts' if os.name == 'nt' else python.parent
+              env = {**os.environ, 'PATH': str(scripts), 'PYTHONPATH': '',
+                     'UV_PYTHON_DOWNLOADS': 'never', 'UV_INDEX_URL': 'http://127.0.0.1:1',
+                     'HTTP_PROXY': 'http://127.0.0.1:1', 'HTTPS_PROXY': 'http://127.0.0.1:1',
+                     'XDG_DATA_HOME': str(root / 'data'), 'LOCALAPPDATA': str(root / 'data')}
+              command = [str(python), '-I', '-m', 'dinkster_supervisor.environment',
+                         '--root', str(root / 'absent project'), 'status', '--json']
+              result = subprocess.run(command, cwd=root, env=env, check=True, capture_output=True, text=True)
+              document = json.loads(result.stdout)
+              assert document['current'] is None and document['engines'] == []
+              assert not (root / 'absent project').exists()
+              subprocess.run([str(scripts / ('uv.exe' if os.name == 'nt' else 'uv')), '--version'],
+                             cwd=root, env=env, check=True)
+              subprocess.run([str(python), '-I', '-c',
+                              "import importlib.util; assert all(importlib.util.find_spec(n) is None for n in ('dinkster', 'torch'))"],
+                             cwd=root, env=env, check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-tools-${{ matrix.os }}
+          path: .release/tools/*.zip
+          if-no-files-found: error
+
+  finalize:
+    needs: [build, tools]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-tools-*
+          merge-multiple: true
+          path: .release/tools
+      - name: Admit native tools into the engine release
+        run: |
+          arguments=()
+          for artifact in .release/tools/*.zip; do arguments+=(--artifact "$artifact"); done
+          uv run --no-project --python 3.12 -m scripts.build_release --extend "${arguments[@]}"
+          (cd dist && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-release
+          path: dist/
+          if-no-files-found: error
 
   install:
-    needs: build
+    needs: finalize
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -119,7 +246,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-release
+          name: engine-release
           path: ${{ runner.temp }}/dinkster-release
       - uses: astral-sh/setup-uv@v5
         with:
@@ -165,7 +292,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-release
+          name: engine-release
           path: dist
       - uses: actions/github-script@v7
         id: identity
@@ -211,7 +338,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-release
+          name: engine-release
           path: dist
       - name: Select the engine distribution
         run: |
@@ -235,7 +362,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-release
+          name: engine-release
           path: dist
       - name: Select the API distribution
         run: |
@@ -259,7 +386,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-release
+          name: engine-release
           path: dist
       - name: Select the supervisor distribution
         run: |
