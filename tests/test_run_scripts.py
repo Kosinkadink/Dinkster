@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,10 +51,10 @@ def test_rerun_skips_frontend_build_and_selects_native_execution(checkout, monke
     monkeypatch.setattr(launcher.platform, "system", lambda: system)
     assert launcher.main() == 0
     relative = "Scripts/python.exe" if system == "Windows" else "bin/python"
-    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv-torch" / relative)
+    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv" / relative)
     assert launcher.os.environ["UV_PYTHON_PREFERENCE"] == "only-managed"
     assert len(calls) == 3
-    assert calls[0][0] == ("powershell.exe" if system == "Windows" else "bash")
+    assert calls[0] == (sys.executable, str(root / "scripts/setup_envs.py"))
     assert calls[1] == (str(root / ".venv" / relative), "-m", "dinkster.cli", "setup")
     assert calls[2][-5:] == (
         "--port",
@@ -99,48 +100,6 @@ def test_unsupported_node_stops_before_mutating_checkout(checkout, monkeypatch, 
     with pytest.raises(RuntimeError, match="Node.js 26.12"):
         launcher.main()
     assert calls == []
-
-
-def test_nvidia_selects_cuda_environment(checkout, monkeypatch):
-    root, _ = checkout
-    python = root / ".venv-gpu/bin/python"
-    python.parent.mkdir(parents=True)
-    python.touch()
-    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
-    assert launcher.main() == 0
-    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(python)
-
-
-@pytest.mark.parametrize("cuda_mask", ["", "-1"])
-def test_cuda_mask_selects_cpu_even_with_nvidia_smi(checkout, monkeypatch, capsys, cuda_mask):
-    root, _ = checkout
-    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", cuda_mask)
-    assert launcher.main() == 0
-    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv-torch/bin/python")
-    assert "CUDA_VISIBLE_DEVICES disables CUDA" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("driver_failure", ["nvidia-smi", "torch"])
-def test_unavailable_cuda_falls_back_to_cpu(checkout, monkeypatch, capsys, driver_failure):
-    root, _ = checkout
-    gpu_python = root / ".venv-gpu/bin/python"
-    gpu_python.parent.mkdir(parents=True)
-    gpu_python.touch()
-    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
-    original_output = launcher.output
-
-    def output(*args, **kwargs):
-        if args == ("nvidia-smi", "-L") and driver_failure == "nvidia-smi":
-            raise subprocess.CalledProcessError(1, args)
-        if args[0] == str(gpu_python) and driver_failure == "torch":
-            return "False"
-        return original_output(*args, **kwargs)
-
-    monkeypatch.setattr(launcher, "output", output)
-    assert launcher.main() == 0
-    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv-torch/bin/python")
-    assert "Using CPU Torch: NVIDIA GPU driver" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell wrapper")
