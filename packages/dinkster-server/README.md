@@ -316,10 +316,13 @@ the next pass. Reports count deleted blobs and sidecars separately as files and
 include their actual sizes, retained candidates and failed items.
 
 Behind the same disabled gate, a server-owned worker checks the persisted size
-policy every minute. Each pass reads the policy anew; unlimited skips automatic
+policy after job publication settlement and at least every minute. Each pass reads
+the policy anew; unlimited skips automatic
 deletion, while a finite limit uses the same owner-held oldest-eligible collector
 as Clear. A policy update affects the next pass, not one already underway. The
-first pass waits one minute; active startup publishers still block collection.
+worker waits for a settled-job notification or a one-minute fallback. The queue
+keeps its vault lease through terminal history/events and releases it before the
+woken task can run; other active publishers and readers still block collection.
 `lastPolicyCollection` reports the last completed pass, including the limit it
 read, blocked reasons and actual reclaimed counts; null means no completed pass.
 Unavailable policy never means unlimited and never permits deletion. Shutdown

@@ -4614,7 +4614,7 @@ def create_app(
         return result
 
     async def settle_job(job: Job) -> None:
-        from .cleanup import RECOVERY_KEY, recover_produced_publications
+        from .cleanup import POLICY_WAKE_KEY, RECOVERY_KEY, recover_produced_publications
         from .library import run_owned_thread
 
         if library is not None and library.scratch_root is not None:
@@ -4624,6 +4624,7 @@ def create_app(
                 lambda: recover_produced_publications(vault, scratch, job=job.run_id)
             )
             app[RECOVERY_KEY].update(recovery)
+            app[POLICY_WAKE_KEY].set()
 
     @contextlib.contextmanager
     def job_context(job: Job) -> Generator[None]:

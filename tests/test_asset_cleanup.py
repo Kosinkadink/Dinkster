@@ -936,18 +936,15 @@ def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
     monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
 
     async def scenario() -> None:
-        ticks: asyncio.Queue[None] = asyncio.Queue()
+        from dinkster_server.cleanup import POLICY_WAKE_KEY
+
         paused: asyncio.Queue[None] = asyncio.Queue()
-        sleep = asyncio.sleep
 
-        async def advanceable_sleep(delay: float) -> None:
-            if delay == 60:
+        class ObservedWake(asyncio.Event):
+            async def wait(self) -> bool:
                 paused.put_nowait(None)
-                await ticks.get()
-            else:
-                await sleep(delay)
+                return await super().wait()
 
-        monkeypatch.setattr(asyncio, "sleep", advanceable_sleep)
         vault = AssetVault(tmp_path / "vault")
         store = LibraryStore(tmp_path / "library")
         store.set_cleanup_limit(limit)
@@ -973,10 +970,11 @@ def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
                 )
             )
         )
+        client.app[POLICY_WAKE_KEY] = ObservedWake()
         await client.start_server()
 
         async def tick() -> dict[str, object]:
-            ticks.put_nowait(None)
+            client.app[POLICY_WAKE_KEY].set()
             await asyncio.wait_for(paused.get(), 10)
             status = await (await client.get("/api/library/storage")).json()
             return cast(dict[str, object], status["lastPolicyCollection"])
@@ -986,7 +984,21 @@ def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
             assert (await (await client.get("/api/library/storage")).json())[
                 "lastPolicyCollection"
             ] is None
-            first = await tick()
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "policy",
+                    "jobId": "adoption-settled",
+                    "graph": {
+                        "nodes": {"n": {"nodeType": "test.echo", "inputs": {"text": "done"}}}
+                    },
+                    "targets": ["n"],
+                },
+            )
+            assert response.status == 202
+            await asyncio.wait_for(paused.get(), 10)
+            status = await (await client.get("/api/library/storage")).json()
+            first = status["lastPolicyCollection"]
             assert first["limitBytes"] == limit
             assert first["reclaimedFiles"] == (0 if limit is None else 2)
             assert vault.has(digests[0]) == (limit is None)

@@ -1760,6 +1760,7 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     from .cleanup import (
         POLICY_KEY,
+        POLICY_WAKE_KEY,
         RECOVERY_KEY,
         handle_cleanup_status,
         maintain_cleanup_policy,
@@ -1778,6 +1779,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
 
     app[LIBRARY_KEY] = library
     app[POLICY_KEY] = {}
+    app[POLICY_WAKE_KEY] = asyncio.Event()
     app.cleanup_ctx.append(cleanup_policy)
     app.router.add_post("/api/assets", handle_upload)
     app.router.add_post("/api/assets/transfers", handle_transfer_upload)

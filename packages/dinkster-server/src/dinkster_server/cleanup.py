@@ -32,6 +32,7 @@ from .library import run_owned_thread
 
 RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
 POLICY_KEY = web.AppKey("produced_policy_collection", dict[str, object])
+POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
 # Individual owner manifests cannot certify unregistered frontend owners.
 FRONTEND_RETENTION_COMPLETE = False
 
@@ -47,7 +48,11 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
     library = app[LIBRARY_KEY]
     state = app[STATE_KEY]
     while True:
-        await asyncio.sleep(60)
+        try:
+            await asyncio.wait_for(app[POLICY_WAKE_KEY].wait(), timeout=60)
+        except TimeoutError:
+            pass
+        app[POLICY_WAKE_KEY].clear()
         result: dict[str, object] = {
             "collectionEnabled": False,
             "reclaimedBytes": 0,
