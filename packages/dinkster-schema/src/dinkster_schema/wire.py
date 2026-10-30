@@ -863,6 +863,8 @@ def _dynamic_entry_to_wire(
         }
         if spec.default is not None:
             entry["default"] = spec.default
+        if spec.hidden:
+            entry["hidden"] = True
         if spec.doc:
             entry["doc"] = spec.doc
         if spec.display_name:
@@ -1466,6 +1468,7 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
             required=_expect_bool(entry.get("required", True), "dynamicCombo.required"),
             doc=_expect_str(entry.get("doc", ""), "dynamicCombo.doc"),
             display_name=_expect_str(entry.get("displayName", ""), "dynamicCombo.displayName"),
+            hidden=_expect_bool(entry.get("hidden", False), "dynamicCombo.hidden"),
         )
     if role == "dynamicSlot":
         has_variants = "variants" in entry
