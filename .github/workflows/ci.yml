@@ -20,7 +20,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      comfy: ${{ steps.paths.outputs.comfy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select the CPU comfy gate
+        id: paths
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo 'comfy=true' >> "$GITHUB_OUTPUT"
+          else
+            paths=$(git diff --name-only "$BASE" HEAD)
+            if grep -E '^(packages/dinkster-(nodes-comfy|compat-comfy)/|tests/test_comfy_|\.github/(actions/torch-cpu-suite/|workflows/ci\.yml$)|uv\.lock$)' <<< "$paths" > /dev/null; then
+              echo 'comfy=true' >> "$GITHUB_OUTPUT"
+            else
+              echo 'comfy=false' >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  torch-cpu:
+    needs: changes
+    if: needs.changes.outputs.comfy == 'true'
+    name: CPU comfy gate (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/torch-cpu-suite
+        with:
+          suite: comfy
+          comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
+
   fast:
+    needs: [changes, torch-cpu]
+    if: always()
     name: format, lint, types and unit subset
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -29,6 +82,18 @@ jobs:
       MKL_NUM_THREADS: "4"
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
+      - name: Require the selected CPU gate
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          COMFY: ${{ needs.changes.outputs.comfy }}
+          CPU_RESULT: ${{ needs.torch-cpu.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$COMFY" = true ]; then
+            test "$CPU_RESULT" = success
+          else
+            test "$CPU_RESULT" = skipped
+          fi
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -78,3 +143,23 @@ jobs:
           pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
+
+  windows-checks:
+    name: Windows format, lint and types
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-packages
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked ruff check .
+      - run: uv run --locked pyright

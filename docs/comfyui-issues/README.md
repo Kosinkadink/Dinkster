@@ -19,6 +19,7 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [surface-net-small-grid-progress-divisor.md](surface-net-small-grid-progress-divisor.md) | VoxelToMesh surface-net extraction | reproduced at bc5f880d; native progress reporting avoids zero divisor |
 | [video-component-crop-color-reset.md](video-component-crop-color-reset.md) | VideoCrop component encoding color space | reproduced at bc5f880d; native preserves reference behavior |
 | [sam3-preview-odd-dimensions.md](sam3-preview-odd-dimensions.md) | SAM3_TrackPreview H264 dimensions | reproduced at bc5f880d; native preserves reference failure |
 | [wan-infinite-talk-missing-initial-image.md](wan-infinite-talk-missing-initial-image.md) | WanInfiniteTalkToVideo optional image inputs | reproduced at bc5f880d; native preserves reference failure |

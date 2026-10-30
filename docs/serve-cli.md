@@ -134,7 +134,7 @@ bounded regression contract, not a claim that arbitrarily large packs or catalog
 take constant time.
 
 ```sh
-uv run python tools/benchmark_schema_catalog.py --repeats 3
+uv run --no-sync python tools/benchmark_schema_catalog.py --repeats 3
 ```
 
 Measured on 2026-09-06 with Python 3.12.3, Linux 7.0.0-29, local storage,
@@ -265,8 +265,10 @@ DINKSTER_ACCELERATOR=cpu dinkster-serve --comfy-root /path/to/ComfyUI \
 On Apple Silicon, install native arm64 PyTorch in the worker environment.
 MPS is selected automatically when available; `DINKSTER_ACCELERATOR=mps`
 requires it and refuses an unavailable backend rather than silently using CPU.
-`scripts/setup_envs.sh` prepares the repository's macOS test environments and
-runs the MPS capability smoke check without a system-wide install.
+The source setup command `uv run --no-project python scripts/setup_envs.py`
+requires a published platform base. macOS setup currently stops pending the
+[Apple Silicon base bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575);
+it does not resolve a local MPS environment.
 
 `DINKSTER_ACCELERATOR` applies to the process and its children, including native
 inference and compatibility workers. Set it on each remote worker service or
@@ -710,9 +712,9 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
-| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
+| `imports/` | Visible import folder initialized by setup, generation serving, or serving with mount changes enabled |
 | `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
-| `output/` | Default writable output folder initialized by setup or serving with mount changes enabled, unless an output is already configured |
+| `output/` | Default writable output folder initialized by setup, generation serving, or serving with mount changes enabled, unless an output is already configured |
 | `.output-initialized` | Records one-time output initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
@@ -867,7 +869,15 @@ scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
 
 `GET /api/mounts?project=<project-id>` returns the project's ordered folders
-and selected output. `POST /api/mounts` accepts `project` (default `default`)
+and selected output. On first serve, an environment-managed generation
+initializes a writable `output` grant at `<library-root>/output` and reports
+`outputMount: "output"` with mount mode `readwrite`. The default library root
+is `<project-root>/dinkster-library`; an explicit library root is preserved.
+Existing selections, read-only grants and deliberately removed defaults are
+not replaced. A deliberately unconfigured library can report `outputMount: null`.
+Initialization does not enable runtime mount editing.
+
+`POST /api/mounts` accepts `project` (default `default`)
 and `shared` (default `false`): a new grant belongs only to that project unless
 Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
 `{"mounts": ["first", "second"], "outputMount": "second"}` to replace the

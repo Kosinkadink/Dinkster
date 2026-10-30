@@ -1358,7 +1358,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-image",
-            "blake3:5a100422d5ff649ab523f3af172bce3819eaaec70f8e6d64e04f181c3cb2c6c1",
+            "blake3:2f1951aedebcce850e6b3fa8171a45412d89f770a6c66bd223cc170c06fb2f9d",
         ),
         (
             "dinkster-nodes-remote",
@@ -1375,8 +1375,8 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert Path(spec.manifest).resolve() == (source_root / "dinkster-pack.toml").resolve()
     assert spec.packs is not None
     info = spec.packs[pack_id]
-    assert info.source == f"python:{pack_id}==0.0.1"
-    assert info.version == "0.0.1"
+    assert info.source == f"python:{pack_id}==0.0.2"
+    assert info.version == "0.0.2"
     assert info.artifact_digest == expected_digest
 
 
@@ -1549,7 +1549,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
         sidecar = source / filename
         if sidecar.is_file():
             shutil.copy2(sidecar, bundled.parent / filename)
-    distribution = SimpleNamespace(version="0.0.1", locate_file=lambda _path: bundled)
+    distribution = SimpleNamespace(version="0.0.2", locate_file=lambda _path: bundled)
 
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
@@ -1564,7 +1564,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-nodes-media-io"]
-    assert info.source == "python:dinkster-nodes-media-io==0.0.1"
+    assert info.source == "python:dinkster-nodes-media-io==0.0.2"
     locked = lock.get("dinkster-nodes-media-io")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
@@ -1718,7 +1718,7 @@ def test_default_pack_refuses_version_outside_suite_lock(
     monkeypatch.setattr("dinkster.compose.importlib.metadata.distribution", distribution)
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.1"):
+    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.2"):
         default_pack_spec("dinkster-nodes-foundation")
 
 
@@ -1741,7 +1741,7 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
         encoding="utf-8",
     )
     distribution = SimpleNamespace(
-        version="0.0.1",
+        version="0.0.2",
         locate_file=lambda _path: tmp_path / "missing/dinkster-pack.toml",
     )
 

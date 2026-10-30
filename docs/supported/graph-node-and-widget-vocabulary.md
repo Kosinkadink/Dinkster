@@ -2,6 +2,10 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend dynamic choices can declare hidden presentation while retaining
+  optionality, their complete option trees and omitted defaults. The flag
+  round-trips through schema declarations without changing execution choices.
+  Frontend descendant visibility is not claimed here.
 - Backend input families can require only the initial declared positions,
   leaving later members optional. Missing initial required slots remain
   validation errors even when later slots are connected. Ordinary families

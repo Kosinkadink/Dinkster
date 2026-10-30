@@ -1822,9 +1822,12 @@ class DynamicComboSpec:
     required: bool = True
     doc: str = ""
     display_name: str = ""
+    hidden: bool = False
 
     def __post_init__(self) -> None:
         _validate_structural_id(self.id, "dynamic combo id")
+        if type(self.hidden) is not bool:
+            raise ValueError(f"dynamic combo {self.id}: hidden must be a bool")
         keys = [option.key for option in self.options]
         if len(set(keys)) != len(keys):
             raise ValueError(f"dynamic combo {self.id}: duplicate option keys")

@@ -24,6 +24,7 @@ from .fetch import (
     fetch_asset,
     fetch_public_asset,
 )
+from .file3d import register_file3d_types
 from .guess import (
     GUESS_CONFIDENCE,
     GuessCandidate,
@@ -325,6 +326,7 @@ __all__ = [
     "bind_audio_value",
     "bind_video_value",
     "register_video_value_type",
+    "register_file3d_types",
     "require_asset_kind",
     "require_digest",
     "require_region",

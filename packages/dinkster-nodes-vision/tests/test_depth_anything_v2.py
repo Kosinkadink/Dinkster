@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
-import os
-from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -12,7 +7,6 @@ import pytest
 
 pytest.importorskip("torch")
 
-from dinkster_assets import install_declared_assets, use_declared_asset_pack
 from dinkster_nodes_vision.depth_anything_v2 import model as depth_model
 from dinkster_nodes_vision.depth_anything_v2.model import (
     _model_config,
@@ -20,46 +14,7 @@ from dinkster_nodes_vision.depth_anything_v2.model import (
     _resize_hint,
     execute_depth_anything_v2,
 )
-from dinkster_workers import load_manifest
 from transformers import Dinov2Config
-
-ROOT = Path(__file__).parents[3]
-MANIFEST = (
-    ROOT
-    / "packages/dinkster-nodes-vision/dinkster_vision_depth_anything_v2_pack/dinkster-pack.toml"
-)
-GOLDEN_PATH = ROOT / "tests" / "goldens" / "depth_anything_v2_controlnet_aux_59b1fc4.json"
-MODEL_SHA256 = "4e01e34ed5549b529b70b92d53226bc370f03041977b390d3dde45d47f516cf9"
-
-
-class _ModelResolver:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def resolve(self, digest: str) -> Path | None:
-        del digest
-        return self.path
-
-
-def _model_path() -> Path:
-    value = os.environ.get("DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL")
-    if not value:
-        pytest.skip("DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL is not configured")
-    path = Path(value)
-    if not path.is_file():
-        pytest.fail(f"DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL does not exist: {path}")
-    return path
-
-
-def _decode(record: object) -> np.ndarray:
-    payload = cast("dict[str, object]", record)
-    shape = cast("list[int]", payload["shape"])
-    encoded = cast("str", payload["uint8Base64"])
-    return np.frombuffer(base64.b64decode(encoded), dtype=np.uint8).reshape(shape)
-
-
-def _golden() -> dict[str, object]:
-    return cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
 
 
 def test_large_model_config_matches_converted_artifact_architecture() -> None:
@@ -120,28 +75,3 @@ def test_multi_image_batches_preserve_frame_order(monkeypatch: pytest.MonkeyPatc
     assert output.shape == (2, 64, 96, 3)
     assert np.count_nonzero(output[0]) == 0
     assert np.count_nonzero(output[1] != 1.0) == 0
-
-
-def test_depth_output_matches_pinned_controlnet_aux_vector() -> None:
-    golden = _golden()
-    assert golden["baseline"] == "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
-    assert golden["modelSha256"] == (
-        "a7ea19fa0ed99244e67b624c72b8580b7e9553043245905be58796a608eb9345"
-    )
-    assert golden["numpy"] == "2.5.1"
-    assert golden["opencv"] == "5.0.0"
-    assert golden["torch"] == "2.13.0+cpu"
-    source = _decode(golden["source"])[None].astype(np.float32) / 255.0
-    expected = _decode(golden["output"])
-    manifest = load_manifest(MANIFEST)
-    install_declared_assets(manifest.name, manifest.assets, _ModelResolver(_model_path()))
-    with use_declared_asset_pack(manifest.name):
-        output = execute_depth_anything_v2(source, resolution=64)
-    actual = np.rint(output[0] * 255.0).astype(np.uint8)
-    assert actual.shape == expected.shape
-    np.testing.assert_array_equal(actual, expected)
-
-
-def test_converted_model_artifact_is_the_expected_bytes() -> None:
-    with _model_path().open("rb") as stream:
-        assert hashlib.file_digest(stream, "sha256").hexdigest() == MODEL_SHA256

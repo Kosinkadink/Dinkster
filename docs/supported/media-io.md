@@ -1,5 +1,8 @@
 ## Media I/O
 
+- Canonical FILE_3D values preserve original file formats and explicitly granted
+  sidecar assets without converting containers or granting filesystem access.
+  Format-specific sockets distinguish mesh, splat and point-cloud files.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
