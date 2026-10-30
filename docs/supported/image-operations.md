@@ -12,6 +12,10 @@
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
 - Native `Trellis2ShapeStage` converts dense structure occupancy to batch-grouped
   sparse coordinates and an empty shape latent, with stage-specific conditioning.
+- Native `Trellis2TextureStage` prepares texture conditioning and sparse noise
+  targets from the batch-grouped shape latents emitted by native Trellis stages.
+  Nonstandard custom latents with interleaved coordinate rows retain the source
+  limitation: padded features flatten in batch order without reordering coordinates.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
