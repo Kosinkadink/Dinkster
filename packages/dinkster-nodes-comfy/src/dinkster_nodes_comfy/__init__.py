@@ -203,6 +203,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .trellis_conditioning import Trellis2Conditioning
+from .trellis_shape import Trellis2ShapeStage
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -514,6 +515,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     *MESH_NODES,
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
+    Trellis2ShapeStage,
 )
 
 
