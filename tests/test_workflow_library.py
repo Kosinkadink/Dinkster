@@ -692,6 +692,15 @@ def test_result_offers_keep_exact_roots_across_claims_and_restart(tmp_path: Path
         released = store.retained_assets("one", "shown-result", "view")
         assert released is not None and released.source_token is None
         assert store.result_asset_offer("one", older.token) == older
+        assert store.claim_result_assets("one", older.token, "preview", "late") is None
+        assert store.retained_assets("one", "preview", "late") is None
+    finally:
+        store.close()
+    store = LibraryStore(path)
+    try:
+        assert store.claim_result_assets("one", older.token, "preview", "reconnected") is None
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_B}
     finally:
         store.close()
 

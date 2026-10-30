@@ -553,6 +553,20 @@ class LibraryStore:
             if row is None:
                 return None
             offer = _result_offer_from_row(row)
+            if row["claimed"]:
+                owners = [
+                    _retention_from_row(owner)
+                    for owner in self._conn.execute(
+                        "SELECT * FROM asset_retentions WHERE scope = ? AND source_token = ?",
+                        (key[0], token),
+                    )
+                ]
+                # A surviving token is not proof that its former roots still exist.
+                if not any(
+                    owner.digests == offer.digests and owner.complete == offer.complete
+                    for owner in owners
+                ):
+                    return None
             roots = _retention_digests(list(offer.digests))
             retained = self._retain_assets_locked(key, roots, 0, offer.complete, token)
             self._conn.execute(
