@@ -43,8 +43,12 @@ def test_checkpoint_savers_keep_core_inputs_and_manifest_order() -> None:
         assert schema.inputs[-1].default is None and not schema.inputs[-1].required
         assert schema.outputs == () and schema.output_node and not schema.idempotent
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
-    assert manifest.namespaces[-2:] == ("CheckpointSave", "ModelSave")
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == manifest.namespaces
+    checkpoint_index = manifest.namespaces.index("CheckpointSave")
+    assert manifest.namespaces[checkpoint_index : checkpoint_index + 2] == (
+        "CheckpointSave",
+        "ModelSave",
+    )
 
 
 def test_lora_save_keeps_source_inputs_and_native_manifest_claim() -> None:
@@ -68,4 +72,4 @@ def test_lora_save_keeps_source_inputs_and_native_manifest_claim() -> None:
     assert schema.outputs == () and schema.output_node and not schema.idempotent
     assert LoraSave in COMFY_NODES
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == manifest.namespaces

@@ -12,6 +12,8 @@ from fractions import Fraction
 from io import BytesIO
 from typing import Any
 
+from dinkster_api.v1 import MEBIBYTE
+
 from . import image_color_conversion
 
 JsonMapping = dict[str, Any]
@@ -398,7 +400,7 @@ def _adjust_offsets(data: bytes, delta: int) -> bytes:
 def _copy_file_bytes(source: Any, destination: Any, size: int) -> None:
     remaining = size
     while remaining:
-        chunk = source.read(min(remaining, 1024 * 1024))
+        chunk = source.read(min(remaining, MEBIBYTE))
         if not chunk:
             raise ValueError("Unexpected end of AVIF file.")
         destination.write(chunk)
