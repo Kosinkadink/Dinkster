@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from io import BytesIO
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import numpy as np
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_image_document import (
     RENDERER_CONTRACT,
     decode_document,
@@ -384,6 +385,13 @@ def test_render_endpoint_persists_output_and_provenance_cache(tmp_path: Path) ->
             output = await client.get(f"/api/assets/{first['asset']['digest']}")
             assert output.status == 200
             assert digest_bytes(await output.read()) == first["asset"]["digest"]
+            with library.store.hold_asset_references() as roots:
+                assert roots == {source_digest, document_digest, first["asset"]["digest"]}
+            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                connection.execute("UPDATE asset_derivations SET asset_digests = NULL")
+            with pytest.raises(AssetError, match="unavailable"):
+                with library.store.hold_asset_references():
+                    pytest.fail("a legacy cached render was assumed reference-free")
             repeated = await client.post(
                 f"/api/assets/{document_digest}/render?scope=local",
                 json={"selector": "composite"},
@@ -393,6 +401,8 @@ def test_render_endpoint_persists_output_and_provenance_cache(tmp_path: Path) ->
             assert second["cached"] is True
             assert second["asset"] == first["asset"]
             assert library.store.get_derivation(first["cacheKey"]) == first["provenance"]
+            with library.store.hold_asset_references() as roots:
+                assert roots == {source_digest, document_digest, first["asset"]["digest"]}
             wrong_scope = await client.post(
                 f"/api/assets/{document_digest}/render?scope=other",
                 json={"selector": "composite"},
@@ -401,6 +411,12 @@ def test_render_endpoint_persists_output_and_provenance_cache(tmp_path: Path) ->
             assert (await wrong_scope.json())["error"]["code"] == (
                 "asset.image_document.dependency_missing"
             )
+            with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                connection.execute("UPDATE asset_derivations SET asset_digests = 'broken'")
+            corrupt = await client.post(
+                f"/api/assets/{document_digest}/render?scope=local", json={}
+            )
+            assert corrupt.status == 503
         finally:
             await client.close()
 

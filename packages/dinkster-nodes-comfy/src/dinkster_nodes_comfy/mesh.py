@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import logging
 import math
 from collections.abc import Mapping
 from typing import Any
@@ -14,11 +15,13 @@ from dinkster_api.v1 import (
     MESH_TYPE,
     DynamicComboOption,
     DynamicComboSpec,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    TriangleMeshBatch,
     TypeExpr,
     materialize_mesh,
     report_progress,
@@ -200,4 +203,101 @@ class GetMeshInfo(Node):
         return cls.outputs(MESH=mesh, STRING=info)
 
 
-MESH_NODES = (RotateMesh, GetMeshInfo)
+class MergeMeshes(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="MergeMeshes",
+            display_name="Merge Meshes",
+            category="3d/mesh",
+            description=(
+                "Concatenate N meshes into one by offsetting face indices and stacking verts, "
+                "faces, uvs, and colors."
+            ),
+            input_families=(
+                InputFamilySpec(
+                    "meshes",
+                    (InputSpec("mesh", _MESH),),
+                    min_members=2,
+                    max_members=50,
+                    member_prefix="mesh",
+                    optional_after_minimum=True,
+                ),
+            ),
+            outputs=(OutputSpec("mesh", _MESH),),
+        )
+
+    @classmethod
+    def execute(cls, *, meshes: Mapping[str, object]) -> Mapping[str, object]:
+        values = [materialize_mesh(value) for value in meshes.values()]
+        if not values:
+            raise ValueError("MergeMeshes: need at least one mesh")
+        torch = importlib.import_module("torch")
+        any_uvs = any(value.uvs is not None for value in values)
+        any_colors = any(value.vertex_colors is not None for value in values)
+        color_channels = max(
+            (
+                int(value.vertex_colors.shape[-1])
+                for value in values
+                if value.vertex_colors is not None
+            ),
+            default=3,
+        )
+        vertices: list[Any] = []
+        faces: list[Any] = []
+        uvs: list[Any] = []
+        colors: list[Any] = []
+        texture = None
+        offset = 0
+        for value in values:
+            # Only the first batch item participates; counts exclude padded geometry.
+            vertex_count = (
+                int(value.vertex_counts[0].item())
+                if value.vertex_counts is not None
+                else value.vertices.shape[1]
+            )
+            face_count = (
+                int(value.face_counts[0].item())
+                if value.face_counts is not None
+                else value.faces.shape[1]
+            )
+            v = value.vertices[0, :vertex_count].cpu()
+            vertices.append(v)
+            faces.append(value.faces[0, :face_count].cpu() + offset)
+            offset += v.shape[0]
+            if any_uvs:
+                uvs.append(
+                    value.uvs[0, :vertex_count].cpu()
+                    if value.uvs is not None
+                    else v.new_zeros((v.shape[0], 2))
+                )
+            if any_colors:
+                c = (
+                    value.vertex_colors[0, :vertex_count].cpu()
+                    if value.vertex_colors is not None
+                    else v.new_ones((v.shape[0], color_channels))
+                )
+                if c.shape[-1] < color_channels:
+                    c = torch.cat(
+                        (c, c.new_ones((c.shape[0], color_channels - c.shape[-1]))), dim=-1
+                    )
+                colors.append(c)
+            if value.texture is not None:
+                if texture is None:
+                    texture = value.texture.cpu()
+                else:
+                    logging.warning(
+                        "MergeMeshes: dropping extra texture from input; only one texture is kept."
+                    )
+        return cls.outputs(
+            mesh=TriangleMeshBatch(
+                vertices=torch.cat(vertices, dim=0).unsqueeze(0),
+                faces=torch.cat(faces, dim=0).unsqueeze(0),
+                uvs=torch.cat(uvs, dim=0).unsqueeze(0) if any_uvs else None,
+                vertex_colors=torch.cat(colors, dim=0).unsqueeze(0) if any_colors else None,
+                texture=texture,
+            )
+        )
+
+
+MESH_NODES = (RotateMesh, GetMeshInfo, MergeMeshes)

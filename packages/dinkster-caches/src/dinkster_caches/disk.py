@@ -43,6 +43,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from dinkster_assets import AssetError
 from dinkster_values import GIBIBYTE
 
 if os.name == "nt":
@@ -60,6 +61,7 @@ from .wire import (
     entry_from_wire,
     entry_to_wire,
     iter_manifest_payloads,
+    manifest_asset_references,
 )
 
 DEFAULT_DISK_CACHE_BYTES = 10 * GIBIBYTE
@@ -133,6 +135,10 @@ class DiskCacheStore:
         self.misses = 0
         self._with_lock(self._recover)
 
+    @property
+    def root(self) -> Path:
+        return self._entries_dir.parent
+
     def _entry_path(self, key: CacheKey) -> Path:
         return self._entries_dir / (stable_hash([key.encode("utf-8")]) + ".json")
 
@@ -179,6 +185,29 @@ class DiskCacheStore:
         """Invalidate a replaced key, including this store's queued publication."""
         self._pending_writes.pop(key, None)
         self._with_lock(self._discard, key)
+
+    @contextmanager
+    def hold_asset_references(self) -> Generator[frozenset[str]]:
+        """Hold existing manifest publication barriers while inspecting external roots.
+
+        This is not a deletion grant: queued publishers and other reference
+        owners still require the asset collector's common barrier.
+        """
+        with self._thread_lock, _exclusive_file_lock(self._lock_path):
+            try:
+                if self._entries_dir.is_symlink():
+                    raise AssetError("cache reference directory must not be a symlink")
+                referenced: set[str] = set()
+                for path in self._manifests():
+                    if path.is_symlink():
+                        raise AssetError("cache reference manifest must not be a symlink")
+                    manifest = self._read_manifest(path)
+                    if manifest is None:
+                        raise AssetError("cache reference manifest is unavailable")
+                    referenced.update(manifest_asset_references(manifest))
+            except OSError as exc:
+                raise AssetError("cache reference state is unavailable") from exc
+            yield frozenset(referenced)
 
     def _discard(self, key: CacheKey) -> None:
         path = self._entry_path(key)

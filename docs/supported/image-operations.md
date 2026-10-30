@@ -3,6 +3,9 @@
 - Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
   angles or a normalized quaternion while retaining material attributes.
   `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Native `MergeMeshes` concatenates the first batch item of each mesh, excluding
+  padding and offsetting face indices. Missing UVs become zero, missing color
+  channels become white, and only the first available texture is retained.
 - Native `PaintMesh` colors mesh vertices from their nearest sparse voxel,
   converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
