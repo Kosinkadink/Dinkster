@@ -589,6 +589,11 @@ namespaces = [
     "ModelSave",
     "SaveImageAdvanced",
     "Trellis2Conditioning",
+    "RotateMesh",
+    "GetMeshInfo",
+    "VoxelToMeshBasic",
+    "VoxelToMesh",
+    "VAEDecodeHunyuan3D",
     "Trellis2ShapeStage",
 ]
 
