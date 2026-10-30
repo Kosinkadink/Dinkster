@@ -93,10 +93,9 @@ def test_native_selection_schema_roundtrip_and_registration():
         assert isinstance(widget, AssetWidget) and widget.selection
         assert not schema.idempotent
         assert node in COMFY_NODES
-    assert (
-        tuple(node.schema().node_type for node in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_preflight_keeps_source_selection_names_and_reports_missing_options(granted_loaders):

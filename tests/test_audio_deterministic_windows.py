@@ -32,6 +32,8 @@ from dinkster_video import assemble_video, save_video_stream
 
 from tests.test_audio_io import _bound, _mount
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _encoded_aac(offset, seeds=(1353,)):
     buffer = io.BytesIO()

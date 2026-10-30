@@ -67,6 +67,7 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
     import av
     from dinkster_assets import AssetRef, MountSnapshotResolver, digest_file
     from dinkster_nodes_media_io import LoadVideoValue, SaveVideoValue, TrimVideo
+    from dinkster_schema.reporting import capture_saved_artifacts
     from dinkster_values import video_meta
 
     class Resolver:
@@ -103,7 +104,10 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
         previous = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT")
         os.environ["DINKSTER_MOUNTS_SNAPSHOT"] = str(snapshot)
         try:
-            saved = cast(AssetRef, SaveVideoValue.execute(video=value)["video"])
+            with capture_saved_artifacts() as claims:
+                saved = cast(AssetRef, SaveVideoValue.execute(video=value)["video"])
+            if claims != [saved.to_wire()]:
+                raise RuntimeError("video save did not attach its published asset")
             resolved = AssetRef.from_wire(saved.to_wire(), MountSnapshotResolver(snapshot))
             with resolved.open() as output, av.open(output, mode="r") as opened:
                 stream = cast(Any, opened).streams.video[0]

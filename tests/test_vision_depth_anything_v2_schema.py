@@ -26,7 +26,7 @@ from dinkster_schema import (
 )
 from dinkster_workers import load_manifest
 
-from dinkster.compose import compose_serving
+from dinkster.compose import compose_serving, default_pack_spec
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -55,10 +55,10 @@ def test_depth_provider_declares_isolated_cpu_execution_and_pinned_model() -> No
     assert manifest.executes == ("dinkster.preprocess.model_depth",)
     assert manifest.sandbox.gpu is False
     assert manifest.requires == (
-        "numpy==2.5.1",
-        "opencv-python-headless==5.0.0.93",
+        "numpy",
+        "opencv-contrib-python-headless",
         "safetensors==0.8.0",
-        "torch==2.13.0",
+        "torch",
         "transformers==5.16.1",
     )
     assert len(manifest.vision_providers) == 1
@@ -171,7 +171,16 @@ def test_depth_provider_wheel_contains_pack_runtime_and_manifest() -> None:
 
 def test_depth_provider_populates_owner_choice_and_scopes_its_model() -> None:
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-depth-anything-v2"),
+                default_pack_spec("dinkster-vision-depth-anything-v3"),
+            ],
+            include_default_packs=False,
+        )
         try:
             assert composition.choices[MODEL_DEPTH_PROVIDER_CHOICE] == (
                 "dinkster-vision-depth-anything-v2",

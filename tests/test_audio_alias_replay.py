@@ -14,7 +14,8 @@ import asyncio
 import base64
 import hashlib
 import json
-from collections.abc import Mapping
+import os
+from collections.abc import Mapping, Sequence
 from functools import cache
 from importlib.metadata import distribution
 from pathlib import Path
@@ -33,10 +34,11 @@ from dinkster_assets import (
 from dinkster_assets.audio import register_audio_value_type
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import translate_prompt
-from dinkster_engine import Engine, ExecutionError
+from dinkster_engine import Engine, ExecutionError, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link, validate
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_media_io import MEDIA_IO_NODES, LoadAudio, register_media_types
+from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     Node,
     NodeSchema,
@@ -49,6 +51,7 @@ from dinkster_schema import (
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_values.audio_codec import audio_window, effective_audio_facts
 from dinkster_workers import InProcessWorker
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 
 from tests.test_audio_io import _mount
 from tools.gen_audio_alias_receipts import encode_contract
@@ -222,10 +225,21 @@ def _run_case(node_class: str, inputs: dict[str, Any]) -> tuple[dict[str, Any], 
     register_asset_type(registry, resolver)
     register_audio_value_type(registry, AUDIO_TYPE, resolver)
     register_media_types(registry)
+    worker = InProcessWorker(build_node_types(native_nodes), registry)
+
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return SavedArtifactAuthority(os.environ["DINKSTER_MOUNTS_SNAPSHOT"]).capture_mounted(
+            claims, node_id, started_at_ns
+        )
+
+    runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     engine = Engine(
         schemas=schemas,
         registry=registry,
-        worker=InProcessWorker(build_node_types(native_nodes), registry),
+        worker=worker,
+        pin_execution=lambda: runtime,
         cache=MemoryLRUCache(),
     )
     result = asyncio.run(engine.run(graph, sorted(targets)))

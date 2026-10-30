@@ -20,7 +20,6 @@ from test_relay import eventually
 from test_remote import TOKEN, make_engine, remote_worker, start_service, stop_service
 
 _SIGSTOP = getattr(signal, "SIGSTOP", signal.SIGTERM)
-_SIGCONT = getattr(signal, "SIGCONT", signal.SIGTERM)
 
 
 def test_lease_ttl_below_the_heartbeat_floor_is_refused() -> None:
@@ -228,7 +227,8 @@ def test_engine_treats_a_silent_daemon_as_dead(tmp_path: Path) -> None:
                 try:
                     assert await eventually(lambda: not worker.alive, timeout=15.0)
                 finally:
-                    os.kill(proc.pid, _SIGCONT)
+                    proc.kill()
+                    await proc.wait()
             finally:
                 await worker.close()
         finally:

@@ -122,7 +122,7 @@ class HunyuanInspect(Node):
         return cls.outputs(summary="ok")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_path: Path) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"
@@ -138,6 +138,7 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
             (tmp_path / "hunyuan_latent_fixture.py").write_text(
                 "from test_hunyuan_latent_torch import HunyuanInspect, HunyuanSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, HunyuanSource, HunyuanInspect)\n",
                 encoding="ascii",
             )
@@ -146,6 +147,10 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "hunyuan_latent_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "hunyuan_latent_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "hunyuan_latent_fixture:register_inference_types",

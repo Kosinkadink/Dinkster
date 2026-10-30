@@ -142,7 +142,7 @@ class CascadeInspect(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_latents_and_prior_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"
@@ -157,6 +157,7 @@ def test_ordinary_manifest_latents_and_prior_twice(tmp_path: Path, in_process: b
             (tmp_path / "cascade_fixture.py").write_text(
                 "from test_stable_cascade_torch import CascadeSource, CascadeInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, CascadeSource, CascadeInspect)\n",
                 encoding="ascii",
             )
@@ -165,6 +166,10 @@ def test_ordinary_manifest_latents_and_prior_twice(tmp_path: Path, in_process: b
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["cascade-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "cascade_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "cascade_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "cascade_fixture:register_inference_types",

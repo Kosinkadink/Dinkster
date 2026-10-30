@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import tomllib
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -22,6 +24,7 @@ from dinkster.pack_archive import (
     _enforce_limit,
     build_pack_archive,
 )
+from scripts.build_official_packs import build as build_official_packs
 from tests.platform_support import symlink_or_skip
 
 MANIFEST = '[pack]\nname = "archive-test"\n\n[pack.entry]\nnodes = "nodes:NODES"\n'
@@ -214,3 +217,196 @@ def test_cli_writes_archive_and_prints_written_digest(
     manager.main()
     printed = capsys.readouterr().out.strip()
     assert printed == f"blake3:{blake3(output.read_bytes()).hexdigest()}"
+
+
+def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_path: Path) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_workers import load_manifest
+
+    root = Path(__file__).resolve().parents[1]
+    version = "0.0.2.dev20261028"
+    first = build_official_packs(root, tmp_path / "first", version=version)
+    second = build_official_packs(root, tmp_path / "second", version=version)
+    assert [path.name for path in first] == [path.name for path in second]
+    assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
+    lock = Lockfile.from_record_json(first[-1].read_text())
+    expected = {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
+        "dinkster-vision-rtdetr",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
+    }
+    assert {pack.pack for pack in lock.packs} == expected
+    core_requirements = {
+        "dinkster-nodes-comfy": (
+            "simpleeval==1.0.8",
+            "numpy",
+            "pillow",
+            "torch",
+            "torchvision",
+            "dinkster-inference==0.1.0",
+            "av",
+            "scipy",
+            "einops",
+            "kornia",
+            "safetensors",
+            "tqdm",
+            "spandrel",
+            "comfy-kitchen",
+        ),
+        "dinkster-nodes-foundation": (),
+        "dinkster-nodes-image": (
+            "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
+            "numpy>=1.26",
+            "opencv-contrib-python-headless>=5.0,<5.1",
+            "pillow>=10",
+            "PyOpenGL>=3.1.8,<4",
+        ),
+        "dinkster-nodes-media-io": (
+            "av==18.1.0",
+            "numpy>=1.26",
+            "pillow>=10",
+            "scipy>=1.11",
+        ),
+        "dinkster-nodes-remote": ("httpx>=0.28,<1",),
+    }
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    for pack in lock.packs:
+        assert pack.version == version
+        assert pack.publisher == "dinkster"
+        assert pack.source == f"git:Kosinkadink/Dinkster@{commit}"
+        archive = first[0].parent / f"{pack.pack}-{version}.zip"
+        extracted = unpack_artifact(
+            archive, tmp_path / "unpacked" / pack.pack, pack.artifact_digest
+        )
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        assert manifest.name == pack.pack
+        if pack.pack in core_requirements:
+            assert manifest.requires == core_requirements[pack.pack]
+        module = manifest.nodes_entry.partition(":")[0]
+        relative = Path(*module.split(".")) / "__init__.py"
+        if pack.pack.startswith("dinkster-vision-"):
+            original = Path("packages/dinkster-nodes-vision/src") / relative
+        else:
+            original = Path("packages") / pack.pack / "src" / relative
+        expected_source = subprocess.check_output(
+            ["git", "show", f"HEAD:{original.as_posix()}"], cwd=root
+        )
+        assert (extracted / relative).read_bytes() == expected_source
+        declared_templates = tomllib.loads((extracted / "dinkster-pack.toml").read_text())[
+            "pack"
+        ].get("templates", [])
+        assert len(manifest.templates) == len(declared_templates)
+        for template in manifest.templates:
+            assert template.path.is_file()
+
+
+@pytest.mark.parametrize("version", ["0.0.2.dev1+gabc", "../../escape"])
+def test_official_artifacts_require_public_pack_versions(tmp_path: Path, version: str) -> None:
+    with pytest.raises(ValueError, match="pack version"):
+        build_official_packs(Path(__file__).resolve().parents[1], tmp_path, version=version)
+    assert not list(tmp_path.iterdir())
+
+
+def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
+    import asyncio
+    import json
+    from dataclasses import replace
+
+    from dinkster_graph import graph_from_wire
+    from dinkster_registry import Lockfile, build_artifact, unpack_artifact
+    from dinkster_workers import load_manifest
+    from dinkster_workers.catalog import read_catalog
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.compose import CompositionError, PackSpec, ServingComposer
+    from dinkster.packs import pack_info_from_manifest
+
+    saved = tmp_path / "workflow.json"
+    original = (
+        b'{"nodes":{"length":{"nodeType":"StringLength","inputs":{"string":"source packs"}},'
+        b'"region":{"nodeType":"dinkster.region.make",'
+        b'"inputs":{"x":2.0,"y":3.0,"width":4.0,"height":5.0}}}}'
+    )
+    saved.write_bytes(original)
+    payloads = build_official_packs(
+        Path(__file__).resolve().parents[1], tmp_path / "payloads", version="0.1.2"
+    )
+    lock = Lockfile.from_record_json(payloads[-1].read_text())
+    specs = []
+    for entry in lock.packs:
+        source = unpack_artifact(
+            payloads[-1].parent / f"{entry.pack}-0.1.2.zip",
+            tmp_path / "sources" / entry.pack,
+            entry.artifact_digest,
+        )
+        manifest = load_manifest(source / "dinkster-pack.toml")
+        assert read_catalog(manifest) is None
+        report = prepare_catalog(manifest.path, environment={"PYTHONPATH": str(source)})
+        assert report.ok, report
+        assert read_catalog(manifest) is not None
+        assert build_artifact(source, tmp_path / "repacked.zip") == entry.artifact_digest
+        info = replace(
+            pack_info_from_manifest(manifest),
+            version=entry.version,
+            artifact_digest=entry.artifact_digest,
+            source=entry.source,
+            publisher=entry.publisher,
+        )
+        specs.append(
+            PackSpec(
+                manifest=manifest.path,
+                python=sys.executable,
+                env={
+                    "PYTHONPATH": str(source),
+                    "DINKSTER_REMOTE_CATALOG_BASE": "",
+                    "DINKSTER_REMOTE_GATEWAY_BASE": "",
+                },
+                packs={entry.pack: info},
+                trust_reserved=True,
+                require_catalog=True,
+            )
+        )
+
+    async def execute() -> None:
+        composer = ServingComposer()
+        try:
+            ordered = composer.order_pack_entries(specs)
+            composer.validate_catalogs(ordered)
+            for spec in ordered:
+                await composer.add_pack(spec)
+            composition = composer.composition
+            assert composition.node_packs["StringLength"] == "dinkster-nodes-comfy"
+            assert composition.node_packs["dinkster.region.make"] == "dinkster-nodes-image"
+            assert composition.packs["dinkster-nodes-comfy"].version == "0.1.2"
+            assert composition.packs["dinkster-nodes-image"].version == "0.1.2"
+            result = await composition.make_engine(lambda _event: None).run(
+                graph_from_wire(json.loads(saved.read_bytes())), ["length", "region"]
+            )
+            assert result.diagnostics == ()
+            assert result.outputs["length"]["length"].resolve() == 12
+            assert result.outputs["region"]["region"].meta.entries == {
+                "x": 2.0,
+                "y": 3.0,
+                "width": 4.0,
+                "height": 5.0,
+            }
+            assert saved.read_bytes() == original
+            source = tmp_path / "sources" / "dinkster-nodes-comfy"
+            (source / "changed.txt").write_text("source drift")
+            with pytest.raises(CompositionError, match="missing or stale"):
+                composer.validate_catalogs(ordered)
+        finally:
+            await composer.close()
+
+    asyncio.run(execute())

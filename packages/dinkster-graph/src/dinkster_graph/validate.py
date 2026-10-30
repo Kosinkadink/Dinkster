@@ -1269,7 +1269,7 @@ def _validate_graph_node(
             if (suffix := fam.member_suffix(key)) is not None
         )
         count = len(suffixes)
-        if count < fam.min_members:
+        if not fam.optional_after_minimum and count < fam.min_members:
             diags.append(
                 Diagnostic(
                     "error",

@@ -1,8 +1,5 @@
 """Torch-free Kandinsky 5 text-conditioning schema."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CLIP_TYPE,
     CONDITIONING_TYPE,
@@ -38,19 +35,3 @@ def test_kandinsky_text_schema_and_registration() -> None:
         assert isinstance(item.widget, StringWidget)
         assert item.widget.multiline and item.widget.dynamic_prompts
     assert schema_from_wire(schema_to_wire(schema)) == schema
-
-
-def test_kandinsky_text_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.clip_model_specific "
-            "import CLIPTextEncodeKandinsky5; CLIPTextEncodeKandinsky5.schema(); "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

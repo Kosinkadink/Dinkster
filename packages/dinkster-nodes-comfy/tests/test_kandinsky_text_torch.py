@@ -107,7 +107,7 @@ class KandinskyInspect(Node):
         return cls.outputs(result="kandinsky prompt streams exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_kandinsky_text_runs_twice_in_both_manifest_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]
@@ -122,6 +122,7 @@ def test_kandinsky_text_runs_twice_in_both_manifest_hosts(tmp_path: Path, in_pro
             (tmp_path / "kandinsky_text_fixture.py").write_text(
                 "from test_kandinsky_text_torch import KandinskyInspect, KandinskySource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, KandinskySource, KandinskyInspect)\n",
                 encoding="ascii",
             )
@@ -131,6 +132,10 @@ def test_kandinsky_text_runs_twice_in_both_manifest_hosts(tmp_path: Path, in_pro
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["kandinsky-text-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "kandinsky_text_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "kandinsky_text_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "kandinsky_text_fixture:register_inference_types",

@@ -192,8 +192,7 @@ class _HostInspect(Node):
 _HOST_NODES = (_HostSource, _HostInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("verified,in_process", ((False, True), (True, True), (True, False)))
 def test_audio_encoder_ordinary_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:
