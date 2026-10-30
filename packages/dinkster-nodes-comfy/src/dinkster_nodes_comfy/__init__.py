@@ -201,6 +201,7 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_conditioning import Trellis2Conditioning
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .upscale_model_loader import UpscaleModelLoader
@@ -501,6 +502,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveImageAdvanced,
     Pixal3DConditioning,
     Pixal3DMultiViewConditioning,
+    Trellis2Conditioning,
 )
 
 

@@ -588,6 +588,7 @@ namespaces = [
     "SaveImageAdvanced",
     "Pixal3DConditioning",
     "Pixal3DMultiViewConditioning",
+    "Trellis2Conditioning",
 ]
 
 [pack.sandbox]
