@@ -201,7 +201,7 @@ def _main() -> None:
             runpy.run_module(module, run_name="__main__", alter_sys=True)
         finally:
             faulthandler.cancel_dump_traceback_later()
-            faulthandler.disable()
+            faulthandler.enable()
 
 
 if __name__ == "__main__":
