@@ -461,23 +461,7 @@ def build(
         constraints = write_constraints(root, output, wheels, uv)
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
-    reserved = {path.name.casefold() for path in artifacts} | {
-        "release-manifest.json",
-        "sha256sums",
-    }
-    for candidate in payload_artifacts or []:
-        name = candidate.name
-        if (
-            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
-            or name.casefold() in reserved
-            or candidate.suffix.casefold() == ".whl"
-        ):
-            raise ValueError(f"invalid or duplicate release payload name: {name}")
-        target = output / name
-        shutil.copyfile(candidate, target)
-        artifacts.append(target)
-        reserved.add(name.casefold())
-    artifacts.sort(key=lambda path: path.name)
+    stage_payloads(output, artifacts, payload_artifacts or [])
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
@@ -490,24 +474,81 @@ def build(
         "version": version,
         "workerProtocol": int(protocol[1]),
         "workspaceWheels": [wheel.name for wheel in wheels],
-        "artifacts": [
-            {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
-            for path in artifacts
-        ],
     }
+    write_manifest(output, manifest, artifacts)
+    return manifest
+
+
+def stage_payloads(output: Path, artifacts: list[Path], candidates: list[Path]) -> None:
+    reserved = {path.name.casefold() for path in artifacts} | {
+        "release-manifest.json",
+        "sha256sums",
+    }
+    for candidate in candidates:
+        name = candidate.name
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
+            or name.casefold() in reserved
+            or candidate.suffix.casefold() == ".whl"
+        ):
+            raise ValueError(f"invalid or duplicate release payload name: {name}")
+        reserved.add(name.casefold())
+    for candidate in candidates:
+        target = output / candidate.name
+        shutil.copyfile(candidate, target)
+        artifacts.append(target)
+    artifacts.sort(key=lambda path: path.name)
+
+
+def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Path]) -> None:
+    manifest["artifacts"] = [
+        {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
+        for path in artifacts
+    ]
     manifest_path = output / "release-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     checksummed = [*artifacts, manifest_path]
     (output / "SHA256SUMS").write_text(
         "".join(f"{sha256(path)}  {path.name}\n" for path in checksummed), encoding="utf-8"
     )
+
+
+def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
+    """Finalize an existing release only after checking every original asset."""
+    manifest_path = output / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("format") != "dinkster.engine/1":
+        raise ValueError("unsupported engine manifest format")
+    artifacts: list[Path] = []
+    names = {"release-manifest.json", "sha256sums"}
+    for row in manifest["artifacts"]:
+        name = row["name"]
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None or name.casefold() in names:
+            raise ValueError(f"invalid or duplicate release artifact: {name}")
+        names.add(name.casefold())
+        path = output / name
+        if path.stat().st_size != row["size"] or sha256(path) != row["sha256"]:
+            raise ValueError(f"release artifact size or SHA256 mismatch: {name}")
+        artifacts.append(path)
+    checksummed = [*artifacts, manifest_path]
+    expected = {path.name: sha256(path) for path in checksummed}
+    lines = (output / "SHA256SUMS").read_text(encoding="ascii").splitlines()
+    if len(lines) != len(expected) or dict(line.split("  ", 1)[::-1] for line in lines) != expected:
+        raise ValueError("release SHA256SUMS mismatch")
+    if {path.name for path in output.iterdir()} != {*expected, "SHA256SUMS"}:
+        raise ValueError("release contains unlisted artifacts")
+    stage_payloads(output, artifacts, candidates)
+    write_manifest(output, manifest, artifacts)
     return manifest
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="vX.Y.Z; omit for a commit-identified development build")
-    parser.add_argument("--frontend-artifact", type=Path, required=True)
+    parser.add_argument("--frontend-artifact", type=Path)
+    parser.add_argument(
+        "--extend", action="store_true", help="Verify and extend an existing release"
+    )
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--external-wheel", type=Path, action="append", default=[])
@@ -516,15 +557,20 @@ if __name__ == "__main__":
     parser.add_argument("--artifact", type=Path, action="append", default=[])
     parser.add_argument("--download-external-wheels", action="store_true")
     args = parser.parse_args()
-    build(
-        Path(__file__).resolve().parent.parent,
-        args.output.resolve(),
-        args.tag,
-        args.frontend_artifact.resolve(),
-        uv=args.uv,
-        external_wheels=args.external_wheel,
-        base_manifests=args.base_manifest,
-        target_variants=set(args.target_variant),
-        payload_artifacts=args.artifact,
-        download_external=args.download_external_wheels,
-    )
+    if args.extend:
+        extend_release(args.output.resolve(), args.artifact)
+    elif args.frontend_artifact is None:
+        parser.error("--frontend-artifact is required when building a release")
+    else:
+        build(
+            Path(__file__).resolve().parent.parent,
+            args.output.resolve(),
+            args.tag,
+            args.frontend_artifact.resolve(),
+            uv=args.uv,
+            external_wheels=args.external_wheel,
+            base_manifests=args.base_manifest,
+            target_variants=set(args.target_variant),
+            payload_artifacts=args.artifact,
+            download_external=args.download_external_wheels,
+        )

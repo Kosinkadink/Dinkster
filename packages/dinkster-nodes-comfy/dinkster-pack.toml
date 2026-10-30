@@ -538,7 +538,9 @@ namespaces = [
     "MoGePanoramaInference",
     "MoGeInference",
     "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
+    "VAEDecodeTripoSplat",
     "LoadAudio",
     "RecordAudio",
     "PreviewAudio",
@@ -586,6 +588,12 @@ namespaces = [
     "CheckpointSave",
     "ModelSave",
     "SaveImageAdvanced",
+    "Trellis2Conditioning",
+    "RotateMesh",
+    "GetMeshInfo",
+    "VoxelToMeshBasic",
+    "VoxelToMesh",
+    "VAEDecodeHunyuan3D",
 ]
 
 [pack.sandbox]

@@ -1,6 +1,6 @@
 [project]
 name = "dinkster"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster - a clean-slate ComfyUI backend (umbrella dev package + demo CLI)"
 requires-python = ">=3.12"
 dependencies = [

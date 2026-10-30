@@ -96,6 +96,16 @@ runtime when the native or compatibility worker is provisioned.
 
 ## Model folders
 
+An environment-managed generation initializes a selected writable `output`
+mount under its library root on first serve, so the first run can save files.
+With the default library location this is `<project-root>/dinkster-library/output`;
+`DINKSTER_LIBRARY_ROOT` or `--library-root` can select another location.
+The grant persists in `mounts.toml` and is reported by `GET /api/mounts` as
+`outputMount: "output"` with a `readwrite` mount. Existing output selections,
+read-only grants, and deliberately removed defaults are preserved. This does
+not enable runtime mount editing. A deliberately unconfigured library can
+still report `outputMount: null`.
+
 `dinkster setup` creates `<DINKSTER_HOME>/library/mounts.toml`, which defaults
 to `~/.dinkster/library/mounts.toml` on Linux and macOS and
 `%USERPROFILE%\.dinkster\library\mounts.toml` on Windows. Download model files

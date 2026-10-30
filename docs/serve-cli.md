@@ -712,9 +712,9 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
-| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
+| `imports/` | Visible import folder initialized by setup, generation serving, or serving with mount changes enabled |
 | `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
-| `output/` | Default writable output folder initialized by setup or serving with mount changes enabled, unless an output is already configured |
+| `output/` | Default writable output folder initialized by setup, generation serving, or serving with mount changes enabled, unless an output is already configured |
 | `.output-initialized` | Records one-time output initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
@@ -869,7 +869,15 @@ scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
 
 `GET /api/mounts?project=<project-id>` returns the project's ordered folders
-and selected output. `POST /api/mounts` accepts `project` (default `default`)
+and selected output. On first serve, an environment-managed generation
+initializes a writable `output` grant at `<library-root>/output` and reports
+`outputMount: "output"` with mount mode `readwrite`. The default library root
+is `<project-root>/dinkster-library`; an explicit library root is preserved.
+Existing selections, read-only grants and deliberately removed defaults are
+not replaced. A deliberately unconfigured library can report `outputMount: null`.
+Initialization does not enable runtime mount editing.
+
+`POST /api/mounts` accepts `project` (default `default`)
 and `shared` (default `false`): a new grant belongs only to that project unless
 Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
 `{"mounts": ["first", "second"], "outputMount": "second"}` to replace the

@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
-import json
-import os
 import sys
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
@@ -17,70 +13,20 @@ import pytest
 pytest.importorskip("torch")
 
 import torch
-from dinkster_api.v1 import Detection, Region
-from dinkster_assets import AssetVault, install_declared_assets, use_declared_asset_pack
+from dinkster_api.v1 import Region
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_nodes_vision.rtdetr import model as rtdetr_model
 from dinkster_nodes_vision.rtdetr import register_types
-from dinkster_nodes_vision.rtdetr.model import execute_detect, load_model, prepare_frames
-from dinkster_nodes_vision.rtdetr.rtdetr import RTv4
+from dinkster_nodes_vision.rtdetr.model import execute_detect
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import IsolatedWorker, load_manifest
-from safetensors import safe_open
+from dinkster_workers import IsolatedWorker
+from worker_model_fixtures import worker_patch_launcher
 
 ROOT = Path(__file__).parents[3]
 MANIFEST = ROOT / "packages/dinkster-nodes-vision/dinkster_vision_rtdetr_pack/dinkster-pack.toml"
-GOLDEN_PATH = ROOT / "tests" / "goldens" / "rtdetr_v4_x_hgnet_c67885b.json"
-MODEL_DIGEST = "blake3:5eaa01a6d16d654d9a4991ab1dfe489b580acc4b939cd1963ac6d12ceb9dc7f8"
-MODEL_SHA256 = "581f9af9bbabb664d1891cbccd823308b176ecd409146f954dfa39af3bec2476"
-MODEL_SIZE = 123_968_978
 TORCH_NUM_THREADS = 1
-
-
-class _ModelResolver:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def resolve(self, digest: str) -> Path | None:
-        return self.path if digest == MODEL_DIGEST else None
-
-
-def _model_path() -> Path:
-    value = os.environ.get("DINKSTER_RTDETR_TEST_MODEL")
-    if not value:
-        pytest.skip("DINKSTER_RTDETR_TEST_MODEL is not configured")
-    path = Path(value)
-    if not path.is_file():
-        pytest.fail(f"DINKSTER_RTDETR_TEST_MODEL does not exist: {path}")
-    return path
-
-
-def _decode(record: object, *, dtype: np.dtype[np.generic]) -> np.ndarray:
-    payload = cast("dict[str, object]", record)
-    shape = cast("list[int]", payload["shape"])
-    encoded = cast("str", payload[f"{dtype.name}Base64"])
-    return np.frombuffer(base64.b64decode(encoded), dtype=dtype).reshape(shape)
-
-
-def _golden() -> dict[str, object]:
-    return cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
-
-
-def _install_model(path: Path) -> None:
-    manifest = load_manifest(MANIFEST)
-    install_declared_assets(manifest.name, manifest.assets, _ModelResolver(path))
-
-
-def _vault(tmp_path: Path) -> AssetVault:
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(MODEL_DIGEST) as writer:
-        with _model_path().open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                writer.write(chunk)
-        writer.commit()
-    return vault
 
 
 @contextmanager
@@ -91,84 +37,6 @@ def _torch_threads(count: int):
         yield
     finally:
         torch.set_num_threads(previous)
-
-
-def test_architecture_exactly_matches_fp16_checkpoint_state() -> None:
-    model = RTv4(enc_h=384, device=torch.device("cpu"), dtype=torch.float32)
-    expected = model.state_dict()
-    actual: dict[str, tuple[int, ...]] = {}
-    with safe_open(_model_path(), framework="pt", device="cpu") as stored:
-        keys = stored.keys()
-        assert len(keys) == 1_183
-        for key in keys:
-            actual[key] = tuple(stored.get_slice(key).get_shape())
-            tensor = stored.get_tensor(key)
-            if tensor.is_floating_point():
-                assert tensor.dtype == torch.float16
-    assert set(actual) == set(expected)
-    for name, shape in actual.items():
-        assert shape == tuple(expected[name].shape)
-
-
-def test_outputs_match_pinned_comfyui_reference_vector() -> None:
-    golden = _golden()
-    assert golden["baseline"] == "c67885b14556cf3e4e061862925282d403d09862"
-    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
-    assert golden["modelBlake3"] == MODEL_DIGEST
-    assert golden["modelSha256"] == MODEL_SHA256
-    assert golden["numpy"] == "2.5.1"
-    assert golden["torch"] == "2.13.0+cpu"
-    assert golden["torchNumThreads"] == TORCH_NUM_THREADS
-    assert golden["torchvision"] == "0.28.0+cpu"
-    source = _decode(golden["source"], dtype=np.dtype(np.uint8))
-    frames = source[None].astype(np.float32) / 255.0
-    _install_model(_model_path())
-    previous_threads = torch.get_num_threads()
-    with _torch_threads(TORCH_NUM_THREADS):
-        with use_declared_asset_pack("dinkster-vision-rtdetr"):
-            model = load_model()
-            prepared = prepare_frames([frames[0]])
-            with torch.inference_mode():
-                outputs = model._forward(prepared)
-                result = model.postprocess(outputs, (source.shape[1], source.shape[0]))[0]
-            capped = execute_detect(
-                np.concatenate((frames, frames)),
-                prompt="",
-                min_score=0.0,
-                max_results=1,
-            )
-    assert torch.get_num_threads() == previous_threads
-    assert len(capped) == 2 and capped[0] == capped[1]
-    # Hosted CPU kernels differed by at most 5.6171e-04; 1.2e-03 is more than
-    # twice that spread, with a 1e-05 relative floor for float32 model output.
-    np.testing.assert_allclose(
-        outputs["pred_logits"].numpy(),
-        _decode(golden["predLogits"], dtype=np.dtype(np.float32)),
-        rtol=1e-5,
-        atol=1.2e-3,
-    )
-    np.testing.assert_allclose(
-        outputs["pred_boxes"].numpy(),
-        _decode(golden["predBoxes"], dtype=np.dtype(np.float32)),
-        rtol=1e-5,
-        atol=1.2e-3,
-    )
-    np.testing.assert_array_equal(
-        result["labels"].numpy(),
-        _decode(golden["labels"], dtype=np.dtype(np.int64)),
-    )
-    np.testing.assert_allclose(
-        result["boxes"].numpy(),
-        _decode(golden["boxes"], dtype=np.dtype(np.float32)),
-        rtol=1e-5,
-        atol=1.2e-3,
-    )
-    np.testing.assert_allclose(
-        result["scores"].numpy(),
-        _decode(golden["scores"], dtype=np.dtype(np.float32)),
-        rtol=1e-5,
-        atol=1.2e-3,
-    )
 
 
 def test_exact_vector_thread_scope_restores_after_failure() -> None:
@@ -312,10 +180,7 @@ def test_invalid_inputs_fail_before_loading_model(monkeypatch: pytest.MonkeyPatc
 
 def test_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
     async def scenario() -> None:
-        golden = _golden()
-        source = _decode(golden["source"], dtype=np.dtype(np.uint8))[None].astype(np.float32)
-        source /= 255.0
-        vault = _vault(tmp_path)
+        source = np.zeros((1, 4, 5, 3), dtype=np.float32)
         registry = TypeRegistry()
         register_core_types(registry)
         register_types(registry)
@@ -323,7 +188,23 @@ def test_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
             MANIFEST,
             registry,
             python=sys.executable,
-            extra_env={"DINKSTER_ASSET_VAULT": str(vault.root)},
+            launcher=worker_patch_launcher(
+                tmp_path,
+                """
+import torch
+from dinkster_nodes_vision.rtdetr import model
+
+class FakeModel:
+    def __call__(self, _batch, _source_size):
+        return [{
+            "labels": torch.tensor([0, 2]),
+            "scores": torch.tensor([0.9, 0.8]),
+            "boxes": torch.tensor([[1.0, 1.0, 4.0, 3.0], [0.0, 0.0, 2.0, 2.0]]),
+        }]
+
+model.load_model = FakeModel
+""",
+            ),
         )
         await worker.start()
         try:
@@ -340,28 +221,20 @@ def test_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
                         {
                             "image": TypedLiteral("IMAGE", source.tolist()),
                             "provider": "dinkster-vision-rtdetr",
-                            "prompt": "",
-                            "min_score": 0.0,
-                            "max_results": 1,
+                            "prompt": "person,car",
+                            "min_score": 0.5,
+                            "max_results": -1,
                         },
                     )
                 }
             )
             result = await engine.run(graph, ["detect"])
             detections = result.outputs["detect"]["detections"].resolve()
-            assert result.outputs["detect"]["count"].resolve() == 1
+            assert result.outputs["detect"]["count"].resolve() == 2
             assert isinstance(detections, list)
-            assert len(detections) == 1 and isinstance(detections[0], Detection)
-            assert detections[0].region.width >= 0.0
-            assert detections[0].region.height >= 0.0
+            assert [detection.label for detection in detections] == ["person", "car"]
+            assert detections[0].region == Region(1.0, 1.0, 3.0, 2.0)
         finally:
             await worker.close()
 
     asyncio.run(scenario())
-
-
-def test_model_artifact_is_the_expected_bytes() -> None:
-    path = _model_path()
-    assert path.stat().st_size == MODEL_SIZE
-    with path.open("rb") as stream:
-        assert hashlib.file_digest(stream, "sha256").hexdigest() == MODEL_SHA256

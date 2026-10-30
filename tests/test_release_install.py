@@ -22,6 +22,7 @@ from scripts.build_release import (
     build_source_archive,
     development_version,
     download_external_wheels,
+    extend_release,
     read_base_manifest,
     release_version,
     stage_external_wheels,
@@ -113,6 +114,8 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert set(workflow["jobs"]) == {
         "validation",
         "build",
+        "tools",
+        "finalize",
         "install",
         "release",
         "publish",
@@ -123,7 +126,20 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "uses": "./.github/workflows/ci.yml",
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
-    assert workflow["jobs"]["install"]["needs"] == "build"
+    assert workflow["jobs"]["tools"]["needs"] == "build"
+    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools"]
+    assert workflow["jobs"]["install"]["needs"] == "finalize"
+    assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
+        {"os": "linux", "runner": "ubuntu-latest"},
+        {"os": "windows", "runner": "windows-latest"},
+    ]
+    for job in ("install", "release", "publish", "publish-api", "publish-supervisor"):
+        downloads = [
+            step["with"]["name"]
+            for step in workflow["jobs"][job]["steps"]
+            if step.get("uses") == "actions/download-artifact@v4"
+        ]
+        assert downloads == ["engine-release"]
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
@@ -474,7 +490,9 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 
 def test_repository_versions_match_first_release_tag() -> None:
-    assert release_version(ROOT, "v0.0.1") == "0.0.1"
+    assert release_version(ROOT, "v0.0.2") == "0.0.2"
+    with pytest.raises(ValueError, match="does not match workspace metadata"):
+        release_version(ROOT, "v0.0.1")
     projects = workspace_projects(ROOT)
     assert "dinkster-nodes-std" not in projects
     dev = tomllib.loads(projects["dinkster-nodes-dev"].read_text(encoding="utf-8"))
@@ -490,7 +508,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     tmp_path: Path,
 ) -> None:
     version = development_version(ROOT)
-    assert version.startswith("0.0.2.dev")
+    assert version.startswith("0.0.3.dev")
     assert version.endswith(
         "+g" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     )
@@ -1061,6 +1079,84 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
                 frontend,
                 payload_artifacts=[payload, candidate],
             )
+
+
+@pytest.mark.parametrize("corruption", [None, "payload", "sums", "extra", "duplicate"])
+def test_native_payload_finalization_preserves_and_verifies_existing_release(
+    tmp_path: Path, corruption: str | None
+) -> None:
+    output = tmp_path / "release"
+    output.mkdir()
+    wheel = output / "dinkster_supervisor-1.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"release-built supervisor wheel")
+    constraints = output / "constraints.txt"
+    constraints.write_bytes(b"pinned constraints\n")
+    original = [constraints, wheel]
+    manifest = {
+        "format": "dinkster.engine/1",
+        "commit": "a" * 40,
+        "version": "1.2.3",
+        "tag": "v1.2.3",
+        "workerProtocol": 1,
+        "workspaceWheels": [wheel.name],
+        "artifacts": [
+            {
+                "name": path.name,
+                "size": len(path.read_bytes()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            for path in original
+        ],
+    }
+    metadata = output / "release-manifest.json"
+    metadata.write_text(json.dumps(manifest) + "\n")
+    sums = output / "SHA256SUMS"
+    sums.write_text(
+        "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+            for path in [*original, metadata]
+        )
+    )
+    candidate = tmp_path / "dinkster-tools-windows-x86_64.zip"
+    candidate.write_bytes(b"native archive")
+    if corruption == "payload":
+        wheel.write_bytes(b"wrong supervisor wheel")
+    elif corruption == "sums":
+        sums.write_text(sums.read_text().replace("  constraints.txt", "  wrong.txt"))
+    elif corruption == "extra":
+        (output / "unlisted.zip").write_bytes(b"unadmitted")
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    if corruption:
+        match = "payload name" if corruption == "duplicate" else "mismatch|unlisted"
+        with pytest.raises(ValueError, match=match):
+            extend_release(
+                output, [candidate, candidate] if corruption == "duplicate" else [candidate]
+            )
+        assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+        return
+    result = extend_release(output, [candidate])
+    assert {key: value for key, value in result.items() if key != "artifacts"} == {
+        key: value for key, value in manifest.items() if key != "artifacts"
+    }
+    assert result["artifacts"] == sorted(
+        [
+            *manifest["artifacts"],
+            {
+                "name": candidate.name,
+                "size": 14,
+                "sha256": hashlib.sha256(b"native archive").hexdigest(),
+            },
+        ],
+        key=lambda row: row["name"],
+    )
+    for path in original:
+        assert path.read_bytes() == before[path.name]
+    assert (output / candidate.name).read_bytes() == b"native archive"
+    final_sums = dict(line.split("  ", 1)[::-1] for line in sums.read_text().splitlines())
+    assert set(final_sums) == {path.name for path in [*original, metadata, candidate]}
+    for name, digest in final_sums.items():
+        assert hashlib.sha256((output / name).read_bytes()).hexdigest() == digest
+    assert json.loads(metadata.read_bytes()) == result
 
 
 def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(

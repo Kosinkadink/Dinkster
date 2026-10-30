@@ -1,5 +1,15 @@
 ## Image operations
 
+- Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
+  angles or a normalized quaternion while retaining material attributes.
+  `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Portable mesh values retain all fifteen geometry and material fields; voxel
+  values retain dense or sparse data, optional colors and resolution.
+- Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
+  extracts basic or surface-net meshes, retaining variable per-item lengths
+  in padded batches. The deprecated `VoxelToMeshBasic` remains available.
+- Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
+  resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
   into the shared `UPSCALE_MODEL` value.
 - Native `FrameInterpolationModelLoader` loads granted FILM and five-block
@@ -18,6 +28,10 @@
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatSamplingPreview` patches a cloned model to report decoded
+  gaussian splat previews during sampling without replacing the sampler callback.
+- Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
+  with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE

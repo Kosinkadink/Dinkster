@@ -5,6 +5,7 @@ from dinkster_api.v1 import (
     AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
+    Node,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -67,7 +68,7 @@ from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
-from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES, VAEDecodeHunyuan3D
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -128,6 +129,7 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mesh import MESH_NODES
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -199,8 +201,14 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_conditioning import Trellis2Conditioning
 from .trellis_upsample import Trellis2UpsampleStage
-from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
+)
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
@@ -219,6 +227,7 @@ from .void_conditioning import (
 )
 from .void_sampler import VOIDSampler
 from .void_warped_noise import VOIDWarpedNoise
+from .voxel_mesh import VOXEL_MESH_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -240,7 +249,7 @@ from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
-COMFY_NODES = (
+COMFY_NODES: tuple[type[Node], ...] = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     SaveText,
@@ -452,7 +461,9 @@ COMFY_NODES = (
     MoGePanoramaInference,
     MoGeInference,
     TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
     TripoSplatConditioning,
+    VAEDecodeTripoSplat,
     LoadAudio,
     RecordAudio,
     PreviewAudio,
@@ -497,6 +508,10 @@ COMFY_NODES = (
     CheckpointSave,
     ModelSave,
     SaveImageAdvanced,
+    Trellis2Conditioning,
+    *MESH_NODES,
+    *VOXEL_MESH_NODES,
+    VAEDecodeHunyuan3D,
 )
 
 
