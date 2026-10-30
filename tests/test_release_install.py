@@ -685,9 +685,12 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     }
     identity = {key: value for key, value in manifest.items() if key != "id"}
     identity["archive"] = {"format": "tar+zstd"}
-    manifest["id"] = "sha256:" + hashlib.sha256(
-        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
-    ).hexdigest()
+    manifest["id"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
     base_manifest = tmp_path / "base-manifest.json"
     base_manifest.write_text(json.dumps(manifest))
     linux_manifest = {
@@ -697,9 +700,12 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     }
     identity = {key: value for key, value in linux_manifest.items() if key != "id"}
     identity["archive"] = {"format": "tar+zstd"}
-    linux_manifest["id"] = "sha256:" + hashlib.sha256(
-        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
-    ).hexdigest()
+    linux_manifest["id"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
     linux_base_manifest = tmp_path / "linux-base-manifest.json"
     linux_base_manifest.write_text(json.dumps(linux_manifest))
     base_manifests = [base_manifest, linux_base_manifest]

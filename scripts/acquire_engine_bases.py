@@ -41,10 +41,7 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
         raise ValueError("base Python is incompatible with the project")
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
-    if (
-        protocol is None
-        or manifest["workerProtocol"] != int(protocol[1])
-    ):
+    if protocol is None or manifest["workerProtocol"] != int(protocol[1]):
         raise ValueError("base worker protocol is incompatible with engine")
     interpreter = manifest["interpreter"]
     triple = "pc-windows-msvc" if platform["os"] == "windows" else "unknown-linux-gnu"
