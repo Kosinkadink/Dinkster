@@ -134,7 +134,7 @@ bounded regression contract, not a claim that arbitrarily large packs or catalog
 take constant time.
 
 ```sh
-uv run python tools/benchmark_schema_catalog.py --repeats 3
+uv run --no-sync python tools/benchmark_schema_catalog.py --repeats 3
 ```
 
 Measured on 2026-09-06 with Python 3.12.3, Linux 7.0.0-29, local storage,

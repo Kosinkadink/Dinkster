@@ -95,6 +95,9 @@ Build the CPU runtime with
 `uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
 or `--variant win-cpu` on Windows. The same Python implementation serves the
 launcher and CPU action; its receipt is `.run/environment-base.json`.
+Contributor setup acceptance runs the root and pack checks with the bundle's
+Python version. The CPython 3.12 rows above describe the separate, unchanged
+full-validation root jobs; they do not override the selected bundle interpreter.
 Keep isolated pack-install tests: workspace editables are not evidence that a
 published pack declares its complete dependencies. Pin CPU dispatch with
 `ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.

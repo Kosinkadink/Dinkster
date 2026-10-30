@@ -72,7 +72,7 @@ open the printed URL from a browser on that machine.
 To put the supervisor in front of the engine, run:
 
 ```sh
-uv run dinkster-supervisor -- uv run --no-sync dinkster-serve
+uv run --no-sync dinkster-supervisor -- uv run --no-sync dinkster-serve
 ```
 
 An embedded or headless core installation may omit both optional packages.
@@ -80,7 +80,7 @@ From a source checkout, remove them from the environment and disable automatic
 sync while launching so the default meta-package does not restore them:
 
 ```sh
-uv sync --no-install-package dinkster-collab --no-install-package dinkster-supervisor
+uv pip uninstall --python .venv dinkster-collab dinkster-supervisor
 uv run --no-sync dinkster-serve
 ```
 

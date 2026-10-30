@@ -48,7 +48,7 @@ the [pack authoring guide](docs/pack-authoring.md) and
 - Writing a pack: [docs/pack-authoring.md](docs/pack-authoring.md), starting
   from the template in [templates/pack/](templates/pack/) - a complete
   doctor-clean pack (manifest, nodes, custom type, icon, tests, CI) kept
-  healthy by this repo's own suite. `uv run dinkster-doctor <pack-dir>` is the
+  healthy by this repo's own suite. `uv run --no-sync dinkster-doctor <pack-dir>` is the
   pack linter and publish gate.
 - Companion frontend: [Dinkster-Frontend](https://github.com/Kosinkadink/Dinkster-Frontend)
 
@@ -98,12 +98,12 @@ installation and runtime use do not require that checkout.
   source return value already equals the asserted literal. Otherwise `result`
   explicitly maps each decimal source result slot to an asserted output name;
   the tool never guesses output names or projections.
-- `uv run dinkster demo` - demo: toy graph through the real engine; shows caching,
+- `uv run --no-sync dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
-- `uv run dinkster-pack prepare-catalogs --defaults` - prepare installed
+- `uv run --no-sync dinkster-pack prepare-catalogs --defaults` - prepare installed
   default-pack dependencies and persist their schemas before serving; run it
   after installation and rerun it after checkout or dependency changes
-- `uv run dinkster-serve` - native protocol server (binds a zero-node diagnostic
+- `uv run --no-sync dinkster-serve` - native protocol server (binds a zero-node diagnostic
   host, then announces installed catalogs with exact provenance without
   starting pack workers; workers activate on demand. Each repeatable
   `--pack path/to/dinkster-pack.toml` runs isolated
@@ -169,12 +169,12 @@ installation and runtime use do not require that checkout.
 
   Cursor pages omit `folders`. Invalid/traversing paths and malformed or
   filter-mismatched cursors return 400; unknown mounts return 404.
-- `uv run dinkster-isolated` - isolation demo: the image pack runs out-of-process
+- `uv run --no-sync dinkster-isolated` - isolation demo: the image pack runs out-of-process
   behind IsolatedWorker; the parent never imports it (schemas arrive over
   the wire), image payloads cross via shared memory, and per-edge boundary
-  diagnostics print live (`DINKSTER_SLOW_TESTS=1 uv run pytest` also covers
+  diagnostics print live (`DINKSTER_SLOW_TESTS=1 uv run --no-sync pytest` also covers
   provisioning a real per-pack venv with uv)
-- `uv run dinkster-port <legacy-pack> --name my-pack` - generate a doctor-clean
+- `uv run --no-sync dinkster-port <legacy-pack> --name my-pack` - generate a doctor-clean
   native pack skeleton from a ComfyUI pack (v1 `NODE_CLASS_MAPPINGS`, V3
   `comfy_entrypoint`, or a mixed pack shipping both): real translated schemas
   (source names kept as aliases), loud `execute()` stubs carrying the source
