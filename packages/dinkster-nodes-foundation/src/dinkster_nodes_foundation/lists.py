@@ -108,15 +108,13 @@ class ListElement(Node):
         )
 
     @classmethod
-    def execute(
-        cls, *, list: Sequence[object], index: int, input_values: Mapping[str, Value]
-    ) -> Mapping[str, object]:
+    def execute(cls, *, index: int, input_values: Mapping[str, Value]) -> Mapping[str, object]:
         children = list_children(input_values["list"])
         assert children is not None
         try:
             item = children[index]
         except IndexError:
-            raise ValueError(f"index {index} out of range for a list of {len(list)}") from None
+            raise ValueError(f"index {index} out of range for a list of {len(children)}") from None
         return cls.outputs(item=item)
 
 

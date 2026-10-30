@@ -547,7 +547,14 @@ class InProcessWorker:
         coercion_diagnostics: list[dict[str, object]] = []
         media_inputs = dict(invocation.inputs)
         try:
-            kwargs = self._build_kwargs(base_schema, invocation, coercion_diagnostics, media_inputs)
+            decoded_inputs: frozenset[str] | None = None
+            if base_schema.input_values:
+                parameters = inspect.signature(cls.execute).parameters
+                if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+                    decoded_inputs = frozenset(parameters)
+            kwargs = self._build_kwargs(
+                base_schema, invocation, coercion_diagnostics, media_inputs, decoded_inputs
+            )
         except (UnresolvablePayload, InputCoercionError) as exc:
             # A linked value produced elsewhere whose type has no codec in
             # this process (a wildcard input fed a resident/tensor type,
@@ -939,6 +946,7 @@ class InProcessWorker:
         invocation: Invocation,
         diagnostics: list[dict[str, object]] | None = None,
         media_inputs: dict[str, Value] | None = None,
+        decoded_inputs: frozenset[str] | None = None,
     ) -> dict[str, object]:
         """Plain values for execute(), boundary-obliviously (hazard H9).
 
@@ -957,10 +965,15 @@ class InProcessWorker:
         def unwrap(input_id: str, value: Value) -> object:
             return self._unwrap(invocation, input_id, value, diagnostics, media_inputs)
 
-        kwargs: dict[str, object] = {fam.id: {} for fam in base_schema.input_families}
+        def wants(name: str) -> bool:
+            return decoded_inputs is None or name in decoded_inputs
+
+        kwargs: dict[str, object] = {
+            fam.id: {} for fam in base_schema.input_families if wants(fam.id)
+        }
         slot_choice = dict(invocation.effective_schema.slot_choices)
         for choice_id, choice in slot_choice.items():
-            if _is_combo_choice(
+            if wants(choice_id) and _is_combo_choice(
                 (*base_schema.input_families, *base_schema.combos, *base_schema.slots),
                 choice_id.split("."),
             ):
@@ -972,12 +985,14 @@ class InProcessWorker:
                 kwargs[choice_id] = choice
         slot_socket: dict[str, object] = {}
         slot_options: dict[str, dict[str, object]] = {
-            slot.id: {} for slot in base_schema.slots if slot.id in slot_choice
+            slot.id: {} for slot in base_schema.slots if slot.id in slot_choice and wants(slot.id)
         }
         for input_id, value in invocation.inputs.items():
             owner = base_schema.slot_of_input(input_id)
             if owner is not None:
                 slot, local = owner
+                if not wants(input_id if slot.variants is None else slot.id):
+                    continue
                 if slot.variants is None:
                     kwargs[input_id] = unwrap(input_id, value)
                     continue
@@ -991,6 +1006,8 @@ class InProcessWorker:
                     slot_options[slot.id][local] = unwrap(input_id, value)
                 continue
             fam = base_schema.family_of_input(input_id)
+            if not wants(input_id if fam is None else fam.id):
+                continue
             if fam is None:
                 kwargs[input_id] = unwrap(input_id, value)
             else:
@@ -1009,6 +1026,8 @@ class InProcessWorker:
             spec = invocation.effective_schema.input(input_id)
             marker = (None,) if spec is not None and spec.type.kind == "list" else None
             family = base_schema.family_of_input(input_id)
+            if not wants(input_id if family is None else family.id):
+                continue
             if family is None:
                 kwargs[input_id] = marker
             else:
@@ -1018,6 +1037,8 @@ class InProcessWorker:
                 assert isinstance(members, dict)
                 members[suffix] = marker
         for family in base_schema.input_families:
+            if family.id not in kwargs:
+                continue
             members = kwargs[family.id]
             assert isinstance(members, dict)
             ordered_members: dict[str, object] = {}
