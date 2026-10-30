@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import signal
@@ -105,13 +106,29 @@ def make_generation(root: Path, number: int = 1) -> None:
         (root / "current").write_text(f"{number}\n")
 
 
-@pytest.mark.parametrize("redirecting_launcher", [False, True])
+@pytest.mark.parametrize(
+    ("redirecting_launcher", "health_body_timeout"),
+    [(False, False), (True, False), (False, True)],
+)
 def test_start_status_idempotence_and_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, redirecting_launcher: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    redirecting_launcher: bool,
+    health_body_timeout: bool,
 ) -> None:
     monkeypatch.setattr(
         "dinkster_supervisor.environment_runtime.secrets.token_urlsafe", lambda _: "-token"
     )
+    if health_body_timeout:
+        original_read = http.client.HTTPResponse.read
+
+        def read(response, *args, **kwargs):
+            if response.geturl().endswith("/api/health"):
+                monkeypatch.setattr(http.client.HTTPResponse, "read", original_read)
+                raise TimeoutError("health response body stalled")
+            return original_read(response, *args, **kwargs)
+
+        monkeypatch.setattr(http.client.HTTPResponse, "read", read)
     if redirecting_launcher:
         launcher = tmp_path / "launcher.py"
         launcher.write_text(
@@ -127,8 +144,8 @@ def test_start_status_idempotence_and_stop(
         monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     make_generation(tmp_path)
     port = free_port()
-    row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
     try:
+        row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
         assert row == {
             "name": "main",
             "generation": 1,
