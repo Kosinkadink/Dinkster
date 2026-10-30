@@ -82,18 +82,22 @@ def test_nested_child_state_and_stack_at_timeout(
     )
     arguments = ["--root", "", "prepare-catalogs"] if module_name == "dinkster.manager" else []
     (tmp_path / "diagnostic_parent.py").write_text(
-        "import subprocess, sys, threading\n"
-        f"result = subprocess.run([sys.executable, '-B', '-m', {module_name!r}, "
+        "import subprocess, threading\n"
+        f"result = subprocess.run([{sys.executable!r}, '-B', '-m', {module_name!r}, "
         f"*{arguments!r}, {str(tmp_path)!r}], capture_output=True, text=True)\n"
         "assert (result.returncode, result.stdout, result.stderr) == "
         "(7, 'nested stdout\\n', 'nested stderr\\n'), result\n"
         "threading.Event().wait(90)\n"
     )
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    # Killing a Windows venv launcher can leave its interpreter holding the output pipes.
+    parent_python = (
+        str(vars(sys)["_base_executable"]) if sys.platform == "win32" else sys.executable
+    )
     result = None
     try:
         with pytest.raises(subprocess.TimeoutExpired) as raised:
-            result = run([sys.executable, "-m", "diagnostic_parent"])
+            result = run([parent_python, "-m", "diagnostic_parent"])
             pytest.fail(f"Diagnostic parent exited before timeout: {result!r}")
         assert raised.value.timeout == 30
         notes = "\n".join(raised.value.__notes__)
