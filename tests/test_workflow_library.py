@@ -1427,7 +1427,13 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
     asyncio.run(scenario())
 
 
-def test_asset_catalog_persists_aliases_and_pages_identities(tmp_path: Path) -> None:
+def test_asset_catalog_persists_aliases_and_pages_identities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_server import library as library_module
+
     async def scenario() -> None:
         root = tmp_path / "imports"
         root.mkdir()
@@ -1443,12 +1449,18 @@ def test_asset_catalog_persists_aliases_and_pages_identities(tmp_path: Path) -> 
         bodies = (b"alpha", b"beta", b"alpha", b"gamma")
         names = ("first.bin", "second.bin", "alias.bin", "last.bin")
         try:
-            for name, body in zip(names, bodies, strict=True):
-                response = await client.post(
-                    "/api/assets",
-                    params={"scope": "local", "name": name},
-                    data=body,
-                )
+            for observed_at, name, body in zip(
+                (100.0, 110.0, 120.0, 130.0), names, bodies, strict=True
+            ):
+                with monkeypatch.context() as patch:
+                    patch.setattr(
+                        library_module, "time", SimpleNamespace(time=lambda now=observed_at: now)
+                    )
+                    response = await client.post(
+                        "/api/assets",
+                        params={"scope": "local", "name": name},
+                        data=body,
+                    )
                 assert response.status == 201, await response.text()
             response = await client.get("/api/assets/catalog?scope=local")
             assert response.status == 200, await response.text()
