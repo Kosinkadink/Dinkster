@@ -30,10 +30,16 @@ def _open_windows_file(path: Path) -> int:
     if not name.startswith("\\\\?\\"):
         name = "\\\\?\\UNC\\" + name[2:] if name.startswith("\\\\") else "\\\\?\\" + name
     # A USN can coalesce repeated changes until the writer closes. Refuse
-    # existing writers and exclude new writers for this handle's lifetime.
-    handle = kernel.CreateFileW(name, 0x80000000, 5, None, 3, 0x02000000, None)
+    # existing writers and exclude writes and deletion for this handle's lifetime.
+    handle = kernel.CreateFileW(name, 0x80000000, 1, None, 3, 0x02000000, None)
     if handle == wintypes.HANDLE(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+        error = ctypes.get_last_error()
+        if error == 32:
+            raise AssetError(
+                f"local asset {str(path)!r}: file is open for writing by another process "
+                "or held for deletion; close that handle before selecting or reading again"
+            )
+        raise ctypes.WinError(error)
     return handle
 
 
@@ -128,11 +134,11 @@ def mount_revision_capability(root: Path) -> dict[str, object]:
             raise ctypes.WinError(ctypes.get_last_error())
         filesystem = name.value
         windows_file_revision(root)
-    except OSError as error:
+    except (OSError, AssetError) as error:
         return {
             "supported": False,
             "filesystem": filesystem,
-            "reason": error.strerror or str(error),
+            "reason": (error.strerror if isinstance(error, OSError) else None) or str(error),
         }
     return {"supported": True, "method": "ntfs-usn", "filesystem": filesystem}
 

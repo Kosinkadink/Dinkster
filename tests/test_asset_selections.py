@@ -212,20 +212,55 @@ def test_local_selection_refuses_active_writers_and_excludes_writes_until_close(
             writer.write(data)
             writer.flush()
             os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-            with pytest.raises(AssetError):
+            with pytest.raises(AssetError, match="file is open for writing") as binding_error:
                 resolve_asset_selection("model/vae", path.name, env=env)
-            with pytest.raises(AssetError):
+            assert path.name in str(binding_error.value)
+            assert "close" in str(binding_error.value)
+            with pytest.raises(AssetError, match="file is open for writing") as read_error:
                 selected.read_bytes()
+            assert path.name in str(read_error.value)
     current = resolve_asset_selection("model/vae", path.name, env=env)
     assert isinstance(current, LocalAssetRef)
     with current.open() as reader:
         with pytest.raises(OSError):
             with path.open("r+b"):
                 pass
+        with pytest.raises(OSError):
+            path.rename(path.with_suffix(".moved"))
+        with pytest.raises(OSError):
+            path.unlink()
         assert reader.read() == b"third"
     path.write_bytes(b"after")
     with pytest.raises(AssetError):
         current.read_bytes()
+    moved = path.rename(path.with_suffix(".moved"))
+    moved.unlink()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native revision discovery")
+def test_root_sharing_conflict_preserves_snapshot_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountDef, MountSnapshotResolver, MountTable, revision
+
+    path = seed(tmp_path / "vae", "real.safetensors", b"weights")
+    env = grants(tmp_path, ("model/vae", path.parent))
+
+    def sharing_conflict(_root: Path | int) -> int:
+        raise AssetError("root is held for deletion; close that handle")
+
+    monkeypatch.setattr(revision, "windows_file_revision", sharing_conflict)
+    table = MountTable()
+    table.add(MountDef(id="vae", path=path.parent), kind="model/vae")
+    capability = table.descriptors()[0]["localBindingCapability"]
+    assert isinstance(capability, dict)
+    assert capability["supported"] is False
+    assert "held for deletion" in capability["reason"]
+    resolver = MountSnapshotResolver(env["DINKSTER_MOUNTS_SNAPSHOT"])
+    for _ in range(2):
+        assert resolver.roots_for_kind("model/vae") == (path.parent,)
+        with pytest.raises(AssetError, match="background index"):
+            resolver.bind_relative_file("model/vae", path.parent, path.name)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows native file revisions")
