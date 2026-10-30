@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
+from uuid import uuid4
 
 _WRAPPER = f"import runpy; runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')"
 
@@ -54,13 +55,15 @@ def _nested_diagnostics(directory: Path) -> str:
     rows = []
     for path in sorted(directory.glob("nested-*.json")):
         record = json.loads(path.read_text())
+        pid_path = path.with_suffix(".pid")
+        pid = int(pid_path.read_text()) if pid_path.exists() else record["pid"]
         exit_path = path.with_suffix(".exit")
         code = int(exit_path.read_text()) if exit_path.exists() else None
-        state, code = ("exited", code) if code is not None else _process_state(record["pid"])
+        state, code = ("exited", code) if code is not None else _process_state(pid)
         stack = path.with_suffix(".stack")
         saved = stack.read_text() if stack.exists() else ""
         rows.append(
-            f"Nested CLI child pid={record['pid']}, module={record['module']}, "
+            f"Nested CLI child pid={pid}, module={record['module']}, "
             f"state before cleanup={state}, returncode before cleanup={code}\n"
             f"Nested child stack before cleanup:\n"
             f"{saved or '(no nested child stack recorded)'}"
@@ -146,19 +149,19 @@ def _trace_nested_commands(directory: Path) -> None:
                     module == "dinkster.manager"
                     and args[index + 2 : index + 3] == ["prepare-catalogs"]
                 ):
+                    self.trace_path = directory / f"nested-{uuid4().hex}.json"
                     args = [
                         *args[:index],
                         "-c",
                         _WRAPPER,
                         "nested",
-                        str(directory),
+                        str(self.trace_path),
                         *args[index + 1 :],
                     ]
                 else:
                     module = None
             super().__init__(args, *positional, **keywords)
-            if module is not None:
-                self.trace_path = directory / f"nested-{self.pid}.json"
+            if self.trace_path is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
                 temporary.write_text(json.dumps({"pid": self.pid, "module": module}))
                 temporary.replace(self.trace_path)
@@ -185,12 +188,15 @@ def _trace_nested_commands(directory: Path) -> None:
 
 def _main() -> None:
     mode, location, module, *arguments = sys.argv[1:]
-    directory = Path(location)
-    trace_path = directory / (
-        "child.stack" if mode == "supervisor" else f"nested-{os.getpid()}.stack"
-    )
     if mode == "supervisor":
-        _trace_nested_commands(directory)
+        trace_path = Path(location) / "child.stack"
+        _trace_nested_commands(Path(location))
+    else:
+        trace_path = Path(location).with_suffix(".stack")
+        # A Windows virtualenv launcher has a different PID from its interpreter.
+        temporary = Path(location).with_suffix(".pid.tmp")
+        temporary.write_text(str(os.getpid()))
+        temporary.replace(Path(location).with_suffix(".pid"))
     sys.argv = [module, *arguments]
     with _open_trace(trace_path) as trace:
         faulthandler.enable(file=trace)

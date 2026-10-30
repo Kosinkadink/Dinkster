@@ -60,6 +60,7 @@ def test_nested_child_state_and_stack_at_timeout(
         "assert faulthandler.is_enabled()\n"
         "assert os.environ['PYTHONFAULTHANDLER'] == '1'\n"
         "root = Path(sys.argv[-1])\n"
+        "(root / 'runtime-pid').write_text(str(os.getpid()))\n"
         "def blocked_nested_child():\n"
         "    deadline = time.monotonic() + 90\n"
         "    while not (root / 'release').exists() and time.monotonic() < deadline:\n"
@@ -87,6 +88,7 @@ def test_nested_child_state_and_stack_at_timeout(
         assert raised.value.timeout == 30
         notes = "\n".join(raised.value.__notes__)
         assert f"module={module_name}" in notes
+        assert f"Nested CLI child pid={(tmp_path / 'runtime-pid').read_text()}," in notes
         assert (
             "state before cleanup=alive" in notes
             if blocked
