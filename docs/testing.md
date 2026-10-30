@@ -75,6 +75,42 @@ required locally before landing; this subset is fast PR feedback, not a
 replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
+### Counted pack runtime matrix
+
+Before freezing a distribution, dependency or pack-loading change, the counted
+suite includes the following runtime environments, not only the root and
+workspace-member tests. The selections and setup commands in
+`.github/workflows/full-validation.yml` and
+`.github/actions/torch-cpu-suite/action.yml` are authoritative.
+
+| Lane | Required execution |
+| --- | --- |
+| Linux CPython 3.12 root | All four `test` file shards, with the workflow's branch-coverage sources and exclusions |
+| Windows CPython 3.12 root | All four `test` file shards in a native Windows checkout |
+| CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in `.venv-torch` |
+| CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
+| Coverage gate | All four Linux coverage files combined; `coverage report --fail-under=80` |
+
+Build CPU Torch environments with `scripts/setup_envs.sh` or
+`scripts/setup_envs.ps1`, including the action's subsequent root/comfy install.
+Do not substitute the all-workspace environment: editable workspace members can
+hide missing dependencies in the selected runtime. Pin CPU dispatch with
+`ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.
+Prepare the pinned validation inputs before running evidence-tooling tests.
+
+On X570, launch each complete suite through the wrapper workspace's
+`run_counted_suite.sh` with `OMP_NUM_THREADS=4` and `MKL_NUM_THREADS=4`.
+Native Windows evidence runs on a Windows machine; a Linux collection or
+simulated platform is not a replacement. Preserve the existing assertions,
+platform exclusions and coverage floor. Model/GPU comparisons are separate
+from this non-model runtime matrix.
+
+The freeze record names every lane, the exact head, commands, results and logs,
+including each shard and the combined coverage percentage. Missing inputs or
+an unexecuted lane are reported as incomplete, never as a pass. Hosted fast
+feedback alone does not certify this matrix. Do not dispatch or rerun hosted
+full validation to obtain the record.
+
 The required `CI_RUNNERS` repository variable controls every job. Its
 `linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
 images. CPU Torch jobs pin AVX2 dispatch in their environment rather than
@@ -101,8 +137,11 @@ next completed run at a descendant head. Find candidate runs in the Actions
 dispatched and release-called runs use a separate non-cancelling durable group,
 so push traffic neither queues nor replaces them. Full validation runs the
 Python 3.12 Linux suite as four whole-file shards, both Python 3.12 Windows
-shards, branch coverage as four shards combined before enforcing the unchanged
-80% floor, model tests, one torch CPU job, translation coverage, artifact
+shards, and branch coverage collected during those same Linux test shards.
+All four coverage artifacts are required and combined before enforcing the
+unchanged 80% floor, without a second root-suite run. Model pytest invocations
+report their ten slowest durations. Full validation also runs model tests,
+one torch CPU job, translation coverage, artifact
 smoke checks and the macOS descriptor test. Every complete lane has a
 20-minute or lower job timeout. `main-status` uploads one JSON artifact with
 every aggregate result and fails unless every selected lane passed. Select a branch in Actions'
@@ -162,8 +201,9 @@ are clearly labeled, and skip loudly rather than silently not existing:
   where the kernel says no.
 - **GPU/multi-GPU** (`test_device_map.py`, placement): device-conditional;
   the two-4090 box is the reference machine.
-- **Headless ANGLE mirror parity** (`test_image_mirror_angle.py`): install
-  the optional runtime with `uv sync --group angle`, then run the test to
+- **Headless ANGLE mirror parity** (`test_image_mirror_angle.py`): workspace
+  synchronization installs ANGLE through the image pack dependency on supported
+  platforms. A core-only checkout can use `uv sync --group angle`. Run the test to
   execute every declared GLSL image mirror against its CPU parity corpus.
   It skips when ANGLE or a float-renderable EGL/GLES 3 context is unavailable.
 - **CI matrix**: Linux + Windows, Python 3.12 - Windows is the

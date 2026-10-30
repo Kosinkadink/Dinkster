@@ -164,6 +164,7 @@ def test_manifest_transports_freeu_patched_models_in_both_hosting_modes(
             (tmp_path / "freeu_fixture_sources.py").write_text(
                 "from test_freeu_torch import FREEU_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FREEU_NODES)\n",
                 encoding="ascii",
             )
@@ -172,6 +173,10 @@ def test_manifest_transports_freeu_patched_models_in_both_hosting_modes(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["freeu-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "freeu_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "freeu_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "freeu_fixture_sources:register_inference_types",

@@ -53,5 +53,7 @@ def test_gligen_textbox_is_registered_in_manifest_and_cold_serializes() -> None:
     manifest = tomllib.loads(
         (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert [node.schema().node_type for node in COMFY_NODES] == manifest["pack"]["namespaces"]
+    assert ["devices", *(node.schema().node_type for node in COMFY_NODES)] == manifest["pack"][
+        "namespaces"
+    ]
     assert GLIGENTextBoxApply in COMFY_NODES

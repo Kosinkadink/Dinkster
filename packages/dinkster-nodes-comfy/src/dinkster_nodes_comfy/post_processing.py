@@ -30,6 +30,8 @@ from dinkster_api.v1 import (
     report_progress,
 )
 
+from .family_migrations import ordered_family_migration
+
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
 _MASK = TypeExpr.concrete(MASK_TYPE)
@@ -380,10 +382,18 @@ class BatchImagesNode(Node):
             category="image/batch",
             input_families=(
                 InputFamilySpec(
-                    "images", (InputSpec("image", _IMAGE),), 1, 50, member_prefix="image"
+                    "images",
+                    (InputSpec("image", _IMAGE),),
+                    1,
+                    50,
+                    member_prefix="image",
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
+            replacements=(
+                ordered_family_migration("BatchImagesNode", "images", "image", ("IMAGE",)),
+            ),
         )
 
     @classmethod
@@ -399,9 +409,17 @@ class BatchMasksNode(Node):
             display_name="Batch Masks",
             category="image/mask",
             input_families=(
-                InputFamilySpec("masks", (InputSpec("mask", _MASK),), 1, 50, member_prefix="mask"),
+                InputFamilySpec(
+                    "masks",
+                    (InputSpec("mask", _MASK),),
+                    1,
+                    50,
+                    member_prefix="mask",
+                    optional_after_minimum=True,
+                ),
             ),
             outputs=(OutputSpec("MASK", _MASK),),
+            replacements=(ordered_family_migration("BatchMasksNode", "masks", "mask", ("MASK",)),),
         )
 
     @classmethod
@@ -418,10 +436,18 @@ class BatchLatentsNode(Node):
             category="model/latent/batch",
             input_families=(
                 InputFamilySpec(
-                    "latents", (InputSpec("latent", _LATENT),), 1, 50, member_prefix="latent"
+                    "latents",
+                    (InputSpec("latent", _LATENT),),
+                    1,
+                    50,
+                    member_prefix="latent",
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
+            replacements=(
+                ordered_family_migration("BatchLatentsNode", "latents", "latent", ("LATENT",)),
+            ),
         )
 
     @classmethod

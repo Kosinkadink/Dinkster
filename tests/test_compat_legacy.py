@@ -9,7 +9,7 @@ against a real install is in test_compat_live.py."""
 from __future__ import annotations
 
 import asyncio
-import importlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -305,9 +305,7 @@ def test_good_pack_loads_and_reports_skips(tmp_path: Path) -> None:
     assert batcher.inputs[0].type == TypeExpr.list_of(TypeExpr.concrete(CORE_INT))
 
 
-def test_pack_model_imports_bind_to_fork_without_replacing_stock_modules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pack_model_imports_bind_to_fork_without_replacing_stock_modules(tmp_path: Path) -> None:
     (tmp_path / "comfy").mkdir()
     (tmp_path / "comfy" / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / "comfy" / "model_base.py").write_text(
@@ -326,21 +324,36 @@ def test_pack_model_imports_bind_to_fork_without_replacing_stock_modules(
         "def patch_runtime():\n    model_base.runtime_patch = 'fork'\n"
         "NODE_CLASS_MAPPINGS = {}\n",
     )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    for name in tuple(sys.modules):
-        if name == "comfy" or name.startswith("comfy.") or name == "dinkster_inference":
-            monkeypatch.delitem(sys.modules, name, raising=False)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib
+import sys
+from pathlib import Path
+from dinkster_compat_comfy.legacy import _import_pack
 
-    stock_model_base = importlib.import_module("comfy.model_base")
-    module = _import_pack(pack)
-    fork_model_base = importlib.import_module("dinkster_inference.model_base")
+sys.path.insert(0, sys.argv[1])
+stock_model_base = importlib.import_module("comfy.model_base")
+module = _import_pack(Path(sys.argv[2]))
+fork_model_base = importlib.import_module("dinkster_inference.model_base")
 
-    assert module.BaseModel is fork_model_base.BaseModel
-    assert module.BaseModel is not stock_model_base.BaseModel
-    assert importlib.import_module("comfy.model_base") is stock_model_base
-    module.patch_runtime()
-    assert fork_model_base.runtime_patch == "fork"
-    assert not hasattr(stock_model_base, "runtime_patch")
+assert module.BaseModel is fork_model_base.BaseModel
+assert module.BaseModel is not stock_model_base.BaseModel
+assert importlib.import_module("comfy.model_base") is stock_model_base
+module.patch_runtime()
+assert fork_model_base.runtime_patch == "fork"
+assert not hasattr(stock_model_base, "runtime_patch")
+""",
+            str(tmp_path),
+            str(pack),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_missing_dependency_is_classified(tmp_path: Path) -> None:

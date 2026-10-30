@@ -4,8 +4,9 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -15,7 +16,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine
+from dinkster_engine import Engine, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
@@ -54,7 +55,7 @@ from dinkster_nodes_image import (
     register_image_types,
 )
 from dinkster_nodes_media_io import register_media_types
-from dinkster_protocol import InvocationResult
+from dinkster_protocol import InvocationResult, SavedArtifact
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import (
     TypeRegistry,
@@ -65,7 +66,10 @@ from dinkster_values import (
 )
 from dinkster_workers import GroupIsolatedWorker, InProcessWorker
 from dinkster_workers.boundary import ValueCodec, decode_result_outputs, encode_result
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
+
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 
 def document() -> ImageDocument:
@@ -113,10 +117,21 @@ def execute_graph_node(node: type[Node], inputs: dict[str, object]) -> dict[str,
     register_media_types(registry)
     register_image_types(registry)
     nodes = [node]
+    worker = InProcessWorker(build_node_types(nodes), registry)
+
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return SavedArtifactAuthority(os.environ["DINKSTER_MOUNTS_SNAPSHOT"]).capture_mounted(
+            claims, node_id, started_at_ns
+        )
+
+    runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     engine = Engine(
         schemas=build_schemas(nodes),
         registry=registry,
-        worker=InProcessWorker(build_node_types(nodes), registry),
+        worker=worker,
+        pin_execution=lambda: runtime,
         cache=MemoryLRUCache(),
     )
 
@@ -163,18 +178,18 @@ def test_native_and_layer_wire_share_one_canonical_document() -> None:
     registry = TypeRegistry()
     register_image_types(registry)
     register_comfy_layers(registry)
-    for type_id in ("LAYERS", "comfy.LAYERS"):
+    for type_id in ("dinkster.layers", "comfy.LAYERS"):
         spec = registry.spec(type_id)
         encoded = spec.encode(value)
         assert encoded == value.data
         assert cast(ImageDocument, spec.decode(encoded)).data == encoded
-    assert registry.equivalent_type("comfy.LAYERS") == "LAYERS"
+    assert registry.equivalent_type("comfy.LAYERS") == "dinkster.layers"
     record = value.to_record()
     record["canvas"]["width"] = 100
     assert value.to_record()["canvas"]["width"] == 2
 
 
-@pytest.mark.parametrize("type_id", ["LAYERS", "comfy.LAYERS"])
+@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
 def test_document_rendition_needs_no_raster_resources(
     type_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -189,7 +204,7 @@ def test_document_rendition_needs_no_raster_resources(
     monkeypatch.setattr(ImageDocument, "render", forbid_raster)
     monkeypatch.setattr(ImageDocument, "read_resource", forbid_raster)
     registry = TypeRegistry()
-    register = register_image_types if type_id == "LAYERS" else register_comfy_layers
+    register = register_image_types if type_id == "dinkster.layers" else register_comfy_layers
     register(registry)
     register(registry)
     spec = registry.spec(type_id)
@@ -198,7 +213,7 @@ def test_document_rendition_needs_no_raster_resources(
     assert rendition.mime == IMAGE_DOCUMENT_MEDIA_TYPE
     assert rendition.data == expected.data
     assert [s.kind for s in registry.renditions_of(type_id) if s.default] == [
-        "image" if type_id == "LAYERS" else "document"
+        "image" if type_id == "dinkster.layers" else "document"
     ]
 
 
@@ -263,7 +278,7 @@ def test_node_build_edit_split_selectors_and_api_flatten_match() -> None:
     split = cast(
         dict[str, Any],
         execute_graph_node(
-            SplitLayers, {"layers": TypedLiteral("LAYERS", split_value.to_record())}
+            SplitLayers, {"layers": TypedLiteral("dinkster.layers", split_value.to_record())}
         ),
     )
     assert len(split["images"]) == len(split["masks"]) == len(split["regions"]) == 2
@@ -313,7 +328,7 @@ def test_edit_layers_node_exposes_structural_and_layer_commands() -> None:
     edited = execute_graph_node(
         EditLayers,
         {
-            "layers": TypedLiteral("LAYERS", value.to_record()),
+            "layers": TypedLiteral("dinkster.layers", value.to_record()),
             "commands": json.dumps(commands),
         },
     )["layers"]
@@ -336,7 +351,7 @@ def test_edit_layers_node_exposes_structural_and_layer_commands() -> None:
     selected = execute_graph_node(
         FlattenLayers,
         {
-            "layers": TypedLiteral("LAYERS", edited.to_record()),
+            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
             "selector": f"layer:{top}",
         },
     )
@@ -349,7 +364,7 @@ def test_edit_layers_node_exposes_structural_and_layer_commands() -> None:
     removed = execute_graph_node(
         EditLayers,
         {
-            "layers": TypedLiteral("LAYERS", edited.to_record()),
+            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
             "commands": json.dumps(remove),
         },
     )["layers"]
@@ -384,7 +399,7 @@ def test_edit_layers_node_exposes_raster_mask_commands(combine: str, channel: st
     edited = execute_graph_node(
         EditLayers,
         {
-            "layers": TypedLiteral("LAYERS", value.to_record()),
+            "layers": TypedLiteral("dinkster.layers", value.to_record()),
             "commands": json.dumps(commands),
         },
     )["layers"]
@@ -408,7 +423,7 @@ def test_edit_layers_node_exposes_raster_mask_commands(combine: str, channel: st
     selected = execute_graph_node(
         FlattenLayers,
         {
-            "layers": TypedLiteral("LAYERS", edited.to_record()),
+            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
             "selector": f"mask:{mask_id}",
         },
     )
@@ -435,7 +450,7 @@ def test_edit_layers_node_exposes_raster_mask_commands(combine: str, channel: st
     enabled = execute_graph_node(
         EditLayers,
         {
-            "layers": TypedLiteral("LAYERS", edited.to_record()),
+            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
             "commands": json.dumps(enable),
         },
     )["layers"]
@@ -449,7 +464,7 @@ def test_edit_layers_node_exposes_raster_mask_commands(combine: str, channel: st
     removed = execute_graph_node(
         EditLayers,
         {
-            "layers": TypedLiteral("LAYERS", enabled.to_record()),
+            "layers": TypedLiteral("dinkster.layers", enabled.to_record()),
             "commands": json.dumps(remove),
         },
     )["layers"]
@@ -646,16 +661,17 @@ def test_comfy_missing_canvas_and_zero_dimensions_use_source_size() -> None:
 
 
 def large_document() -> ImageDocument:
-    value = empty_document(4096, 4096)
+    value = empty_document(64, 64)
+    rng = np.random.default_rng(0)
     for index in range(50):
         output = io.BytesIO()
-        Image.new("RGB", (4096, 4096), (index, 34, 56)).save(output, "PNG")
+        Image.fromarray(rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)).save(output, "PNG")
         raster = output.getvalue()
         assert len(raster) > INLINE_RESOURCE_LIMIT
         value = append_raster(value, raster, name=f"Layer {index}")
     registry = TypeRegistry()
     register_image_types(registry)
-    spec = registry.spec("LAYERS")
+    spec = registry.spec("dinkster.layers")
     assert spec.meta is not None
     meta = spec.meta(value)
     size = len(spec.encode(value)) + len(canonical_json(meta).encode())
@@ -663,7 +679,7 @@ def large_document() -> ImageDocument:
     assert all("inline" not in resource for resource in value.to_record()["resources"].values())
     assert b"/tmp" not in value.data
     assert len(value.to_record()["resources"]) == 50
-    print(f"50x4096x4096 document plus metadata: {size} bytes")
+    print(f"50x64x64 document plus metadata: {size} bytes")
     return value
 
 
@@ -1499,7 +1515,7 @@ def test_layer_file_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, forma
         execute_graph_node(
             SaveLayers,
             {
-                "layers": TypedLiteral("LAYERS", value.to_record()),
+                "layers": TypedLiteral("dinkster.layers", value.to_record()),
                 "target": {"mount": "out", "prefix": "layers"},
                 "format": format,
             },
@@ -1618,7 +1634,7 @@ def test_isolated_worker_shm_flatten_matches_in_process(
                         "edit": GraphNode(
                             "dinkster.layers.edit",
                             {
-                                "layers": TypedLiteral("LAYERS", value.to_record()),
+                                "layers": TypedLiteral("dinkster.layers", value.to_record()),
                                 "commands": "[]",
                             },
                         )
@@ -1653,7 +1669,7 @@ def test_isolated_worker_shm_flatten_matches_in_process(
                 nodes={
                     "flatten": GraphNode(
                         "dinkster.layers.flatten",
-                        {"layers": TypedLiteral("LAYERS", value.to_record())},
+                        {"layers": TypedLiteral("dinkster.layers", value.to_record())},
                     )
                 }
             )

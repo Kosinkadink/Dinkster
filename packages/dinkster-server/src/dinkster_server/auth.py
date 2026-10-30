@@ -130,6 +130,11 @@ class Principal:
         """Authorize a route when any scope grants the capability."""
         return any(capability in capabilities for capabilities in self.grants.values())
 
+    @property
+    def is_operator(self) -> bool:
+        """Only a nondelegated human with settings authority can manage local storage."""
+        return self.kind == "human" and self.delegation_id is None and self.allows("settings:write")
+
     def allows_in(self, scope: str, capability: str) -> bool:
         """Authorize one capability against one resource scope."""
         if self.local:
@@ -892,7 +897,7 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "settings:read" if read else "settings:write"
     if path.startswith("/api/packs/"):
         return "settings:write"
-    if path == "/api/assets/guess":
+    if path in {"/api/assets/guess", "/api/workflows/plan", "/api/mounts/resolve-path"}:
         return "assets:read"
     if read and path == "/api/output-profiles/model":
         return "assets:read"

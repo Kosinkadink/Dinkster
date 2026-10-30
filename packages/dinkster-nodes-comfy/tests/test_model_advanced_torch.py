@@ -254,7 +254,10 @@ def test_compute_dtype_installs_torch_dtype() -> None:
     assert result.dtype is torch.bfloat16
 
 
-def test_attention_backend_installs_runtime_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("attention", ("pytorch attention", "comfy kitchen attention"))
+def test_attention_backend_installs_runtime_callback(
+    monkeypatch: pytest.MonkeyPatch, attention: str
+) -> None:
     import dinkster_nodes_comfy.model_advanced as advanced
 
     def pytorch_attention(
@@ -278,7 +281,7 @@ def test_attention_backend_installs_runtime_callback(monkeypatch: pytest.MonkeyP
         ),
     )
     original = source()
-    patched = ModelAttentionBackend.execute(model=original, attention="pytorch attention")["MODEL"]
+    patched = ModelAttentionBackend.execute(model=original, attention=attention)["MODEL"]
     query = torch.tensor([1.0, -2.0])
     key = torch.tensor([3.0, 5.0])
     value = torch.tensor([-4.0, 2.0])
@@ -336,6 +339,7 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
             (tmp_path / "advanced_model_fixture_sources.py").write_text(
                 "from test_model_advanced_torch import ADVANCED_MODEL_FIXTURE_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *ADVANCED_MODEL_FIXTURE_NODES)\n",
                 encoding="ascii",
             )
@@ -344,6 +348,10 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["advanced-model-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "advanced_model_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "advanced_model_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "advanced_model_fixture_sources:register_inference_types",

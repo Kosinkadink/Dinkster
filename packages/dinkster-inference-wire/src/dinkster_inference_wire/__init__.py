@@ -70,7 +70,13 @@ from .sparse import (
     TriangleMesh,
     TriangleMeshBatch,
 )
-from .types import materialize_clip_vision_output, register_inference_types
+from .types import (
+    materialize_clip_vision_output,
+    materialize_mesh,
+    materialize_splat,
+    materialize_voxel,
+    register_inference_types,
+)
 
 __all__ = [
     "BuiltinSamplerSelection",
@@ -83,6 +89,9 @@ __all__ = [
     "SamplerSelection",
     "SigmaSchedule",
     "materialize_clip_vision_output",
+    "materialize_mesh",
+    "materialize_splat",
+    "materialize_voxel",
     "nvidia_compute_dtypes",
     "register_conditioning_type",
     "register_inference_types",

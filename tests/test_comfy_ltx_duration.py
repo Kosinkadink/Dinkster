@@ -34,7 +34,6 @@ def test_duration_predictor_schema_and_complete_manifest() -> None:
         ("seconds", (CORE_FLOAT,)),
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    assert (
-        tuple(n.schema().node_type for n in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
+    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces

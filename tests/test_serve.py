@@ -56,7 +56,7 @@ async def _default_pack_names() -> tuple[str, ...]:
         await composer.close()
 
 
-def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Path) -> None:
+def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_path: Path) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
 
     environment = tmp_path / "core-environment"
@@ -70,8 +70,20 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             "sync",
             "--locked",
             "--no-dev",
-            "--no-install-package",
-            "dinkster-collab",
+            "--package",
+            "dinkster",
+            "--package",
+            "dinkster-nodes-foundation",
+            "--package",
+            "dinkster-nodes-media-io",
+            "--package",
+            "dinkster-nodes-image",
+            "--package",
+            "dinkster-nodes-remote",
+            "--package",
+            "dinkster-nodes-vision",
+            "--package",
+            "dinkster-nodes-comfy",
             "--no-install-package",
             "dinkster-supervisor",
         ],
@@ -85,10 +97,11 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             str(python),
             "-c",
             "import importlib.metadata as m, importlib.util as u; "
-            "assert all(u.find_spec(n) is None for n in "
-            "('dinkster_collab', 'dinkster_supervisor')); "
+            "assert u.find_spec('dinkster_collab') is not None; "
+            "assert u.find_spec('dinkster_supervisor') is None; "
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
-            "('dinkster-collab', 'dinkster-supervisor'))",
+            "('dinkster-collab', 'dinkster-supervisor', 'dinkster-nodes-std', "
+            "'dinkster-nodes-dev'))",
         ],
         check=True,
     )
@@ -173,7 +186,7 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
                     await asyncio.sleep(0.05)
             assert job["state"] == "completed", job
             async with session.get(base + "/api/sessions") as response:
-                assert response.status == 404
+                assert response.status == 200, await response.text()
 
     try:
         asyncio.run(scenario())
@@ -306,25 +319,13 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     manifest = calls[0]["manifest"]
     assert isinstance(manifest, PackManifest)
     assert manifest.name == pack_name
-    assert "torch==2.13.0" in manifest.requires
+    assert "torch" in manifest.requires
     assert calls[0]["venv_root"] == tmp_path / "runtime-venvs" / "cuda" / digest
     assert calls[0]["accelerator"] == "cuda"
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
     workspace_names = {path.name for path in workspace}
-    assert workspace_names == {
-        "dinkster-api",
-        "dinkster-assets",
-        "dinkster-caches",
-        "dinkster-image-document",
-        "dinkster-inference-wire",
-        "dinkster-memory",
-        "dinkster-protocol",
-        "dinkster-schema",
-        "dinkster-values",
-        "dinkster-video",
-        "dinkster-workers",
-    }
+    assert workspace_names == {"dinkster-api"}
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")
@@ -333,12 +334,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         project = tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
-    assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
-        assert any(
-            requirement.startswith("dinkster-inference @ https://")
-            for requirement in manifest.requires
-        )
+        assert "dinkster-inference==0.1.0" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -968,13 +965,26 @@ def test_openai_generation_environment_fails_with_argparse_diagnostic(
     assert message in capsys.readouterr().err
 
 
-def test_sandbox_refuses_live_mount_mutation(
+def test_sandbox_mount_edits_require_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from dinkster import serve
+    from dinkster.mounts_api import MOUNTS_KEY
 
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        async def inspect() -> None:
+            app = await awaitable  # type: ignore[misc]
+            service = app[MOUNTS_KEY]
+            assert service.allow_changes
+            assert service.restart_for_changes
+            assert service.settings_table is not service.table
+            app.freeze()
+            await app.cleanup()
+
+        asyncio.run(inspect())
+
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -986,9 +996,7 @@ def test_sandbox_refuses_live_mount_mutation(
             "--allow-mount-changes",
         ],
     )
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert "cannot be combined with --sandbox-packs" in capsys.readouterr().err
+    serve.main()
 
 
 def test_sandbox_host_grants_require_the_flag(
@@ -2597,6 +2605,184 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
+@pytest.mark.parametrize(
+    ("in_process", "output_configuration"),
+    [(False, "fresh"), (True, "fresh"), (True, "custom"), (True, "read-only"), (True, "removed")],
+)
+def test_serve_explicit_generation_uses_only_its_sources(
+    tmp_path: Path, in_process: bool, output_configuration: str
+) -> None:
+    import venv
+
+    from dinkster_assets import MountDef, dump_mounts, load_mounts
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    manifest = write_shutdown_pack(tmp_path / "source", 57)
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    generation = tmp_path / "generations" / "1"
+    generation.mkdir(parents=True)
+    pack = "shutdown-pack-57"
+    lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
+    stage_generation_packs(generation, lock, {pack: archive})
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "inProcessPacks": [pack] if in_process else [],
+            }
+        )
+    )
+    if not in_process:
+        venv.EnvBuilder(system_site_packages=True).create(generation / "packs" / pack)
+    source = generation / "pack-sources" / pack
+    report = prepare_catalog(source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)})
+    assert report.ok, report
+    library_root = tmp_path / "library"
+    expected_output = "output" if output_configuration == "fresh" else None
+    output_path = library_root / "output"
+    existing_mount = None
+    if output_configuration != "fresh":
+        library_root.mkdir()
+        if output_configuration == "removed":
+            (library_root / ".output-initialized").touch()
+        else:
+            output_path = tmp_path / "custom-output"
+            if output_configuration == "custom":
+                expected_output = "renders"
+                output_path.mkdir()
+            existing_mount = MountDef(
+                expected_output or "output",
+                output_path,
+                "readwrite" if expected_output else "read",
+            )
+            (library_root / "mounts.toml").write_text(
+                dump_mounts((existing_mount,), output_mount=expected_output), encoding="utf-8"
+            )
+    port = free_port()
+    log = tmp_path / "server.log"
+    with log.open("wb") as output:
+        process = subprocess.Popen(
+            serve_with_library_command(
+                port,
+                tmp_path / "library",
+                "--generation",
+                str(generation),
+                "--strict-packs",
+                *(["--engine-variant", "linux-cpu"] if in_process else []),
+            ),
+            cwd=tmp_path,
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            wait_for_composition(process, port)
+
+            async def check() -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                        data = await response.json()
+                    async with client.get(f"http://127.0.0.1:{port}/api/mounts") as response:
+                        mounts = await response.json()
+                    assert mounts["outputMount"] == expected_output, mounts
+                    if expected_output is not None:
+                        selected = next(
+                            row for row in mounts["mounts"] if row["id"] == expected_output
+                        )
+                        assert selected["mode"] == "readwrite"
+                        assert Path(selected["path"]) == output_path
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/api/assets",
+                            params={
+                                "scope": "local",
+                                "mount": expected_output,
+                                "name": "first-run.txt",
+                            },
+                            data=b"first generation output",
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            saved = await response.json()
+                        assert (
+                            saved["asset"]["virtualPath"]
+                            == f"mounts/{expected_output}/first-run.txt"
+                        )
+                        assert (
+                            output_path / "first-run.txt"
+                        ).read_bytes() == b"first generation output"
+                    else:
+                        assert not output_path.exists()
+                    if existing_mount is not None:
+                        assert existing_mount in load_mounts(library_root / "mounts.toml")
+                    assert mounts["mountChangesAllowed"] is False
+                    workflow = {
+                        "format": "dinkster-workflow",
+                        "formatVersion": 1,
+                        "graphs": {"root": {"nodes": {"probe": {"type": "shutdown57.probe"}}}},
+                        "environment": {
+                            "nodes": {"shutdown57.probe": {"pack": pack}},
+                            "packs": {pack: {"version": "1.2.3"}},
+                        },
+                    }
+                    for variant in (None, "win-nvidia"):
+                        body: dict[str, object] = {"workflows": [workflow]}
+                        if variant is not None:
+                            body["variant"] = variant
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/api/workflows/plan", json=body
+                        ) as response:
+                            plan = await response.json()
+                            assert response.status == 200, plan
+                            assert plan == {"packs": [], "assets": [], "errors": []}
+                assert set(data["nodes"]) == {"shutdown57.probe"}, data
+                assert data["nodes"]["shutdown57.probe"]["pack"] == pack
+
+            asyncio.run(check())
+        except Exception as exc:
+            exc.add_note(log.read_text())
+            raise
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=30)
+
+    if in_process:
+        for selected_variant, explicit_variant, error in (
+            ("linux-cpu", "win-nvidia", "--engine-variant differs"),
+            (None, "linux-cpu", "generation variant must be a non-empty string"),
+        ):
+            (generation / "generation.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.generation/1",
+                        "variant": selected_variant,
+                        "inProcessPacks": [pack],
+                    }
+                )
+            )
+            refused = subprocess.run(
+                serve_command(
+                    free_port(),
+                    "--generation",
+                    str(generation),
+                    "--engine-variant",
+                    explicit_variant,
+                ),
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert refused.returncode != 0
+            assert error in refused.stderr
+
+
 def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     children = Path(f"/proc/{parent.pid}/task/{parent.pid}/children")
     return tuple(int(pid) for pid in children.read_text("ascii").split())
@@ -2814,7 +3000,16 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
     port = free_port()
     pack = Path(__file__).resolve().parent.parent / pack_path
     process, log = start_logged_serve(
-        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+        ),
+        tmp_path,
     )
     pending_error: BaseException | None = None
     try:
@@ -2822,6 +3017,22 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         packs = report["packs"]
         assert isinstance(packs, dict)
         assert packs["dinkster-nodes-dev"]["state"] == "announced"
+
+        async def plan() -> None:
+            workflow = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {}}},
+            }
+            async with aiohttp.ClientSession() as client:
+                async with client.post(
+                    f"http://127.0.0.1:{port}/api/workflows/plan",
+                    json={"workflows": [workflow]},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert await response.json() == {"packs": [], "assets": [], "errors": []}
+
+        asyncio.run(plan())
     except BaseException as error:
         pending_error = error
         raise
@@ -3576,7 +3787,13 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
     folder-picker flow end to end, with mounts.toml as the durable record."""
+    from dinkster.project_folders import ProjectFolders
+
     library_root = tmp_path / "library"
+    library_root.mkdir()
+    projects = ProjectFolders(library_root / "project-folders.json")
+    projects.initialize(())
+    projects.update("film", [], available=(), output=None)
     granted = tmp_path / "granted"
     granted.mkdir(parents=True)
     payload = b"mounted-bytes"
@@ -3615,7 +3832,77 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                         pass
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/mounts") as resp:
-                assert (await resp.json())["mounts"] == []
+                listing = await resp.json()
+                rows = {row["id"]: row for row in listing["mounts"]}
+                assert set(rows) == {"imports", "output"}
+                assert listing["outputMount"] == "output"
+                output = rows["output"]
+                assert output["path"] == str(library_root / "output")
+                assert output["mode"] == "readwrite"
+                imports = rows["imports"]
+                assert imports["id"] == "imports"
+                assert imports["path"] == str(library_root / "imports")
+                assert imports["mode"] == "readwrite"
+            async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
+                listing = await resp.json()
+                assert {row["id"] for row in listing["mounts"]} == {"imports", "output"}
+                assert listing["outputMount"] is None
+            assert (library_root / "imports").is_dir()
+            assert (library_root / "output").is_dir()
+            async with asyncio.timeout(60):
+                while imports["state"] != "ready":
+                    await asyncio.sleep(0.05)
+                    async with session.get(base + "/api/mounts") as resp:
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        imports = rows["imports"]
+            from io import BytesIO
+
+            from PIL import Image
+
+            image = BytesIO()
+            Image.new("RGB", (2, 1), (17, 42, 93)).save(image, format="PNG")
+            async with session.post(
+                base + "/api/assets/media",
+                params={
+                    "scope": "local",
+                    "kind": "media/image",
+                    "name": "dropped.png",
+                    "project": "film",
+                },
+                data=image.getvalue(),
+                headers={"Content-Type": "image/png"},
+            ) as resp:
+                assert resp.status == 201, await resp.text()
+                imported = (await resp.json())["asset"]
+            async with session.get(
+                base + "/api/mounts/locations",
+                params={"scope": "local", "project": "film", "digest": imported["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert (await resp.json())["locations"] == [
+                    {
+                        "storage": "mount",
+                        "mount": "imports",
+                        "virtualPath": "mounts/imports/dropped.png",
+                        "path": str(library_root / "imports" / "dropped.png"),
+                    }
+                ]
+            assert imported["virtualPath"] == "mounts/imports/dropped.png"
+            assert (library_root / "imports" / "dropped.png").read_bytes() == image.getvalue()
+            from dinkster_assets import AssetVault
+
+            assert not AssetVault(library_root / "vault").has(imported["digest"])
+            async with session.get(base + "/api/assets/" + imported["digest"]) as resp:
+                assert resp.status == 200
+                assert await resp.read() == image.getvalue()
+            async with session.get(
+                base + "/api/assets/availability",
+                params={"scope": "local", "digest": imported["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {
+                    "assets": [{"digest": imported["digest"], "status": "available"}]
+                }
             async with session.post(
                 base + "/api/mounts", json={"id": "shots", "path": str(granted)}
             ) as resp:
@@ -3627,7 +3914,9 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        (row,) = (await resp.json())["mounts"]
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        assert set(rows) == {"imports", "output", "shots"}
+                        row = rows["shots"]
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)
@@ -3642,9 +3931,17 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:
-                assert (await resp.json())["mounts"] == []
+                assert {row["id"] for row in (await resp.json())["mounts"]} == {"imports", "output"}
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
+            async with session.get(
+                base + "/api/assets/availability",
+                params={"scope": "local", "digest": entry["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {
+                    "assets": [{"digest": entry["digest"], "status": "missing"}]
+                }
             assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
 
     try:
@@ -3804,7 +4101,9 @@ serve.main()
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        (row,) = (await resp.json())["mounts"]
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        assert set(rows) == {"imports", "output", "renders"}
+                        row = rows["renders"]
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)

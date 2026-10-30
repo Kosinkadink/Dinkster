@@ -34,6 +34,7 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     TypeExpr,
     append_audio_edit,
+    attach_saved_artifact,
     audio_channel_layout,
     audio_from_source,
     effective_audio_facts,
@@ -252,6 +253,8 @@ def _save_audio(
                     limit=os.fstat(output.fileno()).st_size,
                 )
             )
+    for ref in refs:
+        attach_saved_artifact(ref.to_wire())
     return {"audios": refs}
 
 

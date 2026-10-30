@@ -138,11 +138,17 @@ def observe_memory_reports(
 ) -> asyncio.Queue[None]:
     reports: asyncio.Queue[None] = asyncio.Queue()
     original = worker._session._apply_measured
+    initial_report = True
 
     def apply_measured(header: Mapping[str, Any]) -> None:
+        nonlocal initial_report
         original(header)
         if header.get("type") == "memoryReport":
-            reports.put_nowait(None)
+            # The report after memoryDevices, not the one after hello, completes startup.
+            if initial_report:
+                initial_report = False
+            else:
+                reports.put_nowait(None)
 
     monkeypatch.setattr(worker._session, "_apply_measured", apply_measured)
     return reports

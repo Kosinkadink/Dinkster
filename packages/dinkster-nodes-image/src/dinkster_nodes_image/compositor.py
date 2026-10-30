@@ -9,34 +9,31 @@ from typing import Any, cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    BLEND_MODES,
     BOUNDING_BOX_TYPE,
     COMFY_ARRAY_TYPE,
-    COMPOSITOR_TYPE,
     CORE_STRING,
     DETECTION_TYPE,
-    LAYERS_TYPE,
     REGION_TYPE,
     CompositorWidget,
+    ImageDocument,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     StringWidget,
     TypeExpr,
+    append_raster,
     copy_media_semantics,
+    empty_document,
+    flatten,
     media_semantics,
+    raster_png,
     report_event,
     report_preview,
 )
-from dinkster_image_document.document import (
-    ImageDocument,
-    append_raster,
-    empty_document,
-    flatten,
-    raster_png,
-)
-from dinkster_image_document.format import BLEND_MODES
 
+from .compositor_types import COMPOSITOR_TYPE, LAYERS_TYPE
 from .geometry import BOOLEAN, FLOAT, IMAGE, INT, MASK
 from .layer_document import migrate_layers
 from .support import combo_input, image_array, mask_array

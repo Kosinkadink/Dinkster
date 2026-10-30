@@ -180,6 +180,7 @@ def test_manifest_executes_inpainting_nodes_with_decoded_inputs(
             (tmp_path / "inpaint_fixture.py").write_text(
                 "from test_inpaint_torch import InpaintInspect, InpaintSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, InpaintSource, InpaintInspect)\n",
                 encoding="ascii",
             )
@@ -188,6 +189,10 @@ def test_manifest_executes_inpainting_nodes_with_decoded_inputs(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["inpaint-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "inpaint_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "inpaint_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "inpaint_fixture:register_inference_types",
