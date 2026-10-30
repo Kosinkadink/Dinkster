@@ -174,7 +174,12 @@ def record_from_job(job: Job) -> HistoryRecord:
                     for outputs in job.result.outputs.values()
                     for digest in value_asset_references(outputs)
                 }
-                | {require_digest(artifact.digest) for artifact in job.result.artifacts}
+                | {
+                    require_digest(item.digest)
+                    for artifact in job.result.artifacts
+                    for item in (artifact, artifact.preview)
+                    if item is not None
+                }
             )
         )
         if job.result is not None

@@ -522,6 +522,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         attach_saved_artifact,
         publish_saved_file_preview,
     )
+    from dinkster_assets.scratch import produced_job_scratch_root
     from dinkster_protocol import Invocation
     from dinkster_values import TypeRegistry, register_core_types
     from dinkster_workers import InProcessWorker
@@ -599,9 +600,13 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         assert decoded.saved_file_previews == result.saved_file_previews
         if enabled:
             assert len({str(item["saved"]) for item in decoded.saved_file_previews}) == count
-            assert AssetVault(tmp_path / "scratch" / "produced-assets").digests() == [
-                digest_bytes(payload)
-            ]
+            scratch = produced_job_scratch_root(
+                tmp_path / "scratch", invocation.invocation_id, invocation.attempt_id
+            )
+            vault = AssetVault(scratch)
+            assert vault.digests() == [digest_bytes(payload)]
+            path = vault.resolve(digest_bytes(payload))
+            assert path is not None and path.read_bytes() == payload
 
     asyncio.run(scenario())
     assert calls == (count if enabled else 0)

@@ -366,6 +366,7 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
     media = AssetRef(digest_bytes(b"source clip"), "clip", 11)
     asset = AssetRef(digest_bytes(b"typed asset"), "data", 11)
     saved_digest = digest_bytes(b"saved output")
+    preview_digest = digest_bytes(b"saved output preview")
     decoy = digest_bytes(b"payload fingerprint, not an external identity")
     leaf = Value(
         "VIDEO",
@@ -393,7 +394,20 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
                 (),
                 artifacts=(
                     SavedArtifact(
-                        "save", saved_digest, "kept.txt", 12, "text/plain", "out/kept.txt"
+                        "save",
+                        saved_digest,
+                        "kept.txt",
+                        12,
+                        "text/plain",
+                        "out/kept.txt",
+                        preview=SavedArtifact(
+                            "save",
+                            preview_digest,
+                            "preview.mp4",
+                            20,
+                            "video/mp4",
+                            f"previews/{preview_digest[7:]}/preview.mp4",
+                        ),
                     ),
                 ),
             )
@@ -403,13 +417,21 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
         store = HistoryStore(path)
         record = store.get("private", "one")
         assert record is not None
-        assert record.asset_digests == tuple(sorted((media.digest, asset.digest, saved_digest)))
+        assert record.asset_digests == tuple(
+            sorted((media.digest, asset.digest, saved_digest, preview_digest))
+        )
         assert "assetDigests" not in record.to_wire()
         with store.hold_asset_references() as roots:
-            assert roots == {SOURCE_DIGEST, media.digest, asset.digest, saved_digest}
+            assert roots == {
+                SOURCE_DIGEST,
+                media.digest,
+                asset.digest,
+                saved_digest,
+                preview_digest,
+            }
         assert store.delete("private", "one")
         with store.hold_asset_references() as roots:
-            assert roots == {SOURCE_DIGEST, media.digest, saved_digest}
+            assert roots == {SOURCE_DIGEST, media.digest, saved_digest, preview_digest}
         assert store.delete_where("other") == 1
         with store.hold_asset_references() as roots:
             assert roots == set()

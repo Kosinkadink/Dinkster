@@ -131,9 +131,10 @@ The main protocol routes include:
   `HistoryStore.hold_asset_references()` separately holds the history write
   barrier and reads source-document roots from accepted and terminal jobs in
   every scope. Terminal writes atomically retain external asset identities
-  from nested target values and saved artifacts, independently of execution
-  cache retention. These manifests persist until their history rows are
-  removed and grant no byte access. Legacy and interrupted rows with unknown
+  from nested target values, saved artifacts and their optional published
+  previews, independently of execution cache retention. These manifests
+  persist until their history rows are removed and grant no byte access.
+  Legacy and interrupted rows with unknown
   output references block inspection rather than count as empty. History
   responses do not expose these internal manifests. This does not inspect
   opaque workflow bytes, retain live previews, or enable deletion.

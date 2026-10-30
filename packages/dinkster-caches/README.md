@@ -88,7 +88,9 @@ Fingerprints and non-residency metadata are preserved.
 yielding external asset digests from all stored value envelopes. Its memory
 counterpart is an async context manager holding the admission/spill lock.
 Both walk nested containers and typed asset values without loading payloads;
-cache payload digests and arbitrary fingerprints are not external asset roots.
+saved-file associations retain the file and its optional published preview.
+Persisted artifact declarations use the same validation as cache replay.
+Cache payload digests and arbitrary fingerprints are not external asset roots.
 Unreadable manifests or invalid reference metadata refuse inspection rather
 than reporting an empty set. These are cache-local barriers, not permission to
 delete assets: pending publishers and other reference owners need separate

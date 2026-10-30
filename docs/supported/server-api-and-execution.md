@@ -35,9 +35,10 @@
   after restart or owner reuse. Association registration is explicit, not
   automatic history or preview integration; it does not enable cleanup.
 - Durable terminal history retains external asset identities from target
-  values and saved artifacts independently of execution-cache entries, without
-  storing output payloads or changing history responses. Legacy and interrupted
-  history with unknown output references refuses collection inspection. This
+  values, saved artifacts and their optional published previews independently
+  of execution-cache entries, without storing output payloads or changing
+  history responses. Legacy and interrupted history with unknown output
+  references refuses collection inspection. This
   does not retain opaque workflow contents or live previews, or enable deletion.
 - Cached image-document renders retain their source, resources and output
   identities independently of catalog records. Verified cache reuse can certify

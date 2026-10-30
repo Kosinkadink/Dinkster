@@ -89,6 +89,12 @@ class MemoryLRUCache:
                 digest
                 for entry in self._entries.values()
                 for digest in value_asset_references(entry)
+            ) | frozenset(
+                item.digest
+                for entry in self._entries.values()
+                for artifact in entry.artifacts
+                for item in (artifact, artifact.preview)
+                if item is not None
             )
 
     def set_persistence_handler(

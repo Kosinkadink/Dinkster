@@ -205,7 +205,7 @@ def manifest_asset_references(manifest: Mapping[str, object]) -> frozenset[str]:
     """External asset roots in persisted values; malformed state refuses collection.
 
     Payload digests belong to the cache's own CAS, not the asset vault. Read
-    only the value envelopes, including container metadata and nested leaves.
+    value envelopes and explicit saved-file/preview associations only.
     """
     if type(manifest.get("version")) is not int or manifest["version"] not in _ACCEPTED_VERSIONS:
         raise AssetError("cache reference manifest version is unavailable")
@@ -237,6 +237,16 @@ def manifest_asset_references(manifest: Mapping[str, object]) -> frozenset[str]:
             if not isinstance(elements, list):
                 raise AssetError("cache reference elements must be a list")
             stack.extend(cast("list[object]", elements))
+    try:
+        artifacts = _artifacts_from_wire(manifest)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise AssetError("cache artifact references are unavailable") from exc
+    for artifact in artifacts:
+        for item in (artifact, artifact.preview):
+            if item is not None:
+                previous = references.setdefault(item.digest, item.size)
+                if previous != item.size:
+                    raise AssetError("source references disagree about byte size")
     return frozenset(references)
 
 
@@ -322,6 +332,23 @@ async def _value_from_wire(
     )
 
 
+def _artifacts_from_wire(wire: Mapping[str, Any]) -> tuple[SavedArtifact, ...]:
+    raw_artifacts = wire["artifacts"] if wire.get("version") == 4 else wire.get("artifacts", [])
+    if type(raw_artifacts) is not list:
+        raise ValueError("cache artifacts must be a list")
+    rows = cast("list[Any]", raw_artifacts)
+    if len(rows) > SAVED_ARTIFACT_CLAIM_LIMIT:
+        raise ValueError("cache artifact count exceeds the limit")
+    artifacts: list[SavedArtifact] = []
+    for raw in rows:
+        item: dict[str, Any] = dict(raw)
+        preview = item.pop("preview", None)
+        artifacts.append(
+            SavedArtifact(**item, preview=SavedArtifact(**preview) if preview is not None else None)
+        )
+    return tuple(artifacts)
+
+
 async def entry_from_wire(
     wire: Mapping[str, Any], fetch_blob: BlobFetch, registry: TypeRegistry
 ) -> CachedResult | None:
@@ -349,27 +376,13 @@ async def entry_from_wire(
         if value is None or value_resource_ids(value):
             return None
         entry[str(output_id)] = value
-    artifacts: list[SavedArtifact] = []
     try:
-        raw_artifacts = wire.get("artifacts", [])
-        if type(raw_artifacts) is not list:
-            return None
-        rows = cast("list[Any]", raw_artifacts)
-        if len(rows) > SAVED_ARTIFACT_CLAIM_LIMIT:
-            return None
-        for raw in rows:
-            item: dict[str, Any] = dict(raw)
-            preview = item.pop("preview", None)
-            artifacts.append(
-                SavedArtifact(
-                    **item, preview=SavedArtifact(**preview) if preview is not None else None
-                )
-            )
+        artifacts = _artifacts_from_wire(wire)
     except (TypeError, ValueError, KeyError):
         return None
     document = wire.get("expansion")
     if document is None:
-        return CachedResult(entry, artifacts=tuple(artifacts))
+        return CachedResult(entry, artifacts=artifacts)
     used: set[str] = set()
 
     def decode_present(index: object, output_id: str) -> Value:
@@ -382,6 +395,6 @@ async def entry_from_wire(
         expansion = return_unit_from_document(document, decode_present)
         if not isinstance(expansion, ExpandedReturn) or used != set(entry):
             return None
-        return CachedResult(entry, expansion, tuple(artifacts))
+        return CachedResult(entry, expansion, artifacts)
     except (KeyError, TypeError, ValueError, RecursionError, OverflowError):
         return None

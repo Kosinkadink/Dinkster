@@ -12,6 +12,7 @@ import pytest
 from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_caches import DiskCacheStore, DiskCAS, MemoryLRUCache
 from dinkster_caches.wire import entry_from_wire
+from dinkster_protocol import CachedResult, SavedArtifact
 from dinkster_values import (
     RESOURCES_META_KEY,
     EncodedPayload,
@@ -150,7 +151,24 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
             EncodedPayload("asset<file>", b"opaque identity", None),
         )
         nested = make_tuple_value([make_list_value("VIDEO", [leaf, leaf]), typed])
-        outputs = {"out": nested}
+        preview_digest = digest_bytes(b"saved file preview")
+        saved = SavedArtifact(
+            "save",
+            digest_bytes(b"saved output"),
+            "saved.txt",
+            12,
+            "text/plain",
+            "out/saved.txt",
+            preview=SavedArtifact(
+                "save",
+                preview_digest,
+                "preview.mp4",
+                18,
+                "video/mp4",
+                f"previews/{preview_digest[7:]}/preview.mp4",
+            ),
+        )
+        outputs = CachedResult({"out": nested}, artifacts=(saved,))
         memory = MemoryLRUCache()
         await memory.put("one", outputs)
         started = asyncio.Event()
@@ -160,7 +178,7 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
             await memory.put("one", {"out": leaf})
 
         async with memory.hold_asset_references() as roots:
-            assert roots == {media.digest, asset.digest}
+            assert roots == {media.digest, asset.digest, saved.digest, preview_digest}
             assert decoy not in roots
             replacement = asyncio.create_task(replace_memory())
             await started.wait()
@@ -173,7 +191,7 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
         await disk.put("two", {"out": leaf})
         restarted = DiskCacheStore(tmp_path, TypeRegistry())
         with restarted.hold_asset_references() as roots:
-            assert roots == {media.digest, asset.digest}
+            assert roots == {media.digest, asset.digest, saved.digest, preview_digest}
         restarted.discard("one")
         with restarted.hold_asset_references() as roots:
             assert roots == {media.digest}
@@ -213,7 +231,18 @@ def test_cache_asset_roots_refuse_linked_reference_state(tmp_path: Path, link: s
 
 
 @pytest.mark.parametrize(
-    "corrupt", ["json", "version", "metadata", "references", "elements", "missing"]
+    "corrupt",
+    [
+        "json",
+        "version",
+        "metadata",
+        "references",
+        "elements",
+        "missing",
+        "artifacts",
+        "preview",
+        "missing_artifacts",
+    ],
 )
 def test_cache_asset_roots_refuse_unreadable_state(tmp_path: Path, corrupt: str) -> None:
     async def scenario() -> None:
@@ -237,6 +266,22 @@ def test_cache_asset_roots_refuse_unreadable_state(tmp_path: Path, corrupt: str)
                 wire["outputs"]["out"]["metaB64"] = base64.b64encode(
                     default_encode({"asset_refs": [{}]})
                 ).decode("ascii")
+            elif corrupt in {"artifacts", "preview", "missing_artifacts"}:
+                wire["version"] = 4
+                if corrupt == "artifacts":
+                    wire["artifacts"] = [{}]
+                elif corrupt == "preview":
+                    wire["artifacts"] = [
+                        {
+                            "node_id": "save",
+                            "digest": digest_bytes(b"saved file"),
+                            "name": "saved.txt",
+                            "size": 10,
+                            "media_type": "text/plain",
+                            "virtual_path": "out/saved.txt",
+                            "preview": {},
+                        }
+                    ]
             else:
                 wire["outputs"]["out"]["elements"] = None
             path.write_text(json.dumps(wire))
