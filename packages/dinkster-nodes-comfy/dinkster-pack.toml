@@ -586,6 +586,7 @@ namespaces = [
     "CheckpointSave",
     "ModelSave",
     "SaveImageAdvanced",
+    "Trellis2Conditioning",
 ]
 
 [pack.sandbox]
