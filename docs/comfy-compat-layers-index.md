@@ -1,24 +1,26 @@
 # ComfyUI compatibility layers
 
-This branch preserves the alias, group, replacement, translation and carrier implementation.
+This branch preserves the alias, group, translation and carrier implementation and their callers.
 The native-node contract uses one registry and one type namespace instead of these bridges.
 
-Indexed source: `1fe1166a33cca6467ae5b2209f761657cbe3ed71`. Counts are physical lines of tracked files at that source.
+Indexed source: `d375d6ba1d6604de130722c93410232b7fc60c47`. Counts are physical lines of tracked files at that source.
 Dedicated layer files may be removed; shared callers retain their unrelated responsibilities.
+The generic replacement engine, successor-declared migrations and their tests remain supported.
+Replacement entries below are preservation references, not compatibility deletion targets.
 Test and fixture entries identify the layer contract, not permission to delete surviving behavior.
 The importer remains responsible for positional workflow inputs and versioned per-node upgrades.
 
 | File | Lines | Purpose |
 | --- | ---: | --- |
-| `.github/workflows/full-validation.yml` | 434 | Implements full validation in the layer or its shared caller. |
+| `.github/workflows/full-validation.yml` | 465 | Implements full validation in the layer or its shared caller. |
 | `docs/comfy-translation-coverage.md` | 88 | Documents comfy translation coverage; shared documentation is edited rather than wholly removed. |
 | `docs/in-process-hosting-design.md` | 437 | Documents in process hosting design; shared documentation is edited rather than wholly removed. |
 | `docs/lazy-input-m1-contract.md` | 522 | Documents lazy input m1 contract; shared documentation is edited rather than wholly removed. |
 | `docs/lazy-switch-lowering.md` | 358 | Documents lazy switch lowering; shared documentation is edited rather than wholly removed. |
 | `docs/list-map-lowering.md` | 186 | Documents list map lowering; shared documentation is edited rather than wholly removed. |
 | `docs/replacement-1-to-n.md` | 199 | Documents replacement 1 to n; shared documentation is edited rather than wholly removed. |
-| `docs/supported/comfyui-compatibility.md` | 119 | Documents comfyui compatibility; shared documentation is edited rather than wholly removed. |
-| `docs/testing.md` | 251 | Documents testing; shared documentation is edited rather than wholly removed. |
+| `docs/supported/comfyui-compatibility.md` | 264 | Documents comfyui compatibility; shared documentation is edited rather than wholly removed. |
+| `docs/testing.md` | 291 | Documents testing; shared documentation is edited rather than wholly removed. |
 | `goldens/replacements/README.md` | 28 | Reference input/output data for README.md; retain unrelated fixture bytes. |
 | `goldens/replacements/chain.json` | 204 | Reference input/output data for chain.json; retain unrelated fixture bytes. |
 | `goldens/replacements/combo.json` | 180 | Reference input/output data for combo.json; retain unrelated fixture bytes. |
@@ -67,58 +69,54 @@ The importer remains responsible for positional workflow inputs and versioned pe
 | `packages/dinkster-nodes-image/README.md` | 112 | Documents README; shared documentation is edited rather than wholly removed. |
 | `packages/dinkster-nodes-image/comfy-aliases.json` | 21374 | Committed schema, alias or group data consumed by the layer registry. |
 | `packages/dinkster-nodes-image/comfy-groups.json` | 1539 | Committed schema, alias or group data consumed by the layer registry. |
-| `packages/dinkster-nodes-image/pyproject.toml` | 31 | Package/dependency metadata wiring the layer into installation or composition. |
+| `packages/dinkster-nodes-image/pyproject.toml` | 29 | Package/dependency metadata wiring the layer into installation or composition. |
 | `packages/dinkster-nodes-media-io/comfy-aliases.json` | 9235 | Committed schema, alias or group data consumed by the layer registry. |
-| `packages/dinkster-nodes-media-io/pyproject.toml` | 31 | Package/dependency metadata wiring the layer into installation or composition. |
+| `packages/dinkster-nodes-media-io/pyproject.toml` | 27 | Package/dependency metadata wiring the layer into installation or composition. |
 | `packages/dinkster-nodes-vision/dinkster_vision_depth_anything_v2_pack/comfy-aliases.inactive.json` | 297 | Committed schema, alias or group data consumed by the layer registry. |
-| `packages/dinkster-schema/README.md` | 232 | Documents README; shared documentation is edited rather than wholly removed. |
-| `packages/dinkster-schema/src/dinkster_schema/__init__.py` | 341 | Implements   init   in the layer or its shared caller. |
+| `packages/dinkster-schema/README.md` | 246 | Documents README; shared documentation is edited rather than wholly removed. |
+| `packages/dinkster-schema/src/dinkster_schema/__init__.py` | 347 | Implements   init   in the layer or its shared caller. |
 | `packages/dinkster-schema/src/dinkster_schema/comfy_alias.py` | 496 | Maintained ComfyUI-to-native translation registry data. |
 | `packages/dinkster-schema/src/dinkster_schema/comfy_group.py` | 768 | Declarative ComfyUI node-group translation patterns. |
-| `packages/dinkster-schema/src/dinkster_schema/replace.py` | 1744 | Declarative node-replacement rules: pack-declared migration data. |
-| `packages/dinkster-server/src/dinkster_server/app.py` | 4697 | The native Dinkster HTTP/WS protocol (DESIGN 3.5). |
-| `packages/dinkster-workers/README.md` | 206 | Documents README; shared documentation is edited rather than wholly removed. |
+| `packages/dinkster-schema/src/dinkster_schema/replace.py` | 1853 | Declarative node-replacement rules: pack-declared migration data. |
+| `packages/dinkster-server/src/dinkster_server/app.py` | 4794 | The native Dinkster HTTP/WS protocol (DESIGN 3.5). |
+| `packages/dinkster-workers/README.md` | 235 | Documents README; shared documentation is edited rather than wholly removed. |
 | `packages/dinkster-workers/src/dinkster_workers/doctor.py` | 1382 | dinkster doctor - the pack linter (DESIGN 3.9). |
-| `packages/dinkster-workers/src/dinkster_workers/host.py` | 3096 | Isolated worker host: the child-process side of IsolatedWorker. |
+| `packages/dinkster-workers/src/dinkster_workers/host.py` | 3116 | Isolated worker host: the child-process side of IsolatedWorker. |
 | `packages/dinkster-workers/src/dinkster_workers/manifest.py` | 3332 | Pack manifests: what a pack is, declared as data (DESIGN 3.6). |
 | `packages/dinkster-workers/src/dinkster_workers/remote.py` | 921 | RemoteWorker: the Worker protocol across a machine boundary. |
 | `packages/dinkster-workers/src/dinkster_workers/service.py` | 593 | Remote worker service: a pack served over the network. |
-| `packages/dinkster-workers/src/dinkster_workers/session.py` | 2588 | BoundarySession: the engine side of one boundary conversation. |
+| `packages/dinkster-workers/src/dinkster_workers/session.py` | 2605 | BoundarySession: the engine side of one boundary conversation. |
+| `pyproject.toml` | 171 | Package/dependency metadata wiring the layer into installation or composition. |
 | `scripts/generate_replacement_goldens.py` | 427 | Reference input/output data for generate_replacement_goldens.py; retain unrelated fixture bytes. |
-| `src/dinkster/comfy_compose.py` | 753 | ComfyUI compat workers as composable packs (DESIGN 3.8 meets 3.6). |
-| `src/dinkster/compat_api.py` | 354 | ComfyUI compat HTTP surface: POST /api/compat/comfy/prompt. |
-| `src/dinkster/compose.py` | 7886 | Multi-pack composition: pack manifests -> one serving engine. |
-| `src/dinkster/mounts_api.py` | 460 | Filesystem mounts API: the operator's directory-grant surface. |
+| `src/dinkster/comfy_compose.py` | 745 | ComfyUI compat workers as composable packs (DESIGN 3.8 meets 3.6). |
+| `src/dinkster/compose.py` | 8007 | Multi-pack composition: pack manifests -> one serving engine. |
 | `src/dinkster/packs.py` | 199 | Pack provenance glue: manifest presentation -> server pack table. |
 | `src/dinkster/port.py` | 1105 | dinkster-port - generate a native Dinkster pack skeleton from a legacy ComfyUI pack. |
-| `src/dinkster/reload_api.py` | 243 | Pack reload coordination and dev-mode mutation endpoints (DESIGN 3.9). |
-| `src/dinkster/serve.py` | 2471 | dinkster-serve: run a Dinkster server from a composed node-pack set. |
 | `tests/memorypack_nodes.py` | 265 | Tests memorypack nodes.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/respack_nodes.py` | 71 | Tests respack nodes.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_audio_alias_replay.py` | 415 | Tests audio alias replay.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_audio_video_contract.py` | 651 | Tests audio video contract.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_audio_alias_replay.py` | 429 | Tests audio alias replay.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_audio_video_contract.py` | 675 | Tests audio video contract.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_av_codec.py` | 463 | Tests av codec.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_choices.py` | 1338 | Tests choices.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_choices.py` | 1352 | Tests choices.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_ckpt_conversion_tool.py` | 59 | Tests ckpt conversion tool.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_comfy_alias_registry.py` | 250 | Tests comfy alias registry.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_comfy_dataset_image_nodes.py` | 55 | Tests comfy dataset image nodes.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_comfy_group_registry.py` | 377 | Tests comfy group registry.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_compat_arm_entry.py` | 54 | Tests compat arm entry.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_compat_comfy.py` | 4810 | Tests compat comfy.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_compat_legacy.py` | 519 | Tests compat legacy.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_compat_legacy.py` | 532 | Tests compat legacy.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_compat_listing_combos.py` | 1210 | Tests compat listing combos.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_compat_review_regressions.py` | 359 | Tests compat review regressions.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_compose.py` | 3768 | Tests compose.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_compose_dispatch.py` | 3369 | Tests compose dispatch.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_conversion_curve_stdlib.py` | 407 | Tests conversion curve stdlib.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_dependency_rule.py` | 405 | Tests dependency rule.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_compose.py` | 4194 | Tests compose.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_compose_dispatch.py` | 3389 | Tests compose dispatch.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_conversion_curve_stdlib.py` | 449 | Tests conversion curve stdlib.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_dependency_rule.py` | 398 | Tests dependency rule.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_fork_nodes.py` | 733 | Tests fork nodes.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_image_codec.py` | 839 | Tests image codec.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_image_comfy_aliases.py` | 884 | Tests image comfy aliases.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_image_comfy_groups.py` | 163 | Tests image comfy groups.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_image_dynamic_schemas.py` | 518 | Tests image dynamic schemas.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_image_preprocessors.py` | 517 | Tests image preprocessors.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_isolated.py` | 4689 | Tests isolated.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_isolated.py` | 4806 | Tests isolated.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_lazy_input_m1_contract.py` | 647 | Tests lazy input m1 contract.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_legacy_sources.py` | 520 | Tests legacy sources.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_loader_stack_census.py` | 123 | Tests loader stack census.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
@@ -128,24 +126,23 @@ The importer remains responsible for positional workflow inputs and versioned pe
 | `tests/test_native_identity_artifacts.py` | 137 | Tests native identity artifacts.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_numeric_stdlib.py` | 676 | Tests numeric stdlib.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_pins.py` | 208 | Tests pins.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_port.py` | 696 | Tests port.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_port.py` | 674 | Tests port.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_primitives.py` | 536 | Tests primitives.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_relay.py` | 1792 | Tests relay.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_replace.py` | 2145 | Tests replace.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_reservations.py` | 804 | Tests reservations.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_relay.py` | 1927 | Tests relay.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_replace.py` | 2327 | Tests replace.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_reservations.py` | 827 | Tests reservations.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_routing_stdlib.py` | 241 | Tests routing stdlib.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_saved_artifacts.py` | 354 | Tests saved artifacts.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_saved_artifacts.py` | 735 | Tests saved artifacts.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_serve_remote.py` | 1642 | Tests serve remote.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_server.py` | 7090 | Tests server.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_server.py` | 7290 | Tests server.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_source_filename.py` | 393 | Tests source filename.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_source_staging.py` | 862 | Tests source staging.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_string_comfy_aliases.py` | 334 | Tests string comfy aliases.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_translate_v3.py` | 1228 | Tests translate v3.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_video_alias_templates.py` | 623 | Tests video alias templates.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_video_runtime.py` | 887 | Tests video runtime.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_video_vhs_live.py` | 328 | Tests video vhs live.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_vision_depth_anything_v2_schema.py` | 190 | Tests vision depth anything v2 schema.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
-| `tests/test_vision_hed_schema.py` | 158 | Tests vision hed schema.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_video_alias_templates.py` | 625 | Tests video alias templates.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_video_runtime.py` | 1502 | Tests video runtime.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_vision_depth_anything_v2_schema.py` | 199 | Tests vision depth anything v2 schema.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_vision_hed_schema.py` | 166 | Tests vision hed schema.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/test_vision_line_edge_schema.py` | 171 | Tests vision line edge schema.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tests/type_equivalence_compat_nodes.py` | 107 | Tests type equivalence compat nodes.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
 | `tools/benchmark_schema_catalog.py` | 278 | Generates or checks benchmark schema catalog. |
@@ -166,4 +163,19 @@ The importer remains responsible for positional workflow inputs and versioned pe
 | `tools/layer_comfy_aliases.py` | 193 | Generates or checks layer comfy aliases. |
 | `tools/legacy_survey.py` | 184 | Generates or checks legacy survey. |
 
-Total: 155 tracked files; whole-file counts include shared integrations.
+Total: 150 tracked files; whole-file counts include shared integrations.
+
+## Earlier layer references
+
+These entries retain the inventory at source `1fe1166a33cca6467ae5b2209f761657cbe3ed71`.
+Their layer references or files are absent at the indexed source above; their bytes remain in this branch's history.
+Counts below refer to the earlier source, not the current tree.
+
+| File | Lines | Purpose |
+| --- | ---: | --- |
+| `src/dinkster/compat_api.py` | 354 | ComfyUI compat HTTP surface: POST /api/compat/comfy/prompt. |
+| `src/dinkster/mounts_api.py` | 460 | Filesystem mounts API: the operator's directory-grant surface. |
+| `src/dinkster/reload_api.py` | 243 | Pack reload coordination and dev-mode mutation endpoints (DESIGN 3.9). |
+| `src/dinkster/serve.py` | 2471 | dinkster-serve: run a Dinkster server from a composed node-pack set. |
+| `tests/test_comfy_dataset_image_nodes.py` | 55 | Tests comfy dataset image nodes.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
+| `tests/test_video_vhs_live.py` | 328 | Tests video vhs live.py; preserve assertions for surviving behavior when removing exclusive layer tests. |
