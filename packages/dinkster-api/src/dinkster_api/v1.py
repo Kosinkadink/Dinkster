@@ -79,6 +79,7 @@ from dinkster_assets import (
     mount_roots_for_kind,
     register_asset_type,
     register_audio_value_type,
+    register_file3d_types,
     register_save_target_type,
     register_video_value_type,
     resolve_asset_selection,
@@ -241,6 +242,19 @@ from dinkster_values import (
     DETECTION_TYPE,
     DICT_TYPE,
     ENCODED_MEDIA_LIMIT_BYTES,
+    FILE_3D_FBX_TYPE,
+    FILE_3D_GLB_TYPE,
+    FILE_3D_GLTF_TYPE,
+    FILE_3D_KSPLAT_TYPE,
+    FILE_3D_OBJ_TYPE,
+    FILE_3D_PLY_TYPE,
+    FILE_3D_POINT_CLOUD_ANY_TYPE,
+    FILE_3D_SPLAT_ANY_TYPE,
+    FILE_3D_SPLAT_TYPE,
+    FILE_3D_SPZ_TYPE,
+    FILE_3D_STL_TYPE,
+    FILE_3D_TYPE,
+    FILE_3D_USDZ_TYPE,
     FLOATS_TYPE,
     GIBIBYTE,
     GLIGEN_TYPE,
@@ -458,11 +472,16 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import latents
 
         value = getattr(latents, name)
+    elif name == "TriangleMeshBatch":
+        from dinkster_inference_wire.sparse import TriangleMeshBatch
+
+        value = TriangleMeshBatch
     elif name in {
         "register_inference_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
+        "materialize_mesh",
         "materialize_clip_vision_output",
         "materialize_splat",
         "materialize_voxel",
@@ -488,10 +507,12 @@ def __dir__() -> list[str]:
         | {
             "LatentStream",
             "MultiStreamLatent",
+            "TriangleMeshBatch",
             "register_inference_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
+            "materialize_mesh",
             "materialize_clip_vision_output",
             "materialize_splat",
             "materialize_voxel",
@@ -525,11 +546,13 @@ if TYPE_CHECKING:
     from dinkster_image_document.interchange import export_ora, export_psd, load_document
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_mesh,
         materialize_splat,
         materialize_voxel,
         register_inference_types,
@@ -540,6 +563,8 @@ if TYPE_CHECKING:
     from dinkster_workers.execution import current_execution_context
 
 __all__ = [
+    "TriangleMeshBatch",
+    "materialize_mesh",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -756,6 +781,19 @@ __all__ = [
     "LOAD3D_MODEL_INFO_TYPE",
     "MASK_TYPE",
     "MODEL3D_TYPE",
+    "FILE_3D_TYPE",
+    "FILE_3D_GLB_TYPE",
+    "FILE_3D_GLTF_TYPE",
+    "FILE_3D_FBX_TYPE",
+    "FILE_3D_OBJ_TYPE",
+    "FILE_3D_STL_TYPE",
+    "FILE_3D_USDZ_TYPE",
+    "FILE_3D_PLY_TYPE",
+    "FILE_3D_SPLAT_TYPE",
+    "FILE_3D_SPZ_TYPE",
+    "FILE_3D_KSPLAT_TYPE",
+    "FILE_3D_SPLAT_ANY_TYPE",
+    "FILE_3D_POINT_CLOUD_ANY_TYPE",
     "MODEL_PATCH_TYPE",
     "MODEL_TYPE",
     "NOISE_TYPE",
@@ -931,5 +969,6 @@ __all__ = [
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",
+    "register_file3d_types",
     "resolver_from_env",
 ]

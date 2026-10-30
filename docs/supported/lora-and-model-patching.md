@@ -13,6 +13,7 @@ uses its kernel when available and falls back to PyTorch attention otherwise.
 `LoraSave` extracts standard low-rank or full-difference LoRA checkpoints from
 model and text-encoder differences, optionally includes bias differences, and
 saves a safetensors file to the selected writable mount.
+Its filename prefix explicitly requests a single-line string editor.
 Filenames retain the source trailing underscore before `.safetensors`.
 The saved file is attached as a validated run artifact within shared result limits.
 

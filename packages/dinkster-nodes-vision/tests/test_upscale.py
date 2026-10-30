@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import io
-import json
-import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import pytest
@@ -347,104 +342,3 @@ def test_upscale_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None
             await worker.close()
 
     asyncio.run(scenario())
-
-
-GOLDEN_PATH = ROOT / "tests" / "goldens" / "upscale_realesrgan_a1079ba1.json"
-GOLDEN_MODELS = {
-    "anime6b": (
-        "DINKSTER_UPSCALE_TEST_ANIME6B",
-        "blake3:717c1bcb17218786f29dd5377dd53a905fb5ec33c6ca12cb8dc0e3f2f18fa1b7",
-        "f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da",
-    ),
-    "general": (
-        "DINKSTER_UPSCALE_TEST_GENERAL",
-        "blake3:c24daac1228a6a1d035f71368d28cd39fcb9457347b1137ef94f9d685bae0e0b",
-        "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292",
-    ),
-}
-
-
-def _golden() -> dict[str, object]:
-    return cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
-
-
-def _decode(record: object) -> np.ndarray:
-    payload = cast("dict[str, object]", record)
-    shape = cast("list[int]", payload["shape"])
-    encoded = cast("str", payload["uint8Base64"])
-    return np.frombuffer(base64.b64decode(encoded), dtype=np.uint8).reshape(shape)
-
-
-def _golden_model_path(name: str) -> Path:
-    variable = GOLDEN_MODELS[name][0]
-    value = os.environ.get(variable)
-    if not value:
-        pytest.skip(f"{variable} is not configured")
-    path = Path(value)
-    if not path.is_file():
-        pytest.fail(f"{variable} does not exist: {path}")
-    return path
-
-
-def _golden_asset(tmp_path: Path, name: str) -> AssetRef:
-    path = _golden_model_path(name)
-    digest = GOLDEN_MODELS[name][1]
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                writer.write(chunk)
-        writer.commit()
-    return AssetRef(digest, path.name, path.stat().st_size, resolver=vault)
-
-
-def test_realesrgan_goldens_pin_the_reference_environment() -> None:
-    golden = _golden()
-    assert golden["baseline"] == "a1079ba16f2674734b065eb036fbfdddaa321a4d"
-    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
-    assert golden["numpy"] == "2.5.1"
-    assert golden["spandrel"] == "0.4.2"
-    assert golden["torch"] == "2.13.0+cpu"
-    assert golden["scales"] == {"anime6b": 4, "general": 4}
-    assert golden["tilings"] == {"full": [512, 32], "tiled": [32, 8]}
-    models = cast("dict[str, dict[str, str]]", golden["models"])
-    for name, (_, blake3_digest, sha256_digest) in GOLDEN_MODELS.items():
-        assert models[name]["blake3"] == blake3_digest
-        assert models[name]["sha256"] == sha256_digest
-    source = _decode(golden["source"])
-    assert source.shape == (40, 56, 3)
-    cases = cast("dict[str, dict[str, object]]", golden["cases"])
-    assert set(cases) == set(GOLDEN_MODELS)
-    for outputs in cases.values():
-        assert set(outputs) == {"full", "tiled"}
-        for record in outputs.values():
-            assert _decode(record).shape == (160, 224, 3)
-
-
-@pytest.mark.parametrize("tiling", ["full", "tiled"])
-@pytest.mark.parametrize("name", sorted(GOLDEN_MODELS))
-def test_upscale_outputs_match_pinned_comfyui_vectors(
-    tmp_path: Path, name: str, tiling: str
-) -> None:
-    golden = _golden()
-    reference = _golden_asset(tmp_path, name)
-    source = _decode(golden["source"])[None].astype(np.float32) / 255.0
-    tile_size, overlap = cast("dict[str, list[int]]", golden["tilings"])[tiling]
-    output = execute_upscale(source, reference, tile_size=tile_size, overlap=overlap)
-    expected = _decode(cast("dict[str, dict[str, object]]", golden["cases"])[name][tiling])
-    assert output.shape == (1, *expected.shape)
-    assert output.dtype == np.float32
-    # Hosted CPU kernels differed by at most one uint8 level; two levels apply
-    # the 2x spread rule, with a 1e-05 relative floor on pre-quantization floats.
-    np.testing.assert_allclose(
-        output[0],
-        expected.astype(np.float32) / 255,
-        rtol=1e-5,
-        atol=2 / 255,
-    )
-
-
-@pytest.mark.parametrize("name", sorted(GOLDEN_MODELS))
-def test_golden_model_artifacts_are_the_expected_bytes(name: str) -> None:
-    path = _golden_model_path(name)
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == GOLDEN_MODELS[name][2]

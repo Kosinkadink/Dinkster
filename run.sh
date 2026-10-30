@@ -22,4 +22,4 @@ if ! command -v uv >/dev/null; then
     fi
     export PATH="$uv_dir:$PATH"
 fi
-exec uv run --no-project --python 3.12 scripts/run.py "$@"
+exec uv run --no-project scripts/run.py "$@"

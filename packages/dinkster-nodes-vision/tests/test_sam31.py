@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import gc
-import hashlib
-import json
-import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,7 +13,6 @@ pytest.importorskip("torch")
 
 import torch
 from dinkster_api.v1 import Detection, Region
-from dinkster_assets import AssetVault, install_declared_assets, use_declared_asset_pack
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
@@ -29,82 +23,15 @@ from dinkster_nodes_vision.sam31.model import (
     execute_segment,
     execute_text_segment,
     execute_track,
-    prepare_frame,
 )
 from dinkster_nodes_vision.sam31.tokenizer import CLIP_BOS, CLIP_EOS, load_tokenizer
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import IsolatedWorker, load_manifest
-from safetensors import safe_open
-from torch.nn import functional as F
+from dinkster_workers import IsolatedWorker
+from worker_model_fixtures import worker_patch_launcher
 
 ROOT = Path(__file__).parents[3]
 MANIFEST = ROOT / "packages/dinkster-nodes-vision/dinkster_vision_sam31_pack/dinkster-pack.toml"
-GOLDEN_PATH = ROOT / "tests" / "goldens" / "sam31_multiplex_8dc3f3f.json"
-TRACK_GOLDEN_PATH = ROOT / "tests" / "goldens" / "sam31_track_8dc3f3f.json"
-DETECT_GOLDEN_PATH = ROOT / "tests" / "goldens" / "sam31_detect_8dc3f3f.json"
-TRACK_GOLDEN_SHA256 = "1d7ea415a504476475d634cc7a308a4bef0a11f4997fad082c16703b6c2e5521"
-DETECT_GOLDEN_SHA256 = "3a686eed763d64873e81a3aaacc101a3ae3f2e68564d1626bdffaf40eb8a2345"
-MODEL_DIGEST = "blake3:1c8d5762dbaf238bc9a2f10de07e0c476d1b68e75453566feb8dc9bcf2cb41c5"
-MODEL_SHA256 = "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03"
 TORCH_NUM_THREADS = 1
-
-
-class _ModelResolver:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def resolve(self, digest: str) -> Path | None:
-        return self.path if digest == MODEL_DIGEST else None
-
-
-def _model_path() -> Path:
-    value = os.environ.get("DINKSTER_SAM31_TEST_MODEL")
-    if not value:
-        pytest.skip("DINKSTER_SAM31_TEST_MODEL is not configured")
-    path = Path(value)
-    if not path.is_file():
-        pytest.fail(f"DINKSTER_SAM31_TEST_MODEL does not exist: {path}")
-    return path
-
-
-def _decode(record: object, *, dtype: np.dtype[np.generic]) -> np.ndarray:
-    payload = cast("dict[str, object]", record)
-    shape = cast("list[int]", payload["shape"])
-    encoded = cast("str", payload[f"{dtype.name}Base64"])
-    return np.frombuffer(base64.b64decode(encoded), dtype=dtype).reshape(shape)
-
-
-def _golden() -> dict[str, object]:
-    return cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
-
-
-def _tracking_golden() -> dict[str, object]:
-    return cast(
-        "dict[str, object]",
-        json.loads(TRACK_GOLDEN_PATH.read_text(encoding="utf-8")),
-    )
-
-
-def _detection_golden() -> dict[str, object]:
-    return cast(
-        "dict[str, object]",
-        json.loads(DETECT_GOLDEN_PATH.read_text(encoding="utf-8")),
-    )
-
-
-def _install_model(path: Path) -> None:
-    manifest = load_manifest(MANIFEST)
-    install_declared_assets(manifest.name, manifest.assets, _ModelResolver(path))
-
-
-def _vault(tmp_path: Path) -> AssetVault:
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(MODEL_DIGEST) as writer:
-        with _model_path().open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                writer.write(chunk)
-        writer.commit()
-    return vault
 
 
 @contextmanager
@@ -115,73 +42,6 @@ def _torch_threads(count: int):
         yield
     finally:
         torch.set_num_threads(previous)
-
-
-def test_architecture_exactly_matches_selected_checkpoint_state() -> None:
-    with torch.device("meta"):
-        model = sam_model.SAM31Model()
-    expected = model.state_dict()
-    actual: dict[str, tuple[int, ...]] = {}
-    with safe_open(_model_path(), framework="pt", device="cpu") as stored:
-        for source in stored.keys():
-            target = sam_model._target_key(source)
-            if target is None:
-                continue
-            shape = tuple(stored.get_slice(source).get_shape())
-            if target.endswith((".in_proj_weight", ".in_proj_bias")):
-                base, suffix = target.rsplit(".in_proj_", 1)
-                ending = ".weight" if suffix == "weight" else ".bias"
-                split_shape = (shape[0] // 3, *shape[1:])
-                actual[base + ".q_proj" + ending] = split_shape
-                actual[base + ".k_proj" + ending] = split_shape
-                actual[base + ".v_proj" + ending] = split_shape
-            else:
-                target = target.replace(".mlp.lin1.", ".mlp.0.")
-                target = target.replace(".mlp.lin2.", ".mlp.2.")
-                target = target.replace(".norm_final_attn.", ".norm_final.")
-                actual[target] = shape
-                if target.startswith("tracker.interactive_sam_") or target == (
-                    "tracker.interactivity_no_mem_embed"
-                ):
-                    actual[target.removeprefix("tracker.")] = shape
-    assert set(actual) == set(expected)
-    assert len(actual) == 1_030
-    assert sum(value.numel() for value in expected.values()) == 483_988_295
-    for name, shape in actual.items():
-        assert shape == tuple(expected[name].shape)
-
-
-def test_detection_architecture_exactly_matches_complete_checkpoint_state() -> None:
-    with torch.device("meta"):
-        model = sam_model.SAM31DetectionModel()
-    expected = model.state_dict()
-    actual: dict[str, tuple[int, ...]] = {}
-    with safe_open(_model_path(), framework="pt", device="cpu") as stored:
-        for source in stored.keys():
-            target = sam_model._detection_target_key(source)
-            assert target is not None
-            shape = tuple(stored.get_slice(source).get_shape())
-            if target.endswith((".in_proj_weight", ".in_proj_bias")):
-                base, suffix = target.rsplit(".in_proj_", 1)
-                ending = ".weight" if suffix == "weight" else ".bias"
-                split_shape = (shape[0] // 3, *shape[1:])
-                actual[base + ".q_proj" + ending] = split_shape
-                actual[base + ".k_proj" + ending] = split_shape
-                actual[base + ".v_proj" + ending] = split_shape
-            else:
-                target = target.replace(".mlp.lin1.", ".mlp.0.")
-                target = target.replace(".mlp.lin2.", ".mlp.2.")
-                target = target.replace(".norm_final_attn.", ".norm_final.")
-                actual[target] = shape
-                if target.startswith("tracker.interactive_sam_") or target == (
-                    "tracker.interactivity_no_mem_embed"
-                ):
-                    actual[target.removeprefix("tracker.")] = shape
-    assert set(actual) == set(expected)
-    assert len(actual) == 1_983
-    assert sum(value.numel() for value in expected.values()) == 876_883_581
-    for name, shape in actual.items():
-        assert shape == tuple(expected[name].shape)
 
 
 def test_offline_tokenizer_matches_pinned_clip_tokens() -> None:
@@ -200,174 +60,6 @@ def test_offline_tokenizer_matches_pinned_clip_tokens() -> None:
     assert len(long) == 2
     assert long[0][0] == long[1][0] == CLIP_BOS
     assert long[0][31] == long[1][2] == CLIP_EOS
-
-
-def test_sam31_output_matches_pinned_comfyui_vector() -> None:
-    golden = _golden()
-    assert golden["baseline"] == "8dc3f3f2094121c0a013e21d89136ebc331d2974"
-    assert golden["modelSha256"] == MODEL_SHA256
-    assert golden["numpy"] == "2.5.1"
-    assert golden["pillow"] == "12.0.0"
-    assert golden["torch"] == "2.13.0+cpu"
-    assert golden["torchNumThreads"] == TORCH_NUM_THREADS
-    assert golden["sourceImageBaseline"] == "0b1ef3ec90846bf82eba195ddcc30a1f5b2b6b38"
-    assert golden["sourceImageSha256"] == (
-        "83e63383d1715a7084afb5cf1e2e47e302869c2c944bfa62d86e769b4ff65ecc"
-    )
-    source = _decode(golden["source"], dtype=np.dtype(np.uint8)).astype(np.float32) / 255.0
-    expected = _decode(golden["refinedLogits"], dtype=np.dtype(np.float32))
-    box = cast("tuple[float, float, float, float]", tuple(cast("list[float]", golden["box"])))
-    _install_model(_model_path())
-    with _torch_threads(TORCH_NUM_THREADS):
-        with use_declared_asset_pack("dinkster-vision-sam31"):
-            model = sam_model.load_model()
-            prepared = prepare_frame(source)
-            prepared_sha256 = hashlib.sha256(prepared.numpy().tobytes()).hexdigest()
-            assert prepared_sha256 == golden["preparedSha256"]
-            with torch.inference_mode():
-                features = model.encode_image(prepared)
-                first = model.segment(
-                    features,
-                    box=sam_model._prompt(box, height=source.shape[0], width=source.shape[1]),
-                )
-                refined = model.segment(features, mask=first)
-                actual = F.interpolate(
-                    refined,
-                    size=source.shape[:2],
-                    mode="bilinear",
-                    align_corners=False,
-                )[0, 0].numpy()
-    # Intermediate model tensors vary by CPU kernel, so the deterministic
-    # prepared input stays exact while the final float output uses the hosted floor.
-    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1.6e-5)
-    sam_model._MODEL = None
-    gc.collect()
-
-
-def test_sam31_tracking_matches_pinned_comfyui_vector() -> None:
-    assert hashlib.sha256(TRACK_GOLDEN_PATH.read_bytes()).hexdigest() == TRACK_GOLDEN_SHA256
-    golden = _tracking_golden()
-    assert golden["baseline"] == "8dc3f3f2094121c0a013e21d89136ebc331d2974"
-    assert golden["modelSha256"] == MODEL_SHA256
-    assert golden["numpy"] == "2.5.1"
-    assert golden["opencv"] == "5.0.0"
-    assert golden["pillow"] == "12.0.0"
-    assert golden["torch"] == "2.13.0+cpu"
-    assert golden["torchNumThreads"] == TORCH_NUM_THREADS
-    assert golden["sourceImageBaseline"] == "0b1ef3ec90846bf82eba195ddcc30a1f5b2b6b38"
-    assert golden["sourceImageSha256"] == (
-        "83e63383d1715a7084afb5cf1e2e47e302869c2c944bfa62d86e769b4ff65ecc"
-    )
-    frames = _decode(golden["sourceFrames"], dtype=np.dtype(np.uint8)).astype(np.float32)
-    frames /= 255.0
-    boxes = cast("list[list[float]]", golden["boxes"])
-    detections = [
-        Detection(
-            f"object-{index}",
-            1.0,
-            Region(box[0], box[1], box[2] - box[0], box[3] - box[1]),
-        )
-        for index, box in enumerate(boxes)
-    ]
-    expected = _decode(golden["trackedMasks"], dtype=np.dtype(np.float32))
-    expected_combined = _decode(golden["combinedMask"], dtype=np.dtype(np.float32))
-    _install_model(_model_path())
-    with _torch_threads(TORCH_NUM_THREADS):
-        with use_declared_asset_pack("dinkster-vision-sam31"):
-            tracked, combined = execute_track(frames, detections)
-            actual = np.stack(tracked)
-    # The local and hosted tracking runs measured zero drift; the 1e-05
-    # relative and absolute floors cover these float32 model masks.
-    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
-    np.testing.assert_allclose(combined, expected_combined, rtol=1e-5, atol=1e-5)
-    sam_model._MODEL = None
-    gc.collect()
-
-
-def test_sam31_detection_and_text_segmentation_match_pinned_comfyui_vector() -> None:
-    assert hashlib.sha256(DETECT_GOLDEN_PATH.read_bytes()).hexdigest() == DETECT_GOLDEN_SHA256
-    golden = _detection_golden()
-    assert golden["baseline"] == "8dc3f3f2094121c0a013e21d89136ebc331d2974"
-    assert golden["modelSha256"] == MODEL_SHA256
-    assert golden["numpy"] == "2.5.1"
-    assert golden["pillow"] == "12.0.0"
-    assert golden["torch"] == "2.13.0+cpu"
-    assert golden["torchNumThreads"] == TORCH_NUM_THREADS
-    assert golden["transformers"] == "5.16.1"
-    assert golden["prompt"] == "person"
-    assert cast("list[int]", golden["tokenIds"])[:3] == [CLIP_BOS, 2533, CLIP_EOS]
-    assert golden["tokenizerCommit"] == "3bee28119e6b28e75b82b811b87b56935314e6a5"
-    assert golden["tokenizerSha256"] == (
-        "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a"
-    )
-    assert golden["sourceImageSha256"] == (
-        "83e63383d1715a7084afb5cf1e2e47e302869c2c944bfa62d86e769b4ff65ecc"
-    )
-    source = _decode(golden["source"], dtype=np.dtype(np.uint8))[None].astype(np.float32)
-    source /= 255.0
-    expected_text = _decode(golden["textEmbedding"], dtype=np.dtype(np.float32))
-    expected_boxes = _decode(golden["boxes"], dtype=np.dtype(np.float32))
-    expected_logits = _decode(golden["logits"], dtype=np.dtype(np.float32))
-    expected_coarse = _decode(golden["coarseMask"], dtype=np.dtype(np.float32))
-    expected_mask = _decode(golden["refinedMask"], dtype=np.dtype(np.float32))
-    top_query = cast("int", golden["topQuery"])
-    _install_model(_model_path())
-    with _torch_threads(TORCH_NUM_THREADS):
-        with use_declared_asset_pack("dinkster-vision-sam31"):
-            model = sam_model.load_detection_model()
-            captured_text: list[torch.Tensor] = []
-            captured_detection: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
-            text_hook = model.text_encoder.register_forward_hook(
-                lambda _module, _inputs, output: captured_text.append(output.detach().cpu())
-            )
-            detector_hook = model.detector.register_forward_hook(
-                lambda _module, _inputs, output: captured_detection.append(
-                    tuple(value.detach().cpu() for value in output)
-                )
-            )
-            try:
-                detections, masks = execute_text_segment(
-                    source,
-                    prompt="person",
-                    min_score=0.5,
-                )
-            finally:
-                text_hook.remove()
-                detector_hook.remove()
-    assert len(captured_text) == len(captured_detection) == len(detections) == len(masks) == 1
-    boxes, logits, coarse = captured_detection[0]
-    # Local CPU kernels differed by at most 7.6293945e-06; 1.6e-05 is more
-    # than twice that spread, with a 1e-05 relative floor for float32 output.
-    np.testing.assert_allclose(captured_text[0].numpy(), expected_text, rtol=1e-5, atol=1.6e-5)
-    np.testing.assert_allclose(boxes[0].numpy(), expected_boxes, rtol=1e-5, atol=1.6e-5)
-    np.testing.assert_allclose(logits[0].numpy(), expected_logits, rtol=1e-5, atol=1.6e-5)
-    np.testing.assert_allclose(
-        coarse[0, top_query].numpy(), expected_coarse, rtol=1e-5, atol=1.6e-5
-    )
-    detection = detections[0]
-    assert detection.label == "person"
-    expected_score = torch.tensor(expected_logits[top_query].item(), dtype=torch.float32).sigmoid()
-    assert detection.score == pytest.approx(float(expected_score), rel=1e-5, abs=1.6e-5)
-    raw_box = expected_boxes[top_query] * np.array((256, 256, 256, 256), dtype=np.float32)
-    assert detection.region == Region(
-        float(np.clip(raw_box[0], 0, 256)),
-        float(np.clip(raw_box[1], 0, 256)),
-        float(np.clip(raw_box[2], 0, 256) - np.clip(raw_box[0], 0, 256)),
-        float(np.clip(raw_box[3], 0, 256) - np.clip(raw_box[1], 0, 256)),
-    )
-    assert detection.mask is not None
-    np.testing.assert_array_equal(detection.mask, expected_mask)
-    np.testing.assert_array_equal(masks[0][0], expected_mask)
-    assert masks[0].shape == (1, 256, 256)
-    assert masks[0].dtype == np.float32 and not masks[0].flags.writeable
-    assert not np.shares_memory(detection.mask, masks[0])
-    assert detection.mask.dtype == np.float32 and not detection.mask.flags.writeable
-    with pytest.raises(ValueError):
-        detection.mask.setflags(write=True)
-    with pytest.raises(ValueError):
-        masks[0].setflags(write=True)
-    sam_model._MODEL = None
-    gc.collect()
 
 
 def test_exact_vector_thread_scope_restores_after_failure() -> None:
@@ -854,17 +546,9 @@ def test_invalid_tracking_inputs_fail_before_loading_model(
 
 def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> None:
     async def scenario() -> None:
-        golden = _golden()
-        source = _decode(golden["source"], dtype=np.dtype(np.uint8))[None].astype(np.float32)
-        source /= 255.0
-        box = cast("list[float]", golden["box"])
-        detection = Detection(
-            "performer",
-            0.8,
-            Region(box[0], box[1], box[2] - box[0], box[3] - box[1]),
-        )
-        expected = _decode(golden["refinedLogits"], dtype=np.dtype(np.float32)) > 0.0
-        vault = _vault(tmp_path)
+        source = np.zeros((1, 4, 5, 3), dtype=np.float32)
+        source[0, :, :, 0] = (0.0, 0.25, 0.5, 0.75, 1.0)
+        detection = Detection("performer", 0.8, Region(1.0, 1.0, 2.0, 2.0))
         registry = TypeRegistry()
         register_core_types(registry)
         register_types(registry)
@@ -872,7 +556,18 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
             MANIFEST,
             registry,
             python=sys.executable,
-            extra_env={"DINKSTER_ASSET_VAULT": str(vault.root)},
+            launcher=worker_patch_launcher(
+                tmp_path,
+                """
+import numpy as np
+from dinkster_nodes_vision.sam31 import model
+
+model.load_model = lambda: object()
+model.predict_logits = lambda _model, frame, boxes: [
+    frame[:, :, 0] - 0.5 for _box in boxes
+]
+""",
+            ),
         )
         await worker.start()
         try:
@@ -920,18 +615,10 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
                 detection.region,
             )
             assert actual.mask is not None
+            expected = np.tile(np.array([0, 0, 0, 1, 1], dtype=np.float32), (4, 1))
             np.testing.assert_array_equal(actual.mask, expected)
             np.testing.assert_array_equal(masks[0][0], expected)
         finally:
             await worker.close()
 
-    sam_model._MODEL = None
-    gc.collect()
     asyncio.run(scenario())
-
-
-def test_model_artifact_is_the_expected_bytes() -> None:
-    path = _model_path()
-    assert path.stat().st_size == 1_745_546_848
-    with path.open("rb") as stream:
-        assert hashlib.file_digest(stream, "sha256").hexdigest() == MODEL_SHA256

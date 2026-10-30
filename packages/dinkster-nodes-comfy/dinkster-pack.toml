@@ -528,6 +528,8 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "LoadBackgroundRemovalModel",
+    "RemoveBackground",
     "CropByBBoxes",
     "CameraAngle",
     "CreateCameraInfo",
@@ -537,9 +539,11 @@ namespaces = [
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
+    "MoGePointMapToMesh",
     "TripoSplatPreprocessImage",
     "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
+    "VAEDecodeTripoSplat",
     "LoadAudio",
     "RecordAudio",
     "PreviewAudio",
@@ -588,6 +592,12 @@ namespaces = [
     "ModelSave",
     "SaveImageAdvanced",
     "Trellis2Conditioning",
+    "RotateMesh",
+    "GetMeshInfo",
+    "VoxelToMeshBasic",
+    "VoxelToMesh",
+    "VAEDecodeHunyuan3D",
+    "Trellis2ShapeStage",
 ]
 
 [pack.sandbox]
