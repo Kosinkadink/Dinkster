@@ -811,6 +811,7 @@ def _check_typed_literal(
     # non-list JSON value can never wrap, so it is a document error even
     # before touching the destination type. An asset<...> stamp is one
     # AssetRef - scalar - whatever it decodes to.
+    literal_value = typed.value
     is_list_stamp = TypeExpr.runtime_cardinality(typed.type_id) == "list"
     if is_list_stamp and not isinstance(typed.value, list):
         diags.append(
@@ -825,7 +826,7 @@ def _check_typed_literal(
             )
         )
     else:
-        _check_literal_type(cast(object, typed.value), typed.type_id, where, input_id, diags)
+        _check_literal_type(literal_value, typed.type_id, where, input_id, diags)
     if expected is None:
         return  # consumer-side declaration problem, reported there
     # Asset coercion applies to stamped literals exactly as to links: an
@@ -863,9 +864,7 @@ def _check_typed_literal(
     if equivalence is not None:
         return
     if expected.runtime_type_id() != typed.type_id:
-        _check_literal_type(
-            cast(object, typed.value), expected.runtime_type_id(), where, input_id, diags
-        )
+        _check_literal_type(literal_value, expected.runtime_type_id(), where, input_id, diags)
     # Cardinality is structural (DESIGN 3.13), mirroring the link path: the
     # stamp is definite, so a shape mismatch with a definite input is an
     # error, not a type warning.
