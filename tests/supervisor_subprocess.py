@@ -54,7 +54,8 @@ def _nested_diagnostics(directory: Path) -> str:
     rows = []
     for path in sorted(directory.glob("nested-*.json")):
         record = json.loads(path.read_text())
-        code = record.get("returncode")
+        exit_path = path.with_suffix(".exit")
+        code = int(exit_path.read_text()) if exit_path.exists() else None
         state, code = ("exited", code) if code is not None else _process_state(record["pid"])
         stack = path.with_suffix(".stack")
         saved = stack.read_text() if stack.exists() else ""
@@ -164,11 +165,10 @@ def _trace_nested_commands(directory: Path) -> None:
 
         def _record_exit(self, code):
             if self.trace_path is not None and code is not None:
-                record = json.loads(self.trace_path.read_text())
-                record["returncode"] = code
                 temporary = self.trace_path.with_suffix(".tmp")
-                temporary.write_text(json.dumps(record))
-                temporary.replace(self.trace_path)
+                temporary.write_text(str(code))
+                temporary.replace(self.trace_path.with_suffix(".exit"))
+                self.trace_path = None
 
         def poll(self):
             code = super().poll()
