@@ -58,6 +58,7 @@ Surface (present only when create_app got a ServerLibrary):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
@@ -339,6 +340,30 @@ class ServerLibrary:
                 recover_asset_observations(self, journals=(vault_journal,))
                 if vault_journal.exists():
                     raise AssetError("encoded output vault location could not be cataloged")
+            if artifact.preview is not None:
+                preview_journal = (
+                    self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+                )
+                preview = artifact.preview
+                try:
+                    preview_ref = AssetRef(
+                        preview.digest,
+                        preview.name,
+                        preview.size,
+                        preview.media_type,
+                        resolver=self.vault,
+                    )
+                    with preview_ref.open() as source:
+                        if os.fstat(source.fileno()).st_size != preview.size:
+                            raise AssetError("saved-file preview size changed")
+                    prepare(preview_ref, artifact.node_id, preview_journal)
+                    recover_asset_observations(self, journals=(preview_journal,))
+                    if preview_journal.exists():
+                        raise AssetError("saved-file preview could not be cataloged")
+                except Exception:
+                    artifact = replace(artifact, preview=None)
+                    with contextlib.suppress(OSError):
+                        preview_journal.unlink(missing_ok=True)
             artifacts.append(artifact)
         return replace(result, artifacts=tuple(artifacts))
 

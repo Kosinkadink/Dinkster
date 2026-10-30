@@ -9,6 +9,15 @@
   complete admitted image batches, subject to existing file and transport bounds.
   Mounted-file descriptors do not impose the encoded-preview byte limit on saved
   weights or other files; the host validates their actual bytes by streaming.
+- Explicit mounted saved files may carry their own optional encoded preview.
+  Hosts with an asset vault can enable or disable lazy preview encoding;
+  disabled calls do not invoke the encoder. Every admitted saved file remains
+  eligible, up to 4096 per invocation, with a 16 MiB encoded-item limit and
+  serialized file-backed staging rather than an in-memory batch of frames.
+  Encoding or preview publication failure does not fail a valid saved file.
+  Exact saved-file authority is still required, and associations survive worker
+  transport, result caches, and backend presentation. Required standalone preview
+  attachments retain their separate 64-item and aggregate-byte limits.
 - Native image, mask, animation, audio, video, text, layer-document, model3D,
   splat, and conditioning savers explicitly attach their successful mounted
   publications. Save nodes require an active invocation attachment context;
@@ -34,6 +43,8 @@
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
   dictionaries, including position, target, zoom, camera type, optional camera
   controls, and structural extensions across execution hosts and caches
+- Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
+  scales, and structural extensions across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
@@ -247,6 +258,10 @@
 - Native Transform Splat translates, rotates, and scales canonical SPLAT
   batches. Nonuniform scaling reshapes Gaussian covariance; opacity,
   spherical harmonics, and per-item counts are preserved.
+- Native Merge Splats concatenates valid Gaussian rows in input order, pads
+  spherical harmonics to the highest degree, and retains unequal batch-item
+  counts with zero-padded rows. Its first two splat sockets are required;
+  additional authored sockets are optional.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate

@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,6 +19,7 @@ from dinkster_api.v1 import (
     IMAGE_TYPE,
     LATENT_TYPE,
     MASK_TYPE,
+    MODEL_TYPE,
     VAE_TYPE,
     InputSpec,
     Node,
@@ -28,7 +31,13 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from dinkster_nodes_comfy.triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+)
+from dinkster_schema import use_reporter
+from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -397,3 +406,228 @@ def test_native_manifest_conditions_twice(tmp_path: Path, in_process: bool) -> N
     finally:
         management.load_model_gpu = original_load
         management.intermediate_device = original_device
+
+
+class PreviewModel:
+    def __init__(self) -> None:
+        self.model = SimpleNamespace(diffusion_model=SimpleNamespace(q_token_length=7))
+        self.wrapper: Any = None
+
+    def clone(self) -> PreviewModel:
+        return PreviewModel()
+
+    def add_wrapper_with_key(self, kind: Any, key: str, wrapper: Any) -> None:
+        self.wrapper = wrapper
+
+
+def _preview_vae() -> Any:
+    return SimpleNamespace(
+        first_stage_model=SimpleNamespace(
+            gaussians_per_point=6, gs=SimpleNamespace(model_channels=3)
+        ),
+        patcher="fixture-vae",
+        vae_dtype=torch.float32,
+    )
+
+
+@pytest.mark.parametrize("positional", (False, True))
+@pytest.mark.parametrize("fail_after", (None, 0, 1))
+def test_sampling_preview_preserves_callbacks_and_disables_only_this_run(
+    monkeypatch: pytest.MonkeyPatch, positional: bool, fail_after: int | None
+) -> None:
+    initialize_inference_process()
+    import dinkster_inference.ldm.triposplat.preview as preview
+    import dinkster_inference.model_management as management
+
+    loads: list[Any] = []
+    decodes: list[Any] = []
+    original_calls: list[Any] = []
+    monkeypatch.setattr(management, "loaded_models", lambda **kwargs: ["existing"])
+    monkeypatch.setattr(
+        management, "load_models_gpu", lambda models, **kwargs: loads.append((models, kwargs))
+    )
+
+    def decode(vae: Any, x0: Any, config: Any) -> Any:
+        decodes.append((x0, config))
+        if fail_after is not None and len(decodes) > fail_after:
+            raise RuntimeError("fixture preview failure")
+        return Image.new("RGB", (37, 19), (30, 90, 150))
+
+    monkeypatch.setattr(preview, "decode_x0_to_image", decode)
+    model = PreviewModel()
+    patched = TripoSplatSamplingPreview.execute(
+        model=model,
+        vae=_preview_vae(),
+        num_gaussians=1030,
+        octree_level=3,
+        yaw=-27.0,
+        pitch=41.0,
+        point_size=4,
+    )["model"]
+    assert model.wrapper is None and patched is not model
+
+    def executor(*args: Any, **kwargs: Any) -> str:
+        callback = args[5] if positional else kwargs["callback"]
+        for step in range(3):
+            callback(step, "shape", "noisy", 3)
+        return "sampler result"
+
+    def original(*args: Any) -> None:
+        original_calls.append(args)
+
+    events: list[Any] = []
+    for _ in range(2):
+        decodes.clear()
+        events.clear()
+        with use_reporter(lambda name, data, blob: events.append((name, data, blob))):
+            result = (
+                patched.wrapper(executor, 0, 1, 2, 3, 4, original)
+                if positional
+                else patched.wrapper(executor, callback=original)
+            )
+        assert result == "sampler result"
+        expected = 3 if fail_after is None else fail_after
+        previews = [item for item in events if item[0] == "preview"]
+        assert len(previews) == expected
+        assert len(decodes) == (3 if fail_after is None else fail_after + 1)
+        # Hand-derived fixture memory: (7*4 + floor(1030/6)*10)*3*4 = 20856.
+        assert loads[-1] == (["existing", "fixture-vae"], {"memory_required": 20856})
+        for _, data, blob in previews:
+            # TripoSplatSamplingPreview F bc5f880d sends JPEG/max512 to server.py.
+            # For fixture RGB 37x19, contain gives 512 x round(19/37*512) = 263.
+            assert data == {"mime": "image/jpeg", "width": 512, "height": 263}
+            assert Image.open(BytesIO(blob)).size == (512, 263)
+        assert [item[1]["step"] for item in events if item[0] == "progress"] == list(
+            range(1, expected + 1)
+        )
+        assert decodes[0] == (
+            "shape",
+            {"gaussians": 1030, "level": 3, "yaw": -27.0, "pitch": 41.0, "point_size": 4},
+        )
+    assert len(loads) == 2
+    assert original_calls == [(step, "shape", "noisy", 3) for step in range(3)] * 2
+
+
+class SamplingPreviewSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.preview-source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        initialize_inference_process()
+        import dinkster_inference.ldm.triposplat.preview as preview
+        import dinkster_inference.model_management as management
+
+        management.loaded_models = lambda **kwargs: []
+        management.load_models_gpu = lambda *_args, **_kwargs: None
+        preview.decode_x0_to_image = lambda *_args: Image.new("RGB", (37, 19), (30, 90, 150))
+        return cls.outputs(model=PreviewModel(), vae=_preview_vae())
+
+
+class SamplingPreviewInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "triposplat-fixture.preview-inspect",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any) -> Any:
+        calls: list[Any] = []
+
+        def executor(*args: Any, **kwargs: Any) -> str:
+            kwargs["callback"](0, "shape", "noise", 2)
+            kwargs["callback"](1, "shape", "noise", 2)
+            return "sampling continued"
+
+        assert (
+            model.wrapper(executor, callback=lambda *args: calls.append(args))
+            == "sampling continued"
+        )
+        assert len(calls) == 2
+        return cls.outputs(summary="patched model and sampler previews transported")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_manifest_sampling_preview_twice(tmp_path: Path, in_process: bool) -> None:
+    initialize_inference_process()
+    import dinkster_inference.ldm.triposplat.preview as preview
+    import dinkster_inference.model_management as management
+
+    originals = management.loaded_models, management.load_models_gpu, preview.decode_x0_to_image
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        (tmp_path / "sampling_preview_fixture.py").write_text(
+            "from test_triposplat_torch import SamplingPreviewSource, SamplingPreviewInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (SamplingPreviewSource, SamplingPreviewInspect)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "sampling-preview.toml"
+        fixture.write_text(
+            '[pack]\nname="preview-fixture"\npublisher="dinkster"\n'
+            'namespaces=["triposplat-fixture"]\n[pack.entry]\n'
+            'nodes="sampling_preview_fixture:NODES"\ntypes="sampling_preview_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                )
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "preview-fixture",
+                        group_manifests=() if in_process else (native, fixture),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("triposplat-fixture.preview-source"),
+                    "preview": GraphNode(
+                        "TripoSplatSamplingPreview",
+                        {"model": Link("source", "model"), "vae": Link("source", "vae")},
+                    ),
+                    "inspect": GraphNode(
+                        "triposplat-fixture.preview-inspect", {"model": Link("preview", "model")}
+                    ),
+                }
+            )
+            events: list[Any] = []
+            for _ in range(2):
+                events.clear()
+                engine = composer.composition.make_engine(events.append)
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "patched model and sampler previews transported"
+                )
+                previews = [
+                    event
+                    for event in events
+                    if event.kind == "node_event" and event.detail["name"] == "preview"
+                ]
+                assert len(previews) == 2
+        finally:
+            await composer.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        management.loaded_models, management.load_models_gpu, preview.decode_x0_to_image = originals

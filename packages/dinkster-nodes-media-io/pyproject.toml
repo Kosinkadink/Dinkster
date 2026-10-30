@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-nodes-media-io"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster first-party asset-backed media I/O node pack"
 requires-python = ">=3.12"
 dependencies = [

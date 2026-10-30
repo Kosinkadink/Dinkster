@@ -11,6 +11,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     SPLAT_TYPE,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -182,3 +183,85 @@ class GetSplatCount(Node):
         )
         report_progress(1, 1, text=f"{count:,} splats")
         return cls.outputs(splat=splat, count=count)
+
+
+class MergeSplat(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="MergeSplat",
+            display_name="Merge Splats",
+            category="3d/splat",
+            description=(
+                "Concatenate any number of gaussian splats into one. Unioning several decodes "
+                "of the same latent at different seeds densifies the surface, this can improve "
+                "surface quality when meshing."
+            ),
+            search_terms=("union splat", "densify gaussian", "combine splat", "merge gaussian"),
+            input_families=(
+                InputFamilySpec(
+                    "splats",
+                    (InputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+                    min_members=2,
+                    max_members=32,
+                    member_prefix="splat",
+                    optional_after_minimum=True,
+                ),
+            ),
+            outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, splats: Mapping[str, object]) -> Mapping[str, object]:
+        values = [materialize_splat(value) for value in splats.values() if value is not None]
+        if not values:
+            raise ValueError("MergeSplat: connect at least one splat.")
+        torch = importlib.import_module("torch")
+        batch = values[0].positions.shape[0]
+        for value in values:
+            if value.positions.shape[0] != batch:
+                raise ValueError(
+                    f"MergeSplat: batch size mismatch ({batch} vs {value.positions.shape[0]})."
+                )
+        max_degree = max(value.sh.shape[2] for value in values)
+        fields: dict[str, list[Any]] = {
+            name: [] for name in ("positions", "scales", "rotations", "opacities", "sh")
+        }
+        lengths: list[int] = []
+        for index in range(batch):
+            rows: dict[str, list[Any]] = {name: [] for name in fields}
+            for value in values:
+                end = (
+                    int(value.counts[index].item())
+                    if value.counts is not None
+                    else value.positions.shape[1]
+                )
+                for name in fields:
+                    row = getattr(value, name)[index, :end]
+                    if name == "sh" and row.shape[1] < max_degree:
+                        row = torch.cat(
+                            [
+                                row,
+                                row.new_zeros(
+                                    row.shape[0], max_degree - row.shape[1], row.shape[2]
+                                ),
+                            ],
+                            dim=1,
+                        )
+                    rows[name].append(row)
+            for name in fields:
+                fields[name].append(torch.cat(rows[name]))
+            lengths.append(fields["positions"][-1].shape[0])
+        size = max(lengths)
+        result: dict[str, Any] = {}
+        for name, batch_rows in fields.items():
+            padded = batch_rows[0].new_zeros((batch, size, *batch_rows[0].shape[1:]))
+            for index, row in enumerate(batch_rows):
+                padded[index, : row.shape[0]] = row
+            result[name] = padded
+        result["counts"] = (
+            torch.tensor(lengths, device=values[0].positions.device, dtype=torch.int64)
+            if len(set(lengths)) > 1
+            else None
+        )
+        return cls.outputs(splat=SimpleNamespace(**result))

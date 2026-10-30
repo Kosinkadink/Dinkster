@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-api"
-version = "0.0.1"
+version = "0.0.2"
 description = "The versioned extension API door: packs import dinkster_api.v1 only (DESIGN 3.6)"
 requires-python = ">=3.12"
 dependencies = [

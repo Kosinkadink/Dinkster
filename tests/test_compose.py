@@ -32,7 +32,7 @@ from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import EngineEvent
-from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
 from dinkster_memory import (
     GovernorReservationService,
     MeasuredMemory,
@@ -68,6 +68,126 @@ DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dink
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
+
+
+@pytest.mark.parametrize("source", ["image-list", "video-asset"])
+def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: str) -> None:
+    import io
+
+    import av
+    import numpy as np
+    from PIL import Image
+
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        specs = tuple(
+            replace(default_pack_spec(pack), in_process=False, python=sys.executable)
+            for pack in (
+                "dinkster-nodes-foundation",
+                "dinkster-nodes-media-io",
+                "dinkster-nodes-image",
+            )
+        )
+        composition = await compose_serving(
+            specs,
+            include_default_packs=False,
+            worker_env={"DINKSTER_ASSET_VAULT": str(tmp_path / "vault")},
+        )
+        try:
+            library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+            app = create_app(
+                composition.make_engine,
+                composition.schemas,
+                library=library,
+                choices=composition.choices,
+                lazy_choices=composition.lazy_choices,
+            )
+            async with TestClient(TestServer(app)) as client:
+                if source == "image-list":
+                    nodes = {
+                        "source": GraphNode(
+                            "dinkster.image.generate",
+                            {"width": 7, "height": 3, "batch_size": 2},
+                            slot_variants={"color_source": "hex", "operation": "solid"},
+                        ),
+                        "split": GraphNode(
+                            "dinkster.image.batch.to_list", {"image": Link("source", "image")}
+                        ),
+                        "select": GraphNode(
+                            "std.list.element", {"list": Link("split", "images"), "index": -1}
+                        ),
+                        "info": GraphNode("dinkster.image.info", {"image": Link("select", "item")}),
+                    }
+                    expected = {"width": 7, "height": 3, "count": 1}
+                else:
+                    path = tmp_path / "input.mp4"
+                    with av.open(str(path), "w") as container:
+                        stream = container.add_stream("libx264rgb", rate=2)
+                        stream.width, stream.height, stream.pix_fmt = 32, 16, "rgb24"
+                        stream.options = {"crf": "0"}
+                        for value in (31, 173):
+                            frame = av.VideoFrame.from_ndarray(
+                                np.full((16, 32, 3), value, dtype=np.uint8), format="rgb24"
+                            )
+                            container.mux(stream.encode(frame))
+                        container.mux(stream.encode())
+                    response = await client.post("/api/assets", data=path.read_bytes())
+                    assert response.status == 201
+                    uploaded = await response.json()
+                    nodes = {
+                        "source": GraphNode(
+                            "dinkster.load_video_value",
+                            {"video": TypedLiteral("asset<VIDEO>", {"digest": uploaded["digest"]})},
+                        ),
+                        "frames": GraphNode(
+                            "dinkster.video.disassemble", {"video": Link("source", "video")}
+                        ),
+                        "info": GraphNode(
+                            "dinkster.image.info", {"image": Link("frames", "images")}
+                        ),
+                        "compare": GraphNode(
+                            "dinkster.image.compare", {"image_a": Link("frames", "images")}
+                        ),
+                    }
+                    expected = {"width": 32, "height": 16, "count": 2}
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "cross-pack",
+                        "jobId": source,
+                        "graph": graph_to_wire(Graph(nodes=nodes)),
+                        "targets": ["info", "compare"] if source == "video-asset" else ["info"],
+                    },
+                )
+                assert response.status == 202, await response.text()
+                async with asyncio.timeout(60):
+                    while True:
+                        result = await (await client.get(f"/api/jobs/cross-pack/{source}")).json()
+                        if result["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0.01)
+                assert result["state"] == "completed", result.get("error", result)
+                assert {
+                    name: result["outputs"]["info"][name]["value"] for name in expected
+                } == expected
+                if source == "video-asset":
+                    response = await client.get(
+                        "/api/values",
+                        params={
+                            "clientId": "cross-pack",
+                            "jobId": source,
+                            "nodeId": "compare",
+                            "outputId": "image_a",
+                            "rendition": "png",
+                        },
+                    )
+                    assert response.status == 200, await response.text()
+                    pixels = np.array(Image.open(io.BytesIO(await response.read())))
+                    assert np.array_equal(pixels, np.full((16, 32, 3), 31, dtype=np.uint8))
+        finally:
+            await composition.close()
+
+    asyncio.run(scenario())
 
 
 def test_default_pack_specs_load_verified_bundled_official_sources(
@@ -1230,7 +1350,7 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:4a94c9dbbf803b60b726e0e09e50870315457c82dba794ad84ab13a1523b4281",
+            "blake3:2ff45dde1588339d578f615422c36cea93dd2f312dea6a3339241c6790b39f97",
         ),
         (
             "dinkster-nodes-media-io",
@@ -1238,7 +1358,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-image",
-            "blake3:7bb3476628d08cd7daa56a09c13a4eb068438f5b4012b753e8c3a0ed3581c276",
+            "blake3:5a100422d5ff649ab523f3af172bce3819eaaec70f8e6d64e04f181c3cb2c6c1",
         ),
         (
             "dinkster-nodes-remote",
@@ -1255,8 +1375,8 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert Path(spec.manifest).resolve() == (source_root / "dinkster-pack.toml").resolve()
     assert spec.packs is not None
     info = spec.packs[pack_id]
-    assert info.source == f"python:{pack_id}==0.0.1"
-    assert info.version == "0.0.1"
+    assert info.source == f"python:{pack_id}==0.0.2"
+    assert info.version == "0.0.2"
     assert info.artifact_digest == expected_digest
 
 
@@ -1429,7 +1549,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
         sidecar = source / filename
         if sidecar.is_file():
             shutil.copy2(sidecar, bundled.parent / filename)
-    distribution = SimpleNamespace(version="0.0.1", locate_file=lambda _path: bundled)
+    distribution = SimpleNamespace(version="0.0.2", locate_file=lambda _path: bundled)
 
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
@@ -1444,7 +1564,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-nodes-media-io"]
-    assert info.source == "python:dinkster-nodes-media-io==0.0.1"
+    assert info.source == "python:dinkster-nodes-media-io==0.0.2"
     locked = lock.get("dinkster-nodes-media-io")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
@@ -1598,7 +1718,7 @@ def test_default_pack_refuses_version_outside_suite_lock(
     monkeypatch.setattr("dinkster.compose.importlib.metadata.distribution", distribution)
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.1"):
+    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.2"):
         default_pack_spec("dinkster-nodes-foundation")
 
 
@@ -1621,7 +1741,7 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
         encoding="utf-8",
     )
     distribution = SimpleNamespace(
-        version="0.0.1",
+        version="0.0.2",
         locate_file=lambda _path: tmp_path / "missing/dinkster-pack.toml",
     )
 
