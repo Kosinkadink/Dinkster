@@ -528,6 +528,8 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "LoadBackgroundRemovalModel",
+    "RemoveBackground",
     "CropByBBoxes",
     "CameraAngle",
     "CreateCameraInfo",
@@ -594,6 +596,7 @@ namespaces = [
     "VoxelToMeshBasic",
     "VoxelToMesh",
     "VAEDecodeHunyuan3D",
+    "Trellis2ShapeStage",
 ]
 
 [pack.sandbox]
