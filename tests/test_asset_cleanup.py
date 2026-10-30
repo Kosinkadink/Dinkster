@@ -12,7 +12,7 @@ from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -941,7 +941,7 @@ def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
         paused: asyncio.Queue[None] = asyncio.Queue()
 
         class ObservedWake(asyncio.Event):
-            async def wait(self) -> bool:
+            async def wait(self) -> Literal[True]:
                 paused.put_nowait(None)
                 return await super().wait()
 
