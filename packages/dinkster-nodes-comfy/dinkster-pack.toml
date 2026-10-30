@@ -533,6 +533,7 @@ namespaces = [
     "CreateCameraInfo",
     "GetSplatCount",
     "TransformSplat",
+    "MergeSplat",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
