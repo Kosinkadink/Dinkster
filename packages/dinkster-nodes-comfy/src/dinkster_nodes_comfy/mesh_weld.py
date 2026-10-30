@@ -131,7 +131,7 @@ class WeldVertices(Node):
         for index, (v, f, c) in enumerate(zip(vertices, faces, colors, strict=True)):
             out.vertices[index, : v.shape[0]] = v
             out.faces[index, : f.shape[0]] = f
-            if c is not None:
+            if c is not None and out.vertex_colors is not None:
                 out.vertex_colors[index, : c.shape[0]] = c
         out.vertex_counts = torch.tensor(
             [v.shape[0] for v in vertices], dtype=torch.int64, device=out.vertices.device
