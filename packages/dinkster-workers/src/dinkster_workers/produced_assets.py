@@ -81,6 +81,11 @@ def result_asset_digests(header: Mapping[str, object], blobs: Sequence[bytes]) -
             raise AssetError("result algebra values must be a list")
         for wire in cast("list[object]", values):
             visit(wire)
+    from .boundary import decode_saved_file_previews
+
+    for claim in decode_saved_file_previews(header):
+        ref = AssetRef.from_wire(cast("Mapping[str, object]", claim["preview"]))
+        digests.add(ref.digest)
     return digests
 
 
@@ -107,7 +112,10 @@ def _source_references(
 
 
 def source_asset_files(
-    outputs: Mapping[str, Value], resolver: AssetResolver | None
+    outputs: Mapping[str, Value],
+    resolver: AssetResolver | None,
+    *,
+    previews: Sequence[Mapping[str, object]] = (),
 ) -> list[tuple[str, Path]]:
     """Resolve declared source identities without decoding value payloads."""
     files: dict[str, Path] = {}
@@ -116,6 +124,12 @@ def source_asset_files(
             for ref in _references(value.meta.get("asset_refs", []), resolver):
                 if ref.digest not in files:
                     files[ref.digest] = ref.local_path()
+    for claim in previews:
+        try:
+            ref = AssetRef.from_wire(cast("Mapping[str, object]", claim["preview"]), resolver)
+            files.setdefault(ref.digest, ref.local_path())
+        except Exception:
+            continue
     return list(files.items())
 
 
@@ -131,6 +145,40 @@ class ProducedAssetAuthority:
         self._vault = vault
         self._source = source
         self._existing = existing or vault
+
+    def capture_previews(
+        self,
+        claims: Sequence[Mapping[str, object]],
+        transferred: AssetResolver | None = None,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Adopt optional file-backed previews before the producer is acknowledged."""
+        accepted: list[Mapping[str, object]] = []
+        for claim in claims:
+            try:
+                ref = AssetRef.from_wire(cast("Mapping[str, object]", claim["preview"]))
+                if self._vault is None:
+                    continue
+                path = transferred.resolve(ref.digest) if transferred is not None else None
+                if path is None and self._source is not None:
+                    path = self._source.resolve(ref.digest)
+                if path is None:
+                    path = self._vault.resolve(ref.digest)
+                if path is None:
+                    continue
+                with (
+                    open_verified(path, ref.digest) as source,
+                    self._vault.writer(ref.digest) as writer,
+                ):
+                    if os.fstat(source.fileno()).st_size != ref.size:
+                        continue
+                    while chunk := source.read(_COPY_BYTES):
+                        writer.write(chunk)
+                    writer.commit()
+                accepted.append(claim)
+            except Exception:
+                # Optional media cannot invalidate successfully produced sources.
+                continue
+        return tuple(accepted)
 
     def capture(
         self,
