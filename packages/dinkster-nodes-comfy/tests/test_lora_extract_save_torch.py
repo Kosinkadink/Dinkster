@@ -92,7 +92,7 @@ def test_schema_stays_torch_free_and_preserves_source_inputs() -> None:
             "-c",
             """
 import sys
-from dinkster_api.v1 import CLIP_TYPE, MODEL_TYPE, TypeExpr
+from dinkster_api.v1 import CLIP_TYPE, MODEL_TYPE, StringWidget, TypeExpr
 from dinkster_nodes_comfy.lora_extract_save import LoraSave
 
 schema = LoraSave.schema()
@@ -103,6 +103,8 @@ assert schema.search_terms == ("export lora",)
 assert tuple(item.id for item in schema.inputs) == (
     "filename_prefix", "rank", "lora_type", "bias_diff", "model_diff", "text_encoder_diff", "mount"
 )
+assert schema.inputs[0].default == "loras/ComfyUI_extracted_lora"
+assert schema.inputs[0].widget == StringWidget(multiline=False)
 assert schema.inputs[4].type == TypeExpr.concrete(MODEL_TYPE)
 assert schema.inputs[4].required is False
 assert schema.inputs[5].type == TypeExpr.concrete(CLIP_TYPE)
