@@ -40,6 +40,8 @@ jobs:
 
   build:
     needs: validation
+    outputs:
+      lock-matrix: ${{ steps.bases.outputs.lock-matrix }}
     permissions:
       actions: read
       contents: read
@@ -61,18 +63,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
       - name: Acquire the selected published base manifests
+        id: bases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           uv run --no-project --python 3.12 --with packaging==26.2 python - <<'PY'
-          import json
+          import json, os
           from pathlib import Path
           from scripts.acquire_engine_bases import acquire
 
           root = Path.cwd()
           selections = json.loads((root / 'scripts/base_bundles.json').read_text())
-          acquire(root, [f'base-{variant}-{identity}' for variant, identity in selections.items()],
-                  root / '.release/base-manifests')
+          paths = acquire(root, [f'base-{variant}-{identity}' for variant, identity in selections.items()],
+                          root / '.release/base-manifests')
+          rows = []
+          for path in paths:
+              base = json.loads(path.read_text())
+              runner = {'linux': 'ubuntu-latest', 'windows': 'windows-latest'}[base['platform']['os']]
+              rows.append({'variant': base['variant'], 'runner': runner})
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('lock-matrix=' + json.dumps({'include': rows}) + '\n')
           PY
       - name: Build the complete release contract
         env:
@@ -124,16 +134,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - variant: linux-cpu
-            runner: ubuntu-latest
-          - variant: win-cpu
-            runner: windows-latest
-          - variant: win-nvidia
-            runner: windows-latest
-          - variant: win-nvidia-cu126
-            runner: windows-latest
+      matrix: ${{ fromJSON(needs.build.outputs.lock-matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
