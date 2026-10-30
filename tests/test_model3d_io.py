@@ -13,7 +13,17 @@ from typing import cast
 
 import dinkster_nodes_media_io.model3d as model3d_module
 import pytest
-from dinkster_api.v1 import LOAD_3D_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import (
+    FILE_3D_GLB_TYPE,
+    FILE_3D_GLTF_TYPE,
+    FILE_3D_TYPE,
+    LOAD_3D_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -24,6 +34,7 @@ from dinkster_assets import (
     MountTable,
     digest_bytes,
     register_asset_type,
+    register_file3d_types,
     register_load3d_type,
     resolver_from_env,
 )
@@ -190,6 +201,296 @@ def test_worker_hands_load_the_asset_and_decodes_it_for_preview(tmp_path: Path) 
         expected = decode_model3d(data)
         assert result.outputs["load"]["model"].resolve() == expected
         assert result.outputs["preview"]["model"].resolve() == expected
+
+    asyncio.run(scenario())
+
+
+def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
+    tmp_path: Path,
+) -> None:
+    source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
+    resource = b"\x00\x01\xfe\xff"
+    vault = AssetVault(tmp_path / "file3d")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        digest = digest_bytes(data)
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest, name, len(data), resolver=vault)
+
+    model = publish(source, "source.gltf")
+    buffer = publish(resource, "data.bin")
+    sender = TypeRegistry()
+    receiver = TypeRegistry()
+    assert len(register_file3d_types(sender, vault)) == 13
+    register_file3d_types(receiver, vault)
+    obj = {"format": "gltf", "source": model, "resources": {"mesh/data.bin": buffer}}
+    value = sender.wrap(FILE_3D_GLTF_TYPE, obj)
+    payload = sender.spec(FILE_3D_GLTF_TYPE).encode(obj)
+    assert len(payload) < 1000 and source not in payload and resource not in payload
+    spec = receiver.spec(FILE_3D_GLTF_TYPE)
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(payload, value.meta.entries)
+    restored = cast("dict[str, object]", spec.decode(payload))
+    assert cast(AssetRef, restored["source"]).read_bytes() == source
+    assert (
+        cast("dict[str, AssetRef]", restored["resources"])["mesh/data.bin"].read_bytes() == resource
+    )
+    assert receiver.wrap(FILE_3D_GLTF_TYPE, restored).fingerprint == value.fingerprint
+    altered = {**obj, "resources": {"mesh/other.bin": buffer}}
+    assert sender.wrap(FILE_3D_GLTF_TYPE, altered).fingerprint != value.fingerprint
+    wrong_format = sender.spec(FILE_3D_GLB_TYPE)
+    with pytest.raises(AssetError, match="does not accept"):
+        sender.wrap(FILE_3D_GLB_TYPE, obj)
+    with pytest.raises(AssetError, match="does not accept"):
+        wrong_format.encode(obj)
+    assert wrong_format.fingerprint is not None
+    with pytest.raises(AssetError, match="does not accept"):
+        wrong_format.fingerprint(obj)
+    with pytest.raises(AssetError, match="does not accept"):
+        wrong_format.decode(payload)
+    with pytest.raises(AssetError, match="metadata"):
+        spec.validate_encoded(payload, {**value.meta.entries, "asset_refs": []})
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "../mesh.bin",
+        "/mesh.bin",
+        "a/../b",
+        "a//b",
+        ".",
+        "C:/b",
+        "a\\b",
+        "%2e%2e/b",
+        "https://host/b",
+    ),
+)
+def test_file3d_resources_cannot_grant_paths(name: str) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"source"), "source.gltf", 6)
+    with pytest.raises(AssetError, match="contained relative"):
+        registry.wrap(FILE_3D_TYPE, {"format": "gltf", "source": ref, "resources": {name: ref}})
+
+
+@pytest.mark.parametrize("change", ("revoke", "replace", "index"))
+def test_file3d_local_binding_uses_live_grant_and_only_reconciles_indexed_content(
+    tmp_path: Path, change: str
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    source = root / "model.obj"
+    source.write_bytes(b"v 1 2 3\nf 1 1 1\n")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef(id="models", path=root), kind="media/model3d")
+    ref = table.bind_name("model.obj", "media/model3d")
+    resolver = MountSnapshotResolver(snapshot)
+    assert isinstance(ref, LocalAssetRef)
+    registry = TypeRegistry()
+    register_file3d_types(registry, resolver)
+    spec = registry.spec(FILE_3D_TYPE)
+    obj = {"format": "obj", "source": ref}
+    local = registry.wrap(FILE_3D_TYPE, obj)
+    payload = spec.encode(obj)
+    wire = json.loads(payload)
+    assert wire["source"]["verification"] == "unverified"
+    assert "digest" not in wire["source"]
+    assert local.meta.entries["asset_refs"] == []
+    assert (
+        cast(LocalAssetRef, cast(dict, spec.decode(payload))["source"]).read_bytes()
+        == source.read_bytes()
+    )
+    foreign = TypeRegistry()
+    register_file3d_types(foreign, MountSnapshotResolver(tmp_path / "foreign-mounts.json"))
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        foreign.spec(FILE_3D_TYPE).decode(payload)
+    if change == "index":
+        expected = source.read_bytes()
+        table.scan("models")
+        reconciled = registry.wrap(FILE_3D_TYPE, obj)
+        portable = cast(AssetRef, cast(dict, reconciled.resolve())["source"])
+        assert portable.digest == digest_bytes(expected)
+        assert portable.read_bytes() == expected
+        assert reconciled.meta.entries["asset_refs"] == [portable.to_wire()]
+        assert reconciled.fingerprint != local.fingerprint
+    else:
+        if change == "revoke":
+            table.remove("models")
+        else:
+            source.write_bytes(b"changed geometry")
+        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+            spec.decode(payload)
+
+
+@pytest.mark.parametrize("source", ("/host/model.obj", {"path": "/host/model.obj"}))
+def test_file3d_source_cannot_introduce_filesystem_authority(source: object) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    with pytest.raises(AssetError):
+        registry.wrap(FILE_3D_TYPE, {"format": "obj", "source": source})
+
+
+@pytest.mark.parametrize(
+    "type_id,format_id",
+    (
+        ("FILE_3D", "custom"),
+        ("FILE_3D_GLB", "glb"),
+        ("FILE_3D_GLTF", "gltf"),
+        ("FILE_3D_FBX", "fbx"),
+        ("FILE_3D_OBJ", "obj"),
+        ("FILE_3D_STL", "stl"),
+        ("FILE_3D_USDZ", "usdz"),
+        ("FILE_3D_PLY", "ply"),
+        ("FILE_3D_SPLAT", "splat"),
+        ("FILE_3D_SPZ", "spz"),
+        ("FILE_3D_KSPLAT", "ksplat"),
+        ("FILE_3D_SPLAT_ANY", "ply"),
+        ("FILE_3D_SPLAT_ANY", "splat"),
+        ("FILE_3D_SPLAT_ANY", "spz"),
+        ("FILE_3D_SPLAT_ANY", "ksplat"),
+        ("FILE_3D_POINT_CLOUD_ANY", "ply"),
+    ),
+)
+def test_file3d_format_families_retain_original_format(type_id: str, format_id: str) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"original"), "source", 8)
+    obj = {"format": format_id, "source": ref}
+    spec = registry.spec(type_id)
+    decoded = cast("dict[str, object]", spec.decode(spec.encode(obj)))
+    assert decoded == {**obj, "resources": {}}
+    assert spec.fingerprint is not None
+    assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
+    wrong = {**obj, "format": "glb" if format_id != "glb" else "gltf"}
+    if type_id != FILE_3D_TYPE:
+        with pytest.raises(AssetError, match="does not accept"):
+            spec.encode(wrong)
+
+
+FILE3D_SOURCE = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
+FILE3D_SIDECAR = b"\x00\x02\xfe\xff"
+
+
+def register_file3d_fixture_types(registry: TypeRegistry) -> None:
+    register_file3d_types(registry, resolver_from_env())
+
+
+class File3DProducer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="file3d-source.make",
+            outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        vault = AssetVault(Path(os.environ["DINKSTER_PACK_SCRATCH"]) / "produced-assets")
+        refs = []
+        for data, name in ((FILE3D_SOURCE, "scene.gltf"), (FILE3D_SIDECAR, "data.bin")):
+            digest = digest_bytes(data)
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            refs.append(AssetRef(digest, name, len(data), resolver=vault))
+        return cls.outputs(
+            file={"format": "gltf", "source": refs[0], "resources": {"mesh/data.bin": refs[1]}}
+        )
+
+
+class File3DConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="file3d-consumer.read",
+            inputs=(InputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
+            outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, file: dict[str, object]) -> Mapping[str, object]:
+        assert cast(AssetRef, file["source"]).read_bytes() == FILE3D_SOURCE
+        assert (
+            cast(dict[str, AssetRef], file["resources"])["mesh/data.bin"].read_bytes()
+            == FILE3D_SIDECAR
+        )
+        return cls.outputs(file=file)
+
+
+def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = AssetVault(tmp_path / "engine-vault")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    manifests = []
+    for name, node, namespace in (
+        ("source", "File3DProducer", "file3d-source"),
+        ("consumer", "File3DConsumer", "file3d-consumer"),
+    ):
+        module = f"file3d_{name}"
+        (tmp_path / f"{module}.py").write_text(
+            f"from test_model3d_io import {node}, register_file3d_fixture_types\n"
+            f"NODES = ({node},)\n",
+            encoding="ascii",
+        )
+        manifest = tmp_path / f"{name}.toml"
+        manifest.write_text(
+            f'[pack]\nname="file3d-{name}"\npublisher="dinkster"\n'
+            f'namespaces=["{namespace}"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_file3d_fixture_types"\n',
+            encoding="ascii",
+        )
+        manifests.append(manifest)
+
+    async def scenario() -> None:
+        graph = Graph(
+            nodes={
+                "source": GraphNode("file3d-source.make"),
+                "consumer": GraphNode("file3d-consumer.read", {"file": Link("source", "file")}),
+            }
+        )
+        for replay in (False, True):
+            registry = TypeRegistry()
+            register_core_types(registry)
+            register_file3d_types(registry, vault)
+            composer = ServingComposer(
+                registry=registry,
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+                pack_scratch_root=tmp_path / "scratch",
+                worker_env={
+                    "CUDA_VISIBLE_DEVICES": "",
+                    "DINKSTER_ACCELERATOR": "cpu",
+                    "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+                },
+            )
+            try:
+                for manifest in manifests:
+                    await composer.add_pack(
+                        PackSpec(
+                            manifest=manifest,
+                            worker_group=manifest.stem,
+                            group_manifests=(manifest,),
+                        )
+                    )
+                result = await composer.composition.make_engine(lambda _event: None).run(
+                    graph, ["consumer"]
+                )
+                value = result.outputs["consumer"]["file"]
+                assert set(result.cached if replay else result.executed) == {"source", "consumer"}
+            finally:
+                await composer.close()
+            shutil.rmtree(tmp_path / "scratch")
+            restored = cast(dict[str, object], value.resolve())
+            source = cast(AssetRef, restored["source"])
+            sidecar = cast(dict[str, AssetRef], restored["resources"])["mesh/data.bin"]
+            assert source.read_bytes() == FILE3D_SOURCE
+            assert sidecar.read_bytes() == FILE3D_SIDECAR
+            assert vault.has(source.digest) and vault.has(sidecar.digest)
 
     asyncio.run(scenario())
 

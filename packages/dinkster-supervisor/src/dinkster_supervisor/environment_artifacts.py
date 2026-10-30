@@ -277,10 +277,9 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     )
 
 
-def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
-    """Populate verified artifacts and merged requirements under a held store writer lock."""
-    base_id = catalog.channel.base_for(variant)
-    base = catalog.bases[variant]
+def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path) -> Path:
+    """Acquire a validated base under a held store writer lock, without an engine release."""
+    base_id = cast("str", base["id"])
     platform = cast("dict[str, object]", base["platform"])
     host = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     if platform["os"] != host:
@@ -295,7 +294,7 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
             )
         downloaded = tuple(
             fetch_artifact(
-                catalog.base_sources[variant],
+                sources,
                 cast("str", row["filename"]),
                 store / "downloads" / base_id[7:] / cast("str", row["filename"]),
                 cast("str", row["sha256"]),
@@ -329,6 +328,13 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
         if created:
             shutil.rmtree(base_root)
         raise
+    return base_root
+
+
+def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
+    """Populate verified artifacts and merged requirements under a held store writer lock."""
+    base = catalog.bases[variant]
+    acquire_base(base, catalog.base_sources[variant], store)
     release_root = store / "engines" / catalog.channel.engine_release[7:]
     owned = cast("list[str]", base["replaces"])
     for row in artifact_rows(catalog.engine["artifacts"], "name"):

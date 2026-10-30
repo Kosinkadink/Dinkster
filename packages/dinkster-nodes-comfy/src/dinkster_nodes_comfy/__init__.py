@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     register_asset_type,
     register_audio_value_type,
     register_curve_type,
+    register_file3d_types,
     register_load3d_type,
     register_video_value_type,
     resolver_from_env,
@@ -32,6 +33,7 @@ from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .background_removal import BACKGROUND_REMOVAL_NODES
 from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
@@ -147,6 +149,7 @@ from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
+from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
@@ -203,6 +206,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .trellis_conditioning import Trellis2Conditioning
+from .trellis_shape import Trellis2ShapeStage
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -452,6 +456,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    *BACKGROUND_REMOVAL_NODES,
     CropByBBoxes,
     CameraAngle,
     CreateCameraInfo,
@@ -461,6 +466,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
+    MoGePointMapToMesh,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
     TripoSplatConditioning,
@@ -513,6 +519,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     *MESH_NODES,
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
+    Trellis2ShapeStage,
 )
 
 
@@ -527,6 +534,7 @@ def register_inference_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_curve_type(registry)
+    register_file3d_types(registry, resolver_from_env())
     _register_inference_types(registry)
 
 
