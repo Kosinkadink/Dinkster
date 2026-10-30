@@ -15,6 +15,11 @@ from filelock import FileLock, Timeout
 from .identity import AssetError, digest_bytes, is_digest, require_digest
 
 
+def is_link_or_junction(path: Path) -> bool:
+    """Reject both forms of directory redirection at managed storage boundaries."""
+    return path.is_symlink() or path.is_junction()
+
+
 class ProducedScratchState:
     """Journal a scratch root's job owner and publications offered for handoff.
 
@@ -25,7 +30,7 @@ class ProducedScratchState:
     def __init__(self, root: Path) -> None:
         self._root = root.absolute()
         self._path = self._root / ".produced-scratch.sqlite"
-        if self._root.is_symlink() or self._path.is_symlink():
+        if is_link_or_junction(self._root) or is_link_or_junction(self._path):
             raise AssetError("produced scratch state must not be a symlink")
 
     def bind(self, job: str, attempt: int) -> None:
@@ -157,12 +162,12 @@ def produced_job_scratch_root(scratch: Path, job: str, attempt: int) -> Path:
 
 
 def _lease_directory(root: Path, *, create: bool = True) -> Path:
-    if root.is_symlink():
+    if is_link_or_junction(root):
         raise AssetError("produced scratch root must not be a symlink")
     # The gate must survive removal of the claimed data directory.
     parent = root.parent / ".leases"
     folder = parent / root.name
-    if parent.is_symlink() or folder.is_symlink() or (folder / "gate.lock").is_symlink():
+    if any(is_link_or_junction(path) for path in (parent, folder, folder / "gate.lock")):
         raise AssetError("produced scratch leases must not be a symlink")
     if create:
         folder.mkdir(parents=True, exist_ok=True)
@@ -210,7 +215,7 @@ class ProducedScratchLease:
 def hold_produced_vault(root: Path) -> ProducedScratchLease:
     """Retain the host's produced vault through publication and reference handoff."""
     root = root.absolute()
-    if root.is_symlink():
+    if is_link_or_junction(root):
         raise AssetError("produced vault ownership must not follow symlinks")
     return ProducedScratchLease(root / ".produced-collection")
 
@@ -224,7 +229,7 @@ def claim_inactive_produced_vault(root: Path) -> Generator[bool]:
     """
     root = root.absolute()
     inventory = root / ".produced-assets.sqlite"
-    if root.is_symlink() or inventory.is_symlink() or not inventory.is_file():
+    if is_link_or_junction(root) or is_link_or_junction(inventory) or not inventory.is_file():
         raise AssetError("produced vault ownership state is unavailable")
     with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
         yield inactive
@@ -244,14 +249,14 @@ def hold_produced_asset_read(path: Path) -> ProducedScratchLease | None:
     root = path.parent.parent
     scratch = root / ".produced-scratch.sqlite"
     inventory = root / ".produced-assets.sqlite"
-    if not any(marker.exists() or marker.is_symlink() for marker in (scratch, inventory)):
+    if not any(marker.exists() or is_link_or_junction(marker) for marker in (scratch, inventory)):
         return None
-    if any(candidate.is_symlink() for candidate in (root, path.parent, path, scratch, inventory)):
+    if any(is_link_or_junction(p) for p in (root, path.parent, path, scratch, inventory)):
         raise AssetError("produced asset reads must not follow symlinks")
     if scratch.exists():
         return ProducedScratchLease(root)
     readers = root / ".produced-readers"
-    if readers.is_symlink():
+    if is_link_or_junction(readers):
         raise AssetError("produced asset reader ownership must not be a symlink")
     return ProducedScratchLease(root / ".produced-collection", readers / path.name)
 
@@ -281,7 +286,7 @@ def retain_produced_asset_path(path: Path) -> None:
 def _job_lease_root(scratch: Path, job: str) -> Path:
     if not job:
         raise AssetError("produced scratch requires a nonempty job")
-    if scratch.is_symlink() or (scratch / "produced-jobs").is_symlink():
+    if is_link_or_junction(scratch) or is_link_or_junction(scratch / "produced-jobs"):
         raise AssetError("produced job ownership root must not be a symlink")
     key = digest_bytes(job.encode("utf-8")).split(":", 1)[1]
     return scratch / "produced-jobs" / key
@@ -317,7 +322,7 @@ def claim_inactive_produced_scratch(root: Path) -> Generator[bool]:
             for path in sorted(folder.iterdir()):
                 if path.name == "gate.lock":
                     continue
-                if path.is_symlink() or not path.is_file():
+                if is_link_or_junction(path) or not path.is_file():
                     raise AssetError("produced scratch has unsafe lease state")
                 owner = path.name.removeprefix("owner-").removesuffix(".lock")
                 if (

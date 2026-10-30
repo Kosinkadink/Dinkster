@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .identity import AssetError, require_digest
+from .scratch import is_link_or_junction
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class ProducedAssetInventory:
 
     def __init__(self, root: Path) -> None:
         self._path = root.absolute() / ".produced-assets.sqlite"
-        if self._path.is_symlink():
+        if is_link_or_junction(root) or is_link_or_junction(self._path):
             raise AssetError("produced asset inventory must not be a symlink")
 
     def pending(self, digest: str, size: int) -> None:

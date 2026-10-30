@@ -360,9 +360,9 @@ interrupted ingest files) only inside recognized per-pack/per-group job stores
 under the host-configured scratch root. Unrelated pack scratch is excluded.
 The job/attempt path must match its read-only journal owner. Both host-job and
 store OS claims remain held during each tree walk. Missing ownership, live
-jobs/writers/readers, unreadable walks and symlinks return null with
-`temporary_accounting_unavailable`, not a partial total. An explicitly configured
-but absent scratch tree reports zero without creating it; an unconfigured root
+jobs/writers/readers, unreadable walks, symlinks and Windows directory junctions
+return null with `temporary_accounting_unavailable`, not a partial total. An
+explicitly configured but absent scratch tree reports zero without creating it; an unconfigured root
 remains unknown. Normal serve supplies `<library-root>/scratch`.
 `reclaimableBytes` is null, `collectionEnabled` is false, and `blocked` always
 includes `owner_completeness_unknown`. Missing, pending or unreadable state adds
@@ -396,10 +396,10 @@ adoption timestamp. Behind the integration gate, successful reconciliation
 verifies every offered engine copy, then holds vault-wide ownership through
 removal of that inactive job's scratch files and empty subdirectories. Both
 host-job and scratch-store claims remain held. Offered, unoffered and interrupted
-temporary files are removed only after a complete safe tree walk; symlinks and
-special files refuse removal before any file is deleted. Offered rows remain
-until removal succeeds, permitting retries after partial deletion. The small
-owner journal and external lease gates remain for safe job-attempt reuse;
+temporary files are removed only after a complete safe tree walk; symlinks,
+Windows directory junctions and special files refuse removal before any file is
+deleted. Offered rows remain until removal succeeds, permitting retries after
+partial deletion. The small owner journal and external lease gates remain for safe job-attempt reuse;
 regular file descriptors are verified sequentially rather than all held open.
 No active job or reader's scratch is removed, and an untracked engine copy is
 not reclassified by this pass.

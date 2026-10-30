@@ -6,6 +6,7 @@ import asyncio
 import multiprocessing
 import os
 import sqlite3
+import subprocess
 import threading
 from collections.abc import Generator, Sequence
 from contextlib import closing, contextmanager
@@ -1428,6 +1429,124 @@ def test_storage_accounting_refuses_escaping_vault_shard(tmp_path: Path) -> None
             assert (outside / ("ab" * 32)).read_bytes() == b"untouched external bytes"
             assert not (vault.root / ".produced-assets.sqlite").exists()
         finally:
+            store.close()
+
+    asyncio.run(scenario())
+
+
+def _directory_junction(link: Path, target: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            check=True,
+            capture_output=True,
+        )
+        assert link.is_junction() and not link.is_symlink()
+    else:
+        # Exercise Windows' distinct predicates while retaining real directory redirection.
+        link.symlink_to(target, target_is_directory=True)
+        is_symlink = Path.is_symlink
+        is_junction = Path.is_junction
+        monkeypatch.setattr(Path, "is_symlink", lambda p: p != link and is_symlink(p))
+        monkeypatch.setattr(Path, "is_junction", lambda p: p == link or is_junction(p))
+
+
+@pytest.mark.parametrize(
+    "boundary", ["root", "scope", "pack", "produced", "jobs", "job", "shard", "nested"]
+)
+def test_recovery_refuses_directory_junctions_without_removing_external_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+    scratch = tmp_path / "scratch"
+    vault = AssetVault(tmp_path / "vault")
+    data = b"offered bytes must remain recoverable"
+    digest = digest_bytes(data)
+    with closing(hold_produced_job(scratch, "finished")):
+        with use_produced_output_job("finished", 1):
+            source = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "p")}
+            )
+            assert source is not None
+            with source.writer(digest) as writer:
+                writer.write(data)
+                path = writer.commit()
+            ProducedScratchState(source.root).offer([digest])
+    nested = source.root / "nested"
+    nested.mkdir()
+    (nested / "keep").write_bytes(b"external user file")
+    link = {
+        "root": scratch,
+        "scope": scratch / "packs",
+        "pack": scratch / "packs" / "p",
+        "produced": source.root.parent.parent,
+        "jobs": source.root.parent,
+        "job": source.root,
+        "shard": path.parent,
+        "nested": nested,
+    }[boundary]
+    outside = tmp_path / "outside"
+    link.rename(outside)
+    before = {p.relative_to(outside): p.read_bytes() for p in outside.rglob("*") if p.is_file()}
+    _directory_junction(link, outside, monkeypatch)
+    result = recover_produced_publications(vault, scratch)
+    assert result["blockedInspections"] == 1
+    assert result["reclaimedFiles"] == result["reclaimedBytes"] == 0
+    assert {
+        p.relative_to(outside): p.read_bytes() for p in outside.rglob("*") if p.is_file()
+    } == before
+    assert path.read_bytes() == data
+
+
+@pytest.mark.parametrize("boundary", ["root", "shard", "blob", "sidecar"])
+def test_collection_refuses_directory_junctions_without_removing_external_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        data = b"produced but not disposable through a junction"
+        digest = digest_bytes(data)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(data))
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            path = writer.commit()
+            inventory.adopted(digest, len(data))
+        outside = tmp_path / "outside"
+        if boundary in {"root", "shard"}:
+            link = vault.root if boundary == "root" else path.parent
+            link.rename(outside)
+        else:
+            outside.mkdir()
+            (outside / "keep").write_bytes(b"external user file")
+            link = path if boundary == "blob" else path.with_name(path.name + ".unsafe")
+            if boundary == "blob":
+                path.unlink()
+        before = {p.relative_to(outside): p.read_bytes() for p in outside.rglob("*") if p.is_file()}
+        _directory_junction(link, outside, monkeypatch)
+        try:
+            result = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                MemoryLRUCache(),
+                scratch_root=tmp_path / "scratch",
+                collect=True,
+            )
+            assert result["reclaimedFiles"] == result["reclaimedBytes"] == 0
+            assert result["reclaimableBytes"] is None
+            assert {
+                p.relative_to(outside): p.read_bytes() for p in outside.rglob("*") if p.is_file()
+            } == before
+            if boundary == "sidecar":
+                assert path.read_bytes() == data
+                assert len(inventory.entries()) == 1
+        finally:
+            history.close()
             store.close()
 
     asyncio.run(scenario())

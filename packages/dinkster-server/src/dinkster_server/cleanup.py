@@ -20,6 +20,7 @@ from dinkster_assets.scratch import (
     claim_inactive_produced_scratch,
     claim_inactive_produced_vault,
     hold_produced_vault,
+    is_link_or_junction,
     produced_job_scratch_root,
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
@@ -137,7 +138,7 @@ def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
             mode = path.stat(follow_symlinks=False).st_mode
         except FileNotFoundError:
             return False
-        if not stat.S_ISDIR(mode):
+        if is_link_or_junction(path) or not stat.S_ISDIR(mode):
             raise AssetError("scratch accounting requires a real directory")
         return True
 
@@ -149,7 +150,7 @@ def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
         if not present_directory(folder):
             continue
         for pack in folder.iterdir():
-            if pack.is_symlink() or not pack.is_dir():
+            if is_link_or_junction(pack) or not pack.is_dir():
                 raise AssetError("scratch pack accounting is unavailable")
             produced = pack / "produced-assets"
             jobs = produced / "jobs"
@@ -161,10 +162,10 @@ def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
                 continue
             for root in jobs.iterdir():
                 if root.name == ".leases":
-                    if root.is_symlink() or not root.is_dir():
+                    if is_link_or_junction(root) or not root.is_dir():
                         raise AssetError("scratch lease accounting is unavailable")
                     continue
-                if root.is_symlink() or not root.is_dir():
+                if is_link_or_junction(root) or not root.is_dir():
                     raise AssetError("scratch job accounting is unavailable")
                 yield pack, root
 
@@ -208,7 +209,7 @@ def _scratch_bytes(scratch: Path) -> int:
             for directory, folders, files in root.walk(follow_symlinks=False, on_error=unreadable):
                 for name in (*folders, *files):
                     path = directory / name
-                    if path.is_symlink():
+                    if is_link_or_junction(path):
                         raise AssetError("scratch accounting must not follow symlinks")
                 for name in files:
                     path = directory / name
@@ -274,13 +275,13 @@ def _remove_scratch(
         for directory, directories, names in root.walk(follow_symlinks=False, on_error=unreadable):
             for name in directories:
                 folder = directory / name
-                if folder.is_symlink():
+                if is_link_or_junction(folder):
                     raise AssetError("scratch removal must not follow symlinks")
                 folders.append(folder)
             for name in names:
                 path = directory / name
                 mode = path.stat(follow_symlinks=False).st_mode
-                if not stat.S_ISREG(mode):
+                if is_link_or_junction(path) or not stat.S_ISREG(mode):
                     raise AssetError("scratch removal requires regular files")
                 # Keep ownership state for idempotent retries and job-attempt reuse.
                 if directory == root and name in {
@@ -303,7 +304,7 @@ def _remove_scratch(
 def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: int) -> None:
     hexpart = digest.split(":", 1)[1]
     destination = vault.root / hexpart[:2] / hexpart
-    if any(path.is_symlink() for path in (vault.root, destination.parent, destination)):
+    if any(is_link_or_junction(path) for path in (vault.root, destination.parent, destination)):
         raise AssetError("publication recovery must not follow symlinks")
     inventory = ProducedAssetInventory(vault.root)
     try:
@@ -319,7 +320,7 @@ def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: in
             inventory.confirm_existing(digest, size)
         return
     source = scratch / hexpart[:2] / hexpart
-    if source.parent.is_symlink() or source.is_symlink():
+    if is_link_or_junction(source.parent) or is_link_or_junction(source):
         raise AssetError("publication recovery must not follow symlinks")
     if not stat.S_ISREG(source.stat(follow_symlinks=False).st_mode):
         raise AssetError("publication recovery requires a regular source file")
@@ -343,18 +344,22 @@ def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: in
 
 
 def _vault_bytes(vault: AssetVault) -> int:
-    if vault.root.is_symlink():
+    if is_link_or_junction(vault.root):
         raise AssetError("vault accounting must not follow symlinks")
     size = 0
     for shard in vault.root.iterdir():
         if len(shard.name) != 2 or any(char not in "0123456789abcdef" for char in shard.name):
             continue
-        if shard.is_symlink() or not shard.is_dir():
+        if is_link_or_junction(shard) or not shard.is_dir():
             raise AssetError("vault shard accounting is unavailable")
         for path in shard.iterdir():
             if len(path.name) != 64 or any(char not in "0123456789abcdef" for char in path.name):
                 continue
-            if path.is_symlink() or not path.is_file() or not path.name.startswith(shard.name):
+            if (
+                is_link_or_junction(path)
+                or not path.is_file()
+                or not path.name.startswith(shard.name)
+            ):
                 raise AssetError("vault blob accounting is unavailable")
             size += path.stat().st_size
     return size
@@ -380,10 +385,10 @@ def _collect_vault(
         path = vault.root / hexpart[:2] / hexpart
         removed: list[tuple[Path, int]] = []
         try:
-            if path.parent.is_symlink() or path.is_symlink():
+            if is_link_or_junction(path.parent) or is_link_or_junction(path):
                 raise AssetError("collection must not follow symlinks")
             siblings = list(path.parent.glob(f"{path.name}.*"))
-            if any(p.is_symlink() or not p.is_file() for p in siblings):
+            if any(is_link_or_junction(p) or not p.is_file() for p in siblings):
                 raise AssetError("collection sidecars are unsafe")
             if path.exists():
                 # The exclusive vault claim replaces managed reader acquisition here.
@@ -443,7 +448,7 @@ def _inspect(
     except (AssetError, OSError):
         blocked.append("vault_accounting_unavailable")
     try:
-        if vault.root.is_symlink():
+        if is_link_or_junction(vault.root):
             raise AssetError("adoption accounting must not follow symlinks")
         inventory = ProducedAssetInventory(vault.root).entries()
         adopted_bytes = sum(row.size for row in inventory if row.adopted_at_ns is not None)
