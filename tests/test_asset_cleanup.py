@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
+import os
 import sqlite3
 import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
+from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import cast
 
@@ -15,7 +18,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
-from dinkster_assets.scratch import hold_produced_job
+from dinkster_assets.scratch import ProducedScratchState, hold_produced_job
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_server import HistoryStore, Principal, ServerLibrary, create_app
 from dinkster_server.auth import StaticBearerAuthenticator
@@ -23,6 +26,220 @@ from dinkster_server.cleanup import inspect_cleanup
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
 from test_history import make_record
 from test_server import SCHEMAS, make_engine
+
+
+def _crash_after_offering(channel: Connection, scratch: str) -> None:
+    root = Path(scratch)
+    host = hold_produced_job(root, "crashed job")
+    with use_produced_output_job("crashed job", 1):
+        source = produced_output_scratch({"DINKSTER_PACK_SCRATCH": str(root / "packs" / "media")})
+        assert source is not None
+        data = b"offered before process exit"
+        digest = digest_bytes(data)
+        with source.writer(digest) as writer:
+            writer.write(data)
+            path = writer.commit()
+        ProducedScratchState(source.root).offer([digest])
+        channel.send(str(path))
+        assert channel.recv() == "crash"
+        assert host is not None
+        os._exit(0)
+
+
+def test_startup_recovers_publication_after_producer_process_crash(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch"
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    process = context.Process(target=_crash_after_offering, args=(child, str(scratch)))
+    process.start()
+    child.close()
+    try:
+        assert parent.poll(15)
+        source = Path(parent.recv())
+        parent.send("crash")
+        process.join(15)
+        assert process.exitcode == 0
+
+        async def scenario() -> None:
+            vault = AssetVault(tmp_path / "vault")
+            library = ServerLibrary(vault, LibraryStore(tmp_path / "library"), scratch_root=scratch)
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+            await client.start_server()
+            try:
+                status = await (await client.get("/api/library/storage")).json()
+                assert status["lastPublicationRecovery"] == {
+                    "verifiedPublications": 1,
+                    "blockedInspections": 0,
+                }
+                data = b"offered before process exit"
+                digest = digest_bytes(data)
+                response = await client.get(f"/api/assets/{digest}")
+                assert response.status == 200 and await response.read() == data
+                assert source.read_bytes() == data
+            finally:
+                await client.close()
+
+        asyncio.run(scenario())
+    finally:
+        parent.close()
+        if process.is_alive():
+            process.terminate()
+            process.join(15)
+
+
+@pytest.mark.parametrize("destination", ["absent", "pending", "untracked"])
+def test_startup_recovers_offered_publications_without_collecting_scratch(
+    tmp_path: Path, destination: str
+) -> None:
+    async def scenario() -> None:
+        scratch = tmp_path / "scratch"
+        vault = AssetVault(tmp_path / "vault")
+        host = hold_produced_job(scratch, "interrupted job")
+        data = b"recover offered bytes"
+        digest = digest_bytes(data)
+        unused = b"not offered for handoff"
+        with use_produced_output_job("interrupted job", 3):
+            source = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+            )
+            assert source is not None
+            for payload in (data, unused):
+                with source.writer(digest_bytes(payload)) as writer:
+                    writer.write(payload)
+                    writer.commit()
+            ProducedScratchState(source.root).offer([digest])
+        host.close()
+        inventory = ProducedAssetInventory(vault.root)
+        if destination != "absent":
+            if destination == "pending":
+                inventory.pending(digest, len(data))
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+        before = {
+            p.relative_to(source.root): p.read_bytes()
+            for p in source.root.rglob("*")
+            if p.is_file()
+        }
+        timestamp: int | None = None
+        for _ in range(2):
+            library = ServerLibrary(vault, LibraryStore(tmp_path / "library"), scratch_root=scratch)
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+            await client.start_server()
+            try:
+                response = await client.get("/api/library/storage")
+                assert response.status == 200
+                status = await response.json()
+                assert status["lastPublicationRecovery"] == {
+                    "verifiedPublications": 1,
+                    "blockedInspections": 0,
+                }
+                assert not status["collectionEnabled"]
+                assert (await client.get(f"/api/assets/{digest}")).status == 200
+                path = vault.resolve(digest)
+                assert path is not None and path.read_bytes() == data
+                assert vault.resolve(digest_bytes(unused)) is None
+                assert {
+                    p.relative_to(source.root): p.read_bytes()
+                    for p in source.root.rglob("*")
+                    if p.is_file()
+                } == before
+                assert library.store.query("local") == []
+                if destination == "untracked":
+                    assert not (vault.root / ".produced-assets.sqlite").exists()
+                else:
+                    (entry,) = inventory.entries()
+                    assert entry.digest == digest and entry.size == len(data)
+                    assert entry.adopted_at_ns is not None
+                    if timestamp is not None:
+                        assert entry.adopted_at_ns == timestamp
+                    timestamp = entry.adopted_at_ns
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "fault", ["host", "writer", "source", "destination", "symlink", "size", "journal"]
+)
+def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
+    tmp_path: Path, fault: str
+) -> None:
+    async def scenario() -> None:
+        scratch = tmp_path / "scratch"
+        vault = AssetVault(tmp_path / "vault")
+        host = hold_produced_job(scratch, "blocked job")
+        data = b"recoverable source"
+        digest = digest_bytes(data)
+        with use_produced_output_job("blocked job", 1):
+            source = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+            )
+            assert source is not None
+            with source.writer(digest) as writer:
+                writer.write(data)
+                path = writer.commit()
+            ProducedScratchState(source.root).offer([digest])
+            live_writer = source.writer(digest_bytes(b"unfinished")) if fault == "writer" else None
+        if fault != "host":
+            host.close()
+        destination = vault.root / digest[7:9] / digest[7:]
+        if fault == "source":
+            path.write_bytes(b"x" * len(data))
+        elif fault == "destination":
+            destination.parent.mkdir()
+            destination.write_bytes(b"x" * len(data))
+        elif fault == "symlink":
+            outside = tmp_path / "outside"
+            outside.write_bytes(data)
+            path.unlink()
+            path.symlink_to(outside)
+        elif fault == "size":
+            path.write_bytes(data + b"extra")
+        elif fault == "journal":
+            (source.root / ".produced-scratch.sqlite").unlink()
+        before = path.read_bytes()
+        healthy = b"another job can recover"
+        healthy_digest = digest_bytes(healthy)
+        other = hold_produced_job(scratch, "healthy job")
+        with use_produced_output_job("healthy job", 2):
+            healthy_source = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "groups" / "healthy")}
+            )
+            assert healthy_source is not None
+            with healthy_source.writer(healthy_digest) as writer:
+                writer.write(healthy)
+                healthy_path = writer.commit()
+            ProducedScratchState(healthy_source.root).offer([healthy_digest])
+        other.close()
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library"), scratch_root=scratch)
+        client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+        try:
+            await client.start_server()
+            response = await client.get("/api/library/storage")
+            assert response.status == 200
+            status = await response.json()
+            assert status["lastPublicationRecovery"] == {
+                "verifiedPublications": 1,
+                "blockedInspections": 1,
+            }
+            assert not status["collectionEnabled"]
+            assert path.read_bytes() == before
+            if fault == "destination":
+                assert destination.read_bytes() == b"x" * len(data)
+            else:
+                assert not destination.exists()
+            adopted = vault.resolve(healthy_digest)
+            assert adopted is not None and adopted.read_bytes() == healthy
+            assert healthy_path.read_bytes() == healthy
+        finally:
+            await client.close()
+            host.close()
+            if live_writer is not None:
+                live_writer.__exit__(None, None, None)
+
+    asyncio.run(scenario())
 
 
 def test_storage_accounting_combines_held_owners_without_enabling_collection(

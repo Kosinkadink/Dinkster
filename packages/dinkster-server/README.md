@@ -292,6 +292,28 @@ includes `owner_completeness_unknown`. Missing, pending or unreadable state adds
 explicit reasons. An inactive claim is not adoption or deletion authority;
 this endpoint never deletes bytes or treats unknown as zero.
 
+### Interrupted publication recovery
+
+Before serving library requests, startup inspects the host-configured scratch
+stores under the same host-job and store claims as accounting. Only journaled
+publications explicitly offered for handoff are recovered. Missing engine bytes
+stream through the existing digest-verifying vault writer, with pending
+inventory recorded before copying and adoption committed while publication
+ownership remains held. Existing engine bytes must verify their digest and size
+before a pending inventory entry can be completed. Untracked existing engine
+assets are not reclassified as produced assets.
+
+Unknown journals, active owners, unsafe paths, size conflicts and corrupt bytes
+block that store without stopping recovery of another recognized job. An
+unreadable or unsafe directory enumeration stops that enumeration rather than
+guessing what was omitted. Recovery never reruns a workflow, copies mounted
+inputs, creates library records or removes scratch, including unoffered bytes.
+Repeating startup preserves the first verified adoption timestamp.
+`lastPublicationRecovery` on operator storage status reports the last startup's
+`verifiedPublications` and `blockedInspections`, or null when no scratch root
+was configured. These counts are observations, not cleanup eligibility or a
+complete orphan census. GET status itself performs no recovery mutation.
+
 ## Learn more
 
 See DESIGN.md sections 3.5 (server protocol), 3.10 (multi-instance

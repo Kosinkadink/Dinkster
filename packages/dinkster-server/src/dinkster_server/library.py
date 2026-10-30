@@ -1647,7 +1647,7 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
 
 
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
-    from .cleanup import handle_cleanup_status
+    from .cleanup import RECOVERY_KEY, handle_cleanup_status, recover_produced_publications
     from .image_document import handle_dependencies, handle_image_document, handle_render
 
     app[LIBRARY_KEY] = library
@@ -1682,6 +1682,13 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     async def recover_upload_observations(app: web.Application) -> None:
         await run_media_publication(library, lambda: recover_asset_observations(library))
 
+    async def recover_produced_handoffs(app: web.Application) -> None:
+        scratch_root = library.scratch_root
+        if scratch_root is not None:
+            app[RECOVERY_KEY] = await run_owned_thread(
+                lambda: recover_produced_publications(library.vault, scratch_root)
+            )
+
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:
             for path in library.vault.root.glob(".latent-upload-*"):
@@ -1701,5 +1708,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             library.latent_ingest_slots.release()
 
     app.on_startup.append(recover_upload_observations)
+    app.on_startup.append(recover_produced_handoffs)
     app.on_startup.append(remove_stale_latent_uploads)
     app.on_cleanup.append(close_store)

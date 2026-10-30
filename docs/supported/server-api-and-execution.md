@@ -42,6 +42,10 @@
   bytes while host-job and store ownership are exclusively held; live, unsafe
   or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
   cleanup remains disabled regardless of individual complete registrations.
+- Startup recovers explicitly offered publications from inactive job scratch
+  through verified engine-vault adoption, without rerunning jobs or deleting
+  scratch. Active, unknown or corrupt stores remain blocked; recovery of another
+  recognized job can continue. Existing untracked assets are not reclassified.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a

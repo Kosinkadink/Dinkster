@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import stat
-from contextlib import AsyncExitStack, ExitStack
+from collections.abc import Generator
+from contextlib import AsyncExitStack, ExitStack, contextmanager
 from pathlib import Path
 
 from aiohttp import web
-from dinkster_assets import AssetError, AssetVault, LibraryStore
+from dinkster_assets import AssetError, AssetVault, LibraryStore, open_verified
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
     ProducedScratchState,
@@ -17,10 +19,13 @@ from dinkster_assets.scratch import (
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_protocol import CacheStore
+from dinkster_values import MEBIBYTE
 
 from .auth import principal_for
 from .history import HistoryStore
 from .library import run_owned_thread
+
+RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
 
 
 async def inspect_cleanup(
@@ -67,9 +72,7 @@ async def inspect_cleanup(
         )
 
 
-def _scratch_bytes(scratch: Path) -> int:
-    """Observe only recognized, inactive job stores without repairing their state."""
-
+def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
     def present_directory(path: Path) -> bool:
         try:
             mode = path.stat(follow_symlinks=False).st_mode
@@ -80,12 +83,8 @@ def _scratch_bytes(scratch: Path) -> int:
         return True
 
     if not present_directory(scratch):
-        return 0
+        return
 
-    def unreadable(error: OSError) -> None:
-        raise error
-
-    size = 0
     for scope in ("packs", "groups"):
         folder = scratch / scope
         if not present_directory(folder):
@@ -108,30 +107,106 @@ def _scratch_bytes(scratch: Path) -> int:
                     continue
                 if root.is_symlink() or not root.is_dir():
                     raise AssetError("scratch job accounting is unavailable")
-                state = ProducedScratchState(root)
-                job, attempt = state.owner()
-                if root != produced_job_scratch_root(pack, job, attempt):
-                    raise AssetError("scratch job location disagrees with its owner")
-                with claim_inactive_produced_job(scratch, job) as inactive_job:
-                    if not inactive_job:
-                        raise AssetError("scratch job is active")
-                    with claim_inactive_produced_scratch(root) as inactive_store:
-                        if not inactive_store or state.owner() != (job, attempt):
-                            raise AssetError("scratch store is active or changed")
-                        state.publications()
-                        for directory, folders, files in root.walk(
-                            follow_symlinks=False, on_error=unreadable
-                        ):
-                            for name in (*folders, *files):
-                                path = directory / name
-                                if path.is_symlink():
-                                    raise AssetError("scratch accounting must not follow symlinks")
-                            for name in files:
-                                path = directory / name
-                                if not path.is_file():
-                                    raise AssetError("scratch accounting contains an unsafe file")
-                                size += path.stat().st_size
+                yield pack, root
+
+
+@contextmanager
+def _hold_scratch_job(scratch: Path, pack: Path, root: Path) -> Generator[ProducedScratchState]:
+    state = ProducedScratchState(root)
+    job, attempt = state.owner()
+    if root != produced_job_scratch_root(pack, job, attempt):
+        raise AssetError("scratch job location disagrees with its owner")
+    with claim_inactive_produced_job(scratch, job) as inactive_job:
+        if not inactive_job:
+            raise AssetError("scratch job is active")
+        with claim_inactive_produced_scratch(root) as inactive_store:
+            if not inactive_store or state.owner() != (job, attempt):
+                raise AssetError("scratch store is active or changed")
+            state.publications()
+            yield state
+
+
+def _scratch_bytes(scratch: Path) -> int:
+    """Observe only recognized, inactive job stores without repairing their state."""
+
+    def unreadable(error: OSError) -> None:
+        raise error
+
+    size = 0
+    for pack, root in _scratch_roots(scratch):
+        with _hold_scratch_job(scratch, pack, root):
+            for directory, folders, files in root.walk(follow_symlinks=False, on_error=unreadable):
+                for name in (*folders, *files):
+                    path = directory / name
+                    if path.is_symlink():
+                        raise AssetError("scratch accounting must not follow symlinks")
+                for name in files:
+                    path = directory / name
+                    if not path.is_file():
+                        raise AssetError("scratch accounting contains an unsafe file")
+                    size += path.stat().st_size
     return size
+
+
+def recover_produced_publications(vault: AssetVault, scratch: Path) -> dict[str, int]:
+    """Complete offered handoffs under inactive-job claims, preserving all scratch."""
+    recovered = 0
+    blocked = 0
+    try:
+        for pack, root in _scratch_roots(scratch):
+            try:
+                with _hold_scratch_job(scratch, pack, root) as state:
+                    for digest, size, offered in state.publications():
+                        if offered:
+                            _recover_publication(vault, root, digest, size)
+                            recovered += 1
+            except (AssetError, OSError):
+                blocked += 1
+    except (AssetError, OSError):
+        blocked += 1
+    return {"verifiedPublications": recovered, "blockedInspections": blocked}
+
+
+def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: int) -> None:
+    hexpart = digest.split(":", 1)[1]
+    destination = vault.root / hexpart[:2] / hexpart
+    if any(path.is_symlink() for path in (vault.root, destination.parent, destination)):
+        raise AssetError("publication recovery must not follow symlinks")
+    inventory = ProducedAssetInventory(vault.root)
+    try:
+        destination_stat = destination.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        destination_stat = None
+    if destination_stat is not None:
+        if not stat.S_ISREG(destination_stat.st_mode):
+            raise AssetError("publication recovery requires a regular destination file")
+        with open_verified(destination, digest) as handle:
+            if os.fstat(handle.fileno()).st_size != size:
+                raise AssetError("recovered publication size disagrees with its journal")
+            inventory.confirm_existing(digest, size)
+        return
+    source = scratch / hexpart[:2] / hexpart
+    if source.parent.is_symlink() or source.is_symlink():
+        raise AssetError("publication recovery must not follow symlinks")
+    if not stat.S_ISREG(source.stat(follow_symlinks=False).st_mode):
+        raise AssetError("publication recovery requires a regular source file")
+    # The exclusive scratch claim already owns this descriptor's lifetime.
+    # Acquiring a second managed-read lease here would conflict with that claim.
+    with source.open("rb") as handle:
+        if os.fstat(handle.fileno()).st_size != size:
+            raise AssetError("recoverable publication size disagrees with its journal")
+        inventory.pending(digest, size)
+        with vault.writer(digest) as writer:
+            count = 0
+            while chunk := handle.read(MEBIBYTE):
+                count += len(chunk)
+                if count > size:
+                    raise AssetError("recoverable publication grew during adoption")
+                writer.write(chunk)
+            if count != size:
+                raise AssetError("recoverable publication is truncated")
+            writer.commit()
+            inventory.adopted(digest, size)
 
 
 def _vault_bytes(vault: AssetVault) -> int:
@@ -224,4 +299,5 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         state.engine.cache,
         scratch_root=library.scratch_root,
     )
+    status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
     return web.json_response(status, headers={"Cache-Control": "no-store"})
