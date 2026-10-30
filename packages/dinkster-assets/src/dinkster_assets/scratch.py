@@ -87,6 +87,20 @@ class ProducedScratchState:
         except sqlite3.Error as exc:
             raise AssetError("produced scratch state is unavailable") from exc
 
+    def forget_publications(self, publications: tuple[tuple[str, int, bool], ...]) -> None:
+        """Retire exact handoff rows only after owned scratch bytes have been removed."""
+        try:
+            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+                for digest, size, offered in publications:
+                    changed = db.execute(
+                        "DELETE FROM publications WHERE digest = ? AND size = ? AND offered = ?",
+                        (digest, size, int(offered)),
+                    ).rowcount
+                    if changed != 1:
+                        raise AssetError("produced scratch publication changed during removal")
+        except sqlite3.Error as exc:
+            raise AssetError("produced scratch state is unavailable") from exc
+
     def publications(self) -> tuple[tuple[str, int, bool], ...]:
         """Read existing publication state without creating or repairing a journal."""
         try:

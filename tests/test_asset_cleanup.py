@@ -37,7 +37,7 @@ from dinkster_server import (
     create_app,
 )
 from dinkster_server.auth import StaticBearerAuthenticator
-from dinkster_server.cleanup import inspect_cleanup
+from dinkster_server.cleanup import inspect_cleanup, recover_produced_publications
 from dinkster_server.library import run_media_publication, run_owned_thread
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
 from test_history import make_record
@@ -156,9 +156,12 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
 
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
 @pytest.mark.parametrize("corrupt", [False, True])
+@pytest.mark.parametrize("collect", [False, True])
 def test_terminal_jobs_recover_only_their_offered_publications(
-    tmp_path: Path, outcome: str, corrupt: bool
+    tmp_path: Path, outcome: str, corrupt: bool, collect: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", collect)
+
     async def scenario() -> None:
         scratch = tmp_path / "scratch"
         vault = AssetVault(tmp_path / "vault")
@@ -251,10 +254,16 @@ def test_terminal_jobs_recover_only_their_offered_publications(
                     assert outcome == "cancelled"
             assert job.state == outcome
             status = await (await client.get("/api/library/storage")).json()
-            assert status["lastPublicationRecovery"] == {
+            recovery = status["lastPublicationRecovery"]
+            assert {
+                key: recovery[key] for key in ("verifiedPublications", "blockedInspections")
+            } == {
                 "verifiedPublications": 0 if corrupt else 1,
                 "blockedInspections": 1 if corrupt else 0,
             }
+            if collect:
+                assert recovery["reclaimedFiles"] == (0 if corrupt else 2)
+                assert (recovery["reclaimedBytes"] > len(data)) == (not corrupt)
             with claim_inactive_produced_vault(vault.root) as inactive:
                 assert inactive
             response = await client.get(f"/api/assets/{digest}")
@@ -263,7 +272,10 @@ def test_terminal_jobs_recover_only_their_offered_publications(
                 assert sources[0].read_bytes() == b"x" * len(data)
             else:
                 assert response.status == 200 and await response.read() == data
-                assert sources[0].read_bytes() == data
+                if collect:
+                    assert not sources[0].exists()
+                else:
+                    assert sources[0].read_bytes() == data
             assert other_path.read_bytes() == unrelated
             assert vault.resolve(unrelated_digest) is None
             assert not status["collectionEnabled"]
@@ -272,6 +284,60 @@ def test_terminal_jobs_recover_only_their_offered_publications(
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+    scratch = tmp_path / "scratch"
+    vault = AssetVault(tmp_path / "vault")
+    host = hold_produced_job(scratch, "finished")
+    data = b"only recoverable publication"
+    digest = digest_bytes(data)
+    with use_produced_output_job("finished", 1):
+        source = produced_output_scratch({"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "p")})
+        assert source is not None
+        with source.writer(digest) as writer:
+            writer.write(data)
+            path = writer.commit()
+        ProducedScratchState(source.root).offer([digest])
+    host.close()
+    with open_verified(path, digest):
+        result = recover_produced_publications(vault, scratch)
+        assert result["blockedInspections"] == 1
+        assert result["reclaimedFiles"] == 0
+        assert path.read_bytes() == data
+        assert not vault.has(digest)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_bytes(b"not job scratch")
+    link = source.root / "escape"
+    link.symlink_to(outside, target_is_directory=True)
+    result = recover_produced_publications(vault, scratch)
+    assert result["blockedInspections"] == 1
+    assert result["reclaimedFiles"] == 0
+    assert path.read_bytes() == data
+    assert (outside / "keep").read_bytes() == b"not job scratch"
+    link.unlink()
+    # A deletion interrupted before journal retirement is safe to retry.
+    path.unlink()
+    unlink = Path.unlink
+
+    def verify_owned_unlink(candidate: Path, missing_ok: bool = False) -> None:
+        if candidate.is_relative_to(source.root):
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+        unlink(candidate, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", verify_owned_unlink)
+    result = recover_produced_publications(vault, scratch)
+    assert result["blockedInspections"] == 0
+    assert not path.exists()
+    assert ProducedScratchState(source.root).publications() == ()
+    held = vault.resolve(digest)
+    assert held is not None and held.read_bytes() == data
+    assert recover_produced_publications(vault, scratch)["reclaimedFiles"] == 0
 
 
 def _crash_after_offering(channel: Connection, scratch: str) -> None:
@@ -334,9 +400,12 @@ def test_startup_recovers_publication_after_producer_process_crash(tmp_path: Pat
 
 
 @pytest.mark.parametrize("destination", ["absent", "pending", "untracked"])
-def test_startup_recovers_offered_publications_without_collecting_scratch(
-    tmp_path: Path, destination: str
+@pytest.mark.parametrize("collect", [False, True])
+def test_startup_recovers_offered_publications_with_gated_scratch_removal(
+    tmp_path: Path, destination: str, collect: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", collect)
+
     async def scenario() -> None:
         scratch = tmp_path / "scratch"
         vault = AssetVault(tmp_path / "vault")
@@ -368,7 +437,7 @@ def test_startup_recovers_offered_publications_without_collecting_scratch(
             if p.is_file()
         }
         timestamp: int | None = None
-        for _ in range(2):
+        for cycle in range(2):
             library = ServerLibrary(vault, LibraryStore(tmp_path / "library"), scratch_root=scratch)
             client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
             await client.start_server()
@@ -376,20 +445,38 @@ def test_startup_recovers_offered_publications_without_collecting_scratch(
                 response = await client.get("/api/library/storage")
                 assert response.status == 200
                 status = await response.json()
-                assert status["lastPublicationRecovery"] == {
-                    "verifiedPublications": 1,
+                expected = {
+                    "verifiedPublications": 0 if collect and cycle else 1,
                     "blockedInspections": 0,
                 }
+                if collect:
+                    removed = [
+                        value
+                        for path, value in before.items()
+                        if path.name != ".produced-scratch.sqlite"
+                    ]
+                    expected.update(
+                        reclaimedBytes=sum(map(len, removed)) if cycle == 0 else 0,
+                        reclaimedFiles=len(removed) if cycle == 0 else 0,
+                    )
+                assert status["lastPublicationRecovery"] == expected
                 assert not status["collectionEnabled"]
                 assert (await client.get(f"/api/assets/{digest}")).status == 200
                 path = vault.resolve(digest)
                 assert path is not None and path.read_bytes() == data
                 assert vault.resolve(digest_bytes(unused)) is None
-                assert {
+                remaining = {
                     p.relative_to(source.root): p.read_bytes()
                     for p in source.root.rglob("*")
                     if p.is_file()
-                } == before
+                }
+                if collect:
+                    assert set(remaining) == {Path(".produced-scratch.sqlite")}
+                    state = ProducedScratchState(source.root)
+                    assert state.owner() == ("interrupted job", 3)
+                    assert state.publications() == ()
+                else:
+                    assert remaining == before
                 assert library.store.query("local") == []
                 if destination == "untracked":
                     assert not (vault.root / ".produced-assets.sqlite").exists()

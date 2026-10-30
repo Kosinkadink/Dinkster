@@ -6,7 +6,7 @@ import os
 import sqlite3
 import stat
 from collections.abc import Generator
-from contextlib import AsyncExitStack, ExitStack, contextmanager
+from contextlib import AsyncExitStack, ExitStack, closing, contextmanager
 from pathlib import Path
 
 from aiohttp import web
@@ -18,6 +18,7 @@ from dinkster_assets.scratch import (
     claim_inactive_produced_job,
     claim_inactive_produced_scratch,
     claim_inactive_produced_vault,
+    hold_produced_vault,
     produced_job_scratch_root,
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
@@ -161,9 +162,10 @@ def _scratch_bytes(scratch: Path) -> int:
 def recover_produced_publications(
     vault: AssetVault, scratch: Path, *, job: str | None = None
 ) -> dict[str, int]:
-    """Complete offered handoffs under inactive-job claims, preserving all scratch."""
+    """Complete handoffs and reconcile inactive scratch behind the integration gate."""
     recovered = 0
     blocked = 0
+    reclaimed = {"reclaimedBytes": 0, "reclaimedFiles": 0}
     try:
         for pack, root in _scratch_roots(scratch):
             try:
@@ -176,11 +178,67 @@ def recover_produced_publications(
                         if offered:
                             _recover_publication(vault, root, digest, size)
                             recovered += 1
+                    if FRONTEND_RETENTION_COMPLETE:
+                        _remove_scratch(vault, root, state, reclaimed)
             except (AssetError, OSError):
                 blocked += 1
     except (AssetError, OSError):
         blocked += 1
-    return {"verifiedPublications": recovered, "blockedInspections": blocked}
+    result = {"verifiedPublications": recovered, "blockedInspections": blocked}
+    if FRONTEND_RETENTION_COMPLETE:
+        result.update(reclaimed)
+    return result
+
+
+def _remove_scratch(
+    vault: AssetVault, root: Path, state: ProducedScratchState, reclaimed: dict[str, int]
+) -> None:
+    """Remove only the claimed job's temporary files while durable handoffs stay held."""
+    publications = state.publications()
+    with closing(hold_produced_vault(vault.root)):
+        for digest, size, offered in publications:
+            if not offered:
+                continue
+            path = vault.resolve(digest)
+            if path is None:
+                raise AssetError("offered publication has no durable engine copy")
+            with open_verified(path, digest) as handle:
+                if os.fstat(handle.fileno()).st_size != size:
+                    raise AssetError("durable publication size disagrees with scratch")
+        # The vault-wide lease keeps verified copies safe without retaining N descriptors.
+
+        def unreadable(error: OSError) -> None:
+            raise error
+
+        files: list[tuple[Path, int]] = []
+        folders: list[Path] = []
+        for directory, directories, names in root.walk(follow_symlinks=False, on_error=unreadable):
+            for name in directories:
+                folder = directory / name
+                if folder.is_symlink():
+                    raise AssetError("scratch removal must not follow symlinks")
+                folders.append(folder)
+            for name in names:
+                path = directory / name
+                mode = path.stat(follow_symlinks=False).st_mode
+                if not stat.S_ISREG(mode):
+                    raise AssetError("scratch removal requires regular files")
+                # Keep ownership state for idempotent retries and job-attempt reuse.
+                if directory == root and name in {
+                    ".produced-scratch.sqlite",
+                    ".produced-scratch.sqlite-journal",
+                    ".produced-scratch.sqlite-wal",
+                    ".produced-scratch.sqlite-shm",
+                }:
+                    continue
+                files.append((path, path.stat().st_size))
+        for path, size in files:
+            path.unlink()
+            reclaimed["reclaimedBytes"] += size
+            reclaimed["reclaimedFiles"] += 1
+        for folder in reversed(folders):
+            folder.rmdir()
+        state.forget_publications(publications)
 
 
 def _recover_publication(vault: AssetVault, scratch: Path, digest: str, size: int) -> None:

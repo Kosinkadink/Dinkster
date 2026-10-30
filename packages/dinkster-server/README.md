@@ -348,14 +348,25 @@ Unknown journals, active owners, unsafe paths, size conflicts and corrupt bytes
 block that store without stopping recovery of another recognized job. An
 unreadable or unsafe directory enumeration stops that enumeration rather than
 guessing what was omitted. Recovery never reruns a workflow, copies mounted
-inputs, creates library records or removes scratch, including unoffered bytes.
+inputs or creates library records. The disabled frontend integration gate
+preserves all scratch by default, including unoffered bytes.
 The queue also reconciles the finishing job's offered publications after engine
 and native settlement, on success, failure and cancellation. It awaits recovery
 before publishing the terminal transition or releasing its dispatch slot; a
 cancelled offloaded recovery retains ownership until the worker settles.
 Recovery failure does not replace the job's original outcome. Other jobs' stores
-are not recovered by this per-job pass. Both startup and terminal reconciliation
-preserve all scratch and the first verified adoption timestamp.
+are not recovered by this per-job pass. Both passes preserve the first verified
+adoption timestamp. Behind the integration gate, successful reconciliation
+verifies every offered engine copy, then holds vault-wide ownership through
+removal of that inactive job's scratch files and empty subdirectories. Both
+host-job and scratch-store claims remain held. Offered, unoffered and interrupted
+temporary files are removed only after a complete safe tree walk; symlinks and
+special files refuse removal before any file is deleted. Offered rows remain
+until removal succeeds, permitting retries after partial deletion. The small
+owner journal and external lease gates remain for safe job-attempt reuse;
+regular file descriptors are verified sequentially rather than all held open.
+No active job or reader's scratch is removed, and an untracked engine copy is
+not reclassified by this pass.
 `lastPublicationRecovery` on operator storage status reports the last completed
 startup or per-job pass's `verifiedPublications` and `blockedInspections`, or
 null when no scratch root was configured. These counts are observations, not
