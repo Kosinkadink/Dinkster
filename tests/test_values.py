@@ -7,6 +7,7 @@ from dataclasses import asdict, fields, replace
 
 import pytest
 from dinkster_values import (
+    ASSET_BASE_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
@@ -125,6 +126,27 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     with registry.registering_pack("mypack", ("mypack",)):
         registry.register("mypack.thing")
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
+
+
+def test_declared_asset_targets_survive_staging_without_granting_local_codecs() -> None:
+    registry = make_registry()
+    registry.register(ASSET_BASE_TYPE)
+    staged = registry.copy()
+    staged.declare_types("mypack", ("mypack",), ("mypack.thing",))
+    assert "asset<mypack.thing>" not in registry
+    registry.replace_from(staged)
+    assert "asset<list<mypack.thing>>" in registry
+    assert registry.spec("asset<mypack.thing>") is registry.spec(ASSET_BASE_TYPE)
+    assert "mypack.thing" not in registry
+    with pytest.raises(KeyError, match="unregistered value type"):
+        registry.spec("mypack.thing")
+    with pytest.raises(KeyError, match="decode-target atom"):
+        registry.spec("asset<mypack.unknown>")
+    registry.remove_pack_types("mypack")
+    assert "asset<mypack.thing>" not in registry
+    assert "asset<mypack.thing>" in staged
+    with pytest.raises(KeyError, match="decode-target atom"):
+        registry.spec("asset<mypack.thing>")
 
 
 def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
