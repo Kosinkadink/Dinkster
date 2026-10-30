@@ -311,6 +311,13 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: Set up Windows runtime environment
         run: uv sync --locked --all-packages
+      - name: Install and verify published Windows engine dependencies
+        shell: pwsh
+        run: |
+          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
+          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
+            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
       - name: Test Windows runtime contracts
         shell: pwsh
         env:
