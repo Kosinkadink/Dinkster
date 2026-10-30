@@ -57,6 +57,7 @@ angle = [
 ]
 dev = [
     "hypothesis>=6",
+    "onnxruntime==1.29.0",
     "pytest>=8",
     "pytest-cov>=6",
     "pyyaml>=6",
