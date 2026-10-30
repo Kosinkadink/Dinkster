@@ -12,6 +12,7 @@ on:
       - scripts/build_environment_tools.py
       - scripts/build_native_tools.py
       - scripts/build_official_packs.py
+      - scripts/build_release_pack_locks.py
       - scripts/acquire_engine_bases.py
       - scripts/base_bundles.json
       - scripts/prune_engine_prereleases.py
@@ -111,6 +112,65 @@ jobs:
           name: tools-supervisor-wheel
           path: dist/dinkster_supervisor-*.whl
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/base-manifests/
+          if-no-files-found: error
+
+  pack-locks:
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: linux-cpu
+            runner: ubuntu-latest
+          - variant: win-cpu
+            runner: windows-latest
+          - variant: win-nvidia
+            runner: windows-latest
+          - variant: win-nvidia-cu126
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/base-manifests
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Resolve official packs against the native selected base
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_release_pack_locks --release dist --base-manifest ".release/base-manifests/$env:VARIANT/manifest.json" --output ".release/pack-locks/$env:VARIANT"
+        if: runner.os == 'Windows'
+      - name: Resolve official packs against the native selected base
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_release_pack_locks --release dist --base-manifest ".release/base-manifests/$VARIANT/manifest.json" --output ".release/pack-locks/$VARIANT"
+        if: runner.os != 'Windows'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-pack-locks-${{ matrix.variant }}
+          path: .release/pack-locks/${{ matrix.variant }}/*.pack-lock.json
+          if-no-files-found: error
 
   tools:
     needs: build
@@ -200,7 +260,7 @@ jobs:
           if-no-files-found: error
 
   finalize:
-    needs: [build, tools]
+    needs: [build, tools, pack-locks]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -219,10 +279,16 @@ jobs:
           pattern: native-tools-*
           merge-multiple: true
           path: .release/tools
-      - name: Admit native tools into the engine release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: official-pack-locks-*
+          merge-multiple: true
+          path: .release/pack-locks
+      - name: Admit native tools and pack locks into the engine release
         run: |
           arguments=()
           for artifact in .release/tools/*.zip; do arguments+=(--artifact "$artifact"); done
+          for artifact in .release/pack-locks/*.pack-lock.json; do arguments+=(--artifact "$artifact"); done
           uv run --no-project --python 3.12 -m scripts.build_release --extend "${arguments[@]}"
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
