@@ -115,6 +115,7 @@ from dinkster_protocol import (
     canonical_extension_snapshot,
     current_export_snapshot,
     extension_behavior_hash,
+    prepare_sampling_model,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
 from dinkster_protocol.pack_surfaces import (
@@ -200,6 +201,7 @@ from dinkster_schema import (
     output_descriptor_entries,
     pack_logger,
     publish_preview_artifact,
+    publish_saved_file_preview,
     report_event,
     report_log,
     report_preview,
@@ -568,6 +570,7 @@ __all__ = [
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
+    "prepare_sampling_model",
     "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
@@ -700,6 +703,7 @@ __all__ = [
     "pack_logger",
     "attach_saved_artifact",
     "publish_preview_artifact",
+    "publish_saved_file_preview",
     "report_event",
     "report_log",
     "report_preview",

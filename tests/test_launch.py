@@ -21,11 +21,9 @@ from dinkster.project_folders import ProjectFolders
 
 def test_frontend_discovery_finds_a_sibling_development_build(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(frontend, "__file__", str(tmp_path / "Dinkster/src/dinkster/frontend.py"))
-
-    def missing_package(_name: str) -> None:
-        raise ModuleNotFoundError("dinkster_frontend")
-
-    monkeypatch.setattr(frontend.importlib.resources, "files", missing_package)
+    monkeypatch.setattr(
+        frontend.importlib.resources, "files", lambda _name: tmp_path / "Dinkster/src/dinkster"
+    )
     bundle = tmp_path / "Dinkster-Frontend/packages/app/dist"
     bundle.mkdir(parents=True)
     (bundle / "index.html").write_text("<main>development</main>")

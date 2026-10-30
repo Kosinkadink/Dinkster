@@ -2,11 +2,25 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend input families can require only the initial declared positions,
+  leaving later members optional. Missing initial required slots remain
+  validation errors even when later slots are connected. Ordinary families
+  retain their stored order and uniform requiredness. Frontend support is
+  not claimed here.
 - Replacement input-family copies can declare historical template input IDs
   and a flat member-port path without retaining a predecessor schema. Existing
   mappings without that metadata retain their wire shape. Historical same-type
   templates are distinct from the current node interface. This describes the
   backend declaration contract, not frontend migration support.
+- Backend replacement input-family copies can explicitly map authored source
+  order to target naming positions instead of preserving suffix IDs. The option
+  composes with historical-template metadata; omitted options retain their wire
+  shape. This is a declaration contract, not a claim of frontend migration support.
+- Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
+  Expression publish same-type rules for historical family member identities.
+  Rules preserve the math expression and output identities, and identify the
+  old flat boolean-family socket path. Node execution is unchanged. Automatic
+  application requires a frontend that supports positional family migrations.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,

@@ -33,6 +33,8 @@
   guidance, using checkpoint denoise-encoder weights when present.
 - Native KSampler and KSamplerAdvanced use the inference sampling engine with
   seeded batch noise, masks, denoise strength and advanced step boundaries.
+- Native KSampler, KSamplerAdvanced and BasicGuider preserve the worker's
+  selected attention route on a cloned model without changing the input model.
 - Native standard and custom samplers retain ordered audio/video stream roles
   and masks through sampling and denoised outputs. AddNoise retains those roles
   through empty-latent handling and replaces nonfinite output values with zero.

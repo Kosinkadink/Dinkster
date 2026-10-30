@@ -70,12 +70,14 @@ def _verify(path: Path, wheel: LockedWheel) -> bool:
         return hashlib.file_digest(stream, "sha256").hexdigest() == wheel.sha256
 
 
-def fetch_wheel(wheel: LockedWheel, store: Path) -> Path:
+def fetch_wheel(wheel: LockedWheel, store: Path, *, offline: bool = False) -> Path:
     """Admit bytes only after size and digest verification; prefer stored bytes."""
     target = store / wheel.sha256 / wheel.filename
     for candidate in (target, store / wheel.filename):
         if _verify(candidate, wheel):
             return candidate
+    if offline:
+        raise ProvisionError(f"offline pack wheel missing or corrupt: {wheel.filename}")
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(dir=target.parent, suffix=".partial")
     staging = Path(name)
@@ -105,6 +107,7 @@ def provision_pack(
     variant: str,
     uv: str = "uv",
     in_process: bool = False,
+    offline: bool = False,
 ) -> Path:
     """Recheck the plan and stage hashed wheels before recording the pack lock."""
     _require_fresh_generation(packs.parent)
@@ -125,7 +128,7 @@ def provision_pack(
         generation = packs.parent
         if not generation_python.resolve().is_relative_to((generation / "python").resolve()):
             raise ProvisionError("in-process interpreter must belong to target generation/python")
-    wheels = [fetch_wheel(wheel, wheel_store) for wheel in plan.wheels]
+    wheels = [fetch_wheel(wheel, wheel_store, offline=offline) for wheel in plan.wheels]
     try:
         if in_process:
             destination.mkdir(parents=True)
@@ -204,6 +207,7 @@ class GenerationContext:
     own_environment_size: int
     uv: str = "uv"
     in_process_packs: tuple[str, ...] = ()
+    offline: bool = False
 
     def validate(self) -> None:
         if self.worker_protocol != PROTOCOL_VERSION:
@@ -307,6 +311,7 @@ def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) ->
                 variant=context.variant,
                 uv=context.uv,
                 in_process=plan.lock.pack in context.in_process_packs,
+                offline=context.offline,
             )
             created.append(packs / plan.lock.pack)
     except BaseException:
@@ -343,7 +348,9 @@ def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("preflight", "rebuild", "doctor", "terminal"))
+    parser.add_argument(
+        "operation", choices=("preflight", "rebuild", "doctor", "terminal", "references")
+    )
     parser.add_argument("--generation", type=Path, required=True)
     parser.add_argument("--generation-python", type=Path, required=True)
     parser.add_argument("--constraints", type=Path, required=True)
@@ -353,6 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--uv-cache", type=Path, required=True)
     parser.add_argument("--own-environment-size", type=int, required=True)
     parser.add_argument("--uv", default="uv")
+    parser.add_argument("--offline", action="store_true")
     parser.add_argument("--source-generation", type=Path)
     parser.add_argument("--lock", type=Path, action="append", default=[])
     parser.add_argument("--in-process-pack", action="append", default=[])
@@ -369,13 +377,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.own_environment_size,
         args.uv,
         tuple(args.in_process_pack),
+        args.offline,
     )
     plans: tuple[PackPlan, ...] = ()
     changes: tuple[str, ...] = ()
+    wheel_hashes: set[str] = set()
     code = 0
     try:
         context.validate()
-        if args.operation == "doctor":
+        if args.operation == "references":
+            packs = context.generation / "packs"
+            if packs.is_symlink() or (packs.exists() and not packs.is_dir()):
+                raise ProvisionError("dependency references require an unlinked packs directory")
+            if packs.exists() and any(
+                entry.is_symlink() or not entry.is_dir() or (entry / "pack-lock.json").is_symlink()
+                for entry in packs.iterdir()
+            ):
+                raise ProvisionError("dependency references require readable pack directories")
+            recorded = _generation_locks(context.generation, ())
+            if set(context.in_process_packs) - {lock.pack for lock in recorded}:
+                raise ProvisionError("in-process packs have no recorded dependency lock")
+            wheel_hashes = {
+                wheel.sha256
+                for lock in recorded
+                for package in lock.packages
+                for wheel in package.wheels
+            }
+        elif args.operation == "doctor":
             plans = preflight_generation(context, source_generation=context.generation)
             changes = doctor_generation(context)
             code = int(bool(changes))
@@ -434,6 +462,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     for plan in plans
                 ],
                 "changes": list(changes),
+                **({"wheelHashes": sorted(wheel_hashes)} if args.operation == "references" else {}),
             }
         )
     )

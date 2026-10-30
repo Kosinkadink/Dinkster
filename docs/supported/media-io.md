@@ -9,6 +9,15 @@
   complete admitted image batches, subject to existing file and transport bounds.
   Mounted-file descriptors do not impose the encoded-preview byte limit on saved
   weights or other files; the host validates their actual bytes by streaming.
+- Explicit mounted saved files may carry their own optional encoded preview.
+  Hosts with an asset vault can enable or disable lazy preview encoding;
+  disabled calls do not invoke the encoder. Every admitted saved file remains
+  eligible, up to 4096 per invocation, with a 16 MiB encoded-item limit and
+  serialized file-backed staging rather than an in-memory batch of frames.
+  Encoding or preview publication failure does not fail a valid saved file.
+  Exact saved-file authority is still required, and associations survive worker
+  transport, result caches, and backend presentation. Required standalone preview
+  attachments retain their separate 64-item and aggregate-byte limits.
 - Native image, mask, animation, audio, video, text, layer-document, model3D,
   splat, and conditioning savers explicitly attach their successful mounted
   publications. Save nodes require an active invocation attachment context;
@@ -244,6 +253,9 @@
   conditioning with even temporal latent lengths, and precomputed warped
   noise sources. Controlled CPU encoders cover mask/video conditioning and
   source preservation; real-model and GPU output parity are not certified.
+- Native Transform Splat translates, rotates, and scales canonical SPLAT
+  batches. Nonuniform scaling reshapes Gaussian covariance; opacity,
+  spherical harmonics, and per-item counts are preserved.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate

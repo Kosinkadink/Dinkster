@@ -532,6 +532,7 @@ namespaces = [
     "CameraAngle",
     "CreateCameraInfo",
     "GetSplatCount",
+    "TransformSplat",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",

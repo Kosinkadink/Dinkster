@@ -93,11 +93,12 @@ def _check_diffusion(patcher: Any) -> None:
     model = patcher.model.diffusion_model
     assert torch.equal(model.img_in.bias, torch.full((128,), 0.125))
     assert torch.equal(model.final_layer.linear.bias, torch.arange(64) / 64)
+    dtype = patcher.model.get_dtype_inference()
     with torch.inference_mode():
         result = model(
-            torch.ones((1, 4, 2, 2)),
-            torch.tensor([0.5]),
-            torch.ones((1, 2, 8)),
+            torch.ones((1, 4, 2, 2), dtype=dtype),
+            torch.tensor([0.5], dtype=dtype),
+            torch.ones((1, 2, 8), dtype=dtype),
             None,
         )
     expected = (torch.arange(64) / 64).reshape(1, 16, 2, 2)

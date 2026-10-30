@@ -19,11 +19,75 @@ permissions:
   contents: read
 
 jobs:
+  opentimelineio-index:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-11-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - name: Verify fresh pip and uv installs against release hashes
+        shell: bash
+        run: |
+          uv run --no-project --python 3.14 python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import urllib.request
+
+          release = 'https://github.com/Kosinkadink/dinkster-opentimelineio/releases/download/v0.19.0/'
+          with urllib.request.urlopen(release + 'SHA256SUMS') as response:
+              hashes = {line.split()[1]: line.split()[0] for line in response.read().decode().splitlines()}
+          with urllib.request.urlopen('https://pypi.org/pypi/dinkster-opentimelineio/0.19.0/json') as response:
+              files = json.load(response)['urls']
+          assert len(files) == 15, len(files)
+          for file in files:
+              assert hashes[file['filename']] == file['digests']['sha256'], file['filename']
+          smoke = '''
+          import importlib.metadata
+          import opentimelineio as otio
+          import opentimelineio._otio
+          assert importlib.metadata.version('dinkster-opentimelineio') == '0.19.0'
+          assert otio.__version__ == '0.19.0.dev1'
+          timeline = otio.schema.Timeline(name='PyPI native wheel')
+          track = otio.schema.Track()
+          timeline.tracks.append(track)
+          track.append(otio.schema.Clip(name='asymmetric', source_range=otio.opentime.TimeRange(
+              otio.opentime.RationalTime(17, 24), otio.opentime.RationalTime(53, 24))))
+          text = otio.adapters.write_to_string(timeline, 'otio_json')
+          actual = otio.adapters.read_from_string(text, 'otio_json')
+          assert timeline.is_equivalent_to(actual)
+          assert actual.duration() == otio.opentime.RationalTime(53, 24)
+          print('Native PyPI import and timeline roundtrip passed:', otio.__version__)
+          '''
+          with tempfile.TemporaryDirectory() as temporary:
+              root = Path(temporary)
+              requirements = root / 'requirements.txt'
+              requirements.write_text('dinkster-opentimelineio==0.19.0 ' + ' '.join(
+                  '--hash=sha256:' + file['digests']['sha256'] for file in files))
+              for installer in ['pip', 'uv']:
+                  venv = root / installer
+                  subprocess.run(['uv', 'venv', '--seed', '--python', '3.14', str(venv)], check=True)
+                  python = venv / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+                  command = ([str(python), '-m', 'pip', 'install', '--no-cache-dir'] if installer == 'pip'
+                             else ['uv', 'pip', 'install', '--python', str(python), '--no-cache'])
+                  subprocess.run(command + ['--index-url', 'https://pypi.org/simple', '--only-binary=:all:',
+                      '--require-hashes', '-r', str(requirements)], check=True)
+                  subprocess.run([str(python), '-c', smoke], check=True)
+                  print(installer, 'fresh hash-checked PyPI install passed', flush=True)
+          PY
+
   opentimelineio:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022]
+        os: [ubuntu-24.04, windows-2022, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -38,7 +102,7 @@ jobs:
       - name: Install the locked released OpenTimelineIO wheel
         run: uv sync --locked --package dinkster-video --no-dev
         env:
-          UV_NO_BUILD_PACKAGE: opentimelineio
+          UV_NO_BUILD_PACKAGE: dinkster-opentimelineio
       - name: Verify released native extension and external timelines
         shell: bash
         run: |
@@ -51,7 +115,8 @@ jobs:
           from dinkster_values.video_document import decode_document, encode_document
           from dinkster_video.document import export_otio, import_otio
 
-          assert importlib.metadata.version('opentimelineio') == '0.19.0.dev1'
+          assert importlib.metadata.version('dinkster-opentimelineio') == '0.19.0'
+          assert otio.__version__ == '0.19.0.dev1'
           for name in ['effects', 'clip_example', 'nested_example', 'multiple_track']:
               text = (Path('tests/fixtures/otio') / f'{name}.otio').read_text()
               original = otio.adapters.read_from_string(text, 'otio_json')

@@ -3,6 +3,7 @@ name = "dinkster-nodes-dev"
 version = "0.0.1"
 description = "Dinkster dev node pack: test/demo scaffolding, never a user surface"
 requires-python = ">=3.12"
+classifiers = ["Private :: Do Not Upload"]
 dependencies = ["dinkster-api", "numpy>=1.26"]
 
 [build-system]

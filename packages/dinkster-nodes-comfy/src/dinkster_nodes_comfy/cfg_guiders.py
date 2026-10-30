@@ -22,6 +22,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
+    prepare_sampling_model,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -88,6 +89,7 @@ class BasicGuider(Node):
     @classmethod
     def execute(cls, *, model: Any, conditioning: Any) -> Mapping[str, object]:
         samplers, _, _, _ = _inference_modules()
+        model = prepare_sampling_model(model)
 
         class GuiderBasic(samplers.CFGGuider):
             def set_conds(self, positive: Any) -> None:

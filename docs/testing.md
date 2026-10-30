@@ -75,6 +75,42 @@ required locally before landing; this subset is fast PR feedback, not a
 replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
+### Counted pack runtime matrix
+
+Before freezing a distribution, dependency or pack-loading change, the counted
+suite includes the following runtime environments, not only the root and
+workspace-member tests. The selections and setup commands in
+`.github/workflows/full-validation.yml` and
+`.github/actions/torch-cpu-suite/action.yml` are authoritative.
+
+| Lane | Required execution |
+| --- | --- |
+| Linux CPython 3.12 root | All four `test` file shards, with the workflow's branch-coverage sources and exclusions |
+| Windows CPython 3.12 root | All four `test` file shards in a native Windows checkout |
+| CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in `.venv-torch` |
+| CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
+| Coverage gate | All four Linux coverage files combined; `coverage report --fail-under=80` |
+
+Build CPU Torch environments with `scripts/setup_envs.sh` or
+`scripts/setup_envs.ps1`, including the action's subsequent root/comfy install.
+Do not substitute the all-workspace environment: editable workspace members can
+hide missing dependencies in the selected runtime. Pin CPU dispatch with
+`ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.
+Prepare the pinned validation inputs before running evidence-tooling tests.
+
+On X570, launch each complete suite through the wrapper workspace's
+`run_counted_suite.sh` with `OMP_NUM_THREADS=4` and `MKL_NUM_THREADS=4`.
+Native Windows evidence runs on a Windows machine; a Linux collection or
+simulated platform is not a replacement. Preserve the existing assertions,
+platform exclusions and coverage floor. Model/GPU comparisons are separate
+from this non-model runtime matrix.
+
+The freeze record names every lane, the exact head, commands, results and logs,
+including each shard and the combined coverage percentage. Missing inputs or
+an unexecuted lane are reported as incomplete, never as a pass. Hosted fast
+feedback alone does not certify this matrix. Do not dispatch or rerun hosted
+full validation to obtain the record.
+
 The required `CI_RUNNERS` repository variable controls every job. Its
 `linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
 images. CPU Torch jobs pin AVX2 dispatch in their environment rather than

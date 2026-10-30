@@ -46,8 +46,10 @@ from .attention import (
     automatic_attention_route,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
+    prepare_sampling_model,
     resolve_attention_runtime_status,
     resolve_role_policy,
+    use_sampling_model_preparer,
     validate_attention_policy,
 )
 from .extensions import (
@@ -451,6 +453,8 @@ class Invocation:
     media_sources: tuple[MediaSourceAuthority, ...] = ()
     """Exact current-run media authorities. They are execution data only and
     deliberately do not participate in graph, schema, or cache identity."""
+    saved_file_previews_enabled: bool = False
+    """Host permission for lazy optional saved-file preview encoding."""
     preview_mode: PreviewMode = "off"
     """This invocation's resolved sampling-preview spend. Execution data
     only: previews are droppable side effects, so the mode never joins
@@ -549,8 +553,17 @@ class SavedArtifact:
     size: int
     media_type: str
     virtual_path: str
+    preview: SavedArtifact | None = None
 
     def __post_init__(self) -> None:
+        if self.preview is not None and (
+            not isinstance(cast("object", self.preview), SavedArtifact)
+            or self.preview.preview is not None
+            or self.preview.node_id != self.node_id
+            or self.preview.virtual_path
+            != f"previews/{self.preview.digest[7:]}/{self.preview.name}"
+        ):
+            raise ValueError("SavedArtifact.preview must name one published preview for this node")
         if any(
             type(value) is not str or not value
             for value in (self.node_id, self.name, self.media_type, self.virtual_path)
@@ -586,6 +599,7 @@ class InvocationResult:
     expansion: ExpandedReturn | None = None
     preview_artifacts: tuple[EncodedPreviewArtifact, ...] = ()
     saved_artifact_claims: tuple[Mapping[str, object], ...] = ()
+    saved_file_previews: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.expansion is None:
@@ -734,11 +748,14 @@ class CachedResult(Mapping[str, Value]):
 
     outputs: Mapping[str, Value]
     expansion: ExpandedReturn | None = None
+    artifacts: tuple[SavedArtifact, ...] = ()
 
     def __post_init__(self) -> None:
         expansion = self.expansion
         if expansion is None and isinstance(self.outputs, CachedResult):
             expansion = self.outputs.expansion
+        if not self.artifacts and isinstance(self.outputs, CachedResult):
+            object.__setattr__(self, "artifacts", self.outputs.artifacts)
         result = InvocationResult(self.outputs, expansion=expansion)
         assert result.outputs is not None
         object.__setattr__(self, "outputs", MappingProxyType(dict(result.outputs)))
@@ -923,8 +940,10 @@ __all__ = [
     "automatic_attention_route",
     "canonical_attention_route_token_bytes",
     "derive_attention_route_token",
+    "prepare_sampling_model",
     "resolve_attention_runtime_status",
     "resolve_role_policy",
+    "use_sampling_model_preparer",
     "validate_attention_policy",
     "single_job_multi_gpu_config_from_wire",
     "single_job_multi_gpu_config_to_wire",

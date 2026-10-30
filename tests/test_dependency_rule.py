@@ -148,9 +148,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_image_document",
         "dinkster_workers",
     },
-    # The install suite contains metadata only; component packs author
-    # through the door exclusively and never import one another.
-    "dinkster_nodes_std": set(),
     "dinkster_nodes_comfy": {"dinkster_api"},
     "dinkster_nodes_foundation": {"dinkster_api"},
     "dinkster_nodes_media_io": {"dinkster_api"},
@@ -347,14 +344,14 @@ def test_umbrella_optional_packages_are_locked() -> None:
     assert root_project["optional-dependencies"] == {
         "default": [
             "dinkster-supervisor",
-            "dinkster-collab",
         ],
-        "collab": ["dinkster-collab"],
+        "collab": [],
         "supervisor": ["dinkster-supervisor"],
     }
-    assert {"dinkster-collab", "dinkster-supervisor"} <= {
+    assert {"dinkster-api", "dinkster-supervisor"} <= {
         dependency for dependency in root_project["dependencies"]
     }
+    assert "dinkster-collab" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -368,10 +365,8 @@ def test_umbrella_optional_packages_are_locked() -> None:
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
         "default": [
-            {"name": "dinkster-collab"},
             {"name": "dinkster-supervisor"},
         ],
-        "collab": [{"name": "dinkster-collab"}],
         "supervisor": [{"name": "dinkster-supervisor"}],
     }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}

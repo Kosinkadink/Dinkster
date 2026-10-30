@@ -986,6 +986,75 @@ def test_list_flags_do_not_hide_element_type_or_unflagged_output_drift(
     assert compare(reference, native)
 
 
+@pytest.mark.parametrize("named", (False, True))
+@pytest.mark.parametrize("minimum", (0, 1))
+@pytest.mark.parametrize("template_required", (False, True))
+def test_autogrow_member_requiredness_matches_expanded_reference(
+    named: bool, minimum: int, template_required: bool
+) -> None:
+    from tools.compare_nodes import compare_registry
+
+    template: dict[str, Any] = {
+        "input": {"required" if template_required else "optional": {"image": ["IMAGE"]}},
+        "min": minimum,
+    }
+    family: dict[str, Any] = {
+        "role": "inputFamily",
+        "id": "images",
+        "required": True,
+        "minMembers": minimum,
+        "optionalAfterMinimum": minimum > 0 and template_required,
+        "template": [
+            {
+                "role": "input",
+                "id": "image",
+                "required": template_required and minimum > 0,
+                "type": {"kind": "concrete", "types": ["IMAGE"]},
+            }
+        ],
+    }
+    if named:
+        template["names"] = ["first", "fourth"]
+        family["memberNames"] = ["first", "fourth"]
+    else:
+        template.update(prefix="image", max=4)
+        family.update(memberPrefix="image", maxMembers=4)
+    reference = {
+        "nodes": [
+            {
+                "class_name": "Example",
+                "input_types": {
+                    "required": {"images": ["COMFY_AUTOGROW_V3", {"template": template}]}
+                },
+            }
+        ]
+    }
+    registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [family]}}}
+    assert compare_registry(reference, registry)["passed"]
+    if minimum > 0 and template_required:
+        family["optionalAfterMinimum"] = False
+        assert not compare_registry(reference, registry)["passed"]
+        family["optionalAfterMinimum"] = True
+    leaf = family["template"][0]
+    if minimum == 0:
+        leaf["required"] = True
+        family["optionalAfterMinimum"] = True
+        assert compare_registry(reference, registry)["passed"]
+        family["optionalAfterMinimum"] = False
+        leaf["required"] = False
+    leaf["required"] = not leaf["required"]
+    assert not compare_registry(reference, registry)["passed"]
+    leaf["required"] = not leaf["required"]
+    family["required"] = False
+    assert not compare_registry(reference, registry)["passed"]
+    family["required"] = True
+    family["minMembers"] = minimum + 1
+    assert not compare_registry(reference, registry)["passed"]
+    family["minMembers"] = minimum
+    leaf["type"] = {"kind": "concrete", "types": ["MASK"]}
+    assert not compare_registry(reference, registry)["passed"]
+
+
 @pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])
 @pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
 def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
@@ -1059,6 +1128,7 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
                 },
             ]
             native_input["memberPrefix"] = "input"
+            native_input["optionalAfterMinimum"] = True
         else:
             reference_input = [
                 "COMFY_DYNAMICGROUP_V3",
