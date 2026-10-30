@@ -32,6 +32,7 @@ from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .background_removal import BACKGROUND_REMOVAL_NODES
 from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
@@ -453,6 +454,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    *BACKGROUND_REMOVAL_NODES,
     CropByBBoxes,
     CameraAngle,
     CreateCameraInfo,

@@ -59,6 +59,8 @@
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `LoadBackgroundRemovalModel` loads an admitted background-removal
+  checkpoint; `RemoveBackground` generates its foreground mask for an image batch.
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
