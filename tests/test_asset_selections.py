@@ -197,6 +197,37 @@ def test_no_filesystem_or_library_fallback_and_changed_bytes_fail_closed(tmp_pat
         ref.read_bytes()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file sharing")
+def test_local_selection_refuses_active_writers_and_excludes_writes_until_close(
+    tmp_path: Path,
+) -> None:
+    path = seed(tmp_path / "vae", "real.safetensors", b"first")
+    env = grants(tmp_path, ("model/vae", path.parent))
+    selected = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(selected, LocalAssetRef)
+    with path.open("r+b") as writer:
+        stat = path.stat()
+        for data in (b"other", b"third"):
+            writer.seek(0)
+            writer.write(data)
+            writer.flush()
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            with pytest.raises(AssetError):
+                resolve_asset_selection("model/vae", path.name, env=env)
+            with pytest.raises(AssetError):
+                selected.read_bytes()
+    current = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(current, LocalAssetRef)
+    with current.open() as reader:
+        with pytest.raises(OSError):
+            with path.open("r+b"):
+                pass
+        assert reader.read() == b"third"
+    path.write_bytes(b"after")
+    with pytest.raises(AssetError):
+        current.read_bytes()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows native file revisions")
 def test_same_stat_rewrite_invalidates_local_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

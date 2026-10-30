@@ -55,7 +55,8 @@
   background index to verify the file; the same name then resolves as a
   verified asset. Mount settings expose this capability, and refusals name
   the filesystem and current scan progress. No model bytes are hashed during
-  filename selection.
+  filename selection. Unverified selections refuse files with active writers;
+  an open unverified read excludes writes until the reader closes.
 - Operators can resolve an absolute local file path to a mounted asset in the
   selected project's live folders without copying bytes. Changed or unindexed
   files are verified and cataloged on demand, including read-only inputs.

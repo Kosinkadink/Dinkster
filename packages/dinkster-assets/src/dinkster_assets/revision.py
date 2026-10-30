@@ -7,16 +7,14 @@ import os
 import struct
 from ctypes import wintypes
 from pathlib import Path
+from typing import BinaryIO
 
 from .identity import AssetError
 
 
-def windows_file_revision(path: Path | int) -> int:
-    """Read a tracked NTFS USN without opening a volume or requiring elevation."""
+def _open_windows_file(path: Path) -> int:
     if os.name != "nt":
-        raise OSError("native file USN is only available on Windows")
-    import msvcrt
-
+        raise OSError("native file handles are only available on Windows")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateFileW.argtypes = (
         wintypes.LPCWSTR,
@@ -28,6 +26,50 @@ def windows_file_revision(path: Path | int) -> int:
         wintypes.HANDLE,
     )
     kernel.CreateFileW.restype = wintypes.HANDLE
+    name = os.path.abspath(path)
+    if not name.startswith("\\\\?\\"):
+        name = "\\\\?\\UNC\\" + name[2:] if name.startswith("\\\\") else "\\\\?\\" + name
+    # A USN can coalesce repeated changes until the writer closes. Refuse
+    # existing writers and exclude new writers for this handle's lifetime.
+    handle = kernel.CreateFileW(name, 0x80000000, 5, None, 3, 0x02000000, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return handle
+
+
+def _close_windows_file(handle: int) -> None:
+    if os.name == "nt":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle(handle)
+
+
+def open_local_file(path: Path) -> BinaryIO:
+    """Open local bytes with Windows write exclusion retained until close."""
+    if os.name != "nt":
+        return path.open("rb")
+    import msvcrt
+
+    handle = _open_windows_file(path)
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
+    except BaseException:
+        _close_windows_file(handle)
+        raise
+    try:
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def windows_file_revision(path: Path | int) -> int:
+    """Read a tracked NTFS USN without opening a volume or requiring elevation."""
+    if os.name != "nt":
+        raise OSError("native file USN is only available on Windows")
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.DeviceIoControl.argtypes = (
         wintypes.HANDLE,
         wintypes.DWORD,
@@ -38,18 +80,8 @@ def windows_file_revision(path: Path | int) -> int:
         ctypes.POINTER(wintypes.DWORD),
         ctypes.c_void_p,
     )
-    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
     owned = not isinstance(path, int)
-    name = os.path.abspath(path) if isinstance(path, Path) else ""
-    if owned and not name.startswith("\\\\?\\"):
-        name = "\\\\?\\UNC\\" + name[2:] if name.startswith("\\\\") else "\\\\?\\" + name
-    handle = (
-        kernel.CreateFileW(name, 0x80000000, 7, None, 3, 0x02000000, None)
-        if owned
-        else msvcrt.get_osfhandle(path)
-    )
-    if handle == wintypes.HANDLE(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+    handle = _open_windows_file(path) if isinstance(path, Path) else msvcrt.get_osfhandle(path)
     try:
         versions = ctypes.create_string_buffer(struct.pack("<HH", 2, 2))
         record = ctypes.create_string_buffer(65536)
@@ -66,7 +98,7 @@ def windows_file_revision(path: Path | int) -> int:
         return revision
     finally:
         if owned:
-            kernel.CloseHandle(handle)
+            _close_windows_file(handle)
 
 
 def mount_revision_capability(root: Path) -> dict[str, object]:

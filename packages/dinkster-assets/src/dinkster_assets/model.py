@@ -19,7 +19,7 @@ from typing import BinaryIO, Protocol, runtime_checkable
 
 from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord, open_verified, verified_local_path
-from .revision import windows_file_revision
+from .revision import open_local_file, windows_file_revision
 
 
 class AssetResolver(Protocol):
@@ -94,7 +94,10 @@ class LocalAssetRef:
 
     def open(self) -> BinaryIO:
         path, signature = self._location()
-        handle = path.open("rb")
+        try:
+            handle = open_local_file(path)
+        except OSError as error:
+            raise AssetError("local asset is unavailable or has an active writer") from error
         try:
             opened = local_file_signature(os.fstat(handle.fileno()), handle.fileno())
             # Windows creation time can differ between path and descriptor stats.
