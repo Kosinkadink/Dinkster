@@ -38,18 +38,25 @@ jobs:
         run: |
           if [ -z "$BASE" ]; then
             echo 'comfy=true' >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$BASE" HEAD | grep -E '^(packages/dinkster-(nodes-comfy|compat-comfy)/|tests/test_comfy_|\.github/(actions/torch-cpu-suite/|workflows/ci\.yml$)|uv\.lock$)' > /dev/null; then
-            echo 'comfy=true' >> "$GITHUB_OUTPUT"
           else
-            echo 'comfy=false' >> "$GITHUB_OUTPUT"
+            paths=$(git diff --name-only "$BASE" HEAD)
+            if grep -E '^(packages/dinkster-(nodes-comfy|compat-comfy)/|tests/test_comfy_|\.github/(actions/torch-cpu-suite/|workflows/ci\.yml$)|uv\.lock$)' <<< "$paths" > /dev/null; then
+              echo 'comfy=true' >> "$GITHUB_OUTPUT"
+            else
+              echo 'comfy=false' >> "$GITHUB_OUTPUT"
+            fi
           fi
 
   torch-cpu:
     needs: changes
     if: needs.changes.outputs.comfy == 'true'
-    name: CPU comfy gate
+    name: CPU comfy gate (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -62,6 +69,7 @@ jobs:
       - uses: ./.github/actions/torch-cpu-suite
         with:
           suite: comfy
+          comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
 
   fast:
     needs: [changes, torch-cpu]
