@@ -193,6 +193,9 @@ its records or recording a version. Back up the catalog before upgrading.
 `LibraryStore(path, read_only=True)` opens an existing catalog without creating
 directories, migrating schemas or changing journal mode. Scoped lookups retain
 the same membership rules, and SQLite refuses writes through this connection.
+SQLite may create or update its WAL/shared-memory coordination files; these are
+not catalog content. Read-only open failures report the underlying SQLite reason
+without retrying with write access or bypassing WAL recovery.
 
 Asset observations share this database but are separate from mutable workflow
 records. `LibraryStore.record_asset` records an original basename, observed
@@ -202,6 +205,8 @@ userinfo, query strings and fragments. `query_assets` pages digest identities
 within one scope/project and retains all their aliases and origin events even
 when only one event matches the name, kind, origin or date filter. Dates are
 observation times, not claims about a file's original creation time.
+Each digest's observations are ordered by ascending observation time, then by
+observation ID for tied times, not by insertion order.
 Publication callers can supply an observation ID and time for idempotent
 recovery; a repeated ID must describe the identical event.
 Startup and catalog recovery backfill verified vault bytes already named by

@@ -107,6 +107,7 @@ from dinkster_values import (
 from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
+from .preview_artifacts import capture_saved_file_previews
 from .produced_assets import ProducedAssetAuthority
 from .run_control import PreparedRunContext
 
@@ -697,6 +698,9 @@ class InProcessWorker:
                 capture_value_diagnostics() as pack_diagnostics,
                 capture_preview_artifacts() as preview_artifacts,
                 capture_saved_artifacts() as saved_artifact_claims,
+                capture_saved_file_previews(
+                    enabled=invocation.saved_file_previews_enabled
+                ) as saved_file_previews,
             ):
                 if inspect.iscoroutinefunction(cls.execute):
                     raw = await cls.execute(**kwargs)
@@ -745,6 +749,7 @@ class InProcessWorker:
                     artifact_candidates=tuple(artifact_candidates),
                     preview_artifacts=tuple(preview_artifacts),
                     saved_artifact_claims=tuple(saved_artifact_claims),
+                    saved_file_previews=tuple(saved_file_previews),
                 )
         finally:
             if close_reporter is not None:

@@ -850,6 +850,8 @@ def encode_invocation(
             "vae": invocation.vae_dtype,
         }
     header["attentionPolicy"] = invocation.attention_policy
+    if invocation.saved_file_previews_enabled:
+        header["savedFilePreviewsEnabled"] = True
     if invocation.preview_mode != "off":
         header["previewMode"] = invocation.preview_mode
         if invocation.preview_animation != "ring":
@@ -1023,6 +1025,9 @@ def decode_invocation(
     except ValueError as exc:
         raise BoundaryError(f"malformed invocation preview animation: {exc}") from exc
     undemanded_raw = cast("object", header.get("connectedUndemandedInputs", ()))
+    saved_file_previews_enabled = header.get("savedFilePreviewsEnabled", False)
+    if type(saved_file_previews_enabled) is not bool:
+        raise BoundaryError("savedFilePreviewsEnabled must be boolean")
     if (
         not isinstance(undemanded_raw, (list, tuple))
         or not all(isinstance(item, str) for item in cast("Sequence[object]", undemanded_raw))
@@ -1084,6 +1089,7 @@ def decode_invocation(
             single_job_multi_gpu_execution=single_job_multi_gpu_execution,
             attention_route_token=attention_token,
             media_sources=tuple(media_sources),
+            saved_file_previews_enabled=saved_file_previews_enabled,
             preview_mode=preview_mode,
             preview_animation=preview_animation,
         )
@@ -1126,6 +1132,11 @@ def encode_result(
     if result.error is None and result.saved_artifact_claims:
         header["savedArtifactClaims"] = [dict(claim) for claim in result.saved_artifact_claims]
         decode_saved_artifact_claims(header)
+    if result.error is None and result.saved_file_previews:
+        header["savedFilePreviews"] = [
+            {key: dict(cast("Mapping[str, object]", value)) for key, value in claim.items()}
+            for claim in result.saved_file_previews
+        ]
     if result.expansion is not None:
         from dinkster_protocol import InvocationReturn, ReturnBatch
 
@@ -1232,6 +1243,38 @@ def decode_saved_artifact_claims(header: Mapping[str, Any]) -> tuple[Mapping[str
         return tuple(claims)
     except (TypeError, ValueError) as exc:
         raise BoundaryError(str(exc)) from exc
+
+
+def decode_saved_file_previews(header: Mapping[str, Any]) -> tuple[Mapping[str, object], ...]:
+    """Optional malformed claims are omitted, never promoted to saved authority."""
+    from dinkster_assets import AssetRef
+    from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT
+
+    from .preview_artifacts import SAVED_FILE_PREVIEW_LIMIT_BYTES
+
+    raw = header.get("savedFilePreviews", [])
+    if type(raw) is not list or len(raw) > SAVED_ARTIFACT_CLAIM_LIMIT:
+        return ()
+    claims: list[Mapping[str, object]] = []
+    for claim in raw:
+        try:
+            if not isinstance(claim, Mapping) or set(claim) != {"saved", "preview"}:
+                continue
+            saved = decode_saved_artifact_claims({"savedArtifactClaims": [claim["saved"]]})[0]
+            preview = AssetRef.from_wire(claim["preview"])
+            if (
+                preview.size <= 0
+                or preview.size > SAVED_FILE_PREVIEW_LIMIT_BYTES
+                or preview.virtual_path != f"previews/{preview.digest[7:]}/{preview.name}"
+                or "/" in preview.name
+                or "\\" in preview.name
+                or preview.name in (".", "..")
+            ):
+                continue
+            claims.append({"saved": saved, "preview": preview.to_wire()})
+        except (AssetError, BoundaryError, TypeError, ValueError, KeyError):
+            continue
+    return tuple(claims)
 
 
 def decode_result_artifact_candidates(
@@ -1814,6 +1857,7 @@ def decode_result(
             outputs=outputs,
             preview_artifacts=_decode_preview_artifacts(header, blobs),
             saved_artifact_claims=decode_saved_artifact_claims(header),
+            saved_file_previews=decode_saved_file_previews(header),
         ), stats
     from dinkster_protocol import ExpandedReturn, InvocationReturn
 
@@ -1823,7 +1867,14 @@ def decode_result(
     if (
         set(header)
         - fields
-        - {"jobRef", "attemptId", "artifactCandidates", "previewArtifacts", "savedArtifactClaims"}
+        - {
+            "jobRef",
+            "attemptId",
+            "artifactCandidates",
+            "previewArtifacts",
+            "savedArtifactClaims",
+            "savedFilePreviews",
+        }
     ):
         raise BoundaryError("invalid invocation expansion frame fields")
     payload = {key: header[key] for key in fields if key in header}
@@ -1845,6 +1896,7 @@ def decode_result(
         expansion=outcome.batch.units[0],
         preview_artifacts=previews,
         saved_artifact_claims=decode_saved_artifact_claims(header),
+        saved_file_previews=decode_saved_file_previews(header),
     ), {name: stat for (_, name), stat in stats.items()}
 
 

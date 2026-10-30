@@ -296,15 +296,15 @@ class LibraryStore:
                     command.upgrade(config, "head")
                     connection.commit()
             self._database = self._engine.raw_connection()
+            self._conn = cast(sqlite3.Connection, self._database.driver_connection)
+            self._conn.row_factory = sqlite3.Row
+            self._lock = threading.Lock()
+            with self._lock, self._conn:
+                latest = self._conn.execute("SELECT MAX(modified) FROM records").fetchone()[0]
+                self._last_modified = float(latest) if latest is not None else 0.0
         except BaseException:
             self._engine.dispose()
             raise
-        self._conn = cast(sqlite3.Connection, self._database.driver_connection)
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock, self._conn:
-            latest = self._conn.execute("SELECT MAX(modified) FROM records").fetchone()[0]
-            self._last_modified = float(latest) if latest is not None else 0.0
 
     def _modified_now(self) -> float:
         latest = self._conn.execute("SELECT MAX(modified) FROM records").fetchone()[0]

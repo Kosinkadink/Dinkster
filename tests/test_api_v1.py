@@ -178,6 +178,7 @@ GOLDEN_V1_SURFACE = (
     "pack_logger",
     "attach_saved_artifact",
     "publish_preview_artifact",
+    "publish_saved_file_preview",
     "report_event",
     "report_log",
     "report_preview",

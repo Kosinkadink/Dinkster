@@ -1597,18 +1597,20 @@ class BoundarySession:
             handoff: list[str] = []
             if self._release_guard is not None:
                 handoff = [rid for rid in refs if self._release_guard.pins.pin(rid)]
+            saved_file_previews = decoded.saved_file_previews
+
+            def adopt() -> None:
+                nonlocal saved_file_previews
+                self._produced_assets.capture(outputs, self._blob_store, invocation.inputs)
+                saved_file_previews = self._produced_assets.capture_previews(
+                    saved_file_previews, self._blob_store
+                )
+
             try:
                 with use_produced_output_job(
                     invocation.job_ref or invocation.invocation_id, invocation.attempt_id
                 ):
-                    adoption = asyncio.create_task(
-                        asyncio.to_thread(
-                            self._produced_assets.capture,
-                            outputs,
-                            self._blob_store,
-                            invocation.inputs,
-                        )
-                    )
+                    adoption = asyncio.create_task(asyncio.to_thread(adopt))
                 self._asset_adoptions.add(adoption)
                 adoption.add_done_callback(self._asset_adoptions.discard)
                 await await_file_operation(adoption)
@@ -1674,6 +1676,7 @@ class BoundarySession:
             expansion=decoded.expansion,
             preview_artifacts=decoded.preview_artifacts,
             saved_artifact_claims=decoded.saved_artifact_claims,
+            saved_file_previews=saved_file_previews,
         )
 
     async def validate_admission(

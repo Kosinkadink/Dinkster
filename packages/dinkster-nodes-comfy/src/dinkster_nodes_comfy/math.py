@@ -22,6 +22,8 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
+from .family_migrations import ordered_family_migration
+
 simple_eval = cast("Callable[..., object]", importlib.import_module("simpleeval").simple_eval)
 
 MAX_EXPONENT = 4000
@@ -88,6 +90,15 @@ class ComfyMathExpression(Node):
                 OutputSpec("FLOAT", TypeExpr.concrete(CORE_FLOAT)),
                 OutputSpec("INT", TypeExpr.concrete(CORE_INT)),
                 OutputSpec("BOOL", TypeExpr.concrete(CORE_BOOLEAN)),
+            ),
+            replacements=(
+                ordered_family_migration(
+                    "ComfyMathExpression",
+                    "values",
+                    "value",
+                    ("FLOAT", "INT", "BOOL"),
+                    inputs=("expression",),
+                ),
             ),
         )
 

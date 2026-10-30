@@ -236,7 +236,6 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_pa
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
-        "dinkster-nodes-generation",
         "dinkster-vision-birefnet",
         "dinkster-vision-depth-anything-v2",
         "dinkster-vision-depth-anything-v3",
@@ -280,7 +279,6 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_pa
             "scipy>=1.11",
         ),
         "dinkster-nodes-remote": ("httpx>=0.28,<1",),
-        "dinkster-nodes-generation": (),
     }
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     for pack in lock.packs:

@@ -5,9 +5,16 @@ description = "Dinkster supervisor: layer-0 process that owns the public port, s
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
+    "blake3>=1.0",
+    "packaging>=24",
+    "zstandard>=0.25",
 ]
 
+[dependency-groups]
+environment-tools = ["uv==0.11.29"]
+
 [project.scripts]
+dinkster-env = "dinkster_supervisor.environment:main"
 dinkster-installs = "dinkster_supervisor.install_manager:main"
 dinkster-supervisor = "dinkster_supervisor.supervisor:main"
 dinkster-station = "dinkster_supervisor.station:main"

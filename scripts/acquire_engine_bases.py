@@ -183,16 +183,9 @@ def acquire(root: Path, tags: list[str], output: Path) -> list[Path]:
                 or not isinstance(extras["wheels"], list)
             ):
                 raise ValueError("extras index does not match selected base")
-            if not manifest["parts"]:
+            if not manifest["archive"]["parts"]:
                 raise ValueError("planning-only base manifests cannot be selected")
-            for number, part in enumerate(manifest["parts"], 1):
-                if (
-                    part["filename"] != f"base.7z.{number:03d}"
-                    or type(part["size"]) is not int
-                    or part["size"] <= 0
-                    or not re.fullmatch(r"[0-9a-f]{64}", part["sha256"])
-                ):
-                    raise ValueError("invalid base archive part identity")
+            for part in manifest["archive"]["parts"]:
                 asset = assets.get(part["filename"])
                 if asset is None or asset["size"] != part["size"] or type(asset["id"]) is not int:
                     raise ValueError("selected base release is missing a complete archive part")
