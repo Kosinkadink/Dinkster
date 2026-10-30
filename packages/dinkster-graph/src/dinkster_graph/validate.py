@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Literal, cast
 
 from dinkster_schema import (
     AssetCoercionPlan,
@@ -692,14 +692,14 @@ def _check_input_value(
             )
         )
     else:
-        _check_literal_type(value, expected.runtime_type_id(), where, input_id, diags)
+        _check_literal_type(cast(object, value), expected.runtime_type_id(), where, input_id, diags)
 
 
 def _literal_type_matches(value: object, type_id: str) -> bool:
     element = parse_list_type_id(type_id)
     if element is not None:
         return isinstance(value, list) and all(
-            _literal_type_matches(item, element) for item in value
+            _literal_type_matches(item, element) for item in cast(list[object], value)
         )
     if type_id == CORE_INT:
         return type(value) is int
@@ -825,7 +825,7 @@ def _check_typed_literal(
             )
         )
     else:
-        _check_literal_type(typed.value, typed.type_id, where, input_id, diags)
+        _check_literal_type(cast(object, typed.value), typed.type_id, where, input_id, diags)
     if expected is None:
         return  # consumer-side declaration problem, reported there
     # Asset coercion applies to stamped literals exactly as to links: an
@@ -863,7 +863,9 @@ def _check_typed_literal(
     if equivalence is not None:
         return
     if expected.runtime_type_id() != typed.type_id:
-        _check_literal_type(typed.value, expected.runtime_type_id(), where, input_id, diags)
+        _check_literal_type(
+            cast(object, typed.value), expected.runtime_type_id(), where, input_id, diags
+        )
     # Cardinality is structural (DESIGN 3.13), mirroring the link path: the
     # stamp is definite, so a shape mismatch with a definite input is an
     # error, not a type warning.
