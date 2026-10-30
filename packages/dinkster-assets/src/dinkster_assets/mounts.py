@@ -46,6 +46,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
+from dinkster_values.asset_folders import current_asset_folders
+
 from .catalog import AssetEntry, FolderListing
 from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord
@@ -641,6 +643,8 @@ class MountTable:
             row.progress = None
             row.scan_started = time.monotonic()
         try:
+            if not row.mount.path.is_dir():
+                raise AssetError(f"asset library root is not a directory: {row.mount.path}")
             library = row.library
             if library is None:
                 index_path = (
@@ -805,6 +809,10 @@ class MountTable:
                 (row for row in self._rows.values() if row.kind == kind),
                 key=lambda row: (row.mount.priority, row.mount.id),
             )
+            context = current_asset_folders()
+            if context is not None:
+                by_id = {row.mount.id: row for row in rows}
+                rows = [by_id[mount_id] for mount_id in context.mounts if mount_id in by_id]
         for row in rows:
             try:
                 root = row.mount.path.resolve()
@@ -936,6 +944,45 @@ class MountTable:
                 self.write_snapshot()
         return ref
 
+    def ref_path(self, path: Path, mount_ids: Sequence[str]) -> AssetRef | None:
+        """Bind exactly one local file under the selected live mount grants."""
+        with self._lock:
+            rows = [self._rows[mount_id] for mount_id in mount_ids if mount_id in self._rows]
+        for row in rows:
+            library = row.library
+            if library is None or row.state != "ready":
+                continue
+            try:
+                root = row.mount.path.resolve(strict=True)
+                lexical_root = row.mount.path.absolute()
+                if path.is_relative_to(lexical_root):
+                    relative = path.relative_to(lexical_root).as_posix()
+                elif path.is_relative_to(root):
+                    relative = path.relative_to(root).as_posix()
+                else:
+                    continue
+                selected = path.resolve(strict=True)
+                if not selected.is_relative_to(root):
+                    return None
+            except (OSError, RuntimeError):
+                continue
+            ref = library.index_file(relative)
+            if ref is None:
+                return None
+            with self._lock:
+                if self._rows.get(row.mount.id) is not row:
+                    return None
+                row.entry_count = len(library.entries())
+                row.missing_entry_count = len(library.missing_entries())
+            try:
+                if path.resolve(strict=True) != selected or not ref.local_path().samefile(selected):
+                    return None
+            except (AssetError, OSError, RuntimeError):
+                return None
+            self.write_snapshot()
+            return replace(ref, resolver=self)
+        return None
+
     def write_snapshot(self) -> None:
         """Publish each indexed mount's root and current index path.
 
@@ -1005,7 +1052,7 @@ class MountSnapshotResolver:
         self._lock = threading.Lock()
         self._stamp: tuple[int, int] | None = None
         self._resolvers: list[tuple[str, str, Path, IndexedAssetResolver]] = []
-        self._roots: tuple[tuple[str, Path], ...] = ()
+        self._roots: tuple[tuple[str, str, Path], ...] = ()
         self._local_bindings: dict[str, object] = {}
         self._selected_files: dict[str, tuple[str, Path, str, LocalFileSignature]] = {}
 
@@ -1018,7 +1065,14 @@ class MountSnapshotResolver:
         require_asset_kind(kind)
         with self._lock:
             self._refresh_locked()
-            return tuple(root for row_kind, root in self._roots if row_kind == kind)
+            roots = [
+                (mount_id, root) for mount_id, row_kind, root in self._roots if row_kind == kind
+            ]
+            context = current_asset_folders()
+            if context is None:
+                return tuple(root for _, root in roots)
+            by_id = dict(roots)
+            return tuple(by_id[mount_id] for mount_id in context.mounts if mount_id in by_id)
 
     def bind_relative_file(self, kind: str, root: Path, relative: str) -> AssetRef | LocalAssetRef:
         """Bind a selected indexed file, or an invocation-local unindexed member.
@@ -1212,7 +1266,9 @@ class MountSnapshotResolver:
                 kind = ""
             prepared.append((priority, mount_id, kind, root, index))
         ordered = sorted(prepared)
-        self._roots = tuple((kind, Path(root)) for _, _, kind, root, _ in ordered if root)
+        self._roots = tuple(
+            (mount_id, kind, Path(root)) for _, mount_id, kind, root, _ in ordered if root
+        )
         for _priority, mount_id, kind, root, index in ordered:
             try:
                 self._resolvers.append(

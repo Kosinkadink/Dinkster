@@ -79,7 +79,7 @@ def test_wan_image_schemas_and_cold_native_discovery() -> None:
         ]
         assert schema_from_wire(schema_to_wire(schema)) == schema
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces
+    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == manifest.namespaces
 
 
 def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
@@ -126,7 +126,7 @@ def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
         assert [o.id for o in schema.outputs] == outputs
         assert schema_from_wire(schema_to_wire(schema)) == schema
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces
+    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == manifest.namespaces
 
 
 def test_scail_schema_preserves_interleaved_optional_inputs() -> None:

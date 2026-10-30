@@ -35,6 +35,7 @@ def test_lora_hook_schemas_and_native_registration() -> None:
     manifest = tomllib.loads(
         (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert tuple(manifest["pack"]["namespaces"]) == tuple(
-        node.schema().node_type for node in COMFY_NODES
+    assert tuple(manifest["pack"]["namespaces"]) == (
+        "devices",
+        *(node.schema().node_type for node in COMFY_NODES),
     )

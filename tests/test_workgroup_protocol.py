@@ -594,7 +594,7 @@ def test_reducer_rejects_foreign_subclasses() -> None:
 
 
 def test_boundary_protocol_and_error_result() -> None:
-    assert PROTOCOL_VERSION == 10
+    assert PROTOCOL_VERSION == 12
     header, blobs, segments = encode_result(
         ValueCodec(TypeRegistry(), use_shm=False),
         InvocationResult(error=NodeError("node-1", "Node", "failed")),

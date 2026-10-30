@@ -51,6 +51,7 @@ from typing import Any, cast
 from aiohttp import web
 from dinkster_assets import (
     AssetVault,
+    AssetWriter,
     LibraryStore,
     MountDef,
     MountsError,
@@ -79,6 +80,7 @@ from dinkster_memory import (
     parse_size,
 )
 from dinkster_protocol import AttentionPolicy, validate_attention_policy
+from dinkster_registry import ArtifactError, InstallError
 from dinkster_schema import (
     LOG_LEVEL_ENV,
     LOG_OVERRIDES_ENV,
@@ -114,6 +116,7 @@ from dinkster_server import (
 from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
+    ManifestError,
     PackManifest,
     SandboxPolicy,
     SingleJobMultiGpuConfig,
@@ -152,8 +155,9 @@ from .compose import (
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
-from .frontend import install_frontend
+from .frontend import discover_frontend_bundle, install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
+from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
@@ -161,8 +165,10 @@ from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
+from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
+from .workflow_requirements_api import VARIANTS, add_workflow_requirement_routes
 
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 _SERVING_PYTHON_ENV = "DINKSTER_SERVING_PYTHON"
@@ -524,7 +530,7 @@ def _with_remote_config(
         environment[_REMOTE_AUTH_TOKEN_FILE_ENV] = token_file
     return replace(
         spec,
-        env=environment,
+        env={**spec.env, **environment},
         execution_config={"catalog_base": catalog_base, "gateway_base": gateway_base},
     )
 
@@ -876,6 +882,12 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_INSTALL_ROOT)",
     )
     parser.add_argument(
+        "--generation",
+        type=Path,
+        metavar="ABS",
+        help="serve only this explicit engine generation's dinkster.lock and pack sources",
+    )
+    parser.add_argument(
         "--comfy-root",
         default=os.environ.get("DINKSTER_COMFYUI_ROOT", ""),
         metavar="PATH",
@@ -1110,6 +1122,12 @@ def main(argv: list[str] | None = None) -> None:
         help="hardware sampling interval for --benchmark (default: 0.5)",
     )
     parser.add_argument(
+        "--engine-variant",
+        choices=VARIANTS,
+        help="declared engine generation variant for workflow-open planning; "
+        "never inferred from hardware",
+    )
+    parser.add_argument(
         "--library-root",
         default=os.environ.get("DINKSTER_LIBRARY_ROOT", "dinkster-library"),
         metavar="PATH",
@@ -1318,6 +1336,18 @@ def main(argv: list[str] | None = None) -> None:
     if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
         parser.error(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
     args = parser.parse_args(argv)
+    if args.generation is not None:
+        if not args.generation.is_absolute():
+            parser.error("--generation requires an absolute path")
+        if (
+            args.install_root
+            or args.pack
+            or args.comfy_root
+            or args.legacy_pack
+            or args.watch_packs
+        ):
+            parser.error("--generation cannot be combined with other pack sources or --watch-packs")
+        args.no_default_packs = True
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
     openai_values = (args.openai_base_url, args.openai_model, args.openai_api_key)
@@ -1600,11 +1630,6 @@ def main(argv: list[str] | None = None) -> None:
             "--allow-mount-changes requires a library root "
             "(granted mounts persist to <library-root>/mounts.toml)"
         )
-    if args.sandbox_packs and args.allow_mount_changes:
-        parser.error(
-            "--allow-mount-changes cannot be combined with --sandbox-packs; "
-            "a running mount namespace cannot add or revoke bind grants"
-        )
     if (args.sandbox_grant_gpu or args.sandbox_grant_network) and not args.sandbox_packs:
         parser.error("sandbox pack grants require --sandbox-packs")
     for name in args.sandbox_grant_gpu:
@@ -1659,6 +1684,8 @@ def main(argv: list[str] | None = None) -> None:
     sandbox_mounts: list[MountDef] = []
     if args.library_root:
         library_root = Path(args.library_root)
+        if args.allow_mount_changes or args.generation is not None:
+            ensure_default_mounts(library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
@@ -1707,7 +1734,10 @@ def main(argv: list[str] | None = None) -> None:
             elif comfy_output_mount is not None and comfy_output_mount.mode == "readwrite":
                 mount_table.select_output_mount("comfy-output", require_config=False)
         mount_service = MountService(
-            mount_table, mounts_config, allow_changes=args.allow_mount_changes
+            mount_table,
+            mounts_config,
+            allow_changes=args.allow_mount_changes,
+            restart_for_changes=args.sandbox_packs,
         )
         # Publish the (initially empty - nothing has scanned yet) snapshot
         # and point THIS process at it: media I/O save nodes run in-process, and
@@ -1768,6 +1798,33 @@ def main(argv: list[str] | None = None) -> None:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
     else:
         specs.extend(compat_specs)
+    if args.generation is not None:
+        try:
+            selected_variant, generation_specs = load_generation_packs(args.generation)
+            if selected_variant not in VARIANTS:
+                raise CompositionError(f"unsupported generation variant: {selected_variant}")
+            if args.engine_variant is not None and args.engine_variant != selected_variant:
+                raise CompositionError("--engine-variant differs from selected generation variant")
+            args.engine_variant = selected_variant
+            for spec in generation_specs:
+                if spec.packs and "dinkster-nodes-remote" in spec.packs:
+                    spec = _with_remote_config(
+                        spec,
+                        catalog_base=args.remote_catalog_base,
+                        gateway_base=args.remote_gateway_base,
+                        poll_interval=args.remote_catalog_poll_interval,
+                        token_file=args.remote_auth_token_file,
+                    )
+                specs.append(spec)
+        except (
+            OSError,
+            ValueError,
+            CompositionError,
+            ArtifactError,
+            InstallError,
+            ManifestError,
+        ) as exc:
+            raise SystemExit(f"invalid generation pack inventory: {exc}") from exc
     resolved_default_pack_count = len(specs)
     installer: Installer | None = None
     if args.install_root:
@@ -1832,6 +1889,8 @@ def main(argv: list[str] | None = None) -> None:
                 protected_roots.append(str(Path(args.library_root)))
             if args.install_root:
                 protected_roots.append(str(Path(args.install_root)))
+            if args.generation is not None:
+                protected_roots.append(str(args.generation))
             secret_paths = (
                 args.auth,
                 args.federated_assets_cursor_key,
@@ -1908,9 +1967,12 @@ def main(argv: list[str] | None = None) -> None:
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
         composer.validate_specs(specs)
-        if args.prepare_stale_catalogs:
+        if args.prepare_stale_catalogs or (
+            args.generation is None
+            and Path(__file__).with_name("official_packs").joinpath("official-packs.lock").is_file()
+        ):
             _prepare_stale_catalogs(
-                specs,
+                specs if args.prepare_stale_catalogs else specs[:resolved_default_pack_count],
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
             )
@@ -1940,12 +2002,24 @@ def main(argv: list[str] | None = None) -> None:
                 provenance,
                 region=args.resolver_region,
             )
+            import_mount = "imports"
+            if mount_service is not None:
+                configured = mount_service.table.config_defs()
+                if not any(mount.id == "imports" for mount in configured):
+                    import_mount = next(
+                        (mount.id for mount in configured if mount.path == root / "imports"),
+                        "imports",
+                    )
             library = ServerLibrary(
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),
+                local_resolver=(mount_service.table if mount_service is not None else None),
+                project_folders_for=(mount_service.project_context if mount_service else None),
+                upload_writer=AssetWriter(mount_service.table) if mount_service else None,
+                import_mount=import_mount,
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.
@@ -2110,6 +2184,14 @@ def main(argv: list[str] | None = None) -> None:
             # GET routes serve everyone; the mutation half answers 403
             # mount-changes-disabled unless --allow-mount-changes opted in.
             add_mount_routes(app, mount_service)
+        add_workflow_requirement_routes(
+            app,
+            manifests=lambda: {
+                name: load_manifest(resolve_manifest_path(spec.manifest))
+                for name, spec in composer.pack_specs().items()
+            },
+            engine_variant=args.engine_variant,
+        )
         if installer is not None:
             # Live install activation: reconcile the served surface with
             # the install root's current generation without a restart.
@@ -2131,10 +2213,17 @@ def main(argv: list[str] | None = None) -> None:
                     await apply_reload(app[STATE_KEY], composer, name)
 
                 watcher = PackWatcher(composer.watch_targets, reload_changed)
-        if args.frontend_root or args.frontend_dev:
+        frontend_bundle = (
+            Path(args.frontend_root)
+            if args.frontend_root
+            else None
+            if args.frontend_dev
+            else discover_frontend_bundle()
+        )
+        if frontend_bundle is not None or args.frontend_dev:
             install_frontend(
                 app,
-                bundle=Path(args.frontend_root) if args.frontend_root else None,
+                bundle=frontend_bundle,
                 development_url=args.frontend_dev or None,
             )
 

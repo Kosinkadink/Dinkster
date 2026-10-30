@@ -89,6 +89,7 @@ def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: 
             (tmp_path / "sdxl_tensor_fixture.py").write_text(
                 "from test_clip_sdxl_torch import TENSOR_FIXTURES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *TENSOR_FIXTURES)\n",
                 encoding="ascii",
             )
@@ -97,6 +98,10 @@ def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: 
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["sdxl-tensor",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "sdxl_tensor_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "sdxl_tensor_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "sdxl_tensor_fixture:register_inference_types",

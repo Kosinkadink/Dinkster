@@ -125,6 +125,7 @@ from .aimdo_bootstrap import bootstrap_aimdo
 from .blobs import BlobTransfer, attribute_moved_wire
 from .boundary import (
     DEFAULT_SHM_THRESHOLD,
+    PROTOCOL_VERSION,
     BoundaryError,
     ValueCodec,
     ValueStore,
@@ -1178,6 +1179,7 @@ async def serve_connection(
 
     hello: dict[str, object] = {
         "type": "hello",
+        "protocol": PROTOCOL_VERSION,
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "registeredTypes": list(worker.registered_types),
@@ -1535,6 +1537,7 @@ async def serve_connection(
                     ),
                     node_id=invocation.node_id,
                     export_snapshot=invocation.export_snapshot,
+                    asset_folders=invocation.asset_folders,
                     materialize_source=(materialize_source if source_staging is not None else None),
                 )
             ):
@@ -1573,6 +1576,9 @@ async def serve_connection(
                     },
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
+                    preview_artifacts=result.preview_artifacts,
+                    saved_artifact_claims=result.saved_artifact_claims,
+                    saved_file_previews=result.saved_file_previews,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()
@@ -1591,6 +1597,11 @@ async def serve_connection(
             )
             pending_blobs: list[tuple[str, bytes | Path]] = list(codec.take_pending_store_blobs())
             pending_blobs.extend(source_files)
+            optional_files = (
+                source_asset_files({}, resolver_from_env(), previews=result.saved_file_previews)
+                if blob_transfer is not None
+                else []
+            )
             if consumers and result.outputs:
                 refs: set[str] = set()
                 for value in result.outputs.values():
@@ -1598,11 +1609,17 @@ async def serve_connection(
                 if refs:
                     inflight_result_refs[invocation_id] = frozenset(refs)
             moved: dict[str, tuple[int, float]] = {}
-            if blob_transfer is not None and pending_blobs:
+            if blob_transfer is not None and (pending_blobs or optional_files):
                 try:
                     # Staged input sources can be returned unchanged; transfer
                     # their bytes before closing the invocation's staging lease.
-                    moved = await ensure_peer_holds(pending_blobs)
+                    try:
+                        moved = await ensure_peer_holds([*pending_blobs, *optional_files])
+                    except Exception:
+                        if not optional_files:
+                            raise
+                        out_header.pop("savedFilePreviews", None)
+                        moved = await ensure_peer_holds(pending_blobs)
                 except BaseException:
                     inflight_result_refs.pop(invocation_id, None)
                     for segment in out_segments:
@@ -1816,6 +1833,7 @@ async def serve_connection(
                 attention_policy=ordinary.attention_policy,
                 attention_route_token=ordinary.attention_route_token,
                 extension_snapshot_digest=ordinary.extension_snapshot_digest,
+                asset_folders=ordinary.asset_folders,
             )
             if invocation.arm is not None:
                 raise ValueError("lazy-dispatch-unsupported: alternate body arm")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import FrozenInstanceError, replace
@@ -28,6 +29,7 @@ from dinkster_protocol import (
     resolve_role_policy,
 )
 from dinkster_workers import ExecutionContext
+from dinkster_workers.execution import use_execution_context
 
 
 def route_token(*, policy: str = "auto", torch_version: str = "2.13.0") -> AttentionRouteToken:
@@ -771,3 +773,113 @@ def test_authenticated_identity_has_unambiguous_provider_encoding() -> None:
     provider_colon_right = identity(replace(token, provider_versions=(("a", "b:c"),)))
 
     assert provider_colon_left != provider_colon_right
+
+
+def test_sampling_model_preparation_is_invocation_local_and_resets_on_failure() -> None:
+    from dinkster_api.v1 import prepare_sampling_model
+
+    model, routed, inner_routed = object(), object(), object()
+    route = route_token()
+
+    class Runtime:
+        def __init__(self, result: object) -> None:
+            self.result = result
+
+        def prepare_sampling_model(self, source: object, token: object) -> object:
+            assert source is model
+            assert token is route
+            return self.result
+
+    def context(runtime: Runtime | None) -> ExecutionContext:
+        return ExecutionContext(
+            arm=None,
+            expected_execution_identity=None,
+            attention_route_token=route if runtime is not None else None,
+            attention_runtime=runtime,
+        )
+
+    async def threaded() -> object:
+        return await asyncio.to_thread(prepare_sampling_model, model)
+
+    assert prepare_sampling_model(model) is model
+    with use_execution_context(context(Runtime(routed))):
+        assert prepare_sampling_model(model) is routed
+        assert asyncio.run(threaded()) is routed
+        with use_execution_context(context(None)):
+            assert prepare_sampling_model(model) is model
+        with pytest.raises(ValueError, match="inner failure"):
+            with use_execution_context(context(Runtime(inner_routed))):
+                assert prepare_sampling_model(model) is inner_routed
+                raise ValueError("inner failure")
+        assert prepare_sampling_model(model) is routed
+    assert prepare_sampling_model(model) is model
+
+
+def test_routed_sampling_preparation_does_not_hide_runtime_failures() -> None:
+    from dinkster_api.v1 import prepare_sampling_model
+
+    class Runtime:
+        def prepare_sampling_model(self, _model: object, _token: object) -> object:
+            raise ValueError("route unavailable")
+
+    for runtime, error, message in (
+        (None, RuntimeError, "cannot prepare"),
+        (Runtime(), ValueError, "route unavailable"),
+    ):
+        context = ExecutionContext(
+            arm=None,
+            expected_execution_identity=None,
+            attention_route_token=route_token(),
+            attention_runtime=runtime,
+        )
+        with use_execution_context(context), pytest.raises(error, match=message):
+            prepare_sampling_model(object())
+
+
+@pytest.mark.parametrize("nested", (False, True))
+def test_in_process_sampling_preserves_invocation_distributed_configuration(nested: bool) -> None:
+    from collections.abc import Mapping
+    from contextlib import nullcontext
+
+    from dinkster_protocol import Invocation, SingleJobMultiGpuExecution
+    from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
+    from dinkster_workers import InProcessWorker, current_execution_context
+
+    class Probe(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.distributed-context",
+                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            context = current_execution_context()
+            assert context is not None
+            return cls.outputs(value=str(context.single_job_multi_gpu_execution))
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schema = Probe.schema()
+        worker = InProcessWorker({schema.node_type: Probe}, registry)
+        config = SingleJobMultiGpuExecution(1, 2, "sequence")
+        outer = use_execution_context(ExecutionContext(None, None)) if nested else nullcontext()
+        with outer:
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="sampling",
+                    node_id="probe",
+                    node_type=schema.node_type,
+                    inputs={},
+                    effective_schema=schema,
+                    single_job_multi_gpu_execution=config,
+                )
+            )
+        assert result.error is None
+        assert result.outputs is not None
+        assert result.outputs["value"].resolve() == str(config)
+
+    asyncio.run(scenario())

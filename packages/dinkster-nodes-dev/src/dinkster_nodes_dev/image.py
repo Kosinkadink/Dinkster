@@ -30,6 +30,7 @@ from dinkster_api.v1 import (
     SaveTargetWidget,
     TypeExpr,
     TypeRegistry,
+    attach_saved_artifact,
     decode_image_array,
     encode_image_array,
     image_array_fingerprint,
@@ -244,4 +245,5 @@ class SaveImagePGM(Node):
         ref = _mount_writer().save_bytes(
             target, data, suffix=".pgm", media_type="image/x-portable-graymap"
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(path=ref.virtual_path, digest=ref.digest)

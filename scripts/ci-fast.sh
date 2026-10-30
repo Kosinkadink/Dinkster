@@ -8,15 +8,19 @@ uv run --locked python scripts/check_builtin_type_spellings.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
+uv run --locked pyright --pythonplatform Windows
 uv run --locked python -m pytest -q \
   tests/test_disabled_features.py \
   tests/test_settings.py \
   tests/test_extension_factory_guard.py \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
+  tests/test_pack_environment.py \
   tests/test_run_scripts.py \
   tests/test_launch.py \
+  tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_frontend_artifact.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
   tests/test_names.py \

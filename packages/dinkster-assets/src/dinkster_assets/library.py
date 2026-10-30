@@ -54,6 +54,15 @@ def _retain_missing_versions(current: dict[str, object], previous: object) -> di
         else []
     )
     old_digest = old.get("digest")
+    if (
+        old_digest == current["digest"]
+        and type(old.get("publishedAtNs")) is int
+        and isinstance(old.get("verification"), Mapping)
+        and old.get("verification") == current.get("verification")
+        and old.get("size") == current.get("size")
+        and old.get("mtimeNs") == current.get("mtimeNs")
+    ):
+        current["publishedAtNs"] = old["publishedAtNs"]
     if isinstance(old_digest, str) and old_digest != current["digest"] and is_digest(old_digest):
         retained.append({key: value for key, value in old.items() if key != "missingVersions"})
     if retained:
@@ -113,6 +122,8 @@ def append_write_record(
     size: int,
     mtime_ns: int,
     verification: AssetVerificationRecord | None = None,
+    *,
+    published_at_ns: int | None = None,
 ) -> None:
     """Record one just-written file. Appends are one small line each, so
     concurrent writers (multiple worker processes saving into one mount)
@@ -123,6 +134,7 @@ def append_write_record(
             "digest": digest,
             "size": size,
             "mtimeNs": mtime_ns,
+            **({"publishedAtNs": published_at_ns} if published_at_ns is not None else {}),
             **({"verification": verification.to_json()} if verification is not None else {}),
         },
         sort_keys=True,
@@ -170,6 +182,11 @@ def load_write_records(root: Path) -> dict[str, dict[str, object]]:
                 "size": size,
                 "mtimeNs": mtime,
                 "digest": digest,
+                **(
+                    {"publishedAtNs": row["publishedAtNs"]}
+                    if type(row.get("publishedAtNs")) is int
+                    else {}
+                ),
                 **({"verification": verification.to_json()} if verification is not None else {}),
             }
     return rows
@@ -444,8 +461,8 @@ class LocalAssetLibrary:
             files_done += 1
             bytes_done += stat.st_size
             report()
-        self._save_index(fresh_index)
-        self._prune_sidecar(fresh_index)
+        if self._save_index(fresh_index):
+            self._prune_sidecar(fresh_index)
         report(force=True)
         return files_done
 
@@ -475,17 +492,68 @@ class LocalAssetLibrary:
                 current = {relative: dict(row) for relative, row in self._current_index.items()}
             self._save_index(current)
 
+    def index_file(self, relative: str) -> AssetRef | None:
+        """Verify and catalog one selected file without rescanning its directory."""
+        try:
+            validate_virtual_path(relative)
+            if any(part.startswith(".") for part in Path(relative).parts) or self._ignore.matches(
+                relative, Path(relative).name
+            ):
+                return None
+            root = self._root.resolve(strict=True)
+            path = root / relative
+            if (
+                not path.is_file()
+                or path.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
+                or not path.resolve(strict=True).is_relative_to(root)
+                or path == self._index_path.resolve()
+            ):
+                return None
+            digest, record = digest_file_with_record(path)
+            stat = path.stat()
+            if (
+                record is None
+                or not record.matches(stat)
+                or not path.resolve(strict=True).is_relative_to(root)
+            ):
+                return None
+        except (AssetError, OSError, RuntimeError):
+            return None
+        with self._index_write_lock:
+            with self._lock:
+                index = dict(self._current_index)
+                index[relative] = _retain_missing_versions(
+                    {
+                        "size": stat.st_size,
+                        "mtimeNs": stat.st_mtime_ns,
+                        "digest": digest,
+                        "verification": record.to_json(),
+                    },
+                    index.get(relative),
+                )
+            if not self._save_index(index):
+                raise OSError("asset index publication failed")
+            with self._lock:
+                self._current_index = index
+                self._publish_entry(path, relative, stat.st_size, digest, record)
+                self._paths_by_digest[digest] = path
+                self._resolutions_by_digest[digest] = AssetResolution(path, record)
+                entry = self._catalog.get(f"{self._namespace}/{relative}")
+                assert entry is not None
+                return entry.ref(resolver=self)
+
     def _prune_sidecar(self, fresh_index: dict[str, dict[str, object]]) -> None:
-        """Drop sidecar rows the index now covers. Rows for files written
-        DURING the scan (not yet in fresh_index) survive, so a save racing
-        a scan never loses its immediate resolvability."""
+        """Drop only publications fully covered by the successfully persisted index."""
         sidecar = self._root / WRITES_SIDECAR_NAME
         try:
             with _sidecar_lock(self._root):
                 remaining = {
                     relative: row
                     for relative, row in load_write_records(self._root).items()
-                    if relative not in fresh_index
+                    if any(
+                        fresh_index.get(relative, {}).get(key) != value
+                        for key, value in row.items()
+                    )
                 }
                 if not remaining:
                     sidecar.unlink(missing_ok=True)
@@ -531,6 +599,7 @@ class LocalAssetLibrary:
     def ref(self, virtual_path: str) -> AssetRef:
         """Mint a resolver-bound AssetRef for a cataloged virtual path -
         the host-side entry point for feeding assets into graphs."""
+        self.refresh_writes()
         with self._lock:
             entry = self._catalog.get(virtual_path)
         if entry is None:
@@ -554,6 +623,8 @@ class LocalAssetLibrary:
             ):
                 continue
             record = AssetVerificationRecord.from_json(digest, row.get("verification"))
+            if record is not None and not record.matches(stat):
+                continue
             self._publish_entry(path, relative, size, digest, record)
 
     def entries(self) -> tuple[AssetEntry, ...]:
@@ -614,7 +685,7 @@ class LocalAssetLibrary:
             return {}
         return {str(key): val for key, val in cast("dict[object, object]", loaded).items()}
 
-    def _save_index(self, index: dict[str, dict[str, object]]) -> None:
+    def _save_index(self, index: dict[str, dict[str, object]]) -> bool:
         """Atomic (temp + os.replace) because the index is *shared* state:
         multiple Dinkster instances pointing at one model folder share hash
         work through this file, and a torn write another instance reads as
@@ -625,7 +696,7 @@ class LocalAssetLibrary:
             serialized = json.dumps(index, indent=1)
             try:
                 if self._index_path.read_text("utf-8") == serialized:
-                    return
+                    return True
             except (OSError, ValueError):
                 pass
             tmp = self._index_path.with_name(self._index_path.name + f".tmp-{os.getpid()}")
@@ -633,12 +704,14 @@ class LocalAssetLibrary:
                 self._index_path.parent.mkdir(parents=True, exist_ok=True)
                 tmp.write_text(serialized, "utf-8")
                 os.replace(tmp, self._index_path)
+                return True
             except OSError:
                 # A read-only root degrades to rehash-on-scan, not failure.
                 try:
                     tmp.unlink()
                 except OSError:
                     pass
+                return False
 
 
 class IndexedAssetResolver:

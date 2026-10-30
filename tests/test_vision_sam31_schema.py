@@ -84,10 +84,10 @@ def test_sam31_pack_declares_cpu_providers_and_pinned_model() -> None:
     assert manifest.sandbox.network is False
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
-        "numpy==2.5.1",
-        "opencv-python-headless==5.0.0.93",
+        "numpy",
+        "opencv-contrib-python-headless",
         "safetensors==0.8.0",
-        "torch==2.13.0",
+        "torch",
     )
     assert [provider.choice for provider in manifest.vision_providers] == [
         DETECT_PROVIDER_CHOICE,

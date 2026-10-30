@@ -1,5 +1,9 @@
 ## Pack execution isolation
 
+- Packs can use image-document construction, editing, rendering, import/export
+  and blend helpers through `dinkster_api.v1`, alongside VIDEO values and
+  streaming helpers. Remote clients can read host invocation cancellation
+  through that API without importing worker internals.
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.
@@ -8,10 +12,17 @@
   identities; a rejected replacement preserves the active owners.
   Built-in identities remain owned by foundation independently of the
   official pack that provides their codec and survive pack removal.
+- Typed asset references can target a type declared by an isolated pack without
+  loading its codec in the engine. Envelope-aware nodes can forward values
+  without decoding payloads, including foundation list selection of images.
 - Dinkster-specific built-in socket types use bare uppercase ids, including
   ASSET, AUDIO_RECORD, CURVE, REGION, DETECTION, RESOURCE and VIDEO_DOCUMENT. Schemas,
   codecs and generators share their canonical spelling module. The internal
   core.absent execution envelope is not a socket type.
+- Packs can use the canonical `INTERP_MODEL` socket for process-resident
+  interpolation models. Values retain their holding-process identity across
+  ordinary worker transport; other processes cannot resolve model contents.
+  This shared type does not itself provide a model loader or interpolation node.
 - Non-dinkster publishers' node schemas and type claims require the pack-name
   prefix at loading and catalog preparation. Declared type claims remain
   exclusive even when the pack has no codec callback. Dependent packs can
