@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import sys
@@ -16,9 +17,19 @@ def test_child_output_and_timeout_diagnostics(
 ) -> None:
     module = tmp_path / "diagnostic_child.py"
     module.write_text(
-        "import sys, threading\n"
+        "import os, shutil, sys, threading\n"
+        "from pathlib import Path\n"
         "def blocked_child():\n"
-        "    threading.Event().wait(90)\n"
+        f"    root = Path({str(tmp_path)!r})\n"
+        "    (root / 'original').write_text('filesystem diagnostic')\n"
+        "    os.link(root / 'original', root / 'first-link')\n"
+        "    os.link(root / 'original', root / 'second-link')\n"
+        "    shutil.copy2(root / 'original', root / 'copied')\n"
+        "    def pending_link(event, arguments):\n"
+        "        if event == 'os.link':\n"
+        "            threading.Event().wait(90)\n"
+        "    sys.addaudithook(pending_link)\n"
+        "    os.link(root / 'original', root / 'pending-link')\n"
         "if sys.argv[1] == 'blocked':\n"
         "    blocked_child()\n"
         "print('child stdout')\n"
@@ -41,6 +52,16 @@ def test_child_output_and_timeout_diagnostics(
     assert "Child stack before cleanup:" in notes
     assert "blocked_child" in notes
     assert str(module) in notes
+    samples = [json.loads(line) for line in notes.splitlines() if line.startswith('{"elapsed":')]
+    assert samples, notes
+    operations = samples[-1]["operations"]
+    assert operations["os.link"]["started"] == 3
+    assert operations["os.link"]["source"] == str(tmp_path / "original")
+    assert operations["os.link"]["destination"] == str(tmp_path / "pending-link")
+    assert operations["shutil.copyfile"]["started"] == 1
+    assert operations["shutil.copyfile"]["destination"] == str(tmp_path / "copied")
+    assert (tmp_path / "copied").read_text() == "filesystem diagnostic"
+    assert not (tmp_path / "pending-link").exists()
 
 
 @pytest.mark.parametrize(
@@ -66,6 +87,7 @@ def test_nested_child_state_and_stack_at_timeout(
         "assert os.environ['PYTHONFAULTHANDLER'] == '1'\n"
         "root = Path(sys.argv[-1])\n"
         "(root / 'runtime-pid').write_text(str(os.getpid()))\n"
+        "os.link(root / 'runtime-pid', root / 'linked-pid')\n"
         f"release = socket.create_connection(('127.0.0.1', {port}), timeout=30)\n"
         "release.settimeout(None)\n"
         "release.sendall(b'ready')\n"
@@ -111,6 +133,14 @@ def test_nested_child_state_and_stack_at_timeout(
         if blocked:
             assert "blocked_nested_child" in notes
             assert str(nested) in notes
+            samples = [
+                json.loads(line) for line in notes.splitlines() if line.startswith('{"elapsed":')
+            ]
+            assert any(
+                sample["operations"].get("os.link", {}).get("destination")
+                == str(tmp_path / "linked-pid")
+                for sample in samples
+            ), notes
         else:
             assert "Timeout (0:00:05)" not in notes
     finally:

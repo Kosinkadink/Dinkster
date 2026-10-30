@@ -8,6 +8,10 @@ import os
 import runpy
 import subprocess
 import sys
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -51,6 +55,14 @@ def _process_state(pid: int) -> tuple[str, int | None]:
     return "alive", None
 
 
+def _read_progress(path: Path) -> str:
+    if not path.exists():
+        return "(no progress recorded)"
+    # The observer may be writing its next row when the parent reaches its deadline.
+    complete, _, _ = path.read_text().rpartition("\n")
+    return complete or "(no complete progress snapshot)"
+
+
 def _nested_diagnostics(directory: Path) -> str:
     rows = []
     for path in sorted(directory.glob("nested-*.json")):
@@ -62,11 +74,14 @@ def _nested_diagnostics(directory: Path) -> str:
         state, code = ("exited", code) if code is not None else _process_state(pid)
         stack = path.with_suffix(".stack")
         saved = stack.read_text() if stack.exists() else ""
+        progress = path.with_suffix(".progress")
         rows.append(
             f"Nested CLI child pid={pid}, module={record['module']}, "
             f"state before cleanup={state}, returncode before cleanup={code}\n"
             f"Nested child stack before cleanup:\n"
-            f"{saved or '(no nested child stack recorded)'}"
+            f"{saved or '(no nested child stack recorded)'}\n"
+            f"Nested filesystem audit starts before cleanup (not completions):\n"
+            f"{_read_progress(progress)}"
         )
     return "\n".join(rows)
 
@@ -96,6 +111,53 @@ def _open_trace(path: Path):
     return os.fdopen(msvcrt.open_osfhandle(handle, os.O_WRONLY), "w")
 
 
+@contextmanager
+def _filesystem_progress(path: Path) -> Iterator[None]:
+    started = time.monotonic()
+    latest: dict[str, tuple[int, float, str, str]] = {}
+    lock = threading.Lock()
+    finished = threading.Event()
+
+    def audit(event: str, arguments: tuple[object, ...]) -> None:
+        if event not in {"os.link", "shutil.copyfile"}:
+            return
+        source, destination = str(arguments[0]), str(arguments[1])
+        with lock:
+            count = latest[event][0] if event in latest else 0
+            latest[event] = (count + 1, time.monotonic() - started, source, destination)
+
+    with _open_trace(path) as output:
+
+        def observe() -> None:
+            while not finished.wait(5):
+                with lock:
+                    snapshot = latest.copy()
+                # Audit events precede the OS call; these are starts, never completed work.
+                row = {
+                    "elapsed": time.monotonic() - started,
+                    "operations": {
+                        event: {
+                            "started": count,
+                            "lastStarted": elapsed,
+                            "source": source,
+                            "destination": destination,
+                        }
+                        for event, (count, elapsed, source, destination) in snapshot.items()
+                    },
+                }
+                output.write(json.dumps(row) + "\n")
+                output.flush()
+
+        sys.addaudithook(audit)
+        observer = threading.Thread(target=observe, daemon=True)
+        observer.start()
+        try:
+            yield
+        finally:
+            finished.set()
+            observer.join()
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
@@ -112,11 +174,14 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
                 # poll must precede kill: an exited child can leave inherited pipes open.
                 returncode = process.poll()
                 stack = trace.read_text() if trace.exists() else "child trace file absent"
+                progress = trace.with_suffix(".progress")
                 exc.cmd = command
                 exc.add_note(
                     f"Supervisor CLI child pid={process.pid}, "
                     f"returncode before cleanup={returncode}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
+                    f"Filesystem audit starts before cleanup (not completions):\n"
+                    f"{_read_progress(progress)}\n"
                     f"{_nested_diagnostics(Path(directory))}"
                 )
                 process.kill()
@@ -198,7 +263,10 @@ def _main() -> None:
         temporary.write_text(str(os.getpid()))
         temporary.replace(Path(location).with_suffix(".pid"))
     sys.argv = [module, *arguments]
-    with _open_trace(trace_path) as trace:
+    with (
+        _open_trace(trace_path) as trace,
+        _filesystem_progress(trace_path.with_suffix(".progress")),
+    ):
         faulthandler.enable(file=trace)
         faulthandler.dump_traceback_later(
             25 if mode == "supervisor" else 5, repeat=True, file=trace
