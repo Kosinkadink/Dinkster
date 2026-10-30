@@ -135,6 +135,10 @@ class DiskCacheStore:
         self.misses = 0
         self._with_lock(self._recover)
 
+    @property
+    def root(self) -> Path:
+        return self._entries_dir.parent
+
     def _entry_path(self, key: CacheKey) -> Path:
         return self._entries_dir / (stable_hash([key.encode("utf-8")]) + ".json")
 

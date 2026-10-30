@@ -36,6 +36,10 @@
   previously unknown references without changing render provenance or responses.
   Unknown or unreadable derivation references block collection inspection;
   cleanup remains disabled.
+- Operators can inspect vault/adoption byte observations and held known asset
+  references without exposing filesystem paths. Unknown accounting is null,
+  with explicit blocked reasons. Temporary/reclaimable accounting is unavailable;
+  cleanup remains disabled regardless of individual complete registrations.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a

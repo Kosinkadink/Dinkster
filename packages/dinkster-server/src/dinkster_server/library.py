@@ -1645,6 +1645,7 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
 
 
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
+    from .cleanup import handle_cleanup_status
     from .image_document import handle_dependencies, handle_image_document, handle_render
 
     app[LIBRARY_KEY] = library
@@ -1667,6 +1668,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         app.router.add_post("/api/assets/{digest}/sources", handle_asset_sources_add)
     app.router.add_post("/api/library", handle_library_create)
     app.router.add_get("/api/library", handle_library_list)
+    app.router.add_get("/api/library/storage", handle_cleanup_status)
     retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
     app.router.add_get(retention_path, handle_retained_assets)
     app.router.add_put(retention_path, handle_retained_assets)

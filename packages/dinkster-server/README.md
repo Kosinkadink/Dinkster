@@ -261,6 +261,28 @@ Reconciliation must hold the exclusive claim through any removal; a claim
 refuses while a publisher or reader owns the identity. These local barriers
 do not certify global owner completeness or enable deletion on their own.
 
+## Storage accounting
+
+`GET /api/library/storage` requires an authenticated human operator and
+`assets:read`. It accepts no query parameters or filesystem destinations and
+returns `Cache-Control: no-store`. It has no collection mutation counterpart.
+
+`vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
+`adoptedBytes` sums recorded verified adoption sizes. Either is null when its
+state is unavailable. These byte totals are observations, not an atomic
+publication snapshot or evidence that bytes are eligible for deletion.
+`knownRetainedAssets` counts the union of held memory/disk cache, all-scope
+history and library roots plus transitive dependencies. It is null when root
+inspection refuses. A partial known set is not a complete owner census.
+
+Memory barriers remain held until the blocking disk/history/library inspection
+settles, including repeated request cancellation. Disk roots are deduplicated;
+blocking barriers are acquired and released on the same worker thread.
+`temporaryBytes` and `reclaimableBytes` are null, `collectionEnabled` is false,
+and `blocked` always includes `owner_completeness_unknown` and
+`temporary_accounting_unavailable`. Missing, pending or unreadable state adds
+explicit reasons. This endpoint never deletes bytes or treats unknown as zero.
+
 ## Learn more
 
 See DESIGN.md sections 3.5 (server protocol), 3.10 (multi-instance
