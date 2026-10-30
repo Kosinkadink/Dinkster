@@ -148,14 +148,20 @@ def _scratch_bytes(scratch: Path) -> int:
     return size
 
 
-def recover_produced_publications(vault: AssetVault, scratch: Path) -> dict[str, int]:
+def recover_produced_publications(
+    vault: AssetVault, scratch: Path, *, job: str | None = None
+) -> dict[str, int]:
     """Complete offered handoffs under inactive-job claims, preserving all scratch."""
     recovered = 0
     blocked = 0
     try:
         for pack, root in _scratch_roots(scratch):
             try:
+                if job is not None and ProducedScratchState(root).owner()[0] != job:
+                    continue
                 with _hold_scratch_job(scratch, pack, root) as state:
+                    if job is not None and state.owner()[0] != job:
+                        raise AssetError("scratch job changed during terminal recovery")
                     for digest, size, offered in state.publications():
                         if offered:
                             _recover_publication(vault, root, digest, size)

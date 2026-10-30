@@ -9,6 +9,7 @@ import sqlite3
 import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import cast
@@ -20,12 +21,180 @@ from dinkster_assets.declared import produced_output_scratch, use_produced_outpu
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import ProducedScratchState, hold_produced_job
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
-from dinkster_server import HistoryStore, Principal, ServerLibrary, create_app
+from dinkster_engine import Engine, EventListener
+from dinkster_server import (
+    STATE_KEY,
+    HistoryStore,
+    Job,
+    JobQueue,
+    Principal,
+    ServerLibrary,
+    create_app,
+)
 from dinkster_server.auth import StaticBearerAuthenticator
 from dinkster_server.cleanup import inspect_cleanup
+from dinkster_server.library import run_owned_thread
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
 from test_history import make_record
-from test_server import SCHEMAS, make_engine
+from test_server import SCHEMAS, Sleeper, echo_graph, make_engine, reset_sleeper, wait_for_state
+
+
+def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellation() -> None:
+    async def scenario() -> None:
+        entered = threading.Event()
+        release = threading.Event()
+
+        def work() -> None:
+            entered.set()
+            assert release.wait(10)
+
+        async def settle(job: Job) -> None:
+            await run_owned_thread(work)
+
+        queue = JobQueue(make_engine(), settle_job=settle)
+        queue.start()
+        try:
+            job = queue.submit("client", "job", echo_graph(), ["s"])
+            assert await asyncio.to_thread(entered.wait, 10)
+            assert job.state == "running"
+            assert queue.submit("client", "job", echo_graph(), ["s"]) is job
+            with pytest.raises(ValueError, match="in use"):
+                queue.submit("client", "job", echo_graph("different"), ["s"])
+            following = queue.submit("client", "next", echo_graph("next"), ["s"])
+            assert job.task is not None
+            for _ in range(2):
+                job.task.cancel()
+                await asyncio.sleep(0)
+                assert not job.task.done()
+                assert following.state == "queued"
+                assert queue.running() == [job]
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await job.task
+            assert job.state == "completed"
+            assert job.result is not None
+            await wait_for_state(following, "completed")
+            assert queue.running() == []
+        finally:
+            release.set()
+            await queue.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_terminal_jobs_recover_only_their_offered_publications(
+    tmp_path: Path, outcome: str, corrupt: bool
+) -> None:
+    async def scenario() -> None:
+        scratch = tmp_path / "scratch"
+        vault = AssetVault(tmp_path / "vault")
+        data = b"terminal offered publication"
+        digest = digest_bytes(data)
+        sources: list[Path] = []
+
+        @contextmanager
+        def running(job: str) -> Generator[None]:
+            host = hold_produced_job(scratch, job)
+            try:
+                with use_produced_output_job(job, 1):
+                    source = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                    )
+                    assert source is not None
+                    with source.writer(digest) as writer:
+                        writer.write(data)
+                        path = writer.commit()
+                        sources.append(path)
+                    ProducedScratchState(source.root).offer([digest])
+                    if corrupt:
+                        path.write_bytes(b"x" * len(data))
+                yield
+            finally:
+                host.close()
+
+        def factory(on_event: EventListener) -> Engine:
+            base = make_engine(on_event)
+            runtime = replace(base.pin_execution(), run_context=running)
+            return Engine(
+                schemas=SCHEMAS,
+                registry=base.registry,
+                worker=runtime.worker,
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+                pin_execution=lambda: runtime,
+            )
+
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library"), scratch_root=scratch)
+        app = create_app(factory, SCHEMAS, library=library)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        other = hold_produced_job(scratch, "unrelated job")
+        unrelated = b"unrelated offered publication"
+        unrelated_digest = digest_bytes(unrelated)
+        with use_produced_output_job("unrelated job", 1):
+            other_source = produced_output_scratch(
+                {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "other")}
+            )
+            assert other_source is not None
+            with other_source.writer(unrelated_digest) as writer:
+                writer.write(unrelated)
+                other_path = writer.commit()
+            ProducedScratchState(other_source.root).offer([unrelated_digest])
+        if outcome == "failed":
+            other.close()
+        try:
+            reset_sleeper()
+            node = {
+                "completed": {"nodeType": "test.echo", "inputs": {"text": "done"}},
+                "failed": {"nodeType": "test.boom", "inputs": {"tag": "failed"}},
+                "cancelled": {"nodeType": "test.sleeper", "inputs": {"tag": "cancel"}},
+            }[outcome]
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "recovery",
+                    "jobId": outcome,
+                    "graph": {"nodes": {"n": node}},
+                    "targets": ["n"],
+                },
+            )
+            assert response.status == 202, await response.text()
+            job = app[STATE_KEY].queue.get("recovery", outcome)
+            assert job is not None
+            async with asyncio.timeout(10):
+                if outcome == "cancelled":
+                    await Sleeper.entered.wait()
+                    cancelled = await client.delete(f"/api/jobs/recovery/{outcome}")
+                    assert cancelled.status == 200
+                while job.task is None:
+                    await asyncio.sleep(0)
+                try:
+                    await job.task
+                except asyncio.CancelledError:
+                    assert outcome == "cancelled"
+            assert job.state == outcome
+            status = await (await client.get("/api/library/storage")).json()
+            assert status["lastPublicationRecovery"] == {
+                "verifiedPublications": 0 if corrupt else 1,
+                "blockedInspections": 1 if corrupt else 0,
+            }
+            response = await client.get(f"/api/assets/{digest}")
+            if corrupt:
+                assert response.status == 404
+                assert sources[0].read_bytes() == b"x" * len(data)
+            else:
+                assert response.status == 200 and await response.read() == data
+                assert sources[0].read_bytes() == data
+            assert other_path.read_bytes() == unrelated
+            assert vault.resolve(unrelated_digest) is None
+            assert not status["collectionEnabled"]
+        finally:
+            other.close()
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 def _crash_after_offering(channel: Connection, scratch: str) -> None:

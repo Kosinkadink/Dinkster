@@ -175,6 +175,7 @@ class JobQueue:
         redactor: PathRedactor | None = None,
         store: QueuePersistence | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
+        settle_job: Callable[[Job], Awaitable[None]] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -191,6 +192,7 @@ class JobQueue:
         self._redactor = redactor if redactor is not None else PathRedactor()
         self._store = store
         self._complete_result = complete_result
+        self._settle_job = settle_job
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -528,6 +530,8 @@ class JobQueue:
                 self._emit(job)
 
     async def _run_job(self, job: Job) -> None:
+        terminal_state: JobState = "completed"
+        error: dict[str, Any] | None = None
         try:
             if job.compiled_graph is not None:
                 result = await self._engine.run_compiled(
@@ -557,42 +561,36 @@ class JobQueue:
             if self._complete_result is not None:
                 result = await self._complete_result(job, result)
             job.result = result
-            self._finish(job, "completed")
         except asyncio.CancelledError:
-            self._finish(job, "cancelled")
+            terminal_state = "cancelled"
             raise
         except GraphCompileError as exc:
-            self._finish(
-                job,
-                "failed",
-                error={"kind": "compile", "code": exc.code, "message": self._clean(str(exc))},
-            )
+            terminal_state = "failed"
+            error = {"kind": "compile", "code": exc.code, "message": self._clean(str(exc))}
         except GraphValidationError as exc:
-            self._finish(
-                job,
-                "failed",
-                error={
-                    "kind": "validation",
-                    "diagnostics": [
-                        {
-                            "severity": d.severity,
-                            "code": d.code,
-                            "nodeId": d.node_id,
-                            "inputId": d.input_id,
-                            "message": self._clean(d.message),
-                        }
-                        for d in exc.diagnostics
-                    ],
-                },
-            )
+            terminal_state = "failed"
+            error = {
+                "kind": "validation",
+                "diagnostics": [
+                    {
+                        "severity": d.severity,
+                        "code": d.code,
+                        "nodeId": d.node_id,
+                        "inputId": d.input_id,
+                        "message": self._clean(d.message),
+                    }
+                    for d in exc.diagnostics
+                ],
+            }
         except ExecutionError as exc:
+            terminal_state = "failed"
             log.exception("job %s failed with ExecutionError", job.key)
             if exc.error.traceback:
                 # The node's own traceback (remote frames when the node ran
                 # in an isolated worker) is not part of the local raise that
                 # log.exception prints; keep the raw form in the terminal.
                 log.error("job %s node traceback:\n%s", job.key, exc.error.traceback)
-            error: dict[str, Any] = {
+            error = {
                 "kind": "execution",
                 "type": type(exc).__name__,
                 "nodeId": exc.error.node_id,
@@ -616,12 +614,8 @@ class JobQueue:
                     }
                     for hint in exc.error.hints
                 ]
-            self._finish(
-                job,
-                "failed",
-                error=error,
-            )
         except Exception as exc:  # noqa: BLE001 - a job must never kill the server
+            terminal_state = "failed"
             log.exception("job %s failed with %s", job.key, type(exc).__name__)
             error = {
                 "kind": "internal",
@@ -629,7 +623,16 @@ class JobQueue:
                 "message": self._clean(str(exc)),
                 "traceback": self._clean(traceback.format_exc()),
             }
-            self._finish(job, "failed", error=error)
         finally:
-            self._running.discard(job.key)
-            self._wakeup.set()
+            try:
+                if self._settle_job is not None:
+                    try:
+                        await self._settle_job(job)
+                    except Exception:  # noqa: BLE001 - recovery cannot change a terminal result
+                        log.exception("job settlement failed for job %s", job.key)
+            finally:
+                try:
+                    self._finish(job, terminal_state, error=error)
+                finally:
+                    self._running.discard(job.key)
+                    self._wakeup.set()

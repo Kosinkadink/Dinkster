@@ -308,11 +308,18 @@ block that store without stopping recovery of another recognized job. An
 unreadable or unsafe directory enumeration stops that enumeration rather than
 guessing what was omitted. Recovery never reruns a workflow, copies mounted
 inputs, creates library records or removes scratch, including unoffered bytes.
-Repeating startup preserves the first verified adoption timestamp.
-`lastPublicationRecovery` on operator storage status reports the last startup's
-`verifiedPublications` and `blockedInspections`, or null when no scratch root
-was configured. These counts are observations, not cleanup eligibility or a
-complete orphan census. GET status itself performs no recovery mutation.
+The queue also reconciles the finishing job's offered publications after engine
+and native settlement, on success, failure and cancellation. It awaits recovery
+before publishing the terminal transition or releasing its dispatch slot; a
+cancelled offloaded recovery retains ownership until the worker settles.
+Recovery failure does not replace the job's original outcome. Other jobs' stores
+are not recovered by this per-job pass. Both startup and terminal reconciliation
+preserve all scratch and the first verified adoption timestamp.
+`lastPublicationRecovery` on operator storage status reports the last completed
+startup or per-job pass's `verifiedPublications` and `blockedInspections`, or
+null when no scratch root was configured. These counts are observations, not
+cleanup eligibility or a complete orphan census. GET status itself performs no
+recovery mutation.
 
 ## Learn more
 

@@ -46,6 +46,9 @@
   through verified engine-vault adoption, without rerunning jobs or deleting
   scratch. Active, unknown or corrupt stores remain blocked; recovery of another
   recognized job can continue. Existing untracked assets are not reclassified.
+  Success, failure and cancellation also reconcile that job's offered bytes
+  after execution settles and before reporting its terminal state. Recovery
+  preserves scratch and the original job outcome; unrelated jobs are untouched.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a
