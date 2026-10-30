@@ -1,8 +1,7 @@
 """Structural validation and type diagnostics.
 
-Shared principle with Dinkster-Frontend: a graph is rejected only on structural
-grounds and the scoped COMBO boundary; other type mismatches are
-advisory warnings.
+Structural errors, primitive literal payload mismatches, and the scoped COMBO
+boundary reject a graph. Other link type mismatches are advisory warnings.
 """
 
 from __future__ import annotations
@@ -28,7 +27,15 @@ from dinkster_schema import (
     plan_type_equivalence,
     resolved_type_expr,
 )
-from dinkster_values import ASSET_TYPE, CORE_BOOLEAN
+from dinkster_values import (
+    ASSET_TYPE,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    parse_list_type_id,
+)
 
 from .model import (
     NODE_ID_FORBIDDEN_CHARS,
@@ -684,6 +691,48 @@ def _check_input_value(
                 input_id,
             )
         )
+    else:
+        _check_literal_type(value, expected.runtime_type_id(), where, input_id, diags)
+
+
+def _literal_type_matches(value: object, type_id: str) -> bool:
+    element = parse_list_type_id(type_id)
+    if element is not None:
+        return isinstance(value, list) and all(
+            _literal_type_matches(item, element) for item in value
+        )
+    if type_id == CORE_INT:
+        return type(value) is int
+    if type_id == CORE_FLOAT:
+        return type(value) in (int, float)
+    if type_id == CORE_BOOLEAN:
+        return type(value) is bool
+    if type_id == CORE_STRING:
+        return type(value) is str
+    if type_id == CORE_COMBO:
+        return type(value) in (str, int, float, bool)
+    # Custom codecs and asset decoding belong to their registered boundaries,
+    # not document admission, which must not load models or resolve files.
+    return True
+
+
+def _check_literal_type(
+    value: object,
+    type_id: str | None,
+    where: str,
+    input_id: str,
+    diags: list[Diagnostic],
+) -> None:
+    if type_id is not None and not _literal_type_matches(value, type_id):
+        diags.append(
+            Diagnostic(
+                "error",
+                "literal-type",
+                f"input '{input_id}' literal does not match {type_id}",
+                where,
+                input_id,
+            )
+        )
 
 
 def _check_coercion_providers(
@@ -775,6 +824,8 @@ def _check_typed_literal(
                 input_id,
             )
         )
+    else:
+        _check_literal_type(typed.value, typed.type_id, where, input_id, diags)
     if expected is None:
         return  # consumer-side declaration problem, reported there
     # Asset coercion applies to stamped literals exactly as to links: an
@@ -811,6 +862,8 @@ def _check_typed_literal(
         return
     if equivalence is not None:
         return
+    if expected.runtime_type_id() != typed.type_id:
+        _check_literal_type(typed.value, expected.runtime_type_id(), where, input_id, diags)
     # Cardinality is structural (DESIGN 3.13), mirroring the link path: the
     # stamp is definite, so a shape mismatch with a definite input is an
     # error, not a type warning.
