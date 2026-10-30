@@ -5,6 +5,7 @@ from dinkster_api.v1 import (
     AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
+    Node,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -30,11 +31,13 @@ from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .background_removal import BACKGROUND_REMOVAL_NODES
 from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
 from .camera_angle import CameraAngle
+from .camera_info import CreateCameraInfo
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .checkpoint_save import ImageOnlyCheckpointSave
@@ -59,13 +62,14 @@ from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
+from .gaussian_splat import GetSplatCount, MergeSplat, TransformSplat
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
-from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES, VAEDecodeHunyuan3D
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -73,8 +77,17 @@ from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
-from .image_crop import ImageCropV2, PrimitiveBoundingBox
+from .image_crop import ImageCropToMask, ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
+from .image_file_tools import (
+    LoadImage,
+    LoadImageMask,
+    LoadImageOutput,
+    PreviewImage,
+    SaveAnimatedPNG,
+    SaveAnimatedWEBP,
+    SaveImage,
+)
 from .image_filters import IMAGE_FILTER_NODES
 from .image_layers import AddLayer
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
@@ -87,6 +100,7 @@ from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
+from .latent_file_tools import LATENT_FILE_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
@@ -94,6 +108,7 @@ from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lora_extract_save import LoraSave
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
@@ -115,6 +130,7 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mesh import MESH_NODES
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -123,6 +139,7 @@ from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_file_loaders import MODEL_FILE_LOADER_NODES
+from .model_file_savers import MODEL_FILE_SAVE_NODES, CheckpointSave, ModelSave
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
@@ -130,6 +147,7 @@ from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
+from .moge_panorama import MoGePanoramaInference
 from .moge_render import MoGeRender
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
@@ -161,6 +179,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save_image_advanced import SaveImageAdvanced
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
@@ -180,11 +199,19 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
 from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
+from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_conditioning import Trellis2Conditioning
+from .trellis_shape import Trellis2ShapeStage
 from .trellis_upsample import Trellis2UpsampleStage
-from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
+)
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
@@ -202,6 +229,8 @@ from .void_conditioning import (
     VOIDWarpedNoiseSource,
 )
 from .void_sampler import VOIDSampler
+from .void_warped_noise import VOIDWarpedNoise
+from .voxel_mesh import VOXEL_MESH_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -218,11 +247,12 @@ from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_audio import WanDancerEncodeAudio
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .wandancer_video import WanDancerVideo
 from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
-COMFY_NODES = (
+COMFY_NODES: tuple[type[Node], ...] = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     SaveText,
@@ -410,6 +440,7 @@ COMFY_NODES = (
     TextEncodeZImageOmni,
     PhotoMakerLoader,
     PhotoMakerEncode,
+    ImageCropToMask,
     ImageCropV2,
     PrimitiveBoundingBox,
     *RTDETR_NODES,
@@ -423,13 +454,21 @@ COMFY_NODES = (
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    *BACKGROUND_REMOVAL_NODES,
     CropByBBoxes,
     CameraAngle,
+    CreateCameraInfo,
+    GetSplatCount,
+    TransformSplat,
+    MergeSplat,
     Trellis2UpsampleStage,
+    MoGePanoramaInference,
     MoGeInference,
     MoGeRender,
     TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
     TripoSplatConditioning,
+    VAEDecodeTripoSplat,
     LoadAudio,
     RecordAudio,
     PreviewAudio,
@@ -457,7 +496,28 @@ COMFY_NODES = (
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
     AddLayer,
+    WanDancerVideo,
+    VOIDWarpedNoise,
     LoadVideo,
+    SaveSVGNode,
+    SaveImage,
+    PreviewImage,
+    LoadImage,
+    LoadImageMask,
+    LoadImageOutput,
+    *LATENT_FILE_NODES,
+    *MODEL_FILE_SAVE_NODES,
+    SaveAnimatedWEBP,
+    SaveAnimatedPNG,
+    LoraSave,
+    CheckpointSave,
+    ModelSave,
+    SaveImageAdvanced,
+    Trellis2Conditioning,
+    *MESH_NODES,
+    *VOXEL_MESH_NODES,
+    VAEDecodeHunyuan3D,
+    Trellis2ShapeStage,
 )
 
 

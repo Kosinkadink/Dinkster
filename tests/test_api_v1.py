@@ -30,6 +30,8 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "TriangleMeshBatch",
+    "materialize_mesh",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -56,10 +58,12 @@ GOLDEN_V1_SURFACE = (
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
+    "prepare_sampling_model",
     "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_splat",
     "materialize_svg",
     "materialize_voxel",
     "register_inference_types",
@@ -176,6 +180,7 @@ GOLDEN_V1_SURFACE = (
     "pack_logger",
     "attach_saved_artifact",
     "publish_preview_artifact",
+    "publish_saved_file_preview",
     "report_event",
     "report_log",
     "report_preview",
@@ -195,6 +200,7 @@ GOLDEN_V1_SURFACE = (
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
     "BOUNDING_BOXES_TYPE",
+    "CAMERA_INFO_STATE_TYPE",
     "CLIP_TYPE",
     "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
@@ -214,6 +220,7 @@ GOLDEN_V1_SURFACE = (
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
+    "IMAGE_DOCUMENT_TYPE",
     "IMAGE_TYPE",
     "IMAGECOMPARE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
@@ -225,6 +232,7 @@ GOLDEN_V1_SURFACE = (
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
     "LOAD3D_CAMERA_TYPE",
+    "LOAD3D_MODEL_INFO_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -355,6 +363,7 @@ GOLDEN_V1_SURFACE = (
     "decode_splat_file",
     "encode_splat",
     "parse_ply_splat",
+    "register_splat_type",
     "render_splat_ply",
     "splat_fingerprint",
     "splat_meta",
@@ -587,37 +596,44 @@ assert "torch" not in sys.modules
 
 
 @pytest.mark.parametrize("native_first", (True, False))
-@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER"))
+@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER", "BACKGROUND_REMOVAL"))
+@pytest.mark.parametrize("preexisting", (False, True))
 def test_model_registration_preserves_resident_identity_without_torch(
-    native_first: bool, type_name: str
+    native_first: bool, type_name: str, preexisting: bool
 ) -> None:
     script = f"""
 import sys
 from dinkster_api.v1 import {type_name}_TYPE, TypeRegistry, register_inference_types
-from dinkster_memory.resident import default_pool
+from dinkster_memory.resident import ResidentPool, default_pool
 from dinkster_native.native import register_native_types
-from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, register_resident_type
 
 model_type = {type_name}_TYPE
 assert model_type == {type_name!r}
 registry = TypeRegistry()
+table = ResidentPool() if {preexisting!r} else default_pool()
+source = object()
+original = register_resident_type(registry, model_type, table=table) if {preexisting!r} else None
+original_encoded = original.encode(source) if original is not None else None
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
 spec = registry.spec(model_type)
+if original is not None:
+    assert spec is original
+    assert spec.decode(original_encoded) is source
 registrations[1](registry)
 assert registry.spec(model_type) is spec
 register_inference_types(registry)
 assert registry.spec(model_type) is spec
-assert default_pool() in registry.resident_tables
+assert table in registry.resident_tables
 assert "comfy.{type_name}" not in registry
-source = object()
 encoded = spec.encode(source)
 assert spec.decode(encoded) is source
 assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
 assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
-assert default_pool().release_resident(source)
+assert table.release_resident(source)
 try:
     spec.decode(encoded)
 except ResidentLookupError:
@@ -818,6 +834,10 @@ from dinkster_values import builtin_types
 from dinkster_native.native import register_native_types
 
 payloads = {
+    'CAMERA_INFO_STATE': {'position': {'x': -3.25, 'y': 7, 'z': 0.5},
+                         'target': [2, -1.5, 8], 'zoom': 1.25,
+                         'extension': {'active': False, 'selection': None,
+                                       'labels': ['right', 'left']}},
     'BOUNDING_BOXES': [{'x': 13, 'y': 7, 'width': 29, 'height': 11,
                         'metadata': {'label': 'left', 'score': 0.75}},
                        {'x': -2, 'y': 5, 'width': 3, 'height': 17, 'metadata': {}}],
@@ -846,6 +866,7 @@ for registrations in ((api.register_inference_types, register_native_types),
             assert not preexisting or spec is first[type_id]
             if not preexisting:
                 assert spec.decode(spec.encode(value)) == value
+                assert registry.wrap(type_id, spec.decode(spec.encode(value))).resolve() == value
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """
@@ -876,6 +897,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_image_document.interchange as document_interchange
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
+    import dinkster_inference_wire.sparse as sparse_values
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
@@ -912,6 +934,7 @@ def test_reexports_are_the_internal_objects() -> None:
     sources = (
         latent_values,
         inference_process,
+        sparse_values,
         inference_types,
         dinkster_schema,
         dinkster_values,

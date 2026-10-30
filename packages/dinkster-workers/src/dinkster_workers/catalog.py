@@ -80,7 +80,6 @@ class PackCatalog(PackDeclarations):
     def __init__(self, declarations: Mapping[str, Any], source: str) -> None:
         super().__init__(declarations)
         self.types = CatalogTypes.from_wire(declarations["types"])
-        self.registered_types = tuple(sorted(self.types.type_ids))
         self.source = source
 
 

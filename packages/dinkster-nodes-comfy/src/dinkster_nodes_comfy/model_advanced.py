@@ -511,14 +511,13 @@ class ModelAttentionBackend(Node):
 
     @classmethod
     def execute(cls, *, model: Any, attention: str) -> Mapping[str, object]:
+        backends = {
+            "pytorch attention": "pytorch",
+            "comfy kitchen attention": "comfy_kitchen_int8",
+        }
         initialize_inference_process()
         module = importlib.import_module("dinkster_inference.ldm.modules.attention")
-        function = module.get_attention_function(
-            {"pytorch attention": "pytorch", "comfy kitchen attention": "comfy_kitchen_int8"}.get(
-                attention
-            ),
-            None,
-        )
+        function = module.get_attention_function(backends.get(attention), None)
         if function is None:
             logging.warning(
                 "Attention backend '%s' is unavailable; using PyTorch attention.", attention

@@ -134,7 +134,7 @@ bounded regression contract, not a claim that arbitrarily large packs or catalog
 take constant time.
 
 ```sh
-uv run python tools/benchmark_schema_catalog.py --repeats 3
+uv run --no-sync python tools/benchmark_schema_catalog.py --repeats 3
 ```
 
 Measured on 2026-09-06 with Python 3.12.3, Linux 7.0.0-29, local storage,
@@ -265,8 +265,10 @@ DINKSTER_ACCELERATOR=cpu dinkster-serve --comfy-root /path/to/ComfyUI \
 On Apple Silicon, install native arm64 PyTorch in the worker environment.
 MPS is selected automatically when available; `DINKSTER_ACCELERATOR=mps`
 requires it and refuses an unavailable backend rather than silently using CPU.
-`scripts/setup_envs.sh` prepares the repository's macOS test environments and
-runs the MPS capability smoke check without a system-wide install.
+The source setup command `uv run --no-project python scripts/setup_envs.py`
+requires a published platform base. macOS setup currently stops pending the
+[Apple Silicon base bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575);
+it does not resolve a local MPS environment.
 
 `DINKSTER_ACCELERATOR` applies to the process and its children, including native
 inference and compatibility workers. Set it on each remote worker service or
@@ -710,8 +712,10 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
-| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
+| `imports/` | Visible import folder initialized by setup, generation serving, or serving with mount changes enabled |
 | `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
+| `output/` | Default writable output folder initialized by setup, generation serving, or serving with mount changes enabled, unless an output is already configured |
+| `.output-initialized` | Records one-time output initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
 | `provenance.json` | Acquisition leads |
@@ -865,7 +869,15 @@ scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
 
 `GET /api/mounts?project=<project-id>` returns the project's ordered folders
-and selected output. `POST /api/mounts` accepts `project` (default `default`)
+and selected output. On first serve, an environment-managed generation
+initializes a writable `output` grant at `<library-root>/output` and reports
+`outputMount: "output"` with mount mode `readwrite`. The default library root
+is `<project-root>/dinkster-library`; an explicit library root is preserved.
+Existing selections, read-only grants and deliberately removed defaults are
+not replaced. A deliberately unconfigured library can report `outputMount: null`.
+Initialization does not enable runtime mount editing.
+
+`POST /api/mounts` accepts `project` (default `default`)
 and `shared` (default `false`): a new grant belongs only to that project unless
 Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
 `{"mounts": ["first", "second"], "outputMount": "second"}` to replace the
@@ -888,8 +900,34 @@ listings remain browsable without disclosing host paths or path-bearing errors
 to non-operators. Location listings and mutations require a human operator
 with `settings:write`, not just `assets:write`; delegated agents cannot grant
 filesystem authority.
-The location response includes `vault` when a library is configured. Optional
-`digest`, `scope` and `project` query fields add `locations` for that cataloged
+The location response advertises `resolvePath: true` when
+`POST /api/mounts/resolve-path` is available. A trusted local desktop host can
+send exactly `{"path": "<absolute-native-path>", "project": "<id>", "scope": "local"}`
+without query fields. The route also requires `assets:read` in that scope.
+It verifies the current bytes of a regular file in a live selected project
+folder, including read-only folders, and catalogs an unindexed or changed file
+without copying it. HTTP 200 returns either `{"status":"resolved","asset":...}`
+with the five-field mounted AssetRef, or
+`{"status":"refused","reason":"not-resolvable"}` for an outside, excluded,
+revoked, missing, unavailable, unsafe or unstable file. An absolute path for
+another operating system is refused. Malformed requests, empty/NUL/relative
+paths and invalid project IDs return HTTP 400 `invalid-path-request`;
+authentication/scope failures remain 401/403; unexpected catalog/storage
+failures return HTTP 500 `mount-resolution-failed`. Responses are no-store and
+never echo the host path. Only an explicit refusal permits the client to fall
+back to uploading bytes. Older location responses without the capability
+advertisement mean unsupported; a missing route after advertisement, malformed
+response or server error is not an ordinary refusal.
+The location response includes `vault` when a library is configured.
+`importMount` identifies the active default target used when a named upload
+omits `mount`; use its `activeMounts` row for the real directory and state.
+It is independent of the selected output folder and may have any mount ID.
+It is null when the host has no named-folder writer/project configuration.
+A revoked default remains identified but has no active row; it is not replaced
+by another destination. An absent field on older hosts means unknown, not an
+implicit `imports` mount. Project membership and live write authority still
+govern the upload; a location response does not grant access.
+Optional `digest`, `scope` and `project` query fields add `locations` for that cataloged
 identity in the selected scope and project; this also requires `assets:read`.
 Only verified vault copies and observed files in live project folders are
 returned, with their actual `path` and `storage` type. Missing, changed,

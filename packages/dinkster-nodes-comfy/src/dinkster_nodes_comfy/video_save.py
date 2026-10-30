@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     bind_video_value,
     current_export_snapshot,
     effective_video_facts,
@@ -37,7 +38,9 @@ _VIDEO = TypeExpr.concrete(VIDEO_TYPE)
 _STRING = TypeExpr.concrete(CORE_STRING)
 
 
-def _codec_input(codecs: tuple[str, ...], *, required: bool = True) -> DynamicComboSpec:
+def _codec_input(
+    codecs: tuple[str, ...], *, required: bool = True, hidden: bool = False
+) -> DynamicComboSpec:
     options: list[DynamicComboOption] = []
     for codec in codecs:
         if codec == "auto":
@@ -80,6 +83,7 @@ def _codec_input(codecs: tuple[str, ...], *, required: bool = True) -> DynamicCo
         "codec",
         tuple(options),
         required=required,
+        hidden=hidden,
         doc=(
             "The output video codec. Auto preserves a compatible source stream. "
             "H.264 and AV1 re-encoding support SDR, HDR (HLG), and HDR PQ."
@@ -137,7 +141,7 @@ class SaveVideo(Node):
                         "MP4, MKV, and WebM select a specific container."
                     ),
                 ),
-                _codec_input(("auto", "h264", "av1"), required=False),
+                _codec_input(("auto", "h264", "av1"), required=False, hidden=True),
             ),
             input_order=("video", "filename_prefix", "format", "codec", "mount"),
             outputs=(OutputSpec("video", _VIDEO, preview=True, doc="The input video, unchanged."),),
@@ -206,11 +210,12 @@ class SaveVideo(Node):
                 source_components="components" in value and not value["edits"],
             )
             encoded.seek(0)
-            writer.save_stream(
+            ref = writer.save_stream(
                 target,
                 cast(BinaryIO, encoded),
                 suffix=suffix,
                 media_type=mime,
                 limit=ENCODED_MEDIA_LIMIT_BYTES,
             )
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs(video=video)

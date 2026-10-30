@@ -243,9 +243,9 @@ class InputFamilyMember:
 class InputFamilyMapping:
     """A top-level dynamic target-family mapping.
 
-    ``copy`` preserves every source-family suffix and member order while
-    mapping template-local inputs. ``members`` creates an explicit ordered
-    target member list from ordinary static source inputs.
+    ``copy`` preserves source-family suffixes by default. ``targetPositions``
+    maps authored order to target naming positions. ``members`` creates an
+    explicit ordered target member list from ordinary static source inputs.
     """
 
     kind: InputFamilyMappingKind
@@ -254,8 +254,11 @@ class InputFamilyMapping:
     members: tuple[InputFamilyMember, ...] = ()
     source_template: tuple[str, ...] = ()
     source_member_port: str = ""
+    member_ids: Literal["targetPositions"] | None = None
 
     def __post_init__(self) -> None:
+        if self.member_ids is not None and self.member_ids != "targetPositions":
+            raise ValueError("input family member ids must be targetPositions or omitted")
         if self.kind == "copy":
             if _STRUCTURAL_ID.fullmatch(self.source_family) is None:
                 raise ValueError("copy input family mapping requires a source family id")
@@ -264,7 +267,13 @@ class InputFamilyMapping:
             if self.members:
                 raise ValueError("copy input family mapping carries no explicit members")
         elif self.kind == "members":
-            if self.source_family or self.inputs or self.source_template or self.source_member_port:
+            if (
+                self.source_family
+                or self.inputs
+                or self.source_template
+                or self.source_member_port
+                or self.member_ids is not None
+            ):
                 raise ValueError("members input family mapping carries only explicit members")
             if not self.members:
                 raise ValueError("members input family mapping requires explicit members")
@@ -309,6 +318,7 @@ class InputFamilyMapping:
         inputs: Mapping[str, MappingSource],
         source_template: Sequence[str] = (),
         source_member_port: str = "",
+        member_ids: Literal["targetPositions"] | None = None,
     ) -> InputFamilyMapping:
         if isinstance(source_template, str):
             raise ValueError("source template must be a sequence of input ids, not a string")
@@ -318,6 +328,7 @@ class InputFamilyMapping:
             inputs=tuple(inputs.items()),
             source_template=tuple(source_template),
             source_member_port=source_member_port,
+            member_ids=member_ids,
         )
 
     @classmethod
@@ -715,6 +726,8 @@ def input_family_mapping_to_wire(mapping: InputFamilyMapping) -> dict[str, objec
             if mapping.source_member_port:
                 template["memberPort"] = mapping.source_member_port
             wire["sourceTemplate"] = template
+        if mapping.member_ids is not None:
+            wire["memberIds"] = mapping.member_ids
         return wire
     return {
         "kind": "members",
@@ -845,6 +858,11 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
     kind = str(wire["kind"])
     source_template: tuple[str, ...] = ()
     source_member_port = ""
+    member_ids: Literal["targetPositions"] | None = None
+    if "memberIds" in wire:
+        if kind != "copy" or wire["memberIds"] != "targetPositions":
+            raise ValueError("memberIds requires a copy mapping and targetPositions")
+        member_ids = "targetPositions"
     if "sourceTemplate" in wire:
         template = wire["sourceTemplate"]
         if kind != "copy" or not isinstance(template, Mapping):
@@ -874,6 +892,7 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
             ),
             source_template=source_template,
             source_member_port=source_member_port,
+            member_ids=member_ids,
         )
     if kind == "members":
         return InputFamilyMapping(
@@ -1459,11 +1478,21 @@ def validate_replacement_references(
                                 if source_family is None
                                 else source_family.min_members
                             )
-                            suffixes = (
-                                ()
-                                if source_family is None or source_family.member_names is None
-                                else source_family.member_names[:member_count]
-                            )
+                            if family_mapping.member_ids == "targetPositions":
+                                suffixes = (
+                                    family.member_names[:member_count]
+                                    if family.member_names is not None
+                                    else tuple(
+                                        f"{family.member_prefix}{index}"
+                                        for index in range(member_count)
+                                    )
+                                )
+                            else:
+                                suffixes = (
+                                    ()
+                                    if source_family is None or source_family.member_names is None
+                                    else source_family.member_names[:member_count]
+                                )
                             if len(suffixes) < member_count:
                                 suffixes = (
                                     family.member_names[:member_count]

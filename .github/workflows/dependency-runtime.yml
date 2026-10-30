@@ -1,0 +1,189 @@
+name: Dependency runtime checks
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/dependency-runtime.yml
+      - .github/actions/torch-cpu-suite/action.yml
+      - scripts/setup_envs.py
+      - scripts/base_bundles.json
+      - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
+      - tools/minimax_h3_multigpu_receipt.py
+      - tests/test_minimax_h3_multigpu_receipt.py
+      - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
+      - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
+      - pyproject.toml
+      - uv.lock
+      - packages/dinkster-video/pyproject.toml
+
+permissions:
+  contents: read
+
+jobs:
+  opentimelineio-index:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-11-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - name: Verify fresh pip and uv installs against release hashes
+        shell: bash
+        run: |
+          uv run --no-project --python 3.14 python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import urllib.request
+
+          release = 'https://github.com/Kosinkadink/dinkster-opentimelineio/releases/download/v0.19.0/'
+          with urllib.request.urlopen(release + 'SHA256SUMS') as response:
+              hashes = {line.split()[1]: line.split()[0] for line in response.read().decode().splitlines()}
+          with urllib.request.urlopen('https://pypi.org/pypi/dinkster-opentimelineio/0.19.0/json') as response:
+              files = json.load(response)['urls']
+          assert len(files) == 15, len(files)
+          for file in files:
+              assert hashes[file['filename']] == file['digests']['sha256'], file['filename']
+          smoke = '''
+          import importlib.metadata
+          import opentimelineio as otio
+          import opentimelineio._otio
+          assert importlib.metadata.version('dinkster-opentimelineio') == '0.19.0'
+          assert otio.__version__ == '0.19.0.dev1'
+          timeline = otio.schema.Timeline(name='PyPI native wheel')
+          track = otio.schema.Track()
+          timeline.tracks.append(track)
+          track.append(otio.schema.Clip(name='asymmetric', source_range=otio.opentime.TimeRange(
+              otio.opentime.RationalTime(17, 24), otio.opentime.RationalTime(53, 24))))
+          text = otio.adapters.write_to_string(timeline, 'otio_json')
+          actual = otio.adapters.read_from_string(text, 'otio_json')
+          assert timeline.is_equivalent_to(actual)
+          assert actual.duration() == otio.opentime.RationalTime(53, 24)
+          print('Native PyPI import and timeline roundtrip passed:', otio.__version__)
+          '''
+          with tempfile.TemporaryDirectory() as temporary:
+              root = Path(temporary)
+              requirements = root / 'requirements.txt'
+              requirements.write_text('dinkster-opentimelineio==0.19.0 ' + ' '.join(
+                  '--hash=sha256:' + file['digests']['sha256'] for file in files))
+              for installer in ['pip', 'uv']:
+                  venv = root / installer
+                  subprocess.run(['uv', 'venv', '--seed', '--python', '3.14', str(venv)], check=True)
+                  python = venv / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+                  command = ([str(python), '-m', 'pip', 'install', '--no-cache-dir'] if installer == 'pip'
+                             else ['uv', 'pip', 'install', '--python', str(python), '--no-cache'])
+                  subprocess.run(command + ['--index-url', 'https://pypi.org/simple', '--only-binary=:all:',
+                      '--require-hashes', '-r', str(requirements)], check=True)
+                  subprocess.run([str(python), '-c', smoke], check=True)
+                  print(installer, 'fresh hash-checked PyPI install passed', flush=True)
+          PY
+
+  opentimelineio:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked released OpenTimelineIO wheel
+        run: uv sync --locked --package dinkster-video --no-dev
+        env:
+          UV_NO_BUILD_PACKAGE: dinkster-opentimelineio
+      - name: Verify released native extension and external timelines
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata
+          from pathlib import Path
+
+          import opentimelineio as otio
+          import opentimelineio._otio
+          from dinkster_values.video_document import decode_document, encode_document
+          from dinkster_video.document import export_otio, import_otio
+
+          assert importlib.metadata.version('dinkster-opentimelineio') == '0.19.0'
+          assert otio.__version__ == '0.19.0.dev1'
+          for name in ['effects', 'clip_example', 'nested_example', 'multiple_track']:
+              text = (Path('tests/fixtures/otio') / f'{name}.otio').read_text()
+              original = otio.adapters.read_from_string(text, 'otio_json')
+              imported = import_otio(text)
+              assert imported['sources'] == {}, name
+              exported = export_otio(decode_document(encode_document(imported)))
+              actual = otio.adapters.read_from_string(exported, 'otio_json')
+              assert original.is_equivalent_to(actual), name
+              print(f'{name}: released wheel external timeline roundtrip passed')
+          PY
+
+  receipt:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the published CPU base and locked workspace
+        shell: bash
+        run: |
+          variant=linux-cpu
+          if [ "$RUNNER_OS" = Windows ]; then variant=win-cpu; fi
+          uv run --no-project python scripts/setup_envs.py --variant "$variant"
+      - name: Test receipt generation on the native platform
+        run: uv run --no-sync python -m pytest -q tests/test_minimax_h3_multigpu_receipt.py
+      - name: Verify the selected bundle and CPU runtime
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata
+          import json
+          import sys
+          from pathlib import Path
+          import torch
+          import torchvision
+
+          manifest = json.loads(Path('.run/environment-base.json').read_text())
+          assert sys.version.split()[0] == manifest['python']
+          for wheel in manifest['wheels']:
+              assert importlib.metadata.version(wheel['name']) == wheel['version'], wheel
+          names = {d.metadata['Name'].lower().replace('_', '-')
+                   for d in importlib.metadata.distributions()}
+          assert not any(name.startswith('nvidia-') or name == 'triton' for name in names)
+          assert torch.version.cuda is None
+          boxes = torch.tensor([[0., 0., 2., 2.], [0., 0., 1., 1.], [3., 3., 4., 4.]])
+          scores = torch.tensor([0.9, 0.8, 0.7])
+          assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
+          print('Published CPU base, installed inventory and NMS passed:', manifest['id'])
+          PY
+      - name: Test public CPU sampler and attention contracts
+        shell: bash
+        run: |
+          uv run --no-sync python -m pytest -q \
+            packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
+            packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py

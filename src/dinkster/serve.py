@@ -155,9 +155,9 @@ from .compose import (
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
-from .frontend import install_frontend
+from .frontend import discover_frontend_bundle, install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
-from .generation_packs import generation_pack_specs
+from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
@@ -165,7 +165,7 @@ from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
-from .setup import ensure_import_mount
+from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
 from .workflow_requirements_api import VARIANTS, add_workflow_requirement_routes
@@ -1684,8 +1684,8 @@ def main(argv: list[str] | None = None) -> None:
     sandbox_mounts: list[MountDef] = []
     if args.library_root:
         library_root = Path(args.library_root)
-        if args.allow_mount_changes:
-            ensure_import_mount(library_root)
+        if args.allow_mount_changes or args.generation is not None:
+            ensure_default_mounts(library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
@@ -1800,7 +1800,13 @@ def main(argv: list[str] | None = None) -> None:
         specs.extend(compat_specs)
     if args.generation is not None:
         try:
-            for spec in generation_pack_specs(args.generation):
+            selected_variant, generation_specs = load_generation_packs(args.generation)
+            if selected_variant not in VARIANTS:
+                raise CompositionError(f"unsupported generation variant: {selected_variant}")
+            if args.engine_variant is not None and args.engine_variant != selected_variant:
+                raise CompositionError("--engine-variant differs from selected generation variant")
+            args.engine_variant = selected_variant
+            for spec in generation_specs:
                 if spec.packs and "dinkster-nodes-remote" in spec.packs:
                     spec = _with_remote_config(
                         spec,
@@ -1961,9 +1967,12 @@ def main(argv: list[str] | None = None) -> None:
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
         composer.validate_specs(specs)
-        if args.prepare_stale_catalogs:
+        if args.prepare_stale_catalogs or (
+            args.generation is None
+            and Path(__file__).with_name("official_packs").joinpath("official-packs.lock").is_file()
+        ):
             _prepare_stale_catalogs(
-                specs,
+                specs if args.prepare_stale_catalogs else specs[:resolved_default_pack_count],
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
             )
@@ -2178,7 +2187,8 @@ def main(argv: list[str] | None = None) -> None:
         add_workflow_requirement_routes(
             app,
             manifests=lambda: {
-                name: load_manifest(spec.manifest) for name, spec in composer.pack_specs().items()
+                name: load_manifest(resolve_manifest_path(spec.manifest))
+                for name, spec in composer.pack_specs().items()
             },
             engine_variant=args.engine_variant,
         )
@@ -2203,10 +2213,17 @@ def main(argv: list[str] | None = None) -> None:
                     await apply_reload(app[STATE_KEY], composer, name)
 
                 watcher = PackWatcher(composer.watch_targets, reload_changed)
-        if args.frontend_root or args.frontend_dev:
+        frontend_bundle = (
+            Path(args.frontend_root)
+            if args.frontend_root
+            else None
+            if args.frontend_dev
+            else discover_frontend_bundle()
+        )
+        if frontend_bundle is not None or args.frontend_dev:
             install_frontend(
                 app,
-                bundle=Path(args.frontend_root) if args.frontend_root else None,
+                bundle=frontend_bundle,
                 development_url=args.frontend_dev or None,
             )
 

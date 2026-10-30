@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import sys
 import tempfile
+import zipfile
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
-from dinkster_registry import LockedPack, Lockfile, build_artifact, unpack_artifact
+from dinkster_registry import (
+    ArtifactError,
+    InstallError,
+    LockedPack,
+    Lockfile,
+    build_artifact,
+    unpack_artifact,
+)
 from dinkster_schema import canonical_claim, canonical_name
-from dinkster_workers import PackManifest, load_manifest
+from dinkster_workers import ManifestError, PackManifest, load_manifest
 
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
@@ -38,17 +48,22 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
         root = sources / entry.pack
         unpack_artifact(artifacts[entry.pack], root, entry.artifact_digest)
         _manifest(root, entry)
-    (generation / "dinkster.lock").write_text(lock.record_json() + "\n", encoding="utf-8")
+    (generation / "dinkster.lock").write_text(
+        lock.record_json() + "\n", encoding="utf-8", newline="\n"
+    )
 
 
-def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
-    """Select only this generation's admitted sources and recorded hosting placement."""
+def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
+    """Read the selected variant and admitted sources from this generation only."""
     if not generation.is_absolute():
         raise CompositionError("--generation requires an absolute path")
     generation = generation.resolve()
     record = json.loads((generation / "generation.json").read_text(encoding="utf-8"))
     if not isinstance(record, dict) or record.get("format") != "dinkster.generation/1":
         raise CompositionError("unsupported generation format")
+    variant = record.get("variant")
+    if not isinstance(variant, str) or not variant.strip():
+        raise CompositionError("generation variant must be a non-empty string")
     hosting = record.get("inProcessPacks", [])
     if (
         not isinstance(hosting, list)
@@ -56,8 +71,20 @@ def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
         or len(set(hosting)) != len(hosting)
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
+    return variant, generation_pack_specs(generation, tuple(hosting))
+
+
+def generation_pack_specs(
+    generation: Path, in_process_packs: tuple[str, ...] = ()
+) -> tuple[PackSpec, ...]:
+    """Select verified admitted sources and their already-provisioned interpreters."""
+    if not generation.is_absolute():
+        raise CompositionError("--generation requires an absolute path")
+    generation = generation.resolve()
     lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
-    if set(hosting) - {entry.pack for entry in lock.packs}:
+    if len(set(in_process_packs)) != len(in_process_packs):
+        raise CompositionError("generation inProcessPacks must contain distinct pack ids")
+    if set(in_process_packs) - {entry.pack for entry in lock.packs}:
         raise CompositionError("generation hosting names packs absent from dinkster.lock")
     specs: list[PackSpec] = []
     for entry in lock.packs:
@@ -71,7 +98,7 @@ def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
         manifest = _manifest(root, entry)
-        in_process = entry.pack in hosting
+        in_process = entry.pack in in_process_packs
         python = (
             generation
             / "packs"
@@ -106,3 +133,48 @@ def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
             )
         )
     return tuple(specs)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--generation", type=Path, required=True)
+    parser.add_argument("--catalog-lock", type=Path, required=True)
+    parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    packs: list[str] = []
+    errors: list[str] = []
+    try:
+        if not all(
+            path.is_absolute() for path in (args.generation, args.catalog_lock, args.artifacts)
+        ):
+            raise CompositionError(
+                "--generation, --catalog-lock and --artifacts require absolute paths"
+            )
+        lock = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        artifacts = {
+            entry.pack: args.artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            for entry in lock.packs
+        }
+        stage_generation_packs(args.generation, lock, artifacts)
+        packs = [entry.pack for entry in lock.packs]
+    except (
+        ArtifactError,
+        CompositionError,
+        InstallError,
+        ManifestError,
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+    ) as exc:
+        errors.append(str(exc))
+        print(str(exc), file=sys.stderr)
+    if args.json:
+        print(json.dumps({"packs": packs, "errors": errors}))
+    elif packs:
+        print("\n".join(packs))
+    return int(bool(errors))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

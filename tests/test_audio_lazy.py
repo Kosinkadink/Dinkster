@@ -63,6 +63,8 @@ from PIL import Image
 
 from tests.test_audio_io import _bound, _mount
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 @pytest.fixture
 def source(tmp_path: Path) -> tuple[AssetRef, np.ndarray]:

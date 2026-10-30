@@ -75,7 +75,7 @@ def _doctor_version() -> str:
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        return version("dinkster-workers")
+        return version("dinkster-api")
     except PackageNotFoundError:  # source checkout without install metadata
         return "0.0.0"
 

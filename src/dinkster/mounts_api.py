@@ -40,7 +40,7 @@ import asyncio
 import contextlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import cast
 
 from aiohttp import web
@@ -62,7 +62,7 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
-from dinkster_server.library import LIBRARY_KEY
+from dinkster_server.library import LIBRARY_KEY, run_owned_thread
 
 from .project_folders import ProjectFolders
 
@@ -334,10 +334,12 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         len(request.query.getall(field, [])) != 1 for field in request.query
     ):
         return _json_error(400, "unknown or repeated location query field")
-    body: dict[str, object] = {}
+    body: dict[str, object] = {"importMount": None, "resolvePath": True}
     library = request.app.get(LIBRARY_KEY)
     if library is not None:
         body["vault"] = str(library.vault.root.resolve())
+        if library.upload_writer is not None and library.project_folders_for is not None:
+            body["importMount"] = library.import_mount
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
         project = request.query.get("project", "default")
@@ -419,6 +421,57 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
             row["path"] = str(mount.path)
     body.update(mounts=rows, activeMounts=active_rows, **service.pending_changes())
     return web.json_response(body, headers={"Cache-Control": "no-store"})
+
+
+async def handle_mount_resolve_path(request: web.Request) -> web.Response:
+    _require_operator(request)
+
+    def respond(body: dict[str, object], status: int = 200) -> web.Response:
+        return web.json_response(body, status=status, headers={"Cache-Control": "no-store"})
+
+    try:
+        body = await request.json()
+        if (
+            request.query
+            or not isinstance(body, dict)
+            or set(body) != {"path", "project", "scope"}
+            or any(not isinstance(body[key], str) or not body[key] for key in body)
+            or "\0" in body["path"]
+            or any(char.isspace() for char in body["scope"])
+        ):
+            return respond({"error": "invalid-path-request"}, 400)
+        project, native_path = body["project"], body["path"]
+        ProjectFolders.validate_project(project)
+        path = Path(native_path)
+        if not path.is_absolute() and not (
+            PureWindowsPath(native_path).is_absolute() or PurePosixPath(native_path).is_absolute()
+        ):
+            return respond({"error": "invalid-path-request"}, 400)
+    except (ValueError, MountsError):
+        return respond({"error": "invalid-path-request"}, 400)
+    resolve_scope(principal_for(request), "assets:read", body["scope"])
+    refused: dict[str, object] = {"status": "refused", "reason": "not-resolvable"}
+    if not path.is_absolute():
+        return respond(refused)
+    service = request.app[MOUNTS_KEY]
+    try:
+        # Exact-file indexing and whole-mount scans must not replace each other's indexes.
+        async with service._scan_lock:
+            context = service.project_context(project)
+            grants = {mount_id: service.table.get(mount_id) for mount_id in context.mounts}
+            ref = await run_owned_thread(lambda: service.table.ref_path(path, context.mounts))
+            if ref is None:
+                return respond(refused)
+            mount_id = ref.virtual_path.split("/", 2)[1]
+            if mount_id not in service.project_context(project).mounts or service.table.get(
+                mount_id
+            ) is not grants.get(mount_id):
+                return respond(refused)
+            service.refresh_resolution_store()
+            service.publish(request.app)
+            return respond({"status": "resolved", "asset": ref.to_wire()})
+    except Exception:
+        return respond({"error": "mount-resolution-failed"}, 500)
 
 
 async def handle_mount_folder(request: web.Request) -> web.Response:
@@ -723,6 +776,7 @@ def add_mount_routes(app: web.Application, service: MountService) -> None:
     app[MOUNTS_KEY] = service
     app.router.add_get("/api/mounts", handle_mounts_list)
     app.router.add_get("/api/mounts/locations", handle_mount_locations)
+    app.router.add_post("/api/mounts/resolve-path", handle_mount_resolve_path)
     app.router.add_get("/api/mounts/{mountId}/list", handle_mount_folder)
     app.router.add_get("/api/mounts/{mountId}/entries", handle_mount_entries)
     app.router.add_put("/api/mounts/output", handle_output_mount_update)

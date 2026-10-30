@@ -6,7 +6,6 @@ is visible as diagnostics (DESIGN 3.9)."""
 from __future__ import annotations
 
 import asyncio
-import glob
 import importlib
 import json
 import logging
@@ -1827,8 +1826,17 @@ def test_worker_conversion_refusal_is_distinct_from_transport_failure(
 
 
 def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) -> None:
+    (tmp_path / "torch.py").write_text(
+        "raise ModuleNotFoundError('No module named torch', name='torch')\n",
+        encoding="utf-8",
+    )
+
     async def scenario() -> None:
-        worker = IsolatedWorker(DEV_MANIFEST, core_registry())
+        worker = IsolatedWorker(
+            DEV_MANIFEST,
+            core_registry(),
+            extra_env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
+        )
         await worker.start()
         try:
             assert worker.can_convert_legacy_checkpoint is False
@@ -2308,7 +2316,7 @@ def test_isolated_host_supplies_export_snapshot(
     asyncio.run(scenario())
 
 
-def test_shm_transport_for_large_payloads_and_cleanup() -> None:
+def test_shm_transport_for_large_payloads_and_cleanup(shm_segments: set[str]) -> None:
     if not sys.platform.startswith(("linux",)):
         pytest.skip("shm leftovers check relies on /dev/shm")
 
@@ -2346,8 +2354,8 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
-        # Single-hop handoff (hazard H14): nothing left in /dev/shm.
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
 
     asyncio.run(scenario())
 
@@ -3190,7 +3198,9 @@ def test_pack_venv_ignores_workspace_only_source_metadata(
     assert "--no-sources" in install
     assert install.index("--no-sources") < install.index("-e")
     assert install.count(str(pack)) == 1
-    assert "dinkster-workers" in install
+    assert install.count(str(api)) == 1
+    assert "dinkster-api" not in install
+    assert "dinkster-workers" not in install
 
 
 def test_pack_venv_reuse_requires_matching_provisioning_inputs(

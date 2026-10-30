@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,30 @@ from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, Re
 from dinkster_nodes_comfy.rebatch import RebatchImages, RebatchLatents
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_empty_image_initializes_cpu_policy_in_a_cold_process() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "from dinkster_nodes_comfy.image_core import EmptyImage\n"
+            "assert 'dinkster_inference.model_management' not in sys.modules\n"
+            "image = EmptyImage.execute(\n"
+            "    width=73, height=41, batch_size=2, color=0x32B76D)['IMAGE']\n"
+            "assert image.device.type == 'cpu'\n"
+            "assert tuple(image.shape) == (2, 41, 73, 3)\n"
+            "import torch\n"
+            "expected = torch.tensor([50 / 255, 183 / 255, 109 / 255], dtype=image.dtype)\n"
+            "torch.testing.assert_close(image, expected.expand_as(image), rtol=0, atol=0)\n",
+        ],
+        env={**os.environ, "DINKSTER_ACCELERATOR": "cpu", "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_rebatch_preserves_frame_order_and_latent_indices() -> None:
@@ -89,6 +115,7 @@ def test_image_dimensions_ordinary_manifest_twice(
             (tmp_path / f"{module}.py").write_text(
                 "from test_image_batch_torch import DimensionSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, DimensionSource)\n",
                 encoding="ascii",
             )
@@ -97,6 +124,10 @@ def test_image_dimensions_ordinary_manifest_twice(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["image-dimension-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    f"{module}:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     f"{module}:register_inference_types",
@@ -208,6 +239,7 @@ def test_rebatch_ordinary_manifest_with_explicit_selection_and_map(
             (tmp_path / "rebatch_fixture.py").write_text(
                 "from test_image_batch_torch import RebatchSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, RebatchSource)\n",
                 encoding="ascii",
             )
@@ -216,6 +248,10 @@ def test_rebatch_ordinary_manifest_with_explicit_selection_and_map(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["rebatch-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "rebatch_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "rebatch_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "rebatch_fixture:register_inference_types",

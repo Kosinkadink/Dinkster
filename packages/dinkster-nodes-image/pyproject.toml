@@ -1,13 +1,13 @@
 [project]
 name = "dinkster-nodes-image"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster first-party image and mask operation nodes"
 requires-python = ">=3.12"
 dependencies = [
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
     "dinkster-api",
     "numpy>=1.26",
-    "opencv-python-headless>=4.10",
+    "opencv-contrib-python-headless>=5.0,<5.1",
     "pillow>=10",
     "PyOpenGL>=3.1.8,<4",
 ]

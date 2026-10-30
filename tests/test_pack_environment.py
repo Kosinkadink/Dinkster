@@ -205,6 +205,84 @@ def test_opencv_alias_preserves_constraint_and_marker(name: str, extra: str) -> 
     )
 
 
+def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
+    tmp_path: Path,
+) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_workers import load_manifest
+
+    from scripts.build_official_packs import build
+
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    pinned = _wheel(wheels, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
+    source = tmp_path / "source"
+    source.mkdir()
+    for family in ("comfy", "foundation", "image", "media-io", "remote", "generation"):
+        root = source / "packages" / f"dinkster-nodes-{family}"
+        root.mkdir(parents=True)
+        (root / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="dinkster-nodes-{family}"\npublisher="dinkster"\n'
+            'requires = ["fixture-extra<3"]\n'
+            '[pack.dependencies]\ndinkster-nodes-foundation=">=0.0.1"\n'
+            '[pack.entry]\nnodes="nodes:NODES"\n'
+        )
+        (root / "nodes.py").write_text("raise AssertionError('node bodies must not load')\n")
+        (root / "pyproject.toml").write_text(
+            '[project]\nrequires-python=">=3.12"\n'
+            'dependencies=["fixture-extra>=2", "dinkster-nodes-foundation>=0.0.1"]\n'
+        )
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(source), "write-tree"], text=True).strip()
+    (source / ".git/HEAD").write_text(tree + "\n")
+    (source / "packages/dinkster-nodes-comfy/pyproject.toml").write_text("dirty = true\n")
+    (source / "packages/dinkster-nodes-comfy/dinkster-pack.toml").write_text("dirty = true\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("fixture-extra==1.2\n")
+    output = tmp_path / "payloads"
+    payloads = build(
+        source,
+        output,
+        version="1.2.3",
+        variant="linux-cpu",
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=[wheels],
+    )
+    assert len(payloads) == 11
+    assert not list(output.glob("dinkster-nodes-generation-*"))
+    inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
+    assert {entry.pack for entry in inventory.packs} == {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+    }
+    for entry in inventory.packs:
+        assert entry.version == "1.2.3"
+        lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
+        lock = PackLock.read(lock_path)
+        assert lock.pack == entry.pack
+        assert lock.variant == "linux-cpu"
+        assert lock.requires_python == ">=3.12"
+        assert lock.requirements == ("fixture-extra<3",)
+        assert [(package.name, package.version) for package in lock.packages] == [
+            ("fixture-extra", "1.2")
+        ]
+        assert lock.packages[0].wheels == (pinned,)
+        extracted = unpack_artifact(
+            output / f"{entry.pack}-1.2.3.zip",
+            tmp_path / "unpacked" / entry.pack,
+            entry.artifact_digest,
+        )
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        assert set(manifest.requires) == set(lock.requirements)
+        assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
+
+
 def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_path: Path) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
     _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
@@ -270,8 +348,48 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
     assert not venv_python(tmp_path / "packs/example").exists()
 
 
+def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> None:
+    archive = tmp_path / "source_only_fixture-1.0.zip"
+    with zipfile.ZipFile(archive, "w") as source:
+        source.writestr(
+            "source_only_fixture-1.0/pyproject.toml",
+            '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+            '[project]\nname="source-only-fixture"\nversion="1.0"\n',
+        )
+        source.writestr(
+            "source_only_fixture-1.0/PKG-INFO",
+            "Metadata-Version: 2.1\nName: source-only-fixture\nVersion: 1.0\n",
+        )
+        source.writestr("source_only_fixture-1.0/source_only_fixture.py", "VALUE = 1\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    with pytest.raises(
+        ProvisionError, match="pack example: source-only-fixture==1.0: source-only closure"
+    ):
+        resolve_pack_lock(
+            pack="example",
+            variant="linux-cpu",
+            requirements=[f"source-only-fixture @ {archive.as_uri()}"],
+            python=Path(sys.executable),
+            constraints=constraints,
+            find_links=[tmp_path],
+        )
+
+    empty = PackLock("example", "linux-cpu", ">=3.12", (), (), ())
+    published = tmp_path / "pack-lock.json"
+    empty.write(published)
+    assert PackLock.read(published) == empty
+    shared = replace(empty, packages=(LockedDistribution("source-only-fixture", "1.0", ()),))
+    shared.write(published)
+    assert PackLock.read(published) == shared
+    facts = GenerationPackages({"source-only-fixture": "1.0"}, "3.12.0", frozenset(), {})
+    plan = plan_pack(shared, facts, variant="linux-cpu", own_environment_size=9)
+    assert plan.conflicts == ()
+    assert plan.wheels == ()
+
+
 def test_generation_adapter_preflights_rebuilds_and_reports_drift(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
     lock = PackLock(
@@ -322,7 +440,26 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
         rebuild_generation(context, plans)
     unrelated.rmdir()
     assert not context.wheel_store.exists()
-    assert rebuild_generation(context, plans) == ("rebuilt pack example from its dependency lock",)
+    context = replace(context, offline=True)
+
+    def refuse_network(*args, **kwargs):
+        pytest.fail("offline pack rebuilding attempted a download")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(urllib.request, "urlopen", refuse_network)
+        with pytest.raises(ProvisionError, match="offline pack wheel missing or corrupt"):
+            rebuild_generation(context, plans)
+        assert not context.wheel_store.exists()
+        context.wheel_store.mkdir()
+        cached = context.wheel_store / extra.filename
+        cached.write_bytes(b"corrupt cached pack wheel")
+        with pytest.raises(ProvisionError, match="offline pack wheel missing or corrupt"):
+            rebuild_generation(context, plans)
+        assert cached.read_bytes() == b"corrupt cached pack wheel"
+        cached.write_bytes((tmp_path / extra.filename).read_bytes())
+        assert rebuild_generation(context, plans) == (
+            "rebuilt pack example from its dependency lock",
+        )
     assert doctor_generation(context) == ()
     assert current.read_text() == "1\n"
     assert (old / "packs/example/pack-lock.json").is_file()
@@ -350,6 +487,14 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert result["packs"] == [
         {"pack": "example", "conflicts": [], "downloadBytes": 0, "ownEnvironmentBytes": 9000}
     ]
+    assert main(["references", *args]) == 0
+    assert json.loads(capsys.readouterr().out)["wheelHashes"] == [extra.sha256]
+    assert main(["references", *args, "--in-process-pack", "missing"]) == 1
+    assert "no recorded dependency lock" in json.loads(capsys.readouterr().out)["changes"][0]
+    (target / "packs/unreadable").write_text("not a pack directory")
+    assert main(["references", *args]) == 1
+    assert "readable pack directories" in json.loads(capsys.readouterr().out)["changes"][0]
+    (target / "packs/unreadable").unlink()
     pack_python = venv_python(target / "packs/example")
     unavailable = pack_python.with_name("unavailable")
     pack_python.rename(unavailable)
@@ -547,9 +692,21 @@ def test_in_process_dependencies_conflict_before_downloads(tmp_path: Path) -> No
     assert not (target / "packs").exists()
 
 
+@pytest.mark.parametrize("windows_error", [False, True], ids=["native", "windows-launch-error"])
 def test_doctor_rejects_unavailable_generation_even_without_packs(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    windows_error: bool,
 ) -> None:
+    if windows_error:
+
+        def missing_interpreter(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            raise FileNotFoundError("[WinError 2] The system cannot find the file specified")
+
+        monkeypatch.setattr(subprocess, "run", missing_interpreter)
     constraints = tmp_path / "constraints.txt"
     constraints.write_text("")
     assert (

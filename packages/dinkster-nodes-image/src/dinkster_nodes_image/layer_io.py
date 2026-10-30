@@ -9,7 +9,6 @@ from dinkster_api.v1 import (
     ASSET_TYPE,
     CORE_COMBO,
     IMAGE_DOCUMENT_MEDIA_TYPE,
-    LAYERS_TYPE,
     SAVE_TARGET_TYPE,
     AssetRef,
     AssetWidget,
@@ -23,10 +22,13 @@ from dinkster_api.v1 import (
     OutputSpec,
     SaveTargetWidget,
     TypeExpr,
+    attach_saved_artifact,
     export_ora,
     export_psd,
     load_document,
 )
+
+from .compositor_types import LAYERS_TYPE
 
 LAYERS = TypeExpr.concrete(LAYERS_TYPE)
 ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -103,4 +105,5 @@ class SaveLayers(Node):
             suffix=suffix,
             media_type=media_type,
         )
+        attach_saved_artifact(reference.to_wire())
         return cls.outputs(document=reference)

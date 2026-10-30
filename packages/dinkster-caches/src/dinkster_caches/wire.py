@@ -22,12 +22,13 @@ from __future__ import annotations
 import base64
 import pickle
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, cast
 
-from dinkster_protocol import CachedResult, ExpandedReturn
+from dinkster_protocol import CachedResult, ExpandedReturn, SavedArtifact
 from dinkster_protocol.result_document import return_unit_from_document, return_unit_to_document
 from dinkster_values import (
+    SAVED_ARTIFACT_CLAIM_LIMIT,
     EncodedPayload,
     ListPayload,
     TuplePayload,
@@ -46,9 +47,11 @@ from dinkster_values.storage import encoded_storage_meta
 ENTRY_WIRE_VERSION = 3
 """v3 adds an atomic expansion document beside the present output values.
 v1 (scalar) and v2 (recursive lists) remain readable as direct results.
-Older readers reject v3 rather than returning an incomplete expansion."""
+Older readers reject v3 rather than returning an incomplete expansion.
+Entries with saved-file associations use v4 so older readers miss instead
+of silently losing the association. Entries without artifacts remain v3."""
 
-_ACCEPTED_VERSIONS = (1, 2, 3)
+_ACCEPTED_VERSIONS = (1, 2, 3, 4)
 
 BlobFetch = Callable[[str, int], Awaitable[bytes | None]]
 """Fetch verified blob bytes by (digest, expected size); None on miss."""
@@ -74,6 +77,7 @@ class EncodedValue:
 class EncodedEntry:
     outputs: Mapping[str, EncodedValue]
     expansion: dict[str, object] | None
+    artifacts: tuple[SavedArtifact, ...] = ()
 
 
 def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
@@ -135,7 +139,9 @@ def encode_entry(outputs: Mapping[str, Value], registry: TypeRegistry) -> Encode
             return result
 
         document = return_unit_to_document(expansion, encode_present)
-    return EncodedEntry(encoded, document)
+    return EncodedEntry(
+        encoded, document, outputs.artifacts if isinstance(outputs, CachedResult) else ()
+    )
 
 
 def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, Any]:
@@ -161,12 +167,16 @@ def entry_to_wire(key: str, encoded: EncodedEntry, store_blob: BlobStore) -> dic
         output_id: _value_to_wire(encoded_value, store_blob)
         for output_id, encoded_value in encoded.outputs.items()
     }
-    return {
+    wire: dict[str, Any] = {
         "version": ENTRY_WIRE_VERSION,
         "key": key,
         "outputs": outputs,
         "expansion": encoded.expansion,
     }
+    if encoded.artifacts:
+        wire["version"] = 4
+        wire["artifacts"] = [asdict(item) for item in encoded.artifacts]
+    return wire
 
 
 def iter_manifest_payloads(manifest: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
@@ -279,8 +289,11 @@ async def entry_from_wire(
     as encoded envelopes that relay but do not load (hazard H2)."""
     if wire.get("version") not in _ACCEPTED_VERSIONS:
         return None
-    if wire.get("version") == 3:
-        if set(wire) != {"version", "key", "outputs", "expansion"}:
+    if wire.get("version") in (3, 4):
+        fields = {"version", "key", "outputs", "expansion"}
+        if wire.get("version") == 4:
+            fields.add("artifacts")
+        if set(wire) != fields:
             return None
     elif "expansion" in wire:
         return None
@@ -295,9 +308,27 @@ async def entry_from_wire(
         if value is None or value_resource_ids(value):
             return None
         entry[str(output_id)] = value
+    artifacts: list[SavedArtifact] = []
+    try:
+        raw_artifacts = wire.get("artifacts", [])
+        if type(raw_artifacts) is not list:
+            return None
+        rows = cast("list[Any]", raw_artifacts)
+        if len(rows) > SAVED_ARTIFACT_CLAIM_LIMIT:
+            return None
+        for raw in rows:
+            item: dict[str, Any] = dict(raw)
+            preview = item.pop("preview", None)
+            artifacts.append(
+                SavedArtifact(
+                    **item, preview=SavedArtifact(**preview) if preview is not None else None
+                )
+            )
+    except (TypeError, ValueError, KeyError):
+        return None
     document = wire.get("expansion")
     if document is None:
-        return CachedResult(entry)
+        return CachedResult(entry, artifacts=tuple(artifacts))
     used: set[str] = set()
 
     def decode_present(index: object, output_id: str) -> Value:
@@ -310,6 +341,6 @@ async def entry_from_wire(
         expansion = return_unit_from_document(document, decode_present)
         if not isinstance(expansion, ExpandedReturn) or used != set(entry):
             return None
-        return CachedResult(entry, expansion)
+        return CachedResult(entry, expansion, tuple(artifacts))
     except (KeyError, TypeError, ValueError, RecursionError, OverflowError):
         return None

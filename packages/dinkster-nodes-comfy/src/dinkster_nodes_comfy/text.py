@@ -67,7 +67,7 @@ class StringFormat(Node):
             input_families=(
                 InputFamilySpec(
                     "values",
-                    TypeExpr.wildcard(),
+                    (InputSpec("value", TypeExpr.wildcard(), required=False),),
                     min_members=0,
                     member_names=tuple(string.ascii_lowercase),
                 ),

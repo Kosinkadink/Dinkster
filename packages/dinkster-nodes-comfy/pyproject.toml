@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-nodes-comfy"
-version = "0.0.1"
+version = "0.0.2"
 description = "Native Dinkster implementations of ComfyUI core nodes"
 requires-python = ">=3.12"
 dependencies = ["dinkster-api", "simpleeval==1.0.8"]

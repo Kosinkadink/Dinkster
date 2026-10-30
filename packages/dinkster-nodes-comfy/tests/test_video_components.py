@@ -112,6 +112,7 @@ def test_video_component_schema_and_cold_import_use_only_public_types() -> None:
 import sys
 from pathlib import Path
 from dinkster_api.v1 import AUDIO_TYPE, CORE_COMBO, CORE_FLOAT, IMAGE_TYPE, VIDEO_TYPE, TypeExpr
+from dinkster_schema import schema_from_wire, schema_to_wire, validate_replacement_references
 import dinkster_nodes_comfy.video_components as module
 from dinkster_nodes_comfy.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 
@@ -169,6 +170,7 @@ videos = concat.input_families[0]
 assert videos.id == "videos"
 assert videos.member_prefix == "video"
 assert (videos.min_members, videos.max_members) == (1, 100)
+assert videos.optional_after_minimum is True
 assert [(item.id, item.type, item.doc) for item in videos.template] == [
     (
         "video",
@@ -176,6 +178,31 @@ assert [(item.id, item.type, item.doc) for item in videos.template] == [
         "VIDEO lists to concatenate in input order.",
     )
 ]
+replacement = concat.replacements[0]
+assert replacement.from_type == "ConcatenateVideo"
+assert replacement.migration.historical_inputs == ("videos",)
+case = replacement.cases[0]
+assert case.to == "ConcatenateVideo"
+assert tuple((name, mapping.kind, mapping.input) for name, mapping in case.inputs) == (
+    ("codec", "copy", "codec"),
+    ("complete_audio", "copy", "complete_audio"),
+)
+assert tuple(name for name, _mapping in case.outputs) == ("video",)
+family_name, family_mapping = case.input_families[0]
+assert family_name == "videos"
+assert family_mapping.source_family == "videos"
+assert family_mapping.source_template == ("video",)
+assert family_mapping.member_ids == "targetPositions"
+assert dict(family_mapping.inputs)["video"].input == "video"
+assert validate_replacement_references({concat.node_type: concat}) == ()
+wire = schema_to_wire(concat)
+assert schema_from_wire(wire) == concat
+wire_replacement = wire["replacements"][0]
+assert wire_replacement["migration"] == {"historicalInputs": ["videos"]}
+wire_mapping = wire_replacement["cases"][0]["inputFamilies"]["videos"]
+assert wire_mapping["sourceFamily"] == "videos"
+assert wire_mapping["sourceTemplate"] == {"inputs": ["video"]}
+assert wire_mapping["memberIds"] == "targetPositions"
 assert [(item.id, item.default, item.advanced) for item in concat.inputs] == [
     ("codec", "auto", True),
     ("complete_audio", None, True),
@@ -546,16 +573,16 @@ def test_native_concatenate_video_cross_public_hosts_twice(
                     "concatenate_with_audio": GraphNode(
                         "ConcatenateVideo",
                         {
-                            "videos.video_z": Link("source", "first"),
-                            "videos.video_a": Link("source", "second"),
+                            "videos.video2": Link("source", "first"),
+                            "videos.video0": Link("source", "second"),
                             "complete_audio": Link("source", "replacement"),
                         },
                     ),
                     "concatenate_without_audio": GraphNode(
                         "ConcatenateVideo",
                         {
-                            "videos.video_z": Link("source", "first"),
-                            "videos.video_a": Link("source", "second"),
+                            "videos.video2": Link("source", "first"),
+                            "videos.video0": Link("source", "second"),
                         },
                     ),
                     "with_audio": GraphNode(

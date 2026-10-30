@@ -5,6 +5,23 @@
   Custom targets and non-media files, including empty text files, are supported
   through both ordinary hosts. Failed invocations do not return kept artifacts;
   returning an ASSET without attaching it does not advertise a saved file.
+  One invocation supports up to 4096 explicit saved-file attachments, including
+  complete admitted image batches, subject to existing file and transport bounds.
+  Mounted-file descriptors do not impose the encoded-preview byte limit on saved
+  weights or other files; the host validates their actual bytes by streaming.
+- Explicit mounted saved files may carry their own optional encoded preview.
+  Hosts with an asset vault can enable or disable lazy preview encoding;
+  disabled calls do not invoke the encoder. Every admitted saved file remains
+  eligible, up to 4096 per invocation, with a 16 MiB encoded-item limit and
+  serialized file-backed staging rather than an in-memory batch of frames.
+  Encoding or preview publication failure does not fail a valid saved file.
+  Exact saved-file authority is still required, and associations survive worker
+  transport, result caches, and backend presentation. Required standalone preview
+  attachments retain their separate 64-item and aggregate-byte limits.
+- Native image, mask, animation, audio, video, text, layer-document, model3D,
+  splat, and conditioning savers explicitly attach their successful mounted
+  publications. Save nodes require an active invocation attachment context;
+  ordinary writer use outside a Save node does not advertise a kept result.
 - Indexed video file selections remain references to their granted files,
   without input copying or an encoded-file size cap. Unindexed selections
   must be scanned before VIDEO admission. Decode working-set and produced
@@ -26,6 +43,8 @@
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
   dictionaries, including position, target, zoom, camera type, optional camera
   controls, and structural extensions across execution hosts and caches
+- Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
+  scales, and structural extensions across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
@@ -138,8 +157,13 @@
   VIDEO_EDIT preservation, track composition, transitions, retiming, bounded
   audio mixing, CURVE parameters available in core-only registries, and
   deterministic CPU text effects
+- OTIO JSON import/export on CPython 3.14 Linux x86_64 and Windows x64 uses
+  prebuilt native wheels; installation needs no local OpenTimelineIO build.
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
+- Native VOID optical-flow-warped noise with 16 latent channels, even temporal
+  lengths, spatial resizing and batch replication. Controlled CPU coverage does
+  not certify real-model optical-flow quality or GPU parity.
 - Native Comfy packs exchange portable VIDEO and VIDEO_EDIT values without
   requiring the media I/O pack. Native Load Video accepts a single indexed,
   granted video asset and retains its encoded source without copying it or
@@ -210,13 +234,19 @@
 - GLB 3D model assets through Load 3D Model, Save 3D Model, and Preview 3D
   nodes carrying validated raw GLB bytes as `dinkster.model3d`
 - Gaussian splat assets through Load Gaussian Splat and Save Gaussian Splat
-  nodes: `dinkster.splat` batches of activated world-space gaussians with
+  nodes: `SPLAT` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
-  splat PLY files
+  splat PLY files. Shared inference and media packs preserve optional per-item
+  counts, empty Gaussian tensors and floating dtype across ordinary worker
+  boundaries; live tensors retain their device and storage. Empty splats can
+  cross workers but cannot be exported to PLY.
+- Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
+  honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
   to a selected writable mount, preserving checkpoint metadata and reserved
-  counter names. Controlled CPU weights exercise serialization; real-model
-  loading and GPU parity are not certified.
+  counter names, and reports the host-validated saved file in execution results.
+  Controlled CPU weights exercise serialization; real-model loading and GPU
+  parity are not certified.
 - Native VOIDSampler supplies the node-defined alpha-space DDIM sampler for
   the existing custom-sampling path, without ordinary KSampler noise scaling.
   Controlled CPU schedules cover the numerical contract, not real-model or
@@ -225,6 +255,13 @@
   conditioning with even temporal latent lengths, and precomputed warped
   noise sources. Controlled CPU encoders cover mask/video conditioning and
   source preservation; real-model and GPU output parity are not certified.
+- Native Transform Splat translates, rotates, and scales canonical SPLAT
+  batches. Nonuniform scaling reshapes Gaussian covariance; opacity,
+  spherical harmonics, and per-item counts are preserved.
+- Native Merge Splats concatenates valid Gaussian rows in input order, pads
+  spherical harmonics to the highest degree, and retains unequal batch-item
+  counts with zero-padded rows. Its first two splat sockets are required;
+  additional authored sockets are optional.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate

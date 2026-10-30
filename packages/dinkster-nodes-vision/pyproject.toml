@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-nodes-vision"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster model-backed vision node providers"
 requires-python = ">=3.12"
 license-files = [
@@ -15,7 +15,7 @@ license-files = [
 dependencies = [
     "dinkster-api",
     "numpy>=1.26",
-    "opencv-python-headless>=4.10",
+    "opencv-contrib-python-headless>=5.0,<5.1",
     "pillow>=10",
 ]
 
@@ -52,6 +52,6 @@ dinkster-api = { workspace = true }
 [tool.pyright]
 pythonVersion = "3.12"
 venvPath = "../.."
-venv = ".venv-torch"
+venv = ".venv"
 include = ["src", "tests"]
 typeCheckingMode = "standard"

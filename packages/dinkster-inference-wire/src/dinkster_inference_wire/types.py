@@ -8,8 +8,10 @@ from dinkster_memory.resident import default_pool
 from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
     BOUNDING_BOXES_TYPE,
+    CAMERA_INFO_STATE_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -29,6 +31,7 @@ from dinkster_values import (
     LATENT_UPSCALE_MODEL_TYPE,
     LAYERS_TYPE,
     LOAD3D_CAMERA_TYPE,
+    LOAD3D_MODEL_INFO_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
     MOGE_GEOMETRY_TYPE,
@@ -54,12 +57,14 @@ from dinkster_values import (
     encode_latent,
     latent_fingerprint,
     register_resident_type,
+    register_splat_type,
     register_video_edit_type,
     validate_latent_encoded,
 )
 
-from .camera_wire import register_load3d_camera_type
+from .camera_wire import register_load3d_camera_type, register_load3d_model_info_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
+from .geometry_wire import materialize_mesh, register_mesh_type
 from .hook_values import (
     normalize_clip_hook_owners,
     normalize_hook_owners,
@@ -75,6 +80,7 @@ from .media_wire import (
 from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
+from .splat_wire import materialize_splat
 from .vision_wire import (
     clip_vision_output_fingerprint,
     decode_clip_vision_output,
@@ -96,6 +102,7 @@ NOISE_TYPE_ID = NOISE_TYPE
 
 _RESIDENT_TYPE_IDS = (
     AUDIO_ENCODER_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
     MODEL_TYPE_ID,
     MOGE_MODEL_TYPE,
     MODEL_PATCH_TYPE,
@@ -153,6 +160,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     for type_id in (
         BOUNDING_BOX_TYPE,
         BOUNDING_BOXES_TYPE,
+        CAMERA_INFO_STATE_TYPE,
         COLOR_TYPE,
         COLORS_TYPE,
         COMPOSITOR_TYPE,
@@ -193,6 +201,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         else register_load3d_camera_type(registry)
     )
     registered.append(
+        registry.spec(LOAD3D_MODEL_INFO_TYPE)
+        if LOAD3D_MODEL_INFO_TYPE in registry
+        else register_load3d_model_info_type(registry)
+    )
+    registered.append(
         registry.spec(POSE_KEYPOINT_TYPE)
         if POSE_KEYPOINT_TYPE in registry
         else register_pose_keypoint_type(registry)
@@ -220,6 +233,8 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
+    registered.append(register_mesh_type(registry))
+    registered.append(register_splat_type(registry))
     registered.append(register_voxel_type(registry))
     register_video_edit_type(registry)
     registered.append(registry.spec(VIDEO_EDIT_TYPE))
@@ -239,6 +254,8 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_mesh",
+    "materialize_splat",
     "materialize_voxel",
     "register_inference_types",
 ]

@@ -28,6 +28,8 @@ from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _conditioning() -> list[Any]:
     return [

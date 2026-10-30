@@ -1,5 +1,17 @@
 ## Image operations
 
+- Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
+  angles or a normalized quaternion while retaining material attributes.
+  `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Portable mesh values retain all fifteen geometry and material fields; voxel
+  values retain dense or sparse data, optional colors and resolution.
+- Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
+  extracts basic or surface-net meshes, retaining variable per-item lengths
+  in padded batches. The deprecated `VoxelToMeshBasic` remains available.
+- Native `Trellis2ShapeStage` converts dense structure occupancy to batch-grouped
+  sparse coordinates and an empty shape latent, with stage-specific conditioning.
+- Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
+  resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
   into the shared `UPSCALE_MODEL` value.
 - Native `FrameInterpolationModelLoader` loads granted FILM and five-block
@@ -12,22 +24,32 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
+  or an explicit quaternion, with roll, field of view, zoom, and projection.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatSamplingPreview` patches a cloned model to report decoded
+  gaussian splat previews during sampling without replacing the sampler callback.
+- Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
+  with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored
   depth, OpenGL or DirectX normals, or an RGB mask.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGePanoramaInference` estimates spherical geometry for a single
+  equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `ImageCropToMask` crops images around foreground masks with adjustable
+  margin, mask growth, background color and output dimensions.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
   with stretching or aspect-preserving black padding.
 - Native `SDPoseFaceBBoxes` converts canonical pose face keypoints into per-frame
@@ -39,6 +61,8 @@
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `LoadBackgroundRemovalModel` loads an admitted background-removal
+  checkpoint; `RemoveBackground` generates its foreground mask for an image batch.
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
@@ -84,6 +108,7 @@
 - Image compositing with placement, mask, common blend modes, Porter-Duff
   operations, explicit alpha polarity, and configurable batch reconciliation
 - Graph-native image composition with ordered `dinkster.layers` values, native
+  ImageDocument storage distinct from structural tensor `LAYERS`, and
   placement from image batches or regions/detections, digest-bound compositor
   edit commands, 26 blend modes plus dissolve, perceptual or linear-light
   rendering, per-layer previews, flatten/split, structural editing nodes, and

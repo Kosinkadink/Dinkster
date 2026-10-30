@@ -1,7 +1,24 @@
 [pack]
 name = "dinkster-nodes-comfy"
 publisher = "dinkster"
+requires = [
+    "simpleeval==1.0.8",
+    "numpy",
+    "pillow",
+    "torch",
+    "torchvision",
+    "dinkster-inference==0.1.0",
+    "av",
+    "scipy",
+    "einops",
+    "kornia",
+    "safetensors",
+    "tqdm",
+    "spandrel",
+    "comfy-kitchen",
+]
 namespaces = [
+    "devices",
     "AudioEncoderLoader",
     "AudioEncoderEncode",
     "SheetSage2AudioToABC",
@@ -476,6 +493,7 @@ namespaces = [
     "TextEncodeZImageOmni",
     "PhotoMakerLoader",
     "PhotoMakerEncode",
+    "ImageCropToMask",
     "ImageCropV2",
     "PrimitiveBoundingBox",
     "RTDETR_detect",
@@ -510,13 +528,22 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "LoadBackgroundRemovalModel",
+    "RemoveBackground",
     "CropByBBoxes",
     "CameraAngle",
+    "CreateCameraInfo",
+    "GetSplatCount",
+    "TransformSplat",
+    "MergeSplat",
     "Trellis2UpsampleStage",
+    "MoGePanoramaInference",
     "MoGeInference",
     "MoGeRender",
     "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
+    "VAEDecodeTripoSplat",
     "LoadAudio",
     "RecordAudio",
     "PreviewAudio",
@@ -545,7 +572,32 @@ namespaces = [
     "SDPoseDrawKeypoints",
     "SDPoseKeypointExtractor",
     "AddLayer",
+    "WanDancerVideo",
+    "VOIDWarpedNoise",
     "LoadVideo",
+    "SaveSVGNode",
+    "SaveImage",
+    "PreviewImage",
+    "LoadImage",
+    "LoadImageMask",
+    "LoadImageOutput",
+    "LoadLatent",
+    "SaveLatent",
+    "CLIPSave",
+    "VAESave",
+    "SaveAnimatedWEBP",
+    "SaveAnimatedPNG",
+    "LoraSave",
+    "CheckpointSave",
+    "ModelSave",
+    "SaveImageAdvanced",
+    "Trellis2Conditioning",
+    "RotateMesh",
+    "GetMeshInfo",
+    "VoxelToMeshBasic",
+    "VoxelToMesh",
+    "VAEDecodeHunyuan3D",
+    "Trellis2ShapeStage",
 ]
 
 [pack.sandbox]
@@ -557,3 +609,4 @@ api = "dinkster-api/v1"
 [pack.entry]
 nodes = "dinkster_nodes_comfy:COMFY_NODES"
 types = "dinkster_nodes_comfy:register_inference_types"
+choices = "dinkster_nodes_comfy.device_routing:device_choices"

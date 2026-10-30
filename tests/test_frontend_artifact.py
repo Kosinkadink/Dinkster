@@ -6,12 +6,13 @@ import hashlib
 import io
 import json
 import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from scripts.build_release import build_frontend_wheel
+from scripts.build_release import versioned_sources
 from scripts.download_frontend import REPOSITORY, download, verify_and_extract
 
 
@@ -20,6 +21,8 @@ def artifact(*, entry: str = "assets/app.js", **overrides: object) -> tuple[byte
     with zipfile.ZipFile(archive, "w") as bundle:
         for name, data in [("index.html", b'<div id="app"></div>'), (entry, b"app();")]:
             info = zipfile.ZipInfo(name)
+            # Preserve unsafe input that ZipInfo otherwise normalizes on Windows.
+            info.filename = name
             info.external_attr = 0o100644 << 16
             bundle.writestr(info, data)
     data = archive.getvalue()
@@ -46,24 +49,32 @@ def test_extract_preserves_the_published_files(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "manifest.json").read_text())["sha256"] == pin["sha256"]
 
 
-def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["0.0.2", "0.0.2.dev123+g" + "a" * 40])
+def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path, version: str) -> None:
     payload, pin = artifact()
     published = tmp_path / "frontend.zip"
     published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(published, "0.0.2", pin, tmp_path, uv)
+    with versioned_sources(Path(__file__).resolve().parents[1], version) as staged:
+        verify_and_extract(payload, pin, staged / "src/dinkster/frontend_bundle/static")
+        subprocess.run(
+            [uv, "build", "--package", "dinkster", "--wheel", "--out-dir", str(tmp_path)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = tmp_path.glob("*.whl")
     with zipfile.ZipFile(wheel) as installed, zipfile.ZipFile(io.BytesIO(payload)) as wrapper:
         with zipfile.ZipFile(io.BytesIO(wrapper.read("bundle.zip"))) as bundle:
             assert {
-                name.removeprefix("dinkster_frontend/static/"): installed.read(name)
+                name.removeprefix("dinkster/frontend_bundle/static/"): installed.read(name)
                 for name in installed.namelist()
-                if name.startswith("dinkster_frontend/static/")
+                if name.startswith("dinkster/frontend_bundle/static/")
             } == {name: bundle.read(name) for name in bundle.namelist()}
-        assert json.loads(installed.read("dinkster_frontend/manifest.json")) == json.loads(
+        assert json.loads(installed.read("dinkster/frontend_bundle/manifest.json")) == json.loads(
             wrapper.read("manifest.json")
         )
-    assert wheel.name == "dinkster_frontend-0.0.2-py3-none-any.whl"
+    assert wheel.name == f"dinkster-{version}-py3-none-any.whl"
 
 
 @pytest.mark.parametrize(
@@ -92,6 +103,9 @@ def test_pinned_hash_is_checked_independently_of_manifest(tmp_path: Path) -> Non
 @pytest.mark.parametrize("entry", ["../escape.js", "/absolute.js", "assets\\escape.js"])
 def test_archive_paths_cannot_escape_the_bundle(tmp_path: Path, entry: str) -> None:
     payload, pin = artifact(entry=entry)
+    with zipfile.ZipFile(io.BytesIO(payload)) as wrapper:
+        with zipfile.ZipFile(io.BytesIO(wrapper.read("bundle.zip"))) as bundle:
+            assert bundle.infolist()[1].orig_filename == entry
     with pytest.raises(ValueError, match="unsafe frontend bundle entry"):
         verify_and_extract(payload, pin, tmp_path / "bundle")
     assert list(tmp_path.iterdir()) == []

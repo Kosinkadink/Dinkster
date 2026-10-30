@@ -75,6 +75,47 @@ required locally before landing; this subset is fast PR feedback, not a
 replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
+### Counted pack runtime matrix
+
+Before freezing a distribution, dependency or pack-loading change, the counted
+suite includes the following runtime environments, not only the root and
+workspace-member tests. The selections and setup commands in
+`.github/workflows/full-validation.yml` and
+`.github/actions/torch-cpu-suite/action.yml` are authoritative.
+
+| Lane | Required execution |
+| --- | --- |
+| Linux CPython 3.12 root | All four `test` file shards, with the workflow's branch-coverage sources and exclusions |
+| Windows CPython 3.12 root | All four `test` file shards in a native Windows checkout |
+| CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
+| CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
+| Coverage gate | All four Linux coverage files combined; `coverage report --fail-under=80` |
+
+Build the CPU runtime with
+`uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
+or `--variant win-cpu` on Windows. The same Python implementation serves the
+launcher and CPU action; its receipt is `.run/environment-base.json`.
+Contributor setup acceptance runs the root and pack checks with the bundle's
+Python version. The CPython 3.12 rows above describe the separate, unchanged
+full-validation root jobs; they do not override the selected bundle interpreter.
+Keep isolated pack-install tests: workspace editables are not evidence that a
+published pack declares its complete dependencies. Pin CPU dispatch with
+`ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.
+Prepare the pinned validation inputs before running evidence-tooling tests.
+
+On X570, launch each complete suite through the wrapper workspace's
+`run_counted_suite.sh` with `OMP_NUM_THREADS=4` and `MKL_NUM_THREADS=4`.
+Native Windows evidence runs on a Windows machine; a Linux collection or
+simulated platform is not a replacement. Preserve the existing assertions,
+platform exclusions and coverage floor. Model/GPU comparisons are separate
+from this non-model runtime matrix.
+
+The freeze record names every lane, the exact head, commands, results and logs,
+including each shard and the combined coverage percentage. Missing inputs or
+an unexecuted lane are reported as incomplete, never as a pass. Hosted fast
+feedback alone does not certify this matrix. Do not dispatch or rerun hosted
+full validation to obtain the record.
+
 The required `CI_RUNNERS` repository variable controls every job. Its
 `linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
 images. CPU Torch jobs pin AVX2 dispatch in their environment rather than
@@ -165,8 +206,9 @@ are clearly labeled, and skip loudly rather than silently not existing:
   where the kernel says no.
 - **GPU/multi-GPU** (`test_device_map.py`, placement): device-conditional;
   the two-4090 box is the reference machine.
-- **Headless ANGLE mirror parity** (`test_image_mirror_angle.py`): install
-  the optional runtime with `uv sync --group angle`, then run the test to
+- **Headless ANGLE mirror parity** (`test_image_mirror_angle.py`): workspace
+  synchronization installs ANGLE through the image pack dependency on supported
+  platforms. A core-only checkout can use `uv sync --group angle`. Run the test to
   execute every declared GLSL image mirror against its CPU parity corpus.
   It skips when ANGLE or a float-renderable EGL/GLES 3 context is unavailable.
 - **CI matrix**: Linux + Windows, Python 3.12 - Windows is the
@@ -198,7 +240,7 @@ integration:
 
 ```bash
 uv run --no-sync python scripts/prepare_validation_inputs.py
-./scripts/setup_envs.sh
+uv run --no-project python scripts/setup_envs.py --variant linux-cpu
 .venv/bin/python -m pytest -q
 ```
 
@@ -210,10 +252,11 @@ evidence revision, so local and hosted full validation execute the same benchmar
 and acceptance sources. Access to the private evidence repository is required
 only for the full maintainer suite, not to install or run Dinkster.
 
-On Windows, `scripts\setup_envs.ps1` creates the equivalent root, CPU Torch,
-and NVIDIA CUDA environments. Run the gates it prints with native Windows
-paths; rerunning the script reasserts the environments, while `-Force` rebuilds
-only the environments it owns.
+On Windows, run the same Python entry point with `--variant win-cpu` for CPU
+checks or omit the variant to select the compatible NVIDIA bundle. Use native
+`.venv\Scripts\python.exe` paths. Rerunning setup reasserts the selected
+environment; `--force` rebuilds `.venv` without deleting the verified base store.
+Run tools with `uv run --no-sync` to retain the manifest's binary wheels.
 
 MediaRecorder WebM upload tests generate local samples only for the writable
 `libopus` and `libvorbis` encoders present in the installed PyAV wheel. The
@@ -221,10 +264,10 @@ fixture gate always requires `libopus`; decode-side admission separately keeps
 Vorbis WebM coverage when the wheel cannot generate it through `libvorbis`.
 
 Run each vision package's full `tests` directory and the benchmark selector
-above with `.venv-torch/bin/python -m pytest -q` too. Supply the real-artifact
+above with `.venv/bin/python -m pytest -q` too. Supply the real-artifact
 environment variables documented in the provider READMEs and composite
 action; an absent artifact's skip is not real-model validation. Training and
-GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
+GPU checks in the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 

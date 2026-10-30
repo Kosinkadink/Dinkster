@@ -294,6 +294,14 @@ class ExecutionRuntime:
         Callable[[str, Sequence[Mapping[str, object]], int], Awaitable[tuple[SavedArtifact, ...]]]
         | None
     ) = None
+    saved_file_previews_enabled: bool = False
+    publish_saved_file_previews: (
+        Callable[
+            [Sequence[SavedArtifact], Sequence[Mapping[str, object]]],
+            Awaitable[tuple[SavedArtifact, ...]],
+        ]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if bool(self.graph_compiler_registry.contributions) != (
@@ -1335,9 +1343,8 @@ class Engine:
                 return False
         return True
 
-    @staticmethod
     def _cached_output_origins(
-        label: str, schema: NodeSchema, outputs: Mapping[str, Value]
+        self, label: str, schema: NodeSchema, outputs: Mapping[str, Value]
     ) -> CachedResult:
         # Content-identical producers share cache entries, not diagnostic
         # identities. Selectors forward an input's provenance unchanged.
@@ -1355,7 +1362,22 @@ class Engine:
                     current, meta=ValueMeta({**value.meta.entries, **current.meta.entries})
                 )
         return CachedResult(
-            rebound, outputs.expansion if isinstance(outputs, CachedResult) else None
+            rebound,
+            outputs.expansion if isinstance(outputs, CachedResult) else None,
+            tuple(
+                replace(
+                    item,
+                    node_id=label,
+                    preview=(
+                        replace(item.preview, node_id=label)
+                        if item.preview is not None and self._runtime().saved_file_previews_enabled
+                        else None
+                    ),
+                )
+                for item in outputs.artifacts
+            )
+            if isinstance(outputs, CachedResult)
+            else (),
         )
 
     def _pin_outputs(self, outputs: Mapping[str, Value], pinned: list[str]) -> bool:
@@ -1718,6 +1740,7 @@ class Engine:
                 # dangle, so recompute instead.
                 await asyncio.sleep(0)
                 continue
+            self._run_artifacts[run_id].extend(outputs.artifacts)
             produced[node_id] = (
                 await resolve_expansion(node_id, outputs)
                 if outputs.expansion is not None and resolve_expansion is not None
@@ -1773,6 +1796,7 @@ class Engine:
                 hit = None
             if hit is not None:
                 hit = self._cached_output_origins(label, schema, hit)
+                self._run_artifacts[run_id].extend(hit.artifacts)
                 produced[node_id] = (
                     await resolve_expansion(node_id, hit)
                     if hit.expansion is not None and resolve_expansion is not None
@@ -1860,6 +1884,7 @@ class Engine:
                     selection.single_job_multi_gpu if selection is not None else None
                 ),
                 media_sources=self._run_media_sources.get(run_id, ()),
+                saved_file_previews_enabled=self._runtime().saved_file_previews_enabled,
                 preview_mode=(
                     # Schema capability gates the policy: unflagged node types
                     # never pay for preview emitters, provider matching, or
@@ -1987,6 +2012,7 @@ class Engine:
                     )
                     raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
                 self._run_artifacts[run_id].extend(artifacts)
+            saved_artifacts: tuple[SavedArtifact, ...] = ()
             if result.saved_artifact_claims:
                 validate = self._runtime().validate_saved_artifacts
                 try:
@@ -2003,9 +2029,35 @@ class Engine:
                         )
                     )
                     raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
-                self._run_artifacts[run_id].extend(artifacts)
+                saved_artifacts = artifacts
+                optional_publisher = self._runtime().publish_saved_file_previews
+                if (
+                    self._runtime().saved_file_previews_enabled
+                    and optional_publisher is not None
+                    and result.saved_file_previews
+                ):
+                    try:
+                        saved_artifacts = await optional_publisher(
+                            artifacts, result.saved_file_previews
+                        )
+                    except Exception as exc:
+                        self._emit(
+                            EngineEvent(
+                                "node_event",
+                                run_id,
+                                label,
+                                {
+                                    "name": "log",
+                                    "data": {
+                                        "level": "warning",
+                                        "message": f"saved-file preview unavailable: {exc}",
+                                    },
+                                },
+                            )
+                        )
+                self._run_artifacts[run_id].extend(saved_artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
-            entry = CachedResult(result.outputs, result.expansion)
+            entry = CachedResult(result.outputs, result.expansion, saved_artifacts)
             if entry.expansion is not None:
                 if not self._cache_hit_valid(schema, entry):
                     raise ExecutionError(

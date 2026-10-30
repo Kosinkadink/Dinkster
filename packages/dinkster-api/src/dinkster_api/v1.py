@@ -115,6 +115,7 @@ from dinkster_protocol import (
     canonical_extension_snapshot,
     current_export_snapshot,
     extension_behavior_hash,
+    prepare_sampling_model,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
 from dinkster_protocol.pack_surfaces import (
@@ -200,6 +201,7 @@ from dinkster_schema import (
     output_descriptor_entries,
     pack_logger,
     publish_preview_artifact,
+    publish_saved_file_preview,
     report_event,
     report_log,
     report_preview,
@@ -218,6 +220,7 @@ from dinkster_values import (
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
     BOUNDING_BOXES_TYPE,
+    CAMERA_INFO_STATE_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -247,6 +250,7 @@ from dinkster_values import (
     HOOKS_TYPE,
     IC_LORA_PARAMETERS_TYPE,
     IMAGE_BATCH_MERGER_ID,
+    IMAGE_DOCUMENT_TYPE,
     IMAGE_TYPE,
     IMAGE_WORKING_SET_LIMIT_BYTES,
     IMAGECOMPARE_TYPE,
@@ -261,6 +265,7 @@ from dinkster_values import (
     LAYERS_TYPE,
     LENGTH_META_KEY,
     LOAD3D_CAMERA_TYPE,
+    LOAD3D_MODEL_INFO_TYPE,
     MASK_TYPE,
     MAX_CURVE_POINTS,
     MEBIBYTE,
@@ -369,6 +374,7 @@ from dinkster_values import (
     register_curve_type,
     register_model3d_type,
     register_resource_handle_type,
+    register_splat_type,
     register_video_edit_type,
     render_audio_wav,
     render_image_png,
@@ -452,12 +458,18 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import latents
 
         value = getattr(latents, name)
+    elif name == "TriangleMeshBatch":
+        from dinkster_inference_wire.sparse import TriangleMeshBatch
+
+        value = TriangleMeshBatch
     elif name in {
         "register_inference_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
+        "materialize_mesh",
         "materialize_clip_vision_output",
+        "materialize_splat",
         "materialize_voxel",
     }:
         from dinkster_inference_wire import types
@@ -481,11 +493,14 @@ def __dir__() -> list[str]:
         | {
             "LatentStream",
             "MultiStreamLatent",
+            "TriangleMeshBatch",
             "register_inference_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
+            "materialize_mesh",
             "materialize_clip_vision_output",
+            "materialize_splat",
             "materialize_voxel",
             "initialize_inference_process",
         }
@@ -517,11 +532,14 @@ if TYPE_CHECKING:
     from dinkster_image_document.interchange import export_ora, export_psd, load_document
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_mesh,
+        materialize_splat,
         materialize_voxel,
         register_inference_types,
     )
@@ -531,6 +549,8 @@ if TYPE_CHECKING:
     from dinkster_workers.execution import current_execution_context
 
 __all__ = [
+    "TriangleMeshBatch",
+    "materialize_mesh",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -562,10 +582,12 @@ __all__ = [
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
+    "prepare_sampling_model",
     "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_splat",
     "materialize_svg",
     "materialize_voxel",
     "register_inference_types",
@@ -693,6 +715,7 @@ __all__ = [
     "pack_logger",
     "attach_saved_artifact",
     "publish_preview_artifact",
+    "publish_saved_file_preview",
     "report_event",
     "report_log",
     "report_preview",
@@ -710,6 +733,7 @@ __all__ = [
     "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
     "ARRAY_TYPE",
+    "CAMERA_INFO_STATE_TYPE",
     "CLIP_TYPE",
     "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
@@ -730,6 +754,7 @@ __all__ = [
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
+    "IMAGE_DOCUMENT_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
@@ -739,6 +764,7 @@ __all__ = [
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
     "LOAD3D_CAMERA_TYPE",
+    "LOAD3D_MODEL_INFO_TYPE",
     "MASK_TYPE",
     "MODEL3D_TYPE",
     "MODEL_PATCH_TYPE",
@@ -859,6 +885,7 @@ __all__ = [
     "region_meta",
     "register_model3d_type",
     "register_resource_handle_type",
+    "register_splat_type",
     "render_audio_wav",
     "render_image_png",
     "render_mask_png",

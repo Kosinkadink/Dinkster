@@ -253,13 +253,15 @@ def main(argv: list[str] | None = None) -> int:
     from zipfile import BadZipFile
 
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments[:1] == ["project-plan"]:
+    if arguments[:1] in (["project-plan"], ["project-apply"]):
         from dinkster_assets import AssetError
+        from dinkster_assets.vault import AssetPublicationError
         from dinkster_registry.artifact import ArtifactError
         from dinkster_registry.install import InstallError
         from dinkster_workers import ManifestError
 
-        from .project_requirements import plan_project_requirements
+        from .compose import CompositionError
+        from .project_requirements import apply_project_requirements, plan_project_requirements
 
         parser = argparse.ArgumentParser(description="Read a project's workflow requirement plan")
         parser.add_argument("--project-root", required=True, type=Path)
@@ -269,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--artifacts", type=Path)
         parser.add_argument("--variant", required=True)
         parser.add_argument("--json", action="store_true", required=True)
+        parser.add_argument("--yes", action="store_true")
         args = parser.parse_args(arguments[1:])
         try:
             for path in (
@@ -280,13 +283,27 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 if path is not None and not path.is_absolute():
                     raise RequirementError("project and generation/catalog paths must be absolute")
-            result = plan_project_requirements(
-                args.project_root,
-                variant=args.variant,
-                source_generation=args.source_generation,
-                catalog_lock=args.catalog_lock,
-                artifacts=args.artifacts,
-            )
+            if arguments[0] == "project-apply":
+                if not args.yes or args.generation is None:
+                    raise RequirementError("project-apply requires --yes and --generation")
+                approved = dict(_object(json.load(sys.stdin), "approved project plan"))
+                result = apply_project_requirements(
+                    args.project_root,
+                    approved=approved,
+                    generation=args.generation,
+                    variant=args.variant,
+                    source_generation=args.source_generation,
+                    catalog_lock=args.catalog_lock,
+                    artifacts=args.artifacts,
+                )
+            else:
+                result = plan_project_requirements(
+                    args.project_root,
+                    variant=args.variant,
+                    source_generation=args.source_generation,
+                    catalog_lock=args.catalog_lock,
+                    artifacts=args.artifacts,
+                )
             print(json.dumps(result))
             plan = cast("dict[str, object]", result["plan"])
             if plan["errors"]:
@@ -296,9 +313,11 @@ def main(argv: list[str] | None = None) -> int:
             OSError,
             ValueError,
             AssetError,
+            AssetPublicationError,
             ArtifactError,
             InstallError,
             ManifestError,
+            CompositionError,
             BadZipFile,
         ) as exc:
             print(f"project plan failed: {exc}", file=sys.stderr)
