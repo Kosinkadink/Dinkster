@@ -58,7 +58,10 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     gate = jobs["coverage-gate"]
     assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
     runtime = jobs["windows-runtime"]
+    assert runtime["strategy"]["matrix"]["shard"] == [1, 2, 3]
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
+    assert "--file-shard ${{ matrix.shard }}/3" in runtime_run["run"]
+    assert "--case-shard-file tests/test_environment_generations.py" in runtime_run["run"]
     runtime_upload = next(
         step for step in runtime["steps"] if step.get("uses") == "actions/upload-artifact@v4"
     )
@@ -71,6 +74,7 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     combine = gate["steps"][-1]["run"]
     assert "*/packages/" in combine
     assert 'coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data' in combine
+    assert "for shard in 1 2 3; do" in combine
     assert 'test -f "coverage-data/.coverage.windows-runtime-$shard"' in combine
     for shard in runtime["strategy"]["matrix"]["shard"]:
         coverage_file = runtime_run["env"]["COVERAGE_FILE"].replace(
