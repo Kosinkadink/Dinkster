@@ -27,7 +27,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 Push-Location $PSScriptRoot
 try {
-    & uv run --no-project --python 3.12 scripts/run.py @args
+    & uv run --no-project --python 3.14.10 scripts/run.py @args
     exit $LASTEXITCODE
 }
 finally {

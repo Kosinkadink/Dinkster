@@ -28,7 +28,9 @@ If uv is missing, the script installs it using the
 in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), without sudo,
 administrator rights, or shell-profile changes. Linux/macOS need curl or wget
 for this download. The installed uv is available immediately to the script.
-The script uses uv-managed Python 3.12 with development headers included,
+Linux/macOS use uv-managed Python 3.12 with development headers included.
+Windows uses the [verified CPython 3.14.10 runtime](install.md#windows-interpreter)
+with the SQLite mapped-shm fix. The script
 prepares the pinned inference and Torch
 environments, builds the pinned frontend, creates local state, and opens the
 editor. It does not need the Desktop app or a separate frontend checkout.

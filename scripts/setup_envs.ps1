@@ -108,20 +108,30 @@ try {
             $RootEnvironment, $TorchEnvironment, $GpuEnvironment, $SetupExtras
     }
 
+    $RuntimeDirectory = Join-Path $RepoRoot ".run\windows-python"
+    Invoke-Native "uv" @(
+        "run", "--no-project", "--python", "3.14.10",
+        "scripts/prepare_windows_python.py", "--output", $RuntimeDirectory
+    )
+    $BasePython = Join-Path $RuntimeDirectory "python\python.exe"
+    $SqliteGate = Join-Path $RepoRoot "packages\dinkster-supervisor\src\dinkster_supervisor\sqlite_runtime.py"
+
     Write-Host "==> .venv (locked workspace env)"
     [Environment]::SetEnvironmentVariable("UV_PROJECT", $null, "Process")
     [Environment]::SetEnvironmentVariable(
         "UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"
     )
     Invoke-Native "uv" @(
-        "sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"
+        "sync", "--project", $RepoRoot, "--python", $BasePython, "--all-packages"
     )
+    Invoke-Native (Join-Path $RootEnvironment "Scripts\python.exe") @("-I", $SqliteGate)
     [Environment]::SetEnvironmentVariable("UV_PROJECT_ENVIRONMENT", $null, "Process")
 
     Write-Host "==> .venv-torch (CPU torch test env)"
     if (-not (Test-Path $TorchPython)) {
-        Invoke-Native "uv" @("venv", $TorchEnvironment, "--python", "3.12")
+        Invoke-Native "uv" @("venv", $TorchEnvironment, "--python", $BasePython)
     }
+    Invoke-Native $TorchPython @("-I", $SqliteGate)
     # Both OpenCV distributions own cv2; restore contrib's files after removing the old one.
     Invoke-Native "uv" @("pip", "uninstall", "--python", $TorchPython, "opencv-python-headless")
     Invoke-Native "uv" @(
@@ -160,9 +170,9 @@ try {
         throw "$TorchPython failed while locating Python headers"
     }
     if (-not (Test-Path (Join-Path $PythonInclude.Trim() "Python.h"))) {
-        throw "Python.h is missing from the Python 3.12 interpreter at $PythonInclude"
+        throw "Python.h is missing from the interpreter at $PythonInclude"
     }
-    Write-Host "==> Python.h present in the Python 3.12 base interpreter"
+    Write-Host "==> Python.h present in the base interpreter"
 
     $NvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     $HasNvidiaGpu = $false
@@ -176,8 +186,9 @@ try {
     if ($HasNvidiaGpu) {
         Write-Host "==> .venv-gpu (CUDA torch test env)"
         if (-not (Test-Path $GpuPython)) {
-            Invoke-Native "uv" @("venv", $GpuEnvironment, "--python", "3.12")
+            Invoke-Native "uv" @("venv", $GpuEnvironment, "--python", $BasePython)
         }
+        Invoke-Native $GpuPython @("-I", $SqliteGate)
         Invoke-Native "uv" @(
             "pip", "install", "--python", $GpuPython,
             "--index-url", "https://download.pytorch.org/whl/cu130",

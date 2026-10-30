@@ -86,7 +86,7 @@ workspace-member tests. The selections and setup commands in
 | Lane | Required execution |
 | --- | --- |
 | Linux CPython 3.12 root | All four `test` file shards, with the workflow's branch-coverage sources and exclusions |
-| Windows CPython 3.12 root | All four `test` file shards in a native Windows checkout |
+| Windows CPython 3.14.10 root | All four `test` file shards in a native Windows checkout, using the patched SQLite runtime |
 | CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in `.venv-torch` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Coverage gate | All four Linux coverage files combined; `coverage report --fail-under=80` |
@@ -136,7 +136,7 @@ next completed run at a descendant head. Find candidate runs in the Actions
 `git merge-base --is-ancestor <merge-sha> <run-head-sha>`. Scheduled,
 dispatched and release-called runs use a separate non-cancelling durable group,
 so push traffic neither queues nor replaces them. Full validation runs the
-Python 3.12 Linux suite as four whole-file shards, both Python 3.12 Windows
+Python 3.12 Linux suite as four whole-file shards, four Python 3.14.10 Windows
 shards, and branch coverage collected during those same Linux test shards.
 All four coverage artifacts are required and combined before enforcing the
 unchanged 80% floor, without a second root-suite run. Model pytest invocations
@@ -161,8 +161,15 @@ launch-checks those exact artifacts on Linux, Windows and macOS before
 publishing the GitHub Release. Its hosted-eligible jobs use the same
 `CI_RUNNERS` variable.
 
-Both workflows use Python 3.12 only. Package requirements and the dependency
-lock continue to support Python 3.13. Heavy jobs run independently; the
+Windows CI and release installation use the verified
+[CPython 3.14.10 runtime](install.md#windows-interpreter). The fast PR lane
+also acquires it and runs durable delegation and base archive tests. Runtime
+acquisition and bundle extraction run the mapped-shm functional gate before
+use; a SQLite version comparison would not distinguish the patched 3.53.1.
+The Windows runtime feature branch receives natural full-validation push runs
+without workflow dispatches or reruns. Linux/macOS selections are unchanged.
+Package requirements and the dependency lock continue to support Python 3.13.
+Heavy jobs run independently; the
 torch CPU job pins AVX2 dispatch without retry jobs.
 
 Linux ARM64 artifact smoke and release installation are not part of the
@@ -206,7 +213,7 @@ are clearly labeled, and skip loudly rather than silently not existing:
   platforms. A core-only checkout can use `uv sync --group angle`. Run the test to
   execute every declared GLSL image mirror against its CPU parity corpus.
   It skips when ANGLE or a float-renderable EGL/GLES 3 context is unavailable.
-- **CI matrix**: Linux + Windows, Python 3.12 - Windows is the
+- **CI matrix**: Linux Python 3.12 and Windows Python 3.14.10 - Windows is the
   dominant user OS and keeps the tcp-transport and shm-lifetime rules
   honest.
 

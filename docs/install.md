@@ -7,7 +7,8 @@ To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
 26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
 `.\run.ps1` on Windows. The scripts install uv user-locally if missing;
-Python 3.12 is obtained by uv when needed. The scripts
+Linux/macOS obtain Python 3.12 through uv. Windows uses the verified private
+Python 3.14.10 runtime described below. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
 
@@ -42,6 +43,8 @@ uv pip install --python .venv/bin/python --no-deps --require-hashes --find-links
 
 On Windows, use `.venv\Scripts\python.exe`. Do not combine wheels or constraints
 from different releases. Models and accelerator runtimes are not bundled.
+On Windows, first prepare the runtime below and pass its executable to
+`uv venv --python` instead of the floating `3.12` selector.
 
 The registry server is a separate deployment, not part of the Dinkster wheel
 set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
@@ -52,7 +55,7 @@ and downloading exact pack releases.
 ## Develop from source
 
 The run scripts above are the default source installation path. For a manual
-development setup, clone the backend and frontend as sibling directories, then run:
+development setup on Linux/macOS, clone the backend and frontend as sibling directories, then run:
 
 ```sh
 uv sync --python 3.12 --all-packages --frozen
@@ -67,6 +70,64 @@ uv run --no-sync dinkster
 The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
 access.
+
+### Windows interpreter
+
+Windows uses CPython 3.14.10 / cp314 from python-build-standalone 20261026,
+with SQLite 3.53.1 plus the upstream
+[mapped-shm recovery fix](https://sqlite.org/src/info/7c103a0b7d).
+The unmodified interpreter fails WAL reopening while an old shared-memory
+mapping survives ([upstream report](https://sqlite.org/forum/forumpost/f9c68d01e2d7f638)).
+A SQLite version string cannot distinguish the patched library, so acquisition
+and bundle extraction require a functional WAL read and integrity check with
+the mapping held open, followed by a released-mapping control.
+
+`scripts/setup_envs.ps1` prepares this runtime in `.run/windows-python` and
+uses it for the root, CPU and optional GPU environments. Existing CPU/GPU
+environments must also pass the check; use `-Force` to recreate incompatible
+environments. For manual root-only setup from the checkout:
+
+```powershell
+uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py --output .run/windows-python
+uv sync --python .run/windows-python/python/python.exe --all-packages --frozen
+```
+
+Preparation verifies immutable Dinkster-Environments source pins, the original
+interpreter archive, and the replacement DLL. Zig 0.14.1 is a new build
+dependency, installed in an isolated uv environment and verified against the
+exact Windows wheel SHA-256. Only `python/DLLs/sqlite3.dll` changes; uv's
+interpreter cache is never modified. The base manifest records the official
+amalgamation, patch, compiler, flags and DLL hashes, and Windows bundle CI
+must reproduce the pinned DLL hash. Linux and macOS are unchanged.
+When a verified upstream interpreter contains the fix, remove the override
+and move the pins together; retain the functional check.
+
+Interpreter inventory:
+
+| Consumer | Interpreter selection | Bundled SQLite |
+| --- | --- | --- |
+| Environments Windows bases | PBS 20261026, CPython 3.14.10 / cp314 | 3.53.1, same-version DLL with upstream fix |
+| Environments Linux base | PBS 20261026, CPython 3.14.10 / cp314, unchanged | 3.53.1, upstream unmodified |
+| Windows full-validation shards, PR runtime job, release install, dependency receipt job | Verified private Windows base interpreter | Patched 3.53.1 |
+| Windows developer root/CPU/GPU environments | `setup_envs.ps1`, verified private base | Patched 3.53.1 |
+| Windows launcher and acquisition bootstrap | uv CPython 3.14.10, no database use before preparation | Unpatched bootstrap may carry 3.53.1; not used as the engine runtime |
+| Linux CI/full-validation/developer environments and macOS release smoke | Floating uv `3.12`, unchanged | Not a fixed artifact; PBS 20261026 CPython 3.12.14 carries 3.53.1 |
+| Linux release runtime | CPython 3.14.10, unchanged | PBS 20261026 carries 3.53.1 |
+| OpenTimelineIO-only dependency index/import checks, including Windows ARM64 | Floating uv `3.14`, unchanged, no Dinkster stores | Not a fixed artifact; PBS 20261026 carries 3.53.1 |
+| Legacy Desktop source installer | Floating uv `3.12` / cp312 | Not fixed; PBS CPython 3.12.14 carries affected 3.53.1 |
+
+The PBS versions above come from the
+[20261026 dependency manifest](https://github.com/astral-sh/python-build-standalone/blob/20261026/pythonbuild/downloads.json);
+Windows 3.14.10 was also executed from the size/hash-verified archive.
+Floating selectors can choose other catalog releases or existing local Python
+installations; they do not promise a SQLite version. The Windows functional
+gate is therefore applied to the interpreter actually admitted for use.
+
+The legacy Desktop installer is superseded by the
+[Desktop-as-client change](https://github.com/Kosinkadink/Dinkster-Desktop/pull/23),
+which uses `dinkster-env` base acquisition instead. Until that change lands,
+a fresh Desktop install floating to a PBS 3.12.x with SQLite 3.50 or newer
+is exposed to the regression. There is no cp314 migration of that legacy path.
 
 For native generation, build the execution environments from the Dinkster
 repository root with `./scripts/setup_envs.sh`, or

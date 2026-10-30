@@ -9,6 +9,8 @@ on:
       - scripts/setup_envs.ps1
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
+      - scripts/prepare_windows_python.py
+      - .github/actions/windows-python/action.yml
       - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
       - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
       - pyproject.toml
@@ -149,6 +151,8 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: runner.os == 'Windows'
       - run: uv sync --locked --all-packages
       - name: Test receipt generation on the native platform
         run: uv run --locked python -m pytest -q tests/test_minimax_h3_multigpu_receipt.py

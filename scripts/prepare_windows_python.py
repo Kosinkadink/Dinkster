@@ -12,10 +12,10 @@ import urllib.request
 from pathlib import Path
 
 # This source pin moves with the Windows base's SQLite override, not with uv's catalog.
-ENVIRONMENTS_COMMIT = "PENDING"
+ENVIRONMENTS_COMMIT = "939c9d30bb255763696f04f313835ce7f3b84244"
 INPUTS = {
-    "windows_sqlite.py": "PENDING",
-    "variants.toml": "PENDING",
+    "windows_sqlite.py": "9f681989e1928d979868f2acbbb5be88d587c1e6f7c97216b3e777a963208b95",
+    "variants.toml": "6c13daa5b35c65c787c859d85bae44a2d463678269c54fcf4ac4141c3ba64db8",
 }
 
 
