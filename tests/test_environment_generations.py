@@ -75,21 +75,23 @@ def _standalone_tree(root: Path) -> None:
 def _assert_shared(first: Path, second: Path) -> None:
     if first.samefile(second):
         return
-    assert sys.platform.startswith("linux"), "expected shared inode or Linux CoW extents"
-    import fcntl
+    if sys.platform == "linux":
+        import fcntl
 
-    extents = []
-    for path in (first, second):
-        # FIEMAP with SYNC: one extent suffices to distinguish clones from plain copies.
-        mapping = bytearray(struct.pack("=QQIIII", 0, 2**64 - 1, 1, 0, 1, 0) + bytes(56))
-        with path.open("rb") as handle:
-            fcntl.ioctl(handle.fileno(), 0xC020660B, mapping, True)
-        assert struct.unpack_from("=I", mapping, 20)[0] == 1
-        physical = struct.unpack_from("=Q", mapping, 40)[0]
-        flags = struct.unpack_from("=I", mapping, 72)[0]
-        assert physical > 0 and flags & 0x2000, "expected a shared CoW extent"
-        extents.append(physical)
-    assert extents[0] == extents[1]
+        extents = []
+        for path in (first, second):
+            # FIEMAP with SYNC: one extent suffices to distinguish clones from plain copies.
+            mapping = bytearray(struct.pack("=QQIIII", 0, 2**64 - 1, 1, 0, 1, 0) + bytes(56))
+            with path.open("rb") as handle:
+                fcntl.ioctl(handle.fileno(), 0xC020660B, mapping, True)
+            assert struct.unpack_from("=I", mapping, 20)[0] == 1
+            physical = struct.unpack_from("=Q", mapping, 40)[0]
+            flags = struct.unpack_from("=I", mapping, 72)[0]
+            assert physical > 0 and flags & 0x2000, "expected a shared CoW extent"
+            extents.append(physical)
+        assert extents[0] == extents[1]
+    else:
+        pytest.fail("expected shared inode or Linux CoW extents")
 
 
 @pytest.mark.parametrize(
@@ -143,8 +145,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     if aliases:
         try:
             (base / "executable-alias").symlink_to(executable)
-            (base / "resource-alias").symlink_to("share/fixture/resource.txt")
-            (base / "directory-alias").symlink_to("share/fixture", target_is_directory=True)
+            (base / "resource-alias").symlink_to(Path("share/fixture/resource.txt"))
+            (base / "directory-alias").symlink_to(Path("share/fixture"), target_is_directory=True)
         except OSError as exc:
             pytest.skip(f"internal interpreter aliases require symlink support: {exc}")
     site = Path(
@@ -347,7 +349,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     "move-cross-volume-corrupt-wheel-cache",
                 }:
                     for category in ("bases", "engines", "wheels"):
-                        shutil.copytree(store / category, target_store / category, symlinks=True)
+                        environment_move.copy_tree(store / category, target_store / category)
                 if problem == "move-cross-volume-corrupt-wheel-cache":
                     warm = tmp_path / "warm-cache-project"
                     warm.mkdir()

@@ -272,6 +272,49 @@ def test_unverified_supervisor_exit_does_not_prove_idle(tmp_path: Path, live: bo
         start_engine(tmp_path, 1, "main", record["port"])
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux procfs process lifetime contract")
+def test_supervisor_exit_during_status_read_refuses_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_generation(tmp_path)
+    with subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    ) as child:
+        stat_path = Path("/proc") / str(child.pid) / "stat"
+        runtime = tmp_path / "runtime/1"
+        runtime.mkdir(parents=True)
+        (runtime / "main.json").write_text(
+            json.dumps(
+                {
+                    "name": "main",
+                    "generation": 1,
+                    "port": 1,
+                    "gpus": [],
+                    "instance": "exiting-supervisor",
+                    "shutdownToken": "private",
+                    "pid": child.pid,
+                    "state": "ready",
+                    "url": "http://127.0.0.1:1",
+                }
+            )
+        )
+        original = Path.read_text
+
+        def read_text(path: Path, *args, **kwargs) -> str:
+            if path != stat_path:
+                return original(path, *args, **kwargs)
+            with path.open(encoding="utf-8") as stream:
+                assert child.stdin is not None
+                child.stdin.close()
+                assert child.wait(timeout=10) == 0
+                return stream.read()
+
+        monkeypatch.setattr(Path, "read_text", read_text)
+        assert engine_status(tmp_path)[0]["state"] == "failed"
+        with pytest.raises(EnvironmentError, match="cannot verify"):
+            require_idle(tmp_path)
+
+
 def test_zero_pid_recovers_identity_for_authenticated_stop(tmp_path: Path) -> None:
     make_generation(tmp_path)
     port = free_port()
