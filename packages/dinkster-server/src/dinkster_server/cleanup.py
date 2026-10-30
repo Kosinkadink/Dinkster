@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from contextlib import AsyncExitStack, ExitStack
 from pathlib import Path
 
@@ -68,8 +69,18 @@ async def inspect_cleanup(
 
 def _scratch_bytes(scratch: Path) -> int:
     """Observe only recognized, inactive job stores without repairing their state."""
-    if scratch.is_symlink() or (scratch.exists() and not scratch.is_dir()):
-        raise AssetError("scratch accounting must not follow symlinks")
+
+    def present_directory(path: Path) -> bool:
+        try:
+            mode = path.stat(follow_symlinks=False).st_mode
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISDIR(mode):
+            raise AssetError("scratch accounting requires a real directory")
+        return True
+
+    if not present_directory(scratch):
+        return 0
 
     def unreadable(error: OSError) -> None:
         raise error
@@ -77,22 +88,18 @@ def _scratch_bytes(scratch: Path) -> int:
     size = 0
     for scope in ("packs", "groups"):
         folder = scratch / scope
-        if folder.is_symlink():
-            raise AssetError("scratch accounting must not follow symlinks")
-        if not folder.exists():
+        if not present_directory(folder):
             continue
         for pack in folder.iterdir():
             if pack.is_symlink() or not pack.is_dir():
                 raise AssetError("scratch pack accounting is unavailable")
             produced = pack / "produced-assets"
             jobs = produced / "jobs"
-            if produced.is_symlink() or jobs.is_symlink():
-                raise AssetError("scratch accounting must not follow symlinks")
-            if not produced.exists():
+            if not present_directory(produced):
                 continue
             if any(path.name != "jobs" for path in produced.iterdir()):
                 raise AssetError("unscoped scratch accounting is unavailable")
-            if not jobs.exists():
+            if not present_directory(jobs):
                 continue
             for root in jobs.iterdir():
                 if root.name == ".leases":

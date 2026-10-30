@@ -134,7 +134,7 @@ class ProducedScratchState:
 
 def produced_job_scratch_root(scratch: Path, job: str, attempt: int) -> Path:
     """Use one canonical job/attempt mapping for publication and reconciliation."""
-    if not isinstance(job, str) or not job or type(attempt) is not int or attempt < 1:
+    if not job or type(attempt) is not int or attempt < 1:
         raise AssetError("produced scratch requires a job and positive attempt")
     key = digest_bytes(json.dumps((job, attempt), ensure_ascii=True).encode("ascii")).split(":", 1)[
         1
