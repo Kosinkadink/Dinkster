@@ -19,6 +19,29 @@ os.environ["DINKSTER_REMOTE_CATALOG_BASE"] = ""
 os.environ["DINKSTER_REMOTE_GATEWAY_BASE"] = ""
 
 
+def pytest_sessionstart(session: pytest.Session) -> None:
+    if os.name != "nt":
+        return
+    import winreg
+
+    base = r"SOFTWARE\Microsoft\Windows\Windows Error Reporting"
+    for suffix, names in (
+        ("", ("DontShowUI", "Disabled")),
+        (r"\LocalDumps", ("DumpFolder", "DumpCount", "DumpType")),
+    ):
+        path = base + suffix
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, access=winreg.KEY_READ) as key:
+                for name in names:
+                    try:
+                        value, _ = winreg.QueryValueEx(key, name)
+                    except OSError as exc:
+                        value = f"unavailable: {exc}"
+                    print(f"WER HKLM\\{path} {name}={value!r}")
+        except OSError as exc:
+            print(f"WER HKLM\\{path} unavailable: {exc}")
+
+
 @pytest.fixture(autouse=True)
 def _isolate_remote_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     # CLI startup removes service settings from the parent environment.
