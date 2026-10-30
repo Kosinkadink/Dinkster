@@ -8,7 +8,7 @@ enabled and disabled where the source checks cache-sensitive behavior.
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import Mapping
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -24,7 +24,7 @@ from dinkster_graph import (
     TypedLiteral,
     graph_to_wire,
 )
-from dinkster_nodes_dev.execution import EXECUTION_NODES
+from dinkster_nodes_dev.execution import EXECUTION_NODES, ExecutionSleep
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry, is_absent, register_core_types
@@ -813,10 +813,24 @@ def test_for_loop(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
-def test_parallel_sleep_nodes(cache_enabled: bool) -> None:
+def test_parallel_sleep_nodes(cache_enabled: bool, monkeypatch: pytest.MonkeyPatch) -> None:
     """Port of ComfyUI test_parallel_sleep_nodes."""
 
     async def scenario() -> None:
+        started: list[int] = []
+        all_started = asyncio.Event()
+        sleep = ExecutionSleep.execute
+
+        async def overlapping_sleep(
+            cls: type[ExecutionSleep], *, value: int, seconds: float
+        ) -> Mapping[str, object]:
+            started.append(value)
+            if len(started) == 2:
+                all_started.set()
+            await asyncio.wait_for(all_started.wait(), timeout=10)
+            return await sleep(value=value, seconds=seconds)
+
+        monkeypatch.setattr(ExecutionSleep, "execute", classmethod(overlapping_sleep))
         events = []
         engine = make_engine(events.append)
         graph = Graph(
@@ -825,9 +839,8 @@ def test_parallel_sleep_nodes(cache_enabled: bool) -> None:
                 "right": GraphNode("dev.execution.sleep", {"value": 5, "seconds": 0.1}),
             }
         )
-        started = time.monotonic()
         result = await engine.run(graph, ["left", "right"], cache_enabled=cache_enabled)
-        assert time.monotonic() - started < 0.18
+        assert sorted(started) == [3, 5]
         assert result.outputs["left"]["value"].resolve() == 3
         assert result.outputs["right"]["value"].resolve() == 5
 
@@ -835,10 +848,26 @@ def test_parallel_sleep_nodes(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
-def test_parallel_sleep_expansion(cache_enabled: bool) -> None:
+def test_parallel_sleep_expansion(cache_enabled: bool, monkeypatch: pytest.MonkeyPatch) -> None:
     """Port of ComfyUI test_parallel_sleep_expansion."""
 
     async def scenario() -> None:
+        started: list[int] = []
+        all_started = asyncio.Event()
+        sleep = ExecutionSleep.execute
+
+        async def overlapping_sleep(
+            cls: type[ExecutionSleep], *, value: int, seconds: float
+        ) -> Mapping[str, object]:
+            started.append(value)
+            if len(started) == 3:
+                all_started.set()
+            # All expanded children must enter before any can finish. A serial
+            # scheduler times out instead of passing on a fast or loaded host.
+            await asyncio.wait_for(all_started.wait(), timeout=10)
+            return await sleep(value=value, seconds=seconds)
+
+        monkeypatch.setattr(ExecutionSleep, "execute", classmethod(overlapping_sleep))
         events = []
         engine = make_engine(events.append)
         graph = Graph(
@@ -849,9 +878,8 @@ def test_parallel_sleep_expansion(cache_enabled: bool) -> None:
                 )
             }
         )
-        started = time.monotonic()
         result = await engine.run(graph, ["parallel"], cache_enabled=cache_enabled)
-        assert time.monotonic() - started < 0.18
+        assert sorted(started) == [3, 5, 7]
         assert result.outputs["parallel"]["value"].resolve() == 15
         assert any(event.kind == "node_expanded" for event in events)
 

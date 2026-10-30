@@ -63,6 +63,8 @@ from PIL import Image
 
 from tests.test_audio_io import _bound, _mount
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 @pytest.fixture
 def source(tmp_path: Path) -> tuple[AssetRef, np.ndarray]:
@@ -787,12 +789,12 @@ def test_onset_curve_tracks_impulses_and_silent_audio() -> None:
     assert all(point[1] == 0 for point in silent.points)
 
 
-def test_long_onsets_respect_curve_point_budget() -> None:
+def test_long_onsets_retain_all_curve_points() -> None:
     waveform = np.zeros((1, 1, 5000), dtype=np.float32)
-    with pytest.warns(UserWarning, match="peak-aggregated"):
-        value = AudioOnsets.execute(audio={"waveform": waveform, "sample_rate": 1})["curve"]
+    value = AudioOnsets.execute(audio={"waveform": waveform, "sample_rate": 1})["curve"]
     assert isinstance(value, Curve)
-    assert len(value.points) == 2500
+    # Hand-derived: a one-sample hop keeps every timestamp, even beyond preview limits.
+    assert value.points == tuple((float(index), 0.0) for index in range(5000))
 
 
 def test_flac_seek_windows_are_sample_exact_and_decoder_bounded(
@@ -1052,19 +1054,6 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
             await worker.close()
 
     asyncio.run(scenario())
-
-
-def test_two_hour_flac_trim_save_rss(tmp_path: Path) -> None:
-    result = subprocess.run(
-        [sys.executable, "tools/audio_conformance.py", "--rss", "--directory", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    report = json.loads(result.stdout.splitlines()[-1])
-    assert report["rss_growth_bytes"] < 64 * 1024 * 1024
-    assert report["saved_frames"] == 480000
-    assert report["source_frames"] == 345600000
 
 
 def _audio_header(wire: bytes) -> tuple[dict[str, Any], bytes]:

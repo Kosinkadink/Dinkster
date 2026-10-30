@@ -988,12 +988,17 @@ def test_widget_socket_binding_enforced() -> None:
         widget=ComboWidget(options=("a", "b")),
     )
     for wrong in (
+        TypeExpr.concrete("INT"),
         TypeExpr.concrete("STRING"),
         TypeExpr.wildcard(),
         TypeExpr.union("COMBO", "STRING"),
     ):
         with pytest.raises(ValueError, match="combo widget requires a concrete"):
             InputSpec("combo", wrong, widget=ComboWidget(options=("a", "b")))
+    with pytest.raises(ValueError, match="boolean widget"):
+        InputSpec("bad", TypeExpr.concrete("STRING"), widget=BooleanWidget(label_on="yes"))
+    with pytest.raises(ValueError, match="save target widget"):
+        InputSpec("bad", TypeExpr.concrete("STRING"), widget=SaveTargetWidget())
 
 
 def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
@@ -1227,6 +1232,7 @@ def test_malformed_widget_wire_rejected() -> None:
     """Structurally invalid built-in widget descriptors refuse loudly."""
     for bad in (
         "ASSET",
+        {"type": ""},
         {"type": "ASSET", "accept": "image/png"},
         {"type": "ASSET", "accept": [1]},
         {"type": "SAVE_TARGET", "suffix": 7},
@@ -1666,3 +1672,66 @@ def test_duplicate_ids_rejected() -> None:
                 InputSpec("x", TypeExpr.concrete("INT")),
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "kind", ["model/vae", "model/diffusers", "directory/input", "directory/dataset"]
+)
+def test_asset_selection_schema_roundtrip_is_strict_and_retains_one_combo(kind: str) -> None:
+    schema = NodeSchema(
+        node_type="selection",
+        inputs=(
+            InputSpec(
+                "choice", TypeExpr.concrete("COMBO"), widget=AssetWidget(kind=kind, selection=True)
+            ),
+        ),
+    )
+    wire: Any = schema_to_wire(schema)
+    assert wire["interface"][0]["widget"] == {
+        "type": "ASSET",
+        "accept": [],
+        "kind": kind,
+        "selection": True,
+    }
+    assert schema_from_wire(wire) == schema
+    for value in (None, 0, 1, "true", [], {}):
+        invalid = json.loads(json.dumps(wire))
+        invalid["interface"][0]["widget"]["selection"] = value
+        with pytest.raises(ValueError, match="selection must be a bool"):
+            schema_from_wire(invalid)
+    for input_type in ("ASSET", "STRING", "INT"):
+        with pytest.raises(ValueError, match="scalar COMBO"):
+            NodeSchema(
+                node_type="invalid",
+                inputs=(
+                    InputSpec(
+                        "choice",
+                        TypeExpr.concrete(input_type),
+                        widget=AssetWidget(kind=kind, selection=True),
+                    ),
+                ),
+            )
+    with pytest.raises(ValueError, match="forbids upload"):
+        AssetWidget(kind=kind, selection=True, allow_upload=True)
+    with pytest.raises(ValueError, match="supported exact kind"):
+        AssetWidget(kind="model/checkpoint", selection=True)
+    ordinary: Any = schema_to_wire(
+        NodeSchema(
+            node_type="ordinary",
+            inputs=(InputSpec("file", TypeExpr.concrete("ASSET"), widget=AssetWidget(kind=kind)),),
+        )
+    )
+    assert "selection" not in ordinary["interface"][0]["widget"]
+    union = TypeExpr.union("COMBO", "ASSET")
+    if kind == "model/vae":
+        union_schema = NodeSchema(
+            node_type="mixed",
+            inputs=(InputSpec("choice", union, widget=AssetWidget(kind=kind, selection=True)),),
+        )
+        assert schema_from_wire(schema_to_wire(union_schema)) == union_schema
+    else:
+        with pytest.raises(ValueError, match="model/vae COMBO/ASSET"):
+            NodeSchema(
+                node_type="mixed",
+                inputs=(InputSpec("choice", union, widget=AssetWidget(kind=kind, selection=True)),),
+            )

@@ -3,8 +3,9 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
-Source-marked file combos may use an ASSET socket and asset picker; ordinary
-combo types, options and defaults remain exact.
+Source-marked file combos may use an ASSET socket and asset picker. Marked
+directory, pair and literal choices require their exact selection kind;
+ordinary combo types, options and defaults remain exact.
 V3 inputs follow the recorded declaration sequence, including optional inputs
 between required inputs. V1 inputs retain required-then-optional group order.
 Hidden inputs are outside the workflow contract on both sides. Output names
@@ -18,6 +19,9 @@ around it. Unflagged and nested-list differences remain differences.
 Declared FLOAT bounds, step and round compare exactly after projecting the
 reference numbers to float; INT and field presence remain exact. Boolean
 round sentinels are not numeric precision values.
+API nodes and nodes originating in nodes_train.py or nodes_dataset.py are
+excluded from required coverage. Training-origin nodes must also be absent
+from the served registry; their exclusion does not hide pending deletions.
 
 Usage: python tools/compare_nodes.py COMFY_JSON REGISTRY_JSON OUT_CSV OUT_JSON
 """
@@ -27,6 +31,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -43,6 +48,10 @@ VALUE_OPTIONS = (
     "forceInput",
     "control_after_generate",
     "multiselect",
+    "conditional_options",
+    "environment_options",
+    "baseline_options",
+    "possible_options",
 )
 
 
@@ -68,9 +77,14 @@ def _type(expr: dict[str, Any]) -> Any:
 def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list[dict[str, Any]]:
     result = []
     for group in ("required", "optional"):
-        for name, spec in groups.get(group, {}).items():
+        parameters = groups.get(group, {})
+        if not isinstance(parameters, dict):
+            raise ValueError(f"{group}: input group must be an object")
+        for name, spec in parameters.items():
             value_type = spec[0] if isinstance(spec, list) else spec
             options = spec[1] if isinstance(spec, list) and len(spec) > 1 else {}
+            if not isinstance(options, dict):
+                raise ValueError(f"{name}: input options must be an object")
             entry: dict[str, Any] = {"name": name, "group": group, "type": value_type}
             if isinstance(value_type, list):
                 entry.update(type="COMBO", options=value_type)
@@ -92,6 +106,11 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry["type"] = "inputFamily"
                 entry["template"] = _reference_inputs(template["input"], list_inputs)
                 entry["min"] = template.get("min", 1)
+                if entry["min"] == 0:
+                    for member in entry["template"]:
+                        member["group"] = "optional"
+                elif any(member["group"] == "required" for member in entry["template"]):
+                    entry["optional_after_minimum"] = True
                 if "names" in template:
                     entry["names"] = template["names"]
                 else:
@@ -122,6 +141,8 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry.pop("multiselect")
             if options.get("file_input"):
                 entry["file_input"] = True
+            if "asset_selection_kind" in options:
+                entry["asset_selection_kind"] = options["asset_selection_kind"]
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
             if entry["type"] == "inputFamily" and not entry["template"]:
@@ -145,6 +166,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if role == "input":
             entry["type"] = _type(item["type"])
             widget = item.get("widget") or {}
+            if widget.get("type") == "ASSET" and widget.get("selection") is True:
+                entry["selection_picker"] = widget.get("kind")
             for key in VALUE_OPTIONS:
                 wire_key = "controlAfterGenerate" if key == "control_after_generate" else key
                 if wire_key in widget:
@@ -158,6 +181,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if "default" in item:
                 entry["default"] = item["default"]
             if entry["type"] in ("COMBO", {"list": "COMBO"}):
+                if isinstance(widget.get("remote"), dict) and widget["remote"].get("route"):
+                    entry["remote_route"] = widget["remote"]["route"]
                 if "options" in widget:
                     entry["options"] = [
                         option["value"] if isinstance(option, dict) else option
@@ -185,6 +210,15 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry.update(
                 type=role, template=_native_inputs(item["template"]), min=item.get("minMembers", 0)
             )
+            if item.get("optionalAfterMinimum") and entry["min"] == 0:
+                for member in entry["template"]:
+                    member["group"] = "optional"
+            if (
+                item.get("optionalAfterMinimum")
+                and entry["min"] > 0
+                and any(member["group"] == "required" for member in entry["template"])
+            ):
+                entry["optional_after_minimum"] = True
             if "memberNames" in item:
                 entry["names"] = item["memberNames"]
             else:
@@ -211,6 +245,17 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         return []
     if isinstance(expected, dict) and isinstance(actual, dict):
         expected, actual = dict(expected), dict(actual)
+        if any(
+            key in expected
+            for key in (
+                "conditional_options",
+                "environment_options",
+                "baseline_options",
+                "possible_options",
+            )
+        ):
+            return [f"{path}: invalid conditional option declaration"]
+        actual.pop("remote_route", None)
         list_flag = expected.pop("_list_flag", False)
         native_type = actual.get("type")
         if (
@@ -222,7 +267,32 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         ):
             actual["type"] = native_type["list"]
         file_input = expected.pop("file_input", False)
-        if actual.pop("file_picker", False):
+        selection_kind = expected.pop("asset_selection_kind", None)
+        selection_picker = actual.pop("selection_picker", None)
+        file_picker = actual.pop("file_picker", False)
+        if selection_kind is not None or selection_picker is not None:
+            if (
+                not isinstance(selection_kind, str)
+                or selection_kind
+                not in {"model/vae", "model/diffusers", "directory/input", "directory/dataset"}
+                or selection_picker != selection_kind
+                or expected.get("type") != "COMBO"
+            ):
+                return [f"{path}: asset selection requires matching source-marked purpose kinds"]
+            native_type = actual.get("type")
+            if native_type == "COMBO" or (
+                selection_kind == "model/vae"
+                and isinstance(native_type, str)
+                and set(native_type.split(",")) == {"COMBO", "ASSET"}
+                and len(native_type.split(",")) == 2
+            ):
+                actual["type"] = "COMBO"
+            else:
+                return [f"{path}: asset selection has an unsupported socket type"]
+            expected.pop("options", None)
+            expected.pop("default", None)
+            actual.pop("default", None)
+        elif file_picker:
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
@@ -264,6 +334,45 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
     expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
+    for item in expected:
+        if not any(
+            key in item
+            for key in (
+                "conditional_options",
+                "environment_options",
+                "baseline_options",
+                "possible_options",
+            )
+        ):
+            continue
+        allowed = None
+        if row["class_name"] == "ModelAttentionBackend" and item["name"] == "attention":
+            allowed = [
+                {
+                    "value": "comfy kitchen attention",
+                    "condition": "comfy_kitchen.int8_attention_is_available()",
+                }
+            ]
+        elif (
+            row["class_name"] in ("SelectModelDevice", "SelectCLIPDevice", "SelectVAEDevice")
+            and item["name"] == "device"
+        ):
+            allowed = [
+                {
+                    "pattern": r"gpu:[0-9]+",
+                    "condition": "len(comfy.model_management.get_all_torch_devices()) > 1",
+                }
+            ]
+        if (
+            allowed is None
+            or "conditional_options" in item
+            or item.get("environment_options") is not True
+            or item.get("possible_options") != allowed
+            or item.get("baseline_options") != item.get("options")
+            or not isinstance(item.get("options"), list)
+            or not all(isinstance(option, str) for option in item["options"])
+        ):
+            return [f"{item['name']}: invalid conditional option declaration"]
     if row.get("is_v3") or "v3_inputs" in row:
         declarations = row.get("v3_inputs")
         if not isinstance(declarations, list) or any(
@@ -282,8 +391,46 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         expected = [by_name[name] for name in names]
     actual = _native_inputs(schema.get("interface", []))
     differences = []
-    save_node = row["class_name"].startswith("Save") and any(
-        item["name"] == "filename_prefix" for item in expected
+    for item in expected:
+        conditional = item.pop("possible_options", [])
+        if not conditional:
+            continue
+        item.pop("environment_options")
+        baseline = item.pop("baseline_options")
+        for entry in (other for other in actual if other["name"] == item["name"]):
+            options = entry.get("options", [])
+            if not entry.get("remote_route"):
+                if any(option not in options for option in baseline):
+                    differences.append(f"{item['name']}: native options omit baseline choices")
+                for declaration in conditional:
+                    if not any(
+                        option == declaration["value"]
+                        if "value" in declaration
+                        else isinstance(option, str)
+                        and re.fullmatch(declaration["pattern"], option) is not None
+                        for option in options
+                    ):
+                        differences.append(f"{item['name']}: native options omit possible choices")
+                if any(
+                    option not in baseline
+                    and not any(
+                        option == declaration["value"]
+                        if "value" in declaration
+                        else isinstance(option, str)
+                        and re.fullmatch(declaration["pattern"], option) is not None
+                        for declaration in conditional
+                    )
+                    for option in options
+                ):
+                    differences.append(
+                        f"{item['name']}: native options include unsupported choices"
+                    )
+            entry["options"] = item["options"]
+    save_node = row.get("output_node") is True and any(
+        item["name"] == "filename_prefix"
+        and item["type"] == "STRING"
+        and not item.get("_list_flag")
+        for item in expected
     )
     if actual and actual[-1]["name"] == "mount" and save_node:
         mount = actual.pop()
@@ -356,6 +503,11 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
+    conditional_options = {}
+    if reference.get("builtin_import_failures"):
+        errors.append(
+            "reference builtin imports failed: " + ", ".join(reference["builtin_import_failures"])
+        )
     ids = set(classes)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
@@ -370,9 +522,34 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
                     errors.append(f"{key}: prefixed type name: {value}")
     for row in nodes:
         name = row["class_name"]
+        inputs = row.get("input_types")
+        if not isinstance(inputs, dict):
+            inputs = {}
+        row_conditionals = {
+            parameter: {
+                key: spec[1].get(key)
+                for key in ("environment_options", "baseline_options", "possible_options")
+            }
+            for group in ("required", "optional")
+            if isinstance(inputs.get(group), dict)
+            for parameter, spec in inputs[group].items()
+            if isinstance(spec, list)
+            and len(spec) > 1
+            and isinstance(spec[1], dict)
+            and spec[1].get("environment_options")
+        }
+        if row_conditionals:
+            conditional_options[name] = row_conditionals
         exclusion = ""
         if row.get("api_node") or str(row.get("file", "")).startswith("comfy_api_nodes/"):
             exclusion = "API node"
+        elif row.get("file") in (
+            "comfy_extras/nodes_train.py",
+            "comfy_extras/nodes_dataset.py",
+        ):
+            exclusion = "training-origin node"
+            if name in served:
+                errors.append(f"excluded training-origin node remains registered: {name}")
         differences = []
         if exclusion:
             status = "excluded"
@@ -383,7 +560,9 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
                 differences = compare(row, served[name])
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 differences = [f"invalid interface: {type(exc).__name__}: {exc}"]
-            status = "differs" if differences else "identical"
+            status = (
+                "differs" if differences else "conditional" if row_conditionals else "identical"
+            )
         results.append(
             {
                 "class_name": name,
@@ -406,8 +585,13 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     counts = dict(Counter(row["status"] for row in results))
     return {
         "reference_commit": reference.get("source_commit"),
+        "reference_environment": reference.get("environment"),
+        "eligible_node_count": sum(
+            row["status"] in ("identical", "conditional", "differs", "absent") for row in results
+        ),
         "counts": counts,
         "engine_exclusions": {},
+        "conditional_options": conditional_options,
         "registry_errors": sorted(set(errors)),
         "rows": results,
         "passed": not errors and not counts.get("differs") and not counts.get("absent"),

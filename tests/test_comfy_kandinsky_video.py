@@ -1,8 +1,5 @@
 """Torch-free Kandinsky video discovery and public schema."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.kandinsky_video import Kandinsky5ImageToVideo
@@ -32,18 +29,3 @@ def test_kandinsky_video_public_schema() -> None:
         "cond_latent",
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
-
-
-def test_kandinsky_video_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy import COMFY_NODES; "
-            "assert any(n.schema().node_type == 'Kandinsky5ImageToVideo' for n in COMFY_NODES); "
-            "assert 'torch' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

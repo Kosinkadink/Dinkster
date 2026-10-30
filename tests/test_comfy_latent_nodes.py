@@ -329,6 +329,7 @@ def test_manifest_executes_latent_and_mask_without_host_types(
             (tmp_path / "latent_fixture_sources.py").write_text(
                 "from test_comfy_latent_nodes import PortableLatentSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "import sys, numpy as np\n"
                 "from types import SimpleNamespace\n"
                 "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray, "
@@ -342,6 +343,10 @@ def test_manifest_executes_latent_and_mask_without_host_types(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["latent-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "latent_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "latent_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "latent_fixture_sources:register_inference_types",

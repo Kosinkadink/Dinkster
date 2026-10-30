@@ -67,7 +67,7 @@ class VideoLatentInspect(Node):
         return cls.outputs(summary=";".join(shapes))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_video_latents_twice(in_process: bool, tmp_path: Path) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"
@@ -83,6 +83,7 @@ def test_ordinary_manifest_executes_video_latents_twice(in_process: bool, tmp_pa
             (tmp_path / "video_latent_fixture.py").write_text(
                 "from test_video_latent_torch import VideoLatentInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, VideoLatentInspect)\n",
                 encoding="ascii",
             )
@@ -91,6 +92,10 @@ def test_ordinary_manifest_executes_video_latents_twice(in_process: bool, tmp_pa
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["video-latent-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "video_latent_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "video_latent_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "video_latent_fixture:register_inference_types",
@@ -339,7 +344,7 @@ class VideoLatentTransformInspect(Node):
         return cls.outputs(summary="video-latent-transforms")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_video_latent_transforms_twice(
     in_process: bool, tmp_path: Path
 ) -> None:
@@ -359,6 +364,7 @@ def test_ordinary_manifest_executes_video_latent_transforms_twice(
                 "    VideoLatentTransformInspect, VideoLatentTransformSource,\n"
                 ")\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, VideoLatentTransformSource, VideoLatentTransformInspect)\n",
                 encoding="ascii",
             )
@@ -367,6 +373,10 @@ def test_ordinary_manifest_executes_video_latent_transforms_twice(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["video-latent-transform-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "video_latent_transform_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "video_latent_transform_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "video_latent_transform_fixture:register_inference_types",

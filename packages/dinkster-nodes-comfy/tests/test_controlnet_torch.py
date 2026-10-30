@@ -27,6 +27,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.controlnet import (
     ControlNetApply,
     ControlNetApplyAdvanced,
+    ControlNetApplySD3,
     ControlNetInpaintingAliMamaApply,
     SetUnionControlNetType,
 )
@@ -73,7 +74,10 @@ class Control:
         self.extra_args[name] = value
 
 
-def test_legacy_copies_each_entry_while_advanced_reuses_prior_control_chains() -> None:
+@pytest.mark.parametrize("apply_node", (ControlNetApplyAdvanced, ControlNetApplySD3))
+def test_legacy_copies_each_entry_while_advanced_reuses_prior_control_chains(
+    apply_node: Any,
+) -> None:
     image = torch.arange(2 * 7 * 11 * 4, dtype=torch.float32).reshape(2, 7, 11, 4) / 1024
     before = image.clone()
     previous = Control()
@@ -84,7 +88,7 @@ def test_legacy_copies_each_entry_while_advanced_reuses_prior_control_chains() -
     ]
     negative = [[torch.tensor([-1.0]), {"control": previous}], [torch.tensor([-2.0]), {}]]
     vae = object()
-    advanced: Any = ControlNetApplyAdvanced.execute(
+    advanced: Any = apply_node.execute(
         positive=positive,
         negative=negative,
         control_net=source,
@@ -236,33 +240,53 @@ class ControlInspect(Node):
         return cls.outputs(strength=p.strength)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-def test_ordinary_manifest_executes_controlnet_nodes(tmp_path: Path, in_process: bool) -> None:
+@pytest.mark.parametrize(
+    "apply_type,in_process",
+    (
+        ("ControlNetApplyAdvanced", True),
+        ("ControlNetApplyAdvanced", False),
+        ("ControlNetApplySD3", True),
+    ),
+)
+def test_ordinary_manifest_executes_controlnet_nodes(
+    tmp_path: Path, in_process: bool, apply_type: str
+) -> None:
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
         composer = ServingComposer(
-            worker_env={"PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src")))}
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(root / "tests"), str(root / "src"), os.environ.get("PYTHONPATH", ""))
+                )
+            }
         )
         try:
-            (tmp_path / "control_fixture.py").write_text(
+            module_name = f"control_fixture_{apply_type}_{in_process}"
+            (tmp_path / f"{module_name}.py").write_text(
                 "from test_controlnet_torch import ControlSource, ControlInspect\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ControlSource, ControlInspect)\n",
+                "from dinkster_inference_wire import register_inference_types\n"
+                "NODES = (ControlSource, ControlInspect)\n",
                 encoding="ascii",
             )
-            manifest = tmp_path / "dinkster-pack.toml"
-            manifest.write_text(
-                (root / "dinkster-pack.toml")
-                .read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["control-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "control_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "control_fixture:register_inference_types",
-                ),
+            fixture_manifest = tmp_path / "fixture.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "control-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["control-fixture"]\n[pack.entry]\n'
+                f'nodes = "{module_name}:NODES"\n'
+                f'types = "{module_name}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            native_manifest = root / "dinkster-pack.toml"
+            for manifest in (native_manifest, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="control-fixture",
+                        group_manifests=(native_manifest, fixture_manifest),
+                    )
+                )
             base = {
                 "control_net": Link("union", "CONTROL_NET"),
                 "image": Link("source", "image"),
@@ -286,7 +310,7 @@ def test_ordinary_manifest_executes_controlnet_nodes(tmp_path: Path, in_process:
                     "legacy": GraphNode(
                         "ControlNetApply", {**base, "conditioning": Link("source", "positive")}
                     ),
-                    "advanced": GraphNode("ControlNetApplyAdvanced", scheduled),
+                    "advanced": GraphNode(apply_type, scheduled),
                     "masked": GraphNode(
                         "ControlNetInpaintingAliMamaApply",
                         {**scheduled, "mask": Link("source", "mask")},

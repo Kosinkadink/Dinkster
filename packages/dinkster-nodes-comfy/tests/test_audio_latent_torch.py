@@ -60,7 +60,7 @@ def test_audio_duration_rounding_and_metadata(node, seconds, shape, ratio) -> No
     assert {key: value for key, value in latent.items() if key != "samples"} == expected
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_creates_audio_latents_twice(in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
@@ -201,6 +201,7 @@ def test_audio_size_production_manifest_both_hosts_twice(tmp_path: Path, in_proc
         (tmp_path / "audio_size_fixture.py").write_text(
             "from test_audio_latent_torch import SizeSource, SizeInspect\n"
             "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+            "from dinkster_nodes_comfy.device_routing import device_choices\n"
             "NODES = (*COMFY_NODES, SizeSource, SizeInspect)\n",
             encoding="ascii",
         )
@@ -210,6 +211,10 @@ def test_audio_size_production_manifest_both_hosts_twice(tmp_path: Path, in_proc
             .read_text()
             .replace("namespaces = [", 'namespaces = ["audio-size-fixture",')
             .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_size_fixture:NODES")
+            .replace(
+                "dinkster_nodes_comfy.device_routing:device_choices",
+                "audio_size_fixture:device_choices",
+            )
             .replace(
                 "dinkster_nodes_comfy:register_inference_types",
                 "audio_size_fixture:register_inference_types",

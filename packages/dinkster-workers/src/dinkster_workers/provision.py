@@ -32,17 +32,7 @@ from packaging.utils import NormalizedName, canonicalize_name
 from .interpreter import InterpreterPreflightError, preflight_interpreter
 from .manifest import PackManifest
 
-_HOST_REQUIREMENTS = (
-    "dinkster-workers",
-    # The execution-boundary contracts (Invocation/Worker) - the child
-    # never imports the engine/scheduler itself (hazard H3 payoff).
-    "dinkster-protocol",
-    "dinkster-schema",
-    "dinkster-values",
-    # The versioned extension door (DESIGN 3.6): pack code imports
-    # dinkster_api.v1, so every pack venv must carry it.
-    "dinkster-api",
-)
+_HOST_REQUIREMENTS = ("dinkster-api",)
 """What the worker host imports; installed from ``workspace_packages`` when
 given, otherwise expected to resolve from the index."""
 

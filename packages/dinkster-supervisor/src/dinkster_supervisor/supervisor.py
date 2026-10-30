@@ -76,15 +76,20 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
+import signal
 import socket
 import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import aiohttp
 from aiohttp import WSMsgType, web
+
+from .environment_process import complete_process, process_lifetime
 
 __all__ = [
     "PROTOCOL_VERSION",
@@ -222,6 +227,8 @@ SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("supervisor_session"
 RESTART_KEY: web.AppKey[Callable[[], Awaitable[None]] | None] = web.AppKey("supervisor_restart")
 CORS_KEY: web.AppKey[frozenset[str]] = web.AppKey("supervisor_cors")
 INSTANCE_KEY: web.AppKey[str | None] = web.AppKey("supervisor_instance")
+SHUTDOWN_TOKEN_KEY: web.AppKey[str | None] = web.AppKey("supervisor_shutdown_token")
+SHUTDOWN_KEY: web.AppKey[Callable[[], None] | None] = web.AppKey("supervisor_shutdown")
 
 
 def _progress_from_health(body: object) -> dict[str, object] | None:
@@ -328,7 +335,8 @@ class EngineProcess:
                     )
                     self._mark_dead(process.returncode, label)
                     return
-                if self.link.state != "ready" and time.monotonic() > deadline:
+                remaining = deadline - time.monotonic()
+                if self.link.state != "ready" and remaining <= 0:
                     process.terminate()
                     try:
                         exit_code = await asyncio.wait_for(process.wait(), timeout=10)
@@ -342,8 +350,13 @@ class EngineProcess:
                     return
                 healthy = False
                 progress: dict[str, object] | None = None
+                probe_timeout = (
+                    timeout
+                    if self.link.state == "ready"
+                    else aiohttp.ClientTimeout(total=min(5, remaining), ceil_threshold=float("inf"))
+                )
                 try:
-                    async with session.get(probe_url) as resp:
+                    async with session.get(probe_url, timeout=probe_timeout) as resp:
                         if resp.status == 200:
                             healthy = True
                             progress = _progress_from_health(await resp.json())
@@ -352,6 +365,8 @@ class EngineProcess:
                     # that is not JSON (foreign engine): the former retries,
                     # the latter is simply an engine with no narration.
                     pass
+                if self.link.state != "ready" and time.monotonic() >= deadline:
+                    continue
                 if healthy:
                     if self.link.state != "ready":
                         self.link.state = "ready"
@@ -405,6 +420,7 @@ class EngineProcess:
 
 async def _handle_status(request: web.Request) -> web.Response:
     status = request.app[LINK_KEY].status_wire()
+    status["supervisor"] = {"pid": os.getpid()}
     instance = request.app[INSTANCE_KEY]
     if instance is not None:
         status["instance"] = instance
@@ -428,6 +444,23 @@ async def _handle_restart(request: web.Request) -> web.Response:
         return web.json_response({"error": "restart-unavailable"}, status=409)
     await restart()
     return web.json_response(request.app[LINK_KEY].status_wire())
+
+
+async def _handle_shutdown(request: web.Request) -> web.Response:
+    instance = request.app[INSTANCE_KEY]
+    token = request.app[SHUTDOWN_TOKEN_KEY]
+    if (
+        instance is None
+        or token is None
+        or request.headers.get("X-Dinkster-Instance") != instance
+        or request.headers.get("X-Dinkster-Shutdown-Token") != token
+    ):
+        return web.json_response({"error": "shutdown-unauthorized"}, status=403)
+    shutdown = request.app[SHUTDOWN_KEY]
+    if shutdown is None:
+        return web.json_response({"error": "shutdown-unavailable"}, status=409)
+    asyncio.get_running_loop().call_soon(shutdown)
+    return web.json_response({"state": "stopping"})
 
 
 def _not_ready(link: EngineLink) -> web.Response:
@@ -523,6 +556,8 @@ def create_supervisor_app(
     restart: Callable[[], Awaitable[None]] | None = None,
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
+    shutdown_token: str | None = None,
+    shutdown: Callable[[], None] | None = None,
 ) -> web.Application:
     """The supervisor's HTTP surface over an EngineLink. Process management
     is the caller's (main() wires an EngineProcess; tests drive the link
@@ -532,6 +567,8 @@ def create_supervisor_app(
     app[RESTART_KEY] = restart
     app[CORS_KEY] = frozenset(allow_origins)
     app[INSTANCE_KEY] = instance
+    app[SHUTDOWN_TOKEN_KEY] = shutdown_token
+    app[SHUTDOWN_KEY] = shutdown
     install_cors(app, app[CORS_KEY])
 
     async def manage_session(app: web.Application) -> None:
@@ -548,6 +585,7 @@ def create_supervisor_app(
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
+    app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     # Reserved namespace: registered before the proxy catch-all, so any
     # /supervisor/ path not claimed above answers locally, never proxies.
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_supervisor_unknown)
@@ -568,6 +606,15 @@ def main() -> None:
     parser.add_argument(
         "--instance",
         help="opaque launcher identifier echoed by /supervisor/status",
+    )
+    parser.add_argument(
+        "--shutdown-token",
+        help="opaque token required with the matching instance to stop this supervisor",
+    )
+    parser.add_argument(
+        "--process-state",
+        type=Path,
+        help="private launcher lifecycle directory; requires --instance",
     )
     parser.add_argument(
         "--engine-host",
@@ -598,6 +645,8 @@ def main() -> None:
         help="engine command after '--' (default: '<this python> -m dinkster.serve')",
     )
     args = parser.parse_args()
+    if args.process_state is not None and not args.instance:
+        parser.error("--process-state requires --instance")
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
     command = list(args.engine)
@@ -610,23 +659,49 @@ def main() -> None:
     engine = EngineProcess(
         command, link, host=args.engine_host, startup_timeout=args.startup_timeout
     )
-    app = create_supervisor_app(
-        link,
-        restart=engine.restart,
-        allow_origins=args.allow_origin,
-        instance=args.instance,
-    )
 
-    async def start_engine(app: web.Application) -> None:
-        await engine.start()
+    async def serve() -> None:
+        stopped = asyncio.Event()
+        if os.name == "posix":
+            # Exit through cleanup and the lifecycle receipt, not SystemExit.
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopped.set)
+        app = create_supervisor_app(
+            link,
+            restart=engine.restart,
+            allow_origins=args.allow_origin,
+            instance=args.instance,
+            shutdown_token=args.shutdown_token,
+            shutdown=stopped.set,
+        )
 
-    async def stop_engine(app: web.Application) -> None:
-        await engine.close()
+        async def start_engine(app: web.Application) -> None:
+            await engine.start()
 
-    app.on_startup.append(start_engine)
-    app.on_cleanup.append(stop_engine)
-    print(f"dinkster supervisor on http://{args.host}:{args.port} (status: {STATUS_PATH})")
-    web.run_app(app, host=args.host, port=args.port, print=None)
+        async def stop_engine(app: web.Application) -> None:
+            await engine.close()
+
+        app.on_startup.append(start_engine)
+        app.on_cleanup.append(stop_engine)
+        runner = web.AppRunner(app)
+        try:
+            await runner.setup()
+            site = web.TCPSite(runner, args.host, args.port)
+            await site.start()
+            await stopped.wait()
+        finally:
+            try:
+                await runner.cleanup()
+            finally:
+                await engine.close()
+            if args.process_state is not None:
+                complete_process(args.process_state, args.instance)
+
+    if args.process_state is None:
+        asyncio.run(serve())
+    else:
+        with process_lifetime(args.process_state, args.instance) as admitted:
+            if admitted:
+                asyncio.run(serve())
 
 
 if __name__ == "__main__":

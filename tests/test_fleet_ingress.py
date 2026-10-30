@@ -454,6 +454,13 @@ def test_exact_primary_and_local_route_matrix(tmp_path: Path) -> None:
             response = await client.post("/api/queue/pause")
             assert response.status == 200
             assert (await response.json())["engine"] == "alpha"
+            for route in (
+                "/api/compat/comfy/prompt",
+                "/api/compat/comfy/prompt?dryRun=1",
+                "/api/compat/comfy/prompt/extra",
+            ):
+                for method in ("GET", "POST"):
+                    assert (await client.request(method, route)).status == 404, route
             assert (await (await client.get("/supervisor/status")).json())["role"] == "ingress"
             assert (await client.get("/supervisor/not-real")).status == 404
             await store.claim_key("default", "client", "job", "alpha")
@@ -865,7 +872,9 @@ def test_oversized_upstream_ws_frame_loudly_closes_downstream(tmp_path: Path) ->
     asyncio.run(scenario())
 
 
-def test_immediate_ws_close_uses_growing_reconnect_backoff(tmp_path: Path) -> None:
+def test_immediate_ws_close_uses_growing_reconnect_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     connections: list[float] = []
     app = web.Application()
 
@@ -879,10 +888,23 @@ def test_immediate_ws_close_uses_growing_reconnect_backoff(tmp_path: Path) -> No
     app.router.add_get("/api/events", events)
 
     async def scenario() -> None:
+        delays: list[float] = []
+        observed = asyncio.Event()
+
+        def reconnect_delay(delay: float) -> float:
+            delays.append(delay)
+            if len(delays) == 4:
+                observed.set()
+                # Park further reconnects until the downstream closes.
+                return 3600
+            return 0
+
+        monkeypatch.setattr(ingress_module, "_reconnect_delay", reconnect_delay)
         client, _, servers = await _fleet(tmp_path, {"alpha": app})
         try:
             ws = await client.ws_connect("/api/events")
-            await asyncio.sleep(0.75)
+            await asyncio.wait_for(observed.wait(), 5)
+            assert delays == [0.1, 0.2, 0.4, 0.8]
             assert 2 <= len(connections) <= 4
             await ws.close()
         finally:
@@ -933,11 +955,9 @@ def test_aggregate_fanout_is_concurrent_and_times_out_by_member(
         monkeypatch.setattr(ingress_module, "_FANOUT_TIMEOUT", 0.15)
         client, _, servers = await _fleet(tmp_path, {"alpha": engine(), "beta": engine(hangs=True)})
         try:
-            started = time.monotonic()
-            response = await client.get("/api/jobs")
-            elapsed = time.monotonic() - started
+            response = await asyncio.wait_for(client.get("/api/jobs"), 2)
             assert response.status == 503
-            assert elapsed < 0.4
+            assert not release.is_set()
             assert (await response.json())["members"] == [
                 {"engine": "beta", "state": "unreachable"}
             ]

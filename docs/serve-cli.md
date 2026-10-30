@@ -28,6 +28,13 @@ tokens documented in [auth.md](auth.md), not a separate server secret.
 
 Default: `3639`. TCP port for the HTTP server.
 
+### --engine-variant
+
+Optional declared generation target: `linux-cpu`, `win-cpu`, `win-nvidia`, or
+`win-nvidia-cu126`. Workflow-open planning uses this value when its request
+omits `variant`. It does not select GPUs, change execution, or infer hardware.
+Without a declared target, plan requests must supply their variant explicitly.
+
 ### --allow-host
 
 Syntax: `--allow-host HOST` (repeatable).
@@ -215,9 +222,9 @@ collision-safe `comfy-model-<category>-<index>` ids and semantic
 `model/...` metadata; their real host paths stay off the API surface.
 
 Without this option, the provider uses native implementations.
-`/api/compat/comfy/schemas` lists pinned source schemas as importable metadata,
-not executable IDs. Supported API prompts submitted to `/api/compat/comfy/prompt`
-are lowered to canonical `dinkster.*` nodes before planning. The single-job
+The executable catalog is served at `/api/nodes`; compiled native graphs
+are submitted through `/api/jobs`. ComfyUI workflows are imported by the
+frontend, not translated by a separate HTTP submission endpoint. The single-job
 multi-GPU options also work without a ComfyUI install. Legacy quarantine
 still requires this option.
 
@@ -407,8 +414,14 @@ configured as `readwrite`; all other configured mounts remain read-only.
 Every jailed worker has an unshared network namespace, including workers with
 granted egress. Allowed HTTPS connections cross a per-worker Unix-socket proxy;
 the worker never receives host or raw network access.
-`--allow-mount-changes` cannot be combined with this flag because a running
-mount namespace cannot add or revoke bind grants.
+With `--allow-mount-changes`, folder grants are saved for the next controlled
+server restart. Responses report `restartRequired` and `pendingRemovals`;
+new folders have state `restart-required`. Running workers retain their
+original grants and output selection because a running mount namespace cannot
+add or revoke bind grants. Listings distinguish saved `outputMount` from
+`activeOutputMount`; operator locations include `activeMounts` so pending
+removals do not hide the paths still granted. Changing a project preference
+does not rebind it.
 
 ### --sandbox-grant-gpu
 
@@ -697,6 +710,10 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
+| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
+| `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
+| `output/` | Default writable output folder initialized by setup or serving with mount changes enabled, unless an output is already configured |
+| `.output-initialized` | Records one-time output initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
 | `provenance.json` | Acquisition leads |
@@ -825,6 +842,22 @@ filesystem mounts while running (the desktop-shell folder-picker
 flow). Granted mounts persist to `<library-root>/mounts.toml`. Off by
 default: runtime mount mutation is a filesystem capability grant and
 stays operator-only. Requires `--library-root`.
+With `--sandbox-packs`, grant additions/removals and the global output selection
+are persisted but do not change live authority until the server restarts.
+No restart is triggered by a folder API request.
+
+Mount entries and `POST /api/mounts` accept an optional `kind` purpose such as
+`model/vae`, `model/vae-approx`, `model/diffusers`, `directory/input` or
+`directory/dataset`. The purpose persists with the grant and is an exact match,
+not a path convention or prefix permission. Omitting it leaves an untyped
+mount; an untyped mount does not supply selection roots. Read-only grants use
+`mode = "read"` (the default). For example:
+
+```toml
+[mounts.datasets]
+path = "/data/training-datasets"
+kind = "directory/dataset"
+```
 
 Mount scans store their indexes in `<library-root>/asset-indexes`, never in
 the mounted directory. If a mount still contains the former
@@ -832,6 +865,74 @@ the mounted directory. If a mount still contains the former
 the library index exists, the mount copy is ignored. `GET /api/mounts` reports
 scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
+
+`GET /api/mounts?project=<project-id>` returns the project's ordered folders
+and selected output. `POST /api/mounts` accepts `project` (default `default`)
+and `shared` (default `false`): a new grant belongs only to that project unless
+Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
+`{"mounts": ["first", "second"], "outputMount": "second"}` to replace the
+project's order and membership without revoking any grants. The output must be
+a writable folder in that list. Null is allowed only when the project has no
+selected output; an existing output requires a replacement before removal.
+Excluding a derived folder does not alter its source installation. Existing
+grants are initialized as shared in priority order when project settings are
+first created. Project settings persist in `<library-root>/project-folders.json`;
+mount priorities are unchanged.
+Job submissions and selection-options requests accept `project` (default
+`default`). Each accepted job pins its folder order and output selection for
+both in-process and isolated workers. Folder preferences restrict name and
+directory lookup, not digest identity; saved digest references still resolve
+through live grants, and revocation remains authoritative. Cached computations
+are separated by the pinned folder context.
+`POST /api/mounts/<id>/retry` queues a rescan of an unavailable folder.
+`GET /api/mounts/locations` exposes operator location details. Other mount
+listings remain browsable without disclosing host paths or path-bearing errors
+to non-operators. Location listings and mutations require a human operator
+with `settings:write`, not just `assets:write`; delegated agents cannot grant
+filesystem authority.
+The location response advertises `resolvePath: true` when
+`POST /api/mounts/resolve-path` is available. A trusted local desktop host can
+send exactly `{"path": "<absolute-native-path>", "project": "<id>", "scope": "local"}`
+without query fields. The route also requires `assets:read` in that scope.
+It verifies the current bytes of a regular file in a live selected project
+folder, including read-only folders, and catalogs an unindexed or changed file
+without copying it. HTTP 200 returns either `{"status":"resolved","asset":...}`
+with the five-field mounted AssetRef, or
+`{"status":"refused","reason":"not-resolvable"}` for an outside, excluded,
+revoked, missing, unavailable, unsafe or unstable file. An absolute path for
+another operating system is refused. Malformed requests, empty/NUL/relative
+paths and invalid project IDs return HTTP 400 `invalid-path-request`;
+authentication/scope failures remain 401/403; unexpected catalog/storage
+failures return HTTP 500 `mount-resolution-failed`. Responses are no-store and
+never echo the host path. Only an explicit refusal permits the client to fall
+back to uploading bytes. Older location responses without the capability
+advertisement mean unsupported; a missing route after advertisement, malformed
+response or server error is not an ordinary refusal.
+The location response includes `vault` when a library is configured.
+`importMount` identifies the active default target used when a named upload
+omits `mount`; use its `activeMounts` row for the real directory and state.
+It is independent of the selected output folder and may have any mount ID.
+It is null when the host has no named-folder writer/project configuration.
+A revoked default remains identified but has no active row; it is not replaced
+by another destination. An absent field on older hosts means unknown, not an
+implicit `imports` mount. Project membership and live write authority still
+govern the upload; a location response does not grant access.
+Optional `digest`, `scope` and `project` query fields add `locations` for that cataloged
+identity in the selected scope and project; this also requires `assets:read`.
+Only verified vault copies and observed files in live project folders are
+returned, with their actual `path` and `storage` type. Missing, changed,
+excluded and revoked copies are omitted. Responses use `Cache-Control: no-store`.
+Each observed filename is verified separately, so identical content at multiple
+names remains revealable without substituting the resolver's preferred alias.
+Vault paths must remain inside the canonical vault root, including after
+symlink resolution. A digest query with both a `vault` string and a `locations`
+array supports exact-file lookup; `locations: []` means no verified location.
+A host without a configured library omits `vault` and does not support that
+lookup, even if it returns an empty `locations` array. Missing fields on older
+hosts likewise do not advertise support. HTTP 400, 403, 404 and 5xx responses
+are errors or unavailable capability, never a successful empty lookup.
+This endpoint only reports locations; it neither downloads nor opens files in
+the desktop shell.
 
 ## Logging
 

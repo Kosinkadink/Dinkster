@@ -1,12 +1,13 @@
 [project]
 name = "dinkster-native"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster native execution provider"
 requires-python = ">=3.12"
 dependencies = [
     "dinkster-assets",
     "dinkster-image-document",
     "dinkster-graph",
+    "dinkster-inference==0.1.0",
     "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-nodes-generation",

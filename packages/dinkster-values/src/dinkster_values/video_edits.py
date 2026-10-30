@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from fractions import Fraction
 from typing import cast
+
+from .builtin_types import VIDEO_EDIT_TYPE
+from .registry import TypeRegistry
+
+VIDEO_TREE_CLIP_LIMIT = 256
+
+
+def register_video_edit_type(registry: TypeRegistry) -> None:
+    """Retain the shared VIDEO_EDIT JSON wire format and first registration."""
+    if VIDEO_EDIT_TYPE not in registry:
+        registry.register(
+            VIDEO_EDIT_TYPE,
+            encode=lambda obj: json.dumps(obj, sort_keys=True, allow_nan=False).encode(),
+            decode=json.loads,
+        )
 
 
 def seconds(value: object, name: str) -> Fraction:
@@ -146,8 +162,8 @@ def effective_video_facts(
         raise ValueError("VIDEO nesting exceeds 16")
     budget = _budget if _budget is not None else [0, 0]
     budget[1] += 1
-    if budget[1] > 64:
-        raise ValueError("VIDEO tree exceeds 64 clips")
+    if budget[1] > VIDEO_TREE_CLIP_LIMIT:
+        raise ValueError(f"VIDEO tree exceeds {VIDEO_TREE_CLIP_LIMIT} clips")
     probe = mapping(video.get("probe"), "VIDEO probe")
     width = integer(probe.get("width"), "probe width", 1)
     height = integer(probe.get("height"), "probe height", 1)
@@ -198,8 +214,11 @@ def effective_video_facts(
             *_, width, height = scale_geometry(width, height, mapping(edit[op], "scale"))
         else:
             clips = edit[op]
-            if not isinstance(clips, list) or not 1 <= len(cast("list[object]", clips)) <= 64:
-                raise ValueError("concat requires between 1 and 64 clips")
+            if (
+                not isinstance(clips, list)
+                or not 1 <= len(cast("list[object]", clips)) <= VIDEO_TREE_CLIP_LIMIT
+            ):
+                raise ValueError(f"concat requires between 1 and {VIDEO_TREE_CLIP_LIMIT} clips")
             for child in cast("list[object]", clips):
                 facts = effective_video_facts(
                     mapping(child, "concat clip"), _depth=_depth + 1, _budget=budget

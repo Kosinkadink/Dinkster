@@ -36,7 +36,7 @@ from dinkster_nodes_remote.runtime import (
 )
 from dinkster_schema import use_reporter
 from dinkster_workers import ExecutionContext, use_execution_context
-from dinkster_workers.boundary import write_frame
+from dinkster_workers.boundary import PROTOCOL_VERSION, write_frame
 
 IMAGE = TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
 STRING = TypeExpr.concrete("STRING")
@@ -877,6 +877,7 @@ async def schema_reload_peer(
         peer_writer.set_result(writer)
         header: dict[str, object] = {
             "type": "hello",
+            "protocol": PROTOCOL_VERSION,
             "pack": "remote-test",
             "workerInstance": "instance-1",
             "schemas": {},
@@ -921,7 +922,9 @@ def test_boundary_accepts_schema_reload_only_after_hello_negotiation() -> None:
                         await asyncio.wait_for(called.wait(), 1)
                         assert session.alive
                     else:
-                        await asyncio.sleep(0.05)
+                        async with asyncio.timeout(1):
+                            while session.alive:
+                                await asyncio.sleep(0)
                         assert not called.is_set()
                         assert not session.alive
                 finally:

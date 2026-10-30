@@ -26,9 +26,171 @@ from dinkster_nodes_comfy.conditioning import (
     ConditioningSetTimestepRange,
     ConditioningStableAudio,
     ConditioningZeroOut,
+    conditioning_set_values,
+    conditioning_set_values_with_timestep_range,
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_conditioning_metadata_append_preserves_sources_and_default_overwrite() -> None:
+    text = object()
+    existing = [object()]
+    incoming = [object(), object()]
+    untouched = {"nested": [object()]}
+    empty: list[object] = []
+    source = [
+        [
+            text,
+            {
+                "refs": existing,
+                "unset": None,
+                "empty": empty,
+                "false": False,
+                "count": 3,
+                "keep": untouched,
+            },
+        ]
+    ]
+    appended = conditioning_set_values(
+        source,
+        {
+            "refs": incoming,
+            "unset": incoming,
+            "absent": incoming,
+            "empty": incoming,
+            "false": True,
+            "count": 7,
+        },
+        append=True,
+    )
+    assert appended is not source
+    assert appended[0] is not source[0]
+    assert appended[0][1] is not source[0][1]
+    assert appended[0][0] is text
+    assert appended[0][1] == {
+        "refs": existing + incoming,
+        "unset": incoming,
+        "absent": incoming,
+        "empty": incoming,
+        "false": 1,
+        "count": 10,
+        "keep": untouched,
+    }
+    assert appended[0][1]["unset"] is incoming
+    assert appended[0][1]["absent"] is incoming
+    assert appended[0][1]["empty"] is not incoming
+    assert type(appended[0][1]["false"]) is int
+    assert appended[0][1]["keep"] is untouched
+    assert appended[0][1]["keep"]["nested"] is untouched["nested"]
+    assert source[0][1]["refs"] is existing
+    assert len(existing) == 1
+    assert source[0][1]["empty"] is empty
+    assert empty == []
+    assert source[0][1]["false"] is False
+    assert "absent" not in source[0][1]
+    assert source[0][1]["unset"] is None
+    assert source[0][1]["count"] == 3
+    replaced = conditioning_set_values(source, {"refs": incoming})
+    assert replaced[0][1]["refs"] is incoming
+    assert replaced[0][0] is text
+    assert replaced[0][1]["keep"] is untouched
+    assert conditioning_set_values([[text, {"refs": (1,)}]], {"refs": (2, 3)}, append=True)[0][1][
+        "refs"
+    ] == (1, 2, 3)
+
+
+def test_conditioning_timestep_values_intersect_and_preserve_outside_intervals() -> None:
+    text = object()
+    source = [[text, {"start_percent": 0.1, "end_percent": 0.9, "keep": "source"}]]
+    result = conditioning_set_values_with_timestep_range(source, {"control": "map"}, 0.25, 0.6)
+    assert all(entry[0] is text for entry in result)
+    assert [entry[1] for entry in result] == [
+        {"start_percent": 0.1, "end_percent": 0.25 - 1e-5, "keep": "source"},
+        {"start_percent": 0.25, "end_percent": 0.6, "keep": "source", "control": "map"},
+        {"start_percent": 0.6 + 1e-5, "end_percent": 0.9, "keep": "source"},
+    ]
+    assert source[0][1] == {"start_percent": 0.1, "end_percent": 0.9, "keep": "source"}
+    clipped = conditioning_set_values_with_timestep_range(source, {"control": "map"}, 0.0, 0.4)
+    assert clipped[0][1] == {
+        "start_percent": 0.1,
+        "end_percent": 0.4,
+        "keep": "source",
+        "control": "map",
+    }
+    for start, end in ((0.9, 1.0), (0.4, 0.4)):
+        assert (
+            conditioning_set_values_with_timestep_range(source, {"control": "map"}, start, end)[0]
+            is source[0]
+        )
+    assert conditioning_set_values_with_timestep_range(source, {}, 0.7, 0.2) is source
+
+    untouched = object()
+    tokens = [object() for _ in range(6)]
+    ranges = [(0.1, 0.9), (0.0, 0.2), (0.4, 0.5), (0.6, 0.8), (0.85, 0.95), None]
+    entries: list[list[Any]] = [
+        [
+            token,
+            {
+                "keep": untouched,
+                **({"start_percent": span[0], "end_percent": span[1]} if span else {}),
+            },
+        ]
+        for token, span in zip(tokens, ranges, strict=True)
+    ]
+    original_metadata = [entry[1].copy() for entry in entries]
+    value = object()
+    split = conditioning_set_values_with_timestep_range(
+        entries, {"control": value, "start_percent": -1.0, "end_percent": 2.0}, 0.25, 0.6
+    )
+    assert [entry[0] for entry in split] == [
+        tokens[0],
+        tokens[0],
+        tokens[0],
+        tokens[1],
+        tokens[2],
+        tokens[3],
+        tokens[4],
+        tokens[5],
+        tokens[5],
+        tokens[5],
+    ]
+    expected_ranges = [
+        (0.1, 0.25 - 1e-5),
+        (0.25, 0.6),
+        (0.6 + 1e-5, 0.9),
+        (0.0, 0.2),
+        (0.4, 0.5),
+        (0.6, 0.8),
+        (0.85, 0.95),
+        (0.0, 0.25 - 1e-5),
+        (0.25, 0.6),
+        (0.6 + 1e-5, 1.0),
+    ]
+    assert [
+        (entry[1]["start_percent"], entry[1]["end_percent"]) for entry in split
+    ] == expected_ranges
+    assert [index for index, entry in enumerate(split) if entry[1].get("control") is value] == [
+        1,
+        4,
+        8,
+    ]
+    assert all(entry[1]["keep"] is untouched for entry in split)
+    for index, original_index in ((3, 1), (5, 3), (6, 4)):
+        assert split[index] is entries[original_index]
+    assert [entry[1] for entry in entries] == original_metadata
+    covered = conditioning_set_values_with_timestep_range(entries, {"control": value})
+    assert len(covered) == len(entries)
+    for new, old, span in zip(covered, entries, ranges, strict=True):
+        assert new[0] is old[0]
+        assert new[1]["control"] is value
+        assert new[1]["keep"] is untouched
+        assert (new[1]["start_percent"], new[1]["end_percent"]) == (span or (0.0, 1.0))
+    for start, end in ((0.95, 1.0), (0.4, 0.4), (-0.2, 0.0)):
+        unchanged = conditioning_set_values_with_timestep_range(entries[:5], {}, start, end)
+        assert len(unchanged) == 5
+        assert all(new is old for new, old in zip(unchanged, entries[:5], strict=True))
+    assert conditioning_set_values_with_timestep_range(entries, {}, 0.8, 0.2) is entries
 
 
 class MaskTensor:
@@ -374,6 +536,7 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
                 "from test_comfy_conditioning_nodes import ConditioningScalarInspector\n"
                 "from test_comfy_conditioning_nodes import ConditioningScalarSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, ConditioningScalarSource, ConditioningScalarInspector)\n",
                 encoding="ascii",
             )
@@ -382,6 +545,10 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["conditioning-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "conditioning_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "conditioning_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "conditioning_fixture_sources:register_inference_types",

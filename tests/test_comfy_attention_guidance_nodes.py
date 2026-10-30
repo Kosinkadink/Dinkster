@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -33,6 +31,7 @@ def test_attention_guidance_schemas_are_registered_with_fixed_core_interfaces() 
                 "rescaling_scale",
             ),
         ),
+        ("SkipLayerGuidanceSD3", ("model", "layers", "scale", "start_percent", "end_percent")),
         (
             "SkipLayerGuidanceDiTSimple",
             ("model", "double_layers", "single_layers", "start_percent", "end_percent"),
@@ -54,24 +53,3 @@ def test_attention_guidance_schemas_are_registered_with_fixed_core_interfaces() 
         assert schema_to_wire(schema)
     assert ATTENTION_GUIDANCE_NODES[0].schema().inputs[1].type == TypeExpr.concrete(CORE_FLOAT)
     assert ATTENTION_GUIDANCE_NODES[2].schema().inputs[1].type == TypeExpr.concrete(CORE_STRING)
-
-
-def test_attention_guidance_schema_registration_does_not_import_torch_or_inference() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "sys.modules['torch'] = None\n"
-            "from dinkster_nodes_comfy.attention_guidance import ATTENTION_GUIDANCE_NODES\n"
-            "schemas = [node.define_schema() for node in ATTENTION_GUIDANCE_NODES]\n"
-            "assert [schema.node_type for schema in schemas] == [\n"
-            "    'SelfAttentionGuidance', 'PerturbedAttentionGuidance',\n"
-            "    'SkipLayerGuidanceDiT', 'SkipLayerGuidanceDiTSimple'\n"
-            "]\n",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )

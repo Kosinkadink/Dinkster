@@ -8,8 +8,392 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+
+
+@pytest.mark.parametrize(
+    "name,parameter,baseline,observed,passed",
+    [
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention"],
+            ["pytorch attention", "comfy kitchen attention"],
+            True,
+        ),
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention"],
+            ["comfy kitchen attention"],
+            False,
+        ),
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention", "comfy kitchen attention"],
+            ["pytorch attention"],
+            False,
+        ),
+        ("ModelAttentionBackend", "attention", ["pytorch attention"], ["pytorch attention"], False),
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention"],
+            ["pytorch attention", "unknown"],
+            False,
+        ),
+        (
+            "SelectModelDevice",
+            "device",
+            ["default", "cpu"],
+            ["default", "cpu", "gpu:0", "gpu:2"],
+            True,
+        ),
+        ("SelectModelDevice", "device", ["default", "cpu"], ["default", "cpu", "gpu:x"], False),
+        ("SelectVAEDevice", "device", ["default"], ["default", "cpu", "gpu:0"], False),
+    ],
+)
+def test_environment_options_remain_conditional_without_hiding_static_drift(
+    name: str, parameter: str, baseline: list[str], observed: list[str], passed: bool
+) -> None:
+    from dinkster_schema import ComboWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+    from tools.dump_comfy_nodes import annotate_environment_options
+
+    inputs: dict[str, Any] = {"required": {parameter: [baseline]}}
+    annotate_environment_options(name, inputs)
+    declaration = inputs["required"][parameter][1]
+    assert declaration["possible_options"][0]["condition"]
+    assert declaration["baseline_options"] == baseline
+    native = schema_to_wire(
+        NodeSchema(
+            node_type=name,
+            inputs=(
+                InputSpec(
+                    parameter, TypeExpr.concrete("COMBO"), widget=ComboWidget(tuple(observed))
+                ),
+            ),
+        )
+    )
+    result = compare_registry(
+        {"nodes": [{"class_name": name, "input_types": inputs, "return_types": []}]},
+        {"nodes": {name: native}},
+    )
+    assert result["passed"] is passed
+    assert result["rows"][0]["status"] == ("conditional" if passed else "differs")
+    assert result["eligible_node_count"] == 1
+    assert result["conditional_options"] == {name: {parameter: declaration}}
+
+
+def test_environment_remote_choices_still_require_same_default() -> None:
+    from dinkster_schema import ComboWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+    from tools.dump_comfy_nodes import annotate_environment_options
+
+    inputs: dict[str, Any] = {"required": {"device": [["default", "cpu", "gpu:0", "gpu:1"]]}}
+    annotate_environment_options("SelectModelDevice", inputs)
+    reference = {"nodes": [{"class_name": "SelectModelDevice", "input_types": inputs}]}
+    schema = schema_to_wire(
+        NodeSchema(
+            node_type="SelectModelDevice",
+            inputs=(
+                InputSpec(
+                    "device",
+                    TypeExpr.concrete("COMBO"),
+                    default="default",
+                    widget=ComboWidget(("default", "cpu"), remote_route="/api/choices/devices.gpu"),
+                ),
+            ),
+        )
+    )
+    registry = {"nodes": {"SelectModelDevice": schema}}
+    result = compare_registry(reference, registry)
+    assert result["passed"] and result["counts"] == {"conditional": 1}
+    interface = schema["interface"]
+    assert isinstance(interface, list)
+    interface[0]["default"] = "cpu"
+    assert not compare_registry(reference, registry)["passed"]
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        [{"value": "cpu", "condition": "anything"}],
+        [{"pattern": ".*", "condition": "anything"}],
+        ["bad"],
+    ],
+)
+def test_conditional_metadata_cannot_remove_static_choices(declaration: object) -> None:
+    from tools.compare_nodes import compare_registry
+
+    result = compare_registry(
+        {
+            "nodes": [
+                {
+                    "class_name": "SelectModelDevice",
+                    "input_types": {
+                        "required": {
+                            "device": [["default", "cpu"], {"conditional_options": declaration}]
+                        }
+                    },
+                }
+            ]
+        },
+        {
+            "nodes": {
+                "SelectModelDevice": {
+                    "nodeType": "SelectModelDevice",
+                    "interface": [
+                        {
+                            "role": "input",
+                            "id": "device",
+                            "type": {"kind": "concrete", "types": ["COMBO"]},
+                            "widget": {"type": "COMBO", "options": ["default"]},
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    assert not result["passed"]
+    assert "invalid conditional option declaration" in result["rows"][0]["differences"]
+
+
+@pytest.mark.parametrize("status", ["differs", "absent", "excluded"])
+@pytest.mark.parametrize(
+    "inputs,message",
+    [
+        ({"required": {"device": [["default", "cpu"], None]}}, "input options must be an object"),
+        ("invalid", "reference input schema unavailable"),
+        ({"required": "invalid"}, "input group must be an object"),
+    ],
+)
+def test_malformed_reference_options_are_reported_without_crashing(
+    status: str, inputs: object, message: str
+) -> None:
+    from tools.compare_nodes import compare_registry
+
+    result = compare_registry(
+        {
+            "nodes": [
+                {
+                    "class_name": "SelectModelDevice",
+                    "api_node": status == "excluded",
+                    "input_types": inputs,
+                }
+            ]
+        },
+        {
+            "nodes": {}
+            if status == "absent"
+            else {"SelectModelDevice": {"nodeType": "SelectModelDevice", "interface": []}}
+        },
+    )
+    assert result["rows"][0]["status"] == status
+    assert result["conditional_options"] == {}
+    if status == "differs":
+        assert message in result["rows"][0]["differences"]
+    assert result["passed"] is (status == "excluded")
+
+
+def test_failed_reference_import_cannot_pass_an_incomplete_census() -> None:
+    from tools.compare_nodes import compare_registry
+
+    result = compare_registry(
+        {
+            "nodes": [{"class_name": "PresentNode", "input_types": {}}],
+            "environment": {"device_policy": "cpu", "torch_version": "2.14.1+cpu"},
+            "builtin_import_failures": ["nodes_glsl.py"],
+        },
+        {"nodes": {"PresentNode": {"nodeType": "PresentNode", "interface": []}}},
+    )
+    assert not result["passed"]
+    assert result["registry_errors"] == ["reference builtin imports failed: nodes_glsl.py"]
+    assert result["reference_environment"] == {
+        "device_policy": "cpu",
+        "torch_version": "2.14.1+cpu",
+    }
+
+
+@pytest.mark.parametrize("upload", ["image_upload", "audio_upload", "video_upload", "file_upload"])
+def test_reference_upload_choices_are_file_inputs(upload: str) -> None:
+    from tools.dump_comfy_nodes import annotate_files
+
+    assert annotate_files({"required": {"file": (["none"], {upload: True})}}) == {
+        "required": {"file": [["none"], {upload: True, "file_input": True}]}
+    }
+    assert annotate_files({"required": {"mode": (["none"], {})}}) == {
+        "required": {"mode": [["none"], {}]}
+    }
+
+
+@pytest.mark.parametrize(
+    "source,excluded",
+    [
+        ("comfy_extras/nodes_train.py", True),
+        ("comfy_extras/nodes_dataset.py", True),
+        ("custom_nodes/nodes_train.py", False),
+        ("nodes.py", False),
+    ],
+)
+def test_cli_training_exclusion_keeps_deletion_errors(
+    tmp_path: Path, source: str, excluded: bool
+) -> None:
+    reference = tmp_path / "reference.json"
+    registry = tmp_path / "registry.json"
+    csv_output = tmp_path / "comparison.csv"
+    summary_output = tmp_path / "summary.json"
+    reference.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"class_name": "LoraModelLoader", "file": source, "input_types": {}},
+                    {"class_name": "OrdinaryNode", "file": "nodes.py", "input_types": {}},
+                    {"class_name": "ApiNode", "api_node": True},
+                ]
+            }
+        )
+    )
+    served = {
+        name: {"nodeType": name, "interface": []}
+        for name in ("LoraModelLoader", "OrdinaryNode", "NativeOnly")
+    }
+    for present in (True, False):
+        if not present:
+            del served["LoraModelLoader"]
+        registry.write_text(json.dumps({"nodes": served}))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "tools/compare_nodes.py",
+                str(reference),
+                str(registry),
+                str(csv_output),
+                str(summary_output),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.stderr == ""
+        summary = json.loads(summary_output.read_text())
+        assert summary["eligible_node_count"] == (1 if excluded else 2)
+        assert summary["passed"] is (not present if excluded else present)
+        assert result.returncode == (0 if summary["passed"] else 1)
+        assert summary["registry_errors"] == (
+            ["excluded training-origin node remains registered: LoraModelLoader"]
+            if excluded and present
+            else []
+        )
+        with csv_output.open() as handle:
+            rows = {row["class_name"]: row for row in csv.DictReader(handle)}
+        assert rows["LoraModelLoader"]["status"] == (
+            "excluded" if excluded else "identical" if present else "absent"
+        )
+        assert rows["LoraModelLoader"]["exclusion"] == ("training-origin node" if excluded else "")
+        assert rows["ApiNode"]["status"] == "excluded"
+        assert rows["NativeOnly"]["status"] == "Dinkster-only"
+
+
+@pytest.mark.parametrize(
+    "name", ["SaveExample", "CLIPSave", "VAESave", "CheckpointSave", "ModelSave"]
+)
+@pytest.mark.parametrize(
+    "output_node,prefix_type", [(True, "STRING"), (False, "STRING"), (True, "INT")]
+)
+@pytest.mark.parametrize("input_is_list", [False, True])
+def test_save_mount_admission_uses_source_output_contract(
+    name: str, output_node: bool, prefix_type: str, input_is_list: bool
+) -> None:
+    from dinkster_schema import InputSpec, MountWidget, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": name,
+                "output_node": output_node,
+                "input_is_list": input_is_list,
+                "input_types": {"required": {"filename_prefix": [prefix_type]}},
+                "return_types": [],
+            }
+        ]
+    }
+    native = schema_to_wire(
+        NodeSchema(
+            node_type=name,
+            output_node=output_node,
+            inputs=(
+                InputSpec(
+                    "filename_prefix",
+                    TypeExpr.list_of(TypeExpr.concrete(prefix_type))
+                    if input_is_list
+                    else TypeExpr.concrete(prefix_type),
+                ),
+                InputSpec(
+                    "mount",
+                    TypeExpr.concrete("STRING"),
+                    required=False,
+                    default=None,
+                    widget=MountWidget(),
+                    adjacent_to="filename_prefix",
+                ),
+            ),
+        )
+    )
+    result = compare_registry(reference, {"nodes": {name: native}})
+    assert result["passed"] is (output_node and prefix_type == "STRING" and not input_is_list)
+    if not result["passed"]:
+        assert "inputs" in result["rows"][0]["differences"]
+
+
+def test_reference_file_arguments_follow_declared_execution_source(tmp_path: Path) -> None:
+    import importlib.util
+
+    from tools.dump_comfy_nodes import annotated_file_arguments, directory_file_inputs
+
+    source = tmp_path / "source_nodes.py"
+    source.write_text("""
+class LoadExample:
+    FUNCTION = "load"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        files = [f for f in os.listdir(input_dir) if f.endswith(".latent")]
+        ordered = sorted(files)
+        return {"required": {"latent": [ordered], "mode": [["fixed", "random"]]}}
+
+    def load(self, latent, mode):
+        path = folder_paths.get_annotated_filepath(latent)
+        other = different_owner.get_annotated_filepath(mode)
+        fixed = folder_paths.get_annotated_filepath("constant.latent")
+        local = "local.latent"
+        ignored = folder_paths.get_annotated_filepath(local)
+        return path, other, fixed, ignored
+
+    def validate(self, mode):
+        return folder_paths.get_annotated_filepath(mode)
+
+class NonFile:
+    FUNCTION = "run"
+
+    def run(self, mode):
+        return mode
+""")
+    spec = importlib.util.spec_from_file_location("source_nodes", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert annotated_file_arguments(module.LoadExample) == {"latent"}
+    assert annotated_file_arguments(module.NonFile) == set()
+    assert directory_file_inputs(module.LoadExample) == {"latent"}
+    assert directory_file_inputs(module.NonFile) == set()
 
 
 def test_comparison_cli(tmp_path: Path) -> None:
@@ -187,6 +571,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "nodes": [
             {
                 "class_name": "SaveExample",
+                "output_node": True,
                 "input_types": {"required": {"filename_prefix": ["STRING"]}},
                 "return_types": [],
             }
@@ -196,6 +581,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "nodes": {
             "SaveExample": {
                 "nodeType": "SaveExample",
+                "outputNode": True,
                 "interface": [
                     {
                         "role": "input",
@@ -600,6 +986,75 @@ def test_list_flags_do_not_hide_element_type_or_unflagged_output_drift(
     assert compare(reference, native)
 
 
+@pytest.mark.parametrize("named", (False, True))
+@pytest.mark.parametrize("minimum", (0, 1))
+@pytest.mark.parametrize("template_required", (False, True))
+def test_autogrow_member_requiredness_matches_expanded_reference(
+    named: bool, minimum: int, template_required: bool
+) -> None:
+    from tools.compare_nodes import compare_registry
+
+    template: dict[str, Any] = {
+        "input": {"required" if template_required else "optional": {"image": ["IMAGE"]}},
+        "min": minimum,
+    }
+    family: dict[str, Any] = {
+        "role": "inputFamily",
+        "id": "images",
+        "required": True,
+        "minMembers": minimum,
+        "optionalAfterMinimum": minimum > 0 and template_required,
+        "template": [
+            {
+                "role": "input",
+                "id": "image",
+                "required": template_required and minimum > 0,
+                "type": {"kind": "concrete", "types": ["IMAGE"]},
+            }
+        ],
+    }
+    if named:
+        template["names"] = ["first", "fourth"]
+        family["memberNames"] = ["first", "fourth"]
+    else:
+        template.update(prefix="image", max=4)
+        family.update(memberPrefix="image", maxMembers=4)
+    reference = {
+        "nodes": [
+            {
+                "class_name": "Example",
+                "input_types": {
+                    "required": {"images": ["COMFY_AUTOGROW_V3", {"template": template}]}
+                },
+            }
+        ]
+    }
+    registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [family]}}}
+    assert compare_registry(reference, registry)["passed"]
+    if minimum > 0 and template_required:
+        family["optionalAfterMinimum"] = False
+        assert not compare_registry(reference, registry)["passed"]
+        family["optionalAfterMinimum"] = True
+    leaf = family["template"][0]
+    if minimum == 0:
+        leaf["required"] = True
+        family["optionalAfterMinimum"] = True
+        assert compare_registry(reference, registry)["passed"]
+        family["optionalAfterMinimum"] = False
+        leaf["required"] = False
+    leaf["required"] = not leaf["required"]
+    assert not compare_registry(reference, registry)["passed"]
+    leaf["required"] = not leaf["required"]
+    family["required"] = False
+    assert not compare_registry(reference, registry)["passed"]
+    family["required"] = True
+    family["minMembers"] = minimum + 1
+    assert not compare_registry(reference, registry)["passed"]
+    family["minMembers"] = minimum
+    leaf["type"] = {"kind": "concrete", "types": ["MASK"]}
+    assert not compare_registry(reference, registry)["passed"]
+
+
 @pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])
 @pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
 def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
@@ -673,6 +1128,7 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
                 },
             ]
             native_input["memberPrefix"] = "input"
+            native_input["optionalAfterMinimum"] = True
         else:
             reference_input = [
                 "COMFY_DYNAMICGROUP_V3",
@@ -702,6 +1158,24 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
     result = compare_registry(reference, registry)
     assert not result["passed"]
     assert "0.75 vs 0.5" in result["rows"][0]["differences"]
+
+    native_children[-1].update(
+        type={"kind": "concrete", "types": ["COMBO"]},
+        default="default",
+        widget={"type": "COMBO", "options": ["default"]},
+    )
+    for declaration in (
+        [{"value": "cpu", "condition": "anything"}],
+        [{"pattern": ".*", "condition": "anything"}],
+        ["bad"],
+    ):
+        reference_children["required"]["strength"] = [
+            ["default", "cpu"],
+            {"conditional_options": declaration},
+        ]
+        result = compare_registry(reference, registry)
+        assert not result["passed"]
+        assert "invalid conditional option declaration" in result["rows"][0]["differences"]
 
 
 def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
@@ -759,3 +1233,63 @@ def test_engine_nodes_are_compared_despite_historical_exclusion_metadata(name: s
     assert result["counts"] == {"differs": 1}
     assert result["engine_exclusions"] == {}
     assert compare_registry(reference, {"nodes": {}})["counts"] == {"absent": 1}
+
+
+@pytest.mark.parametrize("v3", [False, True])
+@pytest.mark.parametrize(
+    "kind", ["model/vae", "model/diffusers", "directory/input", "directory/dataset"]
+)
+def test_source_marked_selections_require_exact_picker_kind_and_socket(kind: str, v3: bool) -> None:
+    from dinkster_api.v1 import AssetWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare
+    from tools.dump_comfy_nodes import FileChoices, annotate_files
+
+    options = FileChoices(["source-option"], kind)
+    spec = ("COMBO", {"options": options}) if v3 else (options,)
+    row = {
+        "class_name": "SelectionExample",
+        "input_types": annotate_files({"required": {"selection": spec}}),
+        "return_types": [],
+    }
+    schema = schema_to_wire(
+        NodeSchema(
+            node_type="SelectionExample",
+            inputs=(
+                InputSpec(
+                    "selection",
+                    TypeExpr.union("COMBO", "ASSET")
+                    if kind == "model/vae"
+                    else TypeExpr.concrete("COMBO"),
+                    widget=AssetWidget(kind=kind, selection=True),
+                ),
+            ),
+        )
+    )
+    assert compare(row, schema) == []
+    interface = schema["interface"]
+    assert isinstance(interface, list)
+    item = interface[0]
+    assert isinstance(item, dict)
+    widget = item["widget"]
+    widget["kind"] = "directory/input" if kind != "directory/input" else "directory/dataset"
+    assert compare(row, schema)
+    widget["kind"] = kind
+    widget.pop("selection")
+    assert compare(row, schema)
+    widget["selection"] = True
+    original_type = item["type"]
+    for invalid_type in (
+        {"kind": "concrete", "types": ["ASSET"]},
+        {"kind": "concrete", "types": ["STRING"]},
+        {"kind": "union", "types": ["COMBO", "ASSET", "STRING"]},
+        {"kind": "list", "element": original_type},
+    ):
+        item["type"] = invalid_type
+        assert compare(row, schema)
+    item["type"] = original_type
+    unmarked = ["source-option"]
+    row["input_types"] = annotate_files(
+        {"required": {"selection": ("COMBO", {"options": unmarked}) if v3 else (unmarked,)}}
+    )
+    assert compare(row, schema)

@@ -148,6 +148,7 @@ from .resolver_subscription import (
     ResolverSuggestion,
 )
 from .save_target import SAVE_TARGET_TYPE, SaveTarget, register_save_target_type
+from .selections import asset_selection_names, asset_selection_options, resolve_asset_selection
 from .transport import (
     DEFAULT_TRANSFER_STALL_TIMEOUT,
     MAX_TRANSPORT_CANDIDATES,
@@ -161,12 +162,19 @@ from .transport import (
     ValidateTransportResult,
     rank_transport_candidates,
 )
-from .value import ASSET_TYPE, bind_video_value, register_asset_type, register_video_value_type
+from .value import (
+    ASSET_TYPE,
+    admit_video_source,
+    bind_video_value,
+    register_asset_type,
+    register_video_value_type,
+)
 from .vault import AssetVault, VaultError, VaultWriter
 from .writer import AssetWriter, MountSnapshotWriter, MountWriteAuthority
 
 __all__ = [
     "ASSET_TYPE",
+    "admit_video_source",
     "AssetScanProgress",
     "DEFAULT_SCOPE",
     "DEFAULT_TRANSFER_STALL_TIMEOUT",
@@ -246,6 +254,9 @@ __all__ = [
     "MountWriteAuthority",
     "MountsError",
     "mount_roots_for_kind",
+    "asset_selection_names",
+    "asset_selection_options",
+    "resolve_asset_selection",
     "KnownTransports",
     "PackAssetCatalog",
     "PackagedSource",

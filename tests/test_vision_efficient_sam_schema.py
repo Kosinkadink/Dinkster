@@ -50,7 +50,7 @@ def test_efficient_sam_pack_declares_cpu_provider_and_pinned_models() -> None:
     assert manifest.sandbox.network is False
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
-        "numpy==2.5.1",
+        "numpy",
         "onnxruntime==1.29.0",
     )
     assert len(manifest.vision_providers) == 1

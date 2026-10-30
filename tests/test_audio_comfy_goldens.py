@@ -21,6 +21,8 @@ import pytest
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_nodes_media_io import EmptyAudio, LoadAudio, SaveAudio, SaveAudioMP3, SaveAudioOpus
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 _GOLDENS = cast(
     "dict[str, Any]",
     json.loads((Path(__file__).parent / "goldens" / "audio_io_e20d433a.json").read_text("utf-8")),

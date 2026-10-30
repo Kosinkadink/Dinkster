@@ -31,7 +31,7 @@ from dinkster_protocol import (
 )
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import host as host_module
-from dinkster_workers.boundary import BoundaryError, ValueCodec, write_frame
+from dinkster_workers.boundary import PROTOCOL_VERSION, BoundaryError, ValueCodec, write_frame
 from dinkster_workers.in_process import InProcessWorker
 from dinkster_workers.session import BoundarySession
 from dinkster_workers.workgroup_session import (
@@ -723,6 +723,7 @@ def test_unbind_refuses_active_channels_and_releases_settled_channels() -> None:
 def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None:
     async def scenario() -> None:
         accepted: asyncio.Future[asyncio.StreamWriter] = asyncio.get_running_loop().create_future()
+        receiving = asyncio.Event()
 
         async def corrupt(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             accepted.set_result(writer)
@@ -730,6 +731,7 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
                 writer,
                 {
                     "type": "hello",
+                    "protocol": PROTOCOL_VERSION,
                     "pack": "test",
                     "schemas": {},
                     "workerInstance": "worker-a",
@@ -737,7 +739,7 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
                 },
                 [],
             )
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(receiving.wait(), 2)
             await write_frame(
                 writer,
                 {"type": WORKGROUP_FRAME_TYPE, "message": {"type": "unknown"}},
@@ -755,8 +757,13 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
             endpoint = session.bind_workgroup_endpoint(
                 definition("worker-a"), ReplicaId("replica-a")
             )
+
+            async def receive() -> None:
+                receiving.set()
+                await endpoint.receive()
+
             with pytest.raises(WorkGroupTransportClosed):
-                await asyncio.wait_for(endpoint.receive(), 2)
+                await asyncio.wait_for(receive(), 2)
             assert not session.alive
         finally:
             await session.close()

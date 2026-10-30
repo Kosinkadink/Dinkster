@@ -103,8 +103,10 @@ def _number_constraint_from_wire(value: object, field: str, wire_version: int) -
     return value
 
 
-def _combo_option_to_wire(option: str | ComboOption, wire_version: int) -> object:
-    if isinstance(option, str):
+def _combo_option_to_wire(
+    option: str | bool | int | float | ComboOption, wire_version: int
+) -> object:
+    if not isinstance(option, ComboOption):
         return option
     wire: dict[str, object] = {"value": option.value}
     for field_name in ("label", "info", "folder"):
@@ -128,6 +130,8 @@ def _widget_descriptor_to_wire(
             asset_wire["kind"] = widget.kind
         if widget.allow_upload:
             asset_wire["allowUpload"] = True
+        if widget.selection:
+            asset_wire["selection"] = True
         return asset_wire
     if isinstance(widget, ComboWidget):
         combo_wire: dict[str, object] = {"type": "COMBO"}
@@ -285,16 +289,16 @@ def _reject_unknown_fields(data: dict[str, object], allowed: frozenset[str], sub
         raise ValueError(f"{subject} has unknown fields: {unknown}")
 
 
-def _combo_option_from_wire(value: object, wire_version: int, *, subject: str) -> str | ComboOption:
-    if type(value) is str and value:
-        return value
+def _combo_option_from_wire(
+    value: object, wire_version: int, *, subject: str
+) -> str | bool | int | float | ComboOption:
     if not isinstance(value, dict):
-        raise ValueError(f"{subject} must be a non-empty string" + " or structured choice")
+        scalar = cast("str | bool | int | float", value)
+        ComboOption(scalar)
+        return scalar
     option = cast("dict[str, object]", value)
     _reject_unknown_fields(option, frozenset({"value", "label", "info", "folder"}), subject)
-    raw_value = option.get("value")
-    if type(raw_value) is not str or not raw_value:
-        raise ValueError(f"{subject}.value must be a non-empty string")
+    raw_value = cast("str | bool | int | float", option.get("value"))
     presentation: dict[str, str] = {}
     for field_name in ("label", "info", "folder"):
         if field_name not in option:
@@ -314,6 +318,7 @@ def _widget_descriptor_from_wire(
         if strict:
             allowed = {"type", "accept", "kind"}
             allowed.add("allowUpload")
+            allowed.add("selection")
             _reject_unknown_fields(widget_data, frozenset(allowed), "ASSET widget")
         accept = widget_data.get("accept", ())
         if not isinstance(accept, list):
@@ -331,6 +336,7 @@ def _widget_descriptor_from_wire(
             accept=tuple(cast("list[str]", accept_values)),
             kind=asset_kind,
             allow_upload=allow_upload,
+            selection=cast("bool", widget_data.get("selection", False)),
         )
     if kind == "MOUNT":
         _reject_unknown_fields(widget_data, frozenset({"type"}), "MOUNT widget")
@@ -514,7 +520,7 @@ def _widget_descriptor_from_wire(
         if "chip" in widget_data and type(chip) is not bool:
             raise ValueError("MULTI_COMBO widget chip must be a boolean")
         return MultiComboWidget(
-            options=decoded_options,
+            options=cast("tuple[str | ComboOption, ...]", decoded_options),
             remote_route=remote_route,
             refresh_button=refresh_button,
             control_after_refresh=cast("Literal['first', 'last'] | None", control_after_refresh),
@@ -792,6 +798,8 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["adjacentTo"] = spec.adjacent_to
     if spec.force_input:
         entry["forceInput"] = True
+    if spec.socketless:
+        entry["socketless"] = True
     if spec.advanced:
         entry["advanced"] = True
     if spec.hidden:
@@ -825,6 +833,8 @@ def _dynamic_entry_to_wire(
         }
         if spec.independent_types:
             entry["independentTypes"] = True
+        if spec.optional_after_minimum:
+            entry["optionalAfterMinimum"] = True
         if spec.member_prefix is not None:
             entry["memberPrefix"] = spec.member_prefix
         if spec.member_names is not None:
@@ -1150,6 +1160,7 @@ def schema_signature(schema: NodeSchema) -> str:
                 member_prefix=entry.member_prefix,
                 member_names=entry.member_names,
                 independent_types=entry.independent_types,
+                optional_after_minimum=entry.optional_after_minimum,
             )
         if isinstance(entry, DynamicComboSpec):
             options = tuple(
@@ -1218,6 +1229,7 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("displayName", None)
         entry.pop("adjacentTo", None)
         entry.pop("forceInput", None)
+        entry.pop("socketless", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
@@ -1368,6 +1380,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
         if "adjacentTo" not in entry
         else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
         force_input=_expect_bool(entry.get("forceInput", False), "input.forceInput"),
+        socketless=_expect_bool(entry.get("socketless", False), "input.socketless"),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
@@ -1419,6 +1432,9 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
             required=_expect_bool(entry.get("required", True), "inputFamily.required"),
             independent_types=_expect_bool(
                 entry.get("independentTypes", False), "inputFamily.independentTypes"
+            ),
+            optional_after_minimum=_expect_bool(
+                entry.get("optionalAfterMinimum", False), "inputFamily.optionalAfterMinimum"
             ),
             member_prefix=None
             if prefix is None

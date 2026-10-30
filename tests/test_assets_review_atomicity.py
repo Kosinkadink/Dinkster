@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -49,42 +51,94 @@ def test_writer_never_publishes_empty_final_file(
     assert ref.size == len(b"complete")
 
 
+@pytest.mark.parametrize("named", (False, True))
 def test_writer_refuses_record_for_rebound_final_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: bool
 ) -> None:
     real_land = AssetWriter._claim_and_land  # pyright: ignore[reportPrivateUsage]
 
-    def rebind_after_land(folder: Path, stem: str, suffix: str, tmp: Path) -> Path:
-        final = real_land(folder, stem, suffix, tmp)
+    def rebind_after_land(
+        folder: Path,
+        stem: str,
+        suffix: str,
+        tmp: Path,
+        counter: int | None = None,
+        *,
+        strict_counter: bool = False,
+        prefer_exact_name: bool = False,
+        before_publish: Callable[[Path], None] | None = None,
+    ) -> tuple[Path, int]:
+        final, counter = real_land(
+            folder,
+            stem,
+            suffix,
+            tmp,
+            counter,
+            strict_counter=strict_counter,
+            prefer_exact_name=prefer_exact_name,
+            before_publish=before_publish,
+        )
         replacement = folder / "replacement.tmp"
         replacement.write_bytes(b"attacker")
         os.replace(replacement, final)
-        return final
+        return final, counter
 
     monkeypatch.setattr(AssetWriter, "_claim_and_land", staticmethod(rebind_after_land))
     with pytest.raises(AssetError, match="rebound"):
-        AssetWriter(_Authority(tmp_path)).save_bytes(
-            SaveTarget(mount="output", prefix="image"), b"complete", suffix=".bin"
-        )
+        writer = AssetWriter(_Authority(tmp_path))
+        if named:
+            writer.save_named_stream(
+                SaveTarget(mount="output", prefix="image.bin"), BytesIO(b"complete"), limit=8
+            )
+        else:
+            writer.save_bytes(
+                SaveTarget(mount="output", prefix="image"), b"complete", suffix=".bin"
+            )
     assert load_write_records(tmp_path) == {}
 
 
+@pytest.mark.parametrize("named", (False, True))
 def test_writer_refuses_temp_rebound_after_hash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: bool
 ) -> None:
     real_land = AssetWriter._claim_and_land  # pyright: ignore[reportPrivateUsage]
 
-    def rebind_before_land(folder: Path, stem: str, suffix: str, tmp: Path) -> Path:
+    def rebind_before_land(
+        folder: Path,
+        stem: str,
+        suffix: str,
+        tmp: Path,
+        counter: int | None = None,
+        *,
+        strict_counter: bool = False,
+        prefer_exact_name: bool = False,
+        before_publish: Callable[[Path], None] | None = None,
+    ) -> tuple[Path, int]:
         replacement = folder / "replacement.tmp"
         replacement.write_bytes(b"attacker")
         os.replace(replacement, tmp)
-        return real_land(folder, stem, suffix, tmp)
+        return real_land(
+            folder,
+            stem,
+            suffix,
+            tmp,
+            counter,
+            strict_counter=strict_counter,
+            prefer_exact_name=prefer_exact_name,
+            before_publish=before_publish,
+        )
 
     monkeypatch.setattr(AssetWriter, "_claim_and_land", staticmethod(rebind_before_land))
     with pytest.raises(AssetError, match="rebound"):
-        AssetWriter(_Authority(tmp_path)).save_bytes(
-            SaveTarget(mount="output", prefix="image"), b"complete", suffix=".bin"
-        )
+        writer = AssetWriter(_Authority(tmp_path))
+        if named:
+            writer.save_named_stream(
+                SaveTarget(mount="output", prefix="image.bin"), BytesIO(b"complete"), limit=8
+            )
+        else:
+            writer.save_bytes(
+                SaveTarget(mount="output", prefix="image"), b"complete", suffix=".bin"
+            )
     assert load_write_records(tmp_path) == {}
 
 

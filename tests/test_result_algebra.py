@@ -147,6 +147,44 @@ def test_positional_tuple_result_roundtrip_and_envelope_validation() -> None:
             decode(changed, blobs)
 
 
+def test_heterogeneous_list_result_roundtrip_and_envelope_validation() -> None:
+    reg = registry()
+    value = reg.wrap(
+        "list<*>",
+        [reg.wrap("STRING", "seven"), reg.wrap("INT", 29), reg.wrap("list<INT>", [3, 8])],
+    )
+    outcome = InvocationReturn(
+        ReturnBatch("scalar", (DirectReturn((("out", PresentOutput(value)),)),))
+    )
+    header, blobs = encode(outcome)
+    restored = decode(header, blobs)
+    assert isinstance(restored, InvocationReturn)
+    returned = restored.batch.units[0]
+    assert isinstance(returned, DirectReturn)
+    present = dict(returned.bindings)["out"]
+    assert isinstance(present, PresentOutput)
+    assert present.value.type_id == "list<*>"
+    assert present.value.resolve() == ["seven", 29, [3, 8]]
+    assert isinstance(present.value.payload, ListPayload)
+    assert [child.type_id for child in present.value.payload.children] == [
+        "STRING",
+        "INT",
+        "list<INT>",
+    ]
+    changed = copy.deepcopy(header)
+    algebra(changed)["values"][0]["typeId"] = "list<STRING>"
+    with pytest.raises(BoundaryError, match="child type"):
+        decode(changed, blobs)
+    changed = copy.deepcopy(header)
+    algebra(changed)["values"][0]["elements"][2]["elements"][0]["typeId"] = "STRING"
+    with pytest.raises(BoundaryError, match="child type"):
+        decode(changed, blobs)
+    changed = copy.deepcopy(header)
+    algebra(changed)["values"][0]["elements"][0]["unexpected"] = True
+    with pytest.raises(BoundaryError, match="descriptor fields"):
+        decode(changed, blobs)
+
+
 def algebra(header: dict[str, object]) -> dict[str, Any]:
     return cast("dict[str, Any]", header["resultAlgebra"])
 

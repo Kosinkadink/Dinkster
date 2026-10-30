@@ -2,10 +2,11 @@ import asyncio
 import base64
 import json
 import time
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from uuid import UUID
 
 import dinkster_server.auth as auth_module
+import dinkster_token_verifier.verifier as verifier_module
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -235,8 +236,16 @@ def test_token_authenticator_rejects_invalid_credentials_without_raising() -> No
     asyncio.run(scenario())
 
 
-def test_token_authenticator_shares_fresh_and_stale_jwks_cache() -> None:
+def test_token_authenticator_shares_fresh_and_stale_jwks_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def scenario() -> None:
+        cache_time = 100.0
+        monkeypatch.setattr(
+            verifier_module,
+            "time",
+            SimpleNamespace(monotonic=lambda: cache_time, time=time.time),
+        )
         key = OKPKey.generate_key("Ed25519")
         service = _JwksService(key)
         jwks_url = await service.start()
@@ -250,7 +259,7 @@ def test_token_authenticator_shares_fresh_and_stale_jwks_cache() -> None:
             assert service.requests == 1
 
             service.available = False
-            await asyncio.sleep(1.05)
+            cache_time += 1.05
             for _ in range(3):
                 assert await authenticator.authenticate(token) is not None
             assert service.requests == 2

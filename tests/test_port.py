@@ -17,7 +17,6 @@ The contract under test:
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -628,27 +627,6 @@ def test_generated_mixed_pack_ports_both_apis(tmp_path: Path) -> None:
 
 
 # --- CLI validation ---------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    not os.environ.get("DINKSTER_COMFYUI_ROOT", ""),
-    reason="DINKSTER_COMFYUI_ROOT not set (live ComfyUI test)",
-)
-def test_cli_ports_a_pack_through_the_real_probe_subprocess(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The full CLI path: probe subprocess under the ComfyUI install's
-    interpreter, JSON transport, generation, doctor-clean output."""
-    pack = write_pack(tmp_path, "live_cli_pack", SCALAR_PACK)
-    out_dir = tmp_path / "ported"
-
-    assert main([str(pack), "--name", "live-port", "--out", str(out_dir)]) == 0
-    stdout = capsys.readouterr().out
-    assert "live-port.shouter" in stdout
-
-    report = diagnose(out_dir / "dinkster-pack.toml")
-    render_text(report)
-    assert not report.findings
 
 
 def test_cli_refuses_bad_names_and_dirty_output(

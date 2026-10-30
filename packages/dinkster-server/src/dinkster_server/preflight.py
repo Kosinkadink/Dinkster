@@ -25,6 +25,7 @@ they never authorize a download or force hashing at submission.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
@@ -35,14 +36,15 @@ from dinkster_assets import (
     AssetSource,
     PackagedSource,
     RemoteSource,
-    acquire_need,
+    asset_selection_names,
     is_digest,
 )
 from dinkster_assets.model import NamedAssetResolver
+from dinkster_assets.vault import AssetPublicationError
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
 
-from .library import ServerLibrary
+from .library import ServerLibrary, acquire_library_asset
 
 __all__ = [
     "asset_preflight",
@@ -80,12 +82,16 @@ def bind_model_names(
             if (
                 not isinstance(value, str)
                 or not isinstance(widget, AssetWidget)
-                or not widget.kind.startswith("model/")
+                or not (widget.selection or widget.kind.startswith("model/"))
             ):
+                continue
+            if widget.selection and value in asset_selection_names(widget.kind):
+                if not isinstance(raw, TypedLiteral) and spec.type.runtime_type_id() is None:
+                    inputs[spec.id] = TypedLiteral("COMBO", value)
                 continue
             ref = (
                 resolver.bind_name(value, widget.kind)
-                if isinstance(resolver, NamedAssetResolver)
+                if not widget.selection and isinstance(resolver, NamedAssetResolver)
                 else None
             )
             if ref is None:
@@ -239,6 +245,9 @@ def asset_preflight(
     referenced: Mapping[str, str],
     consented: set[str],
     hinted_sources: Mapping[str, Sequence[str]],
+    *,
+    scope: str = "local",
+    project: str = "default",
 ) -> list[dict[str, object]]:
     """Resolve every referenced identity or say exactly why not.
 
@@ -265,10 +274,9 @@ def asset_preflight(
             required[digest] = cast(str, dependency["resourceId"])
             pending.append(digest)
     catalog = library.pack_assets
-    pack_roots = catalog.pack_roots() if catalog is not None else {}
     plan: list[dict[str, object]] = []
     for digest in sorted(required):
-        if library.locate(digest) is not None:
+        if library.asset_available(digest):
             continue
         name = required[digest]
         declared = catalog.need_for(digest) if catalog is not None else None
@@ -290,19 +298,10 @@ def asset_preflight(
         )
         if digest in consented:
             try:
-                result = acquire_need(
-                    need,
-                    library.vault,
-                    resolver=library.resolver,
-                    pack_roots=pack_roots,
-                    provenance=library.provenance,
-                    public_sources=(
-                        library.public_sources_for(digest)
-                        if library.public_sources_for is not None
-                        else ()
-                    ),
-                    receipts=library.receipts,
-                )
+                result = acquire_library_asset(library, need, scope=scope, project=project)
+            except (AssetPublicationError, OSError, sqlite3.Error):
+                result = None
+                detail = "asset publication metadata is unavailable; retry after storage recovery"
             except AssetError as exc:  # defensive: acquire reports, not raises
                 result = None
                 detail = str(exc)

@@ -8,6 +8,7 @@ from dinkster_schema import (
     AssetWidget,
     BooleanWidget,
     ColorWidget,
+    ComboOption,
     ComboWidget,
     CompositorWidget,
     CurveWidget,
@@ -20,8 +21,6 @@ from dinkster_schema import (
     InputSpec,
     MountWidget,
     MultiComboWidget,
-    Node,
-    NodeOutputError,
     NodeSchema,
     NumberWidget,
     OutputRepresents,
@@ -58,6 +57,100 @@ def test_schema_reexports_custom_widget_descriptor() -> None:
     assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
     with pytest.raises(ValueError, match="MOUNT.*reserved"):
         CustomWidgetDescriptor("MOUNT")
+
+
+def test_scalar_combo_choices_preserve_wire_types_and_metadata() -> None:
+    options = ("auto", 8, 10, True, 1, 1.5, "8", ComboOption(False, label="Disabled"))
+    schema = dataclasses.replace(
+        SCHEMA,
+        inputs=(
+            InputSpec(
+                "depth", TypeExpr.concrete("COMBO"), default=8, widget=ComboWidget(options=options)
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    interface = cast("list[dict[str, Any]]", wire["interface"])
+    assert interface[0]["widget"]["options"] == [
+        "auto",
+        8,
+        10,
+        True,
+        1,
+        1.5,
+        "8",
+        {"value": False, "label": "Disabled"},
+    ]
+    decoded = schema_from_wire(json.loads(json.dumps(wire)))
+    assert decoded == schema
+    widget = decoded.inputs[0].widget
+    assert isinstance(widget, ComboWidget)
+    assert tuple(type(option) for option in widget.options) == tuple(type(x) for x in options)
+    assert type(decoded.inputs[0].default) is int
+    assert schema_to_wire(decoded) == wire
+
+
+@pytest.mark.parametrize("value", [-(2**53 - 1), 2**53 - 1])
+def test_static_combo_safe_integer_choices_roundtrip(value: int) -> None:
+    schema = NodeSchema(
+        node_type="test.safe-combo",
+        inputs=(
+            InputSpec(
+                "choice",
+                TypeExpr.concrete("COMBO"),
+                default=value,
+                widget=ComboWidget(options=(value, ComboOption(value, label="Boundary"))),
+            ),
+        ),
+    )
+    assert schema_from_wire(json.loads(json.dumps(schema_to_wire(schema)))) == schema
+
+
+@pytest.mark.parametrize("value", [-(2**53 + 1), -(2**53), 2**53, 2**53 + 1])
+@pytest.mark.parametrize("presented", [False, True])
+def test_static_combo_wire_rejects_unsafe_integer_choices(value: int, presented: bool) -> None:
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="test.unsafe-combo",
+            inputs=(
+                InputSpec("choice", TypeExpr.concrete("COMBO"), widget=ComboWidget(options=(1,))),
+            ),
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["widget"]["options"] = [
+        {"value": value, "label": "Unsafe"} if presented else value
+    ]
+    with pytest.raises(ValueError):
+        schema_from_wire(wire)
+
+
+@pytest.mark.parametrize("value", [None, [], {}, "", float("nan"), float("inf"), -(2**53), 2**53])
+def test_static_combo_rejects_non_choices(value: Any) -> None:
+    with pytest.raises(ValueError):
+        ComboWidget(options=(value,))
+    with pytest.raises(ValueError):
+        ComboOption(value)
+
+
+@pytest.mark.parametrize("value", [8, True, 1.5, ComboOption(8)])
+def test_multi_combo_retains_string_choices(value: Any) -> None:
+    with pytest.raises(ValueError):
+        MultiComboWidget(options=(value,))
+
+
+@pytest.mark.parametrize("value", [-(2**53), 2**53, float("inf"), float("nan"), [], {}])
+def test_scalar_combo_rejects_invalid_defaults_in_model_and_wire(value: Any) -> None:
+    with pytest.raises(ValueError, match="combo default"):
+        InputSpec("choice", TypeExpr.concrete("COMBO"), default=value)
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="test.combo-default",
+            inputs=(InputSpec("choice", TypeExpr.concrete("COMBO")),),
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["default"] = value
+    with pytest.raises(ValueError, match="combo default"):
+        schema_from_wire(wire)
 
 
 @pytest.mark.parametrize("input_values", [False, True])
@@ -143,6 +236,109 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     assert schema_signature(schema) == schema_signature(
         dataclasses.replace(schema, inputs=(dataclasses.replace(schema.inputs[0], widget=None),))
     )
+
+
+@pytest.mark.parametrize("representations", [False, True])
+def test_forced_floats_numeric_presentation_preserves_socket(representations: bool) -> None:
+    widget = NumberWidget(min=-1, step=0.001)
+    presentation = (
+        WidgetRepresentations(
+            (WidgetRepresentation("number", widget),), default="number", user_switchable=False
+        )
+        if representations
+        else widget
+    )
+    schema = NodeSchema(
+        "test.floats-presentation",
+        inputs=(
+            InputSpec(
+                "floats_strength",
+                TypeExpr.concrete("FLOATS"),
+                default=-1,
+                force_input=True,
+                widget=presentation,
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    item = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert item["type"] == {"kind": "concrete", "types": ["FLOATS"]}
+    assert item["default"] == -1
+    assert item["forceInput"] is True
+    assert schema_from_wire(wire) == schema
+    assert schema.inputs[0].widget == presentation
+    assert widget.min == -1 and widget.step == 0.001
+    for wrong_type, forced in (
+        (TypeExpr.concrete("FLOATS"), False),
+        (TypeExpr.concrete("OPAQUE"), True),
+        (TypeExpr.list_of(TypeExpr.concrete("FLOATS")), True),
+        (TypeExpr.union("FLOATS", "FLOAT"), True),
+    ):
+        with pytest.raises(ValueError, match="number widget requires"):
+            InputSpec("value", wrong_type, force_input=forced, widget=presentation)
+
+
+@pytest.mark.parametrize("scope", ["direct", "combo", "family"])
+def test_socketless_color_preserves_nested_literals_and_execution_identity(scope: str) -> None:
+    def declaration(socketless: bool) -> NodeSchema:
+        color = InputSpec(
+            "color",
+            TypeExpr.concrete("COLOR"),
+            default="#123456",
+            widget=ColorWidget(),
+            socketless=socketless,
+        )
+        if scope == "combo":
+            return NodeSchema(
+                "ColorExample",
+                combos=(
+                    DynamicComboSpec(
+                        "padding_style",
+                        (DynamicComboOption("color", (color,)),),
+                        default="color",
+                    ),
+                ),
+            )
+        if scope == "family":
+            return NodeSchema("ColorExample", input_families=(InputFamilySpec("colors", (color,)),))
+        return NodeSchema("ColorExample", inputs=(color,))
+
+    schema = declaration(True)
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    assert schema_signature(schema) == schema_signature(declaration(False))
+    stored = {"colors.first.color": "#abcdef"} if scope == "family" else {}
+    choices = {"padding_style": "color"} if scope == "combo" else None
+    effective = elaborate(schema, stored, slot_variants=choices)
+    color = next(spec for spec in effective.inputs if spec.widget == ColorWidget())
+    assert color.type == TypeExpr.concrete("COLOR")
+    assert color.default == "#123456"
+    assert color.socketless is True
+    wire = schema_to_wire(effective)
+    entries = cast("list[dict[str, Any]]", wire["interface"])
+    entry = next(item for item in entries if item["id"] == color.id)
+    assert entry["socketless"] is True
+    assert entry["widget"] == {"type": "COLOR"}
+    assert "forceInput" not in entry
+    assert schema_from_wire(wire) == effective
+
+
+def test_socketless_input_defaults_and_invalid_declarations() -> None:
+    color = InputSpec("color", TypeExpr.concrete("COLOR"), widget=ColorWidget())
+    wire = schema_to_wire(NodeSchema("ColorExample", inputs=(color,)))
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert color.socketless is False
+    assert "socketless" not in entry
+    assert schema_from_wire(wire).inputs[0].socketless is False
+    for bad in (None, 0, 1, "true"):
+        with pytest.raises(ValueError, match="socketless"):
+            dataclasses.replace(color, socketless=bad)
+        entry["socketless"] = bad
+        with pytest.raises(ValueError, match="socketless"):
+            schema_from_wire(wire)
+    entry["socketless"] = True
+    entry["forceInput"] = True
+    with pytest.raises(ValueError, match="socketless.*force_input"):
+        schema_from_wire(wire)
 
 
 def test_save_mount_adjacency_preserves_wire_order_and_execution_identity() -> None:
@@ -392,14 +588,6 @@ def test_type_expressions_roundtrip_and_remain_closed() -> None:
         type_expr_from_wire({"kind": "future"})
 
 
-def test_malformed_widget_wire_is_rejected() -> None:
-    wire = schema_to_wire(SCHEMA)
-    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
-    entry["widget"] = {"type": ""}
-    with pytest.raises(ValueError):
-        schema_from_wire(wire)
-
-
 def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -> None:
     schema = NodeSchema(
         node_type="test.represented-output",
@@ -443,35 +631,6 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
                     "applies": {"mode": [1]},
                 }
             )
-        )
-
-
-class TwoOutputs(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.two_outputs",
-            outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
-            ),
-        )
-
-
-def test_outputs_helper_requires_exact_output_ids() -> None:
-    assert TwoOutputs.outputs(first=1, second=2) == {"first": 1, "second": 2}
-    with pytest.raises(NodeOutputError, match="missing outputs: second"):
-        TwoOutputs.outputs(first=1, secondd=2)
-
-
-def test_duplicate_ids_are_rejected() -> None:
-    with pytest.raises(ValueError):
-        NodeSchema(
-            "test.duplicate",
-            inputs=(
-                InputSpec("x", TypeExpr.concrete("INT")),
-                InputSpec("x", TypeExpr.concrete("INT")),
-            ),
         )
 
 

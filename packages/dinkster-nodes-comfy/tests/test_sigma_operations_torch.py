@@ -234,6 +234,7 @@ def test_sigma_operations_cross_both_manifest_hosts_twice(tmp_path: Path, in_pro
                 "from test_sigma_operations_torch import SigmaInspect\n"
                 "from test_sigma_operations_torch import SigmaModelSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, SigmaModelSource, SigmaInspect)\n",
                 encoding="ascii",
             )
@@ -243,6 +244,10 @@ def test_sigma_operations_cross_both_manifest_hosts_twice(tmp_path: Path, in_pro
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["sigma-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "sigma_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "sigma_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "sigma_fixture:register_inference_types",

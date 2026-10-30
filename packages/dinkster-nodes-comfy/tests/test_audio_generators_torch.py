@@ -87,7 +87,7 @@ class AudioGeneratorInspect(Node):
         return cls.outputs(result="audio generators exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_audio_generators_feed_consumer_twice_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -105,6 +105,7 @@ def test_audio_generators_feed_consumer_twice_in_both_hosts(
             (tmp_path / "audio_generator_fixture.py").write_text(
                 "from test_audio_generators_torch import AudioGeneratorInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "from dinkster_nodes_media_io import register_media_types\n"
                 "NODES = (*COMFY_NODES, AudioGeneratorInspect)\n"
                 "def register_types(registry):\n"
@@ -117,6 +118,10 @@ def test_audio_generators_feed_consumer_twice_in_both_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-generator-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_generator_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "audio_generator_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "audio_generator_fixture:register_types",

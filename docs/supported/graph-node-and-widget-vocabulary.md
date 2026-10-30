@@ -2,6 +2,31 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend input families can require only the initial declared positions,
+  leaving later members optional. Missing initial required slots remain
+  validation errors even when later slots are connected. Ordinary families
+  retain their stored order and uniform requiredness. Frontend support is
+  not claimed here.
+- Replacement input-family copies can declare historical template input IDs
+  and a flat member-port path without retaining a predecessor schema. Existing
+  mappings without that metadata retain their wire shape. Historical same-type
+  templates are distinct from the current node interface. This describes the
+  backend declaration contract, not frontend migration support.
+- Backend replacement input-family copies can explicitly map authored source
+  order to target naming positions instead of preserving suffix IDs. The option
+  composes with historical-template metadata; omitted options retain their wire
+  shape. This is a declaration contract, not a claim of frontend migration support.
+- Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
+  Expression publish same-type rules for historical family member identities.
+  Rules preserve the math expression and output identities, and identify the
+  old flat boolean-family socket path. Node execution is unchanged. Automatic
+  application requires a frontend that supports positional family migrations.
+- Backend `list<*>` values retain independently typed child envelopes through
+  ordinary worker and persistent-cache boundaries. Outputs collect existing
+  typed values rather than guessing types from Python objects. Nested lists,
+  child input conversion and resident-resource discovery retain each child's
+  concrete identity; concrete `list<T>` remains homogeneous. This does not
+  claim native CreateList or frontend editor/importer support.
 - Backend schemas describe fixed positional tuples, derive tuple outputs from
   independently typed input families in document order, and select a position's
   type using a stored integer index. Tuple declarations round-trip through the
@@ -18,7 +43,10 @@
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
-  per-option info, and folder paths; combo options derived from dynamic input
+  per-option info, and folder paths; static combo choices preserve strings,
+  booleans, JSON-safe integers and finite floats without conversion. Integer
+  choices outside -(2^53 - 1) to 2^53 - 1 are rejected. Multi-combo choices
+  remain strings. Combo options derived from dynamic input
   family members with stable stored IDs and separately editable labels;
   boolean; number (number/slider/knob/gradientslider displays), string, color,
   curve editor and graph-native image compositor,
@@ -35,9 +63,27 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Backend `CAMERA_INFO_STATE` values retain nested JSON camera-view state across
+  pack boundaries. This does not claim a camera editor or CreateCameraInfo node.
+- Inputs can declare socketless presentation while retaining their type,
+  widget, default and interface order, including nested combos and families.
+  The flag defaults to false, conflicts with forced socket presentation, and
+  does not change execution signatures. Frontend pin rendering is not claimed.
 - Backend mount widgets present one scalar STRING mount id. Input adjacency
   hints name a sibling input without changing interface order or execution
   identity. This does not claim frontend rendering or native save-node support.
+- Backend asset-selection widgets retain one source-named COMBO input; VAE
+  selection also permits the existing ASSET carrier for real files. The public
+  asset authority enumerates only exact granted kinds for VAE, Diffusers,
+  input subdirectories and saved datasets. It resolves literals, same-root
+  file pairs and contained directory subtrees without filesystem or library
+  fallback. The options API returns names and shapes, not host paths.
+  Explicit mount purposes persist in config and runtime grants; omitted kinds
+  remain untyped and do not authorize source selections.
+  This does not claim frontend picker support.
+- Ordinary text-encoder ASSET inputs accept contained source-relative filenames
+  through model-name preflight, with exact-kind root priority and existing
+  verified or unverified file references. Traversal and escaping links refuse.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
@@ -46,13 +92,21 @@
   FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
   types and numeric defaults remain unchanged, including with named widget
   representations. This does not claim frontend numeric-union editor support.
+- Forced-input FLOATS sockets accept numeric presentation with FLOAT constraint
+  semantics, retaining their canonical socket type and default on the wire,
+  including named representations. This does not change runtime values or
+  provide frontend FLOATS editing.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
-  core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
-  `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
-  `asset<T>`
+  core.absent, immutable `CURVE` with monotone-cubic default or explicit linear
+  interpolation, stable-sorted points including duplicate positions and empty
+  curves that evaluate to zero; the 4096-point limit applies only to curve
+  preview renditions, not value transport. HISTOGRAM is a plain ordered integer
+  list with no length or positivity restriction through shared structural
+  transport. Ordered `dinkster.layers`, strict versioned `dinkster.compositor`,
+  parametric `list<T>` and `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable

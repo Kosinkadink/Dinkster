@@ -6,7 +6,6 @@ every platform so it cannot rot until someone boots Windows."""
 from __future__ import annotations
 
 import asyncio
-import glob
 import os
 import tempfile
 from pathlib import Path
@@ -15,6 +14,7 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode
+from dinkster_protocol import Invocation
 from dinkster_workers import (
     BoundaryListener,
     IsolatedWorker,
@@ -23,6 +23,7 @@ from dinkster_workers import (
     connect_endpoint,
     unix_endpoints_supported,
 )
+from dinkster_workers.boundary import TransferStat
 from dinkster_workers.transport import TOKEN_ENV
 from test_isolated import DEV_MANIFEST, core_registry, image_graph
 
@@ -101,7 +102,7 @@ def test_unix_listener_where_supported() -> None:
     asyncio.run(scenario())
 
 
-def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path) -> None:
+def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path, shm_segments: set[str]) -> None:
     """The whole M2 flow - handshake, invocation, shm handoff, ack - over
     the TCP fallback. Fingerprints must match the unix-transport run
     (hazard H4: location - and transport - independence)."""
@@ -136,10 +137,13 @@ def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
     if os.path.isdir("/dev/shm"):
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
 
 
-def test_cancel_mid_flight_leaves_no_segments() -> None:
+def test_cancel_mid_flight_leaves_no_segments(
+    monkeypatch: pytest.MonkeyPatch, shm_segments: set[str]
+) -> None:
     """Held-until-ack segment handles (the Windows-safe lifetime) must not
     leak when an invocation is cancelled after its shm inputs were sent.
     The large string input rides shm (threshold 64); whether the cancel
@@ -151,6 +155,15 @@ def test_cancel_mid_flight_leaves_no_segments() -> None:
         worker = IsolatedWorker(DEV_MANIFEST, registry, shm_threshold=64)
         await worker.start()
         try:
+            sent = asyncio.Event()
+            send_invocation = worker._session._send_invocation
+
+            async def send(invocation: Invocation) -> dict[str, TransferStat]:
+                stats = await send_invocation(invocation)
+                sent.set()
+                return stats
+
+            monkeypatch.setattr(worker._session, "_send_invocation", send)
             engine = Engine(
                 schemas=dict(worker.schemas),
                 registry=registry,
@@ -163,7 +176,7 @@ def test_cancel_mid_flight_leaves_no_segments() -> None:
                 }
             )
             task = asyncio.create_task(engine.run(graph, ["w"]))
-            await asyncio.sleep(0.5)  # let the invocation cross the boundary
+            await asyncio.wait_for(sent.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -172,4 +185,5 @@ def test_cancel_mid_flight_leaves_no_segments() -> None:
 
     asyncio.run(scenario())
     if os.path.isdir("/dev/shm"):
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]

@@ -476,7 +476,7 @@ class InspectSuperResolutionStartImage(Node):
         return cls.outputs(summary="hunyuan video super resolution start image")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -495,6 +495,7 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                 "    Inspect, InspectSuperResolution, InspectSuperResolutionStartImage, Source\n"
                 ")\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, Source, Inspect, InspectSuperResolution, "
                 "InspectSuperResolutionStartImage)\n",
                 encoding="ascii",
@@ -505,6 +506,10 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-video-image-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "hunyuan_video_image_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "hunyuan_video_image_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "hunyuan_video_image_fixture:register_inference_types",

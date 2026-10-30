@@ -295,7 +295,13 @@ def test_close_waits_for_an_in_flight_write(
         journal = ExecutionJournal(JournalStore(path), flush_interval=0.01)
         entered = threading.Event()
         release = threading.Event()
+        closing = asyncio.Event()
         original = journal._write
+        original_stop = journal._stop.set
+
+        def note_close() -> None:
+            original_stop()
+            closing.set()
 
         def slow_write(batch: list[Any]) -> None:
             entered.set()
@@ -303,15 +309,16 @@ def test_close_waits_for_an_in_flight_write(
             original(batch)
 
         monkeypatch.setattr(journal, "_write", slow_write)
+        monkeypatch.setattr(journal._stop, "set", note_close)
         journal.start()
         journal.observe(lifecycle("run-1", "node_started", 1), scope="local")
-        await asyncio.to_thread(entered.wait, 5)
+        assert await asyncio.to_thread(entered.wait, 5)
         closer = asyncio.ensure_future(journal.close())
-        await asyncio.sleep(0.05)
-        # close() must wait for the write, not abandon it to race the
-        # store's close.
-        assert not closer.done()
-        release.set()
+        try:
+            await asyncio.wait_for(closing.wait(), 5)
+            assert not closer.done()
+        finally:
+            release.set()
         async with asyncio.timeout(5):
             await closer
 

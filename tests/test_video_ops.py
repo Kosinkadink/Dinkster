@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
+import os
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import VIDEO_EDIT_TYPE, VIDEO_TYPE
+from dinkster_api.v1 import (
+    VIDEO_EDIT_TYPE,
+    VIDEO_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    assemble_video,
+    disassemble_video,
+    edit_video,
+)
+from dinkster_graph import Graph, GraphNode
 from dinkster_nodes_media_io import (
     AssembleVideo,
     DisassembleVideo,
@@ -18,6 +34,188 @@ from dinkster_nodes_media_io import (
 from dinkster_nodes_media_io.video import decode_video_frames
 from dinkster_values import video_from_source
 from dinkster_video import save_video_stream
+
+from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_native_video_registration_is_torch_free_and_preserves_first_authority() -> None:
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_TYPE, VIDEO_EDIT_TYPE; "
+            "from dinkster_nodes_comfy import register_inference_types; "
+            "r=TypeRegistry(); register_inference_types(r); "
+            "assert VIDEO_TYPE in r and VIDEO_EDIT_TYPE in r; assert 'torch' not in sys.modules",
+        ],
+        check=True,
+    )
+    from dinkster_api.v1 import TypeRegistry, register_video_edit_type
+    from dinkster_nodes_comfy import register_inference_types
+    from dinkster_nodes_media_io import register_media_types
+
+    for first, second in (
+        (register_inference_types, register_media_types),
+        (register_media_types, register_inference_types),
+    ):
+        registry = TypeRegistry()
+        first(registry)
+        video_spec = registry.spec(VIDEO_TYPE)
+        edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+        second(registry)
+        register_video_edit_type(registry)
+        assert registry.spec(VIDEO_TYPE) is video_spec
+        assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+
+    registry = TypeRegistry()
+    registry.register(VIDEO_TYPE, encode=lambda _: b"video", decode=lambda _: "video")
+    registry.register(VIDEO_EDIT_TYPE, encode=lambda _: b"edit", decode=lambda _: "edit")
+    video_spec = registry.spec(VIDEO_TYPE)
+    edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+    register_inference_types(registry)
+    assert registry.spec(VIDEO_TYPE) is video_spec
+    assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+
+
+def test_shared_video_edit_registration_is_torch_free_and_preserves_first_authority() -> None:
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_EDIT_TYPE; "
+            "from dinkster_inference_wire.types import register_inference_types; "
+            "r=TypeRegistry(); specs=register_inference_types(r); "
+            "assert VIDEO_EDIT_TYPE in r; assert r.spec(VIDEO_EDIT_TYPE) in specs; "
+            "assert not any(n in sys.modules for n in ('torch','av','dinkster_inference'))",
+        ],
+        check=True,
+    )
+    from dinkster_api.v1 import TypeRegistry, register_video_edit_type
+    from dinkster_inference_wire.types import register_inference_types
+
+    value = {
+        "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
+        "trim": {"start_time": 0.25, "duration": 0.25},
+        "vendor": {"tag": "retain", "enabled": False},
+    }
+    registry = TypeRegistry()
+    first = register_inference_types(registry)
+    spec = registry.spec(VIDEO_EDIT_TYPE)
+    assert spec.declared_codec
+    assert spec.encode(value) == (
+        b'{"crop": {"height": 7, "width": 11, "x": 5, "y": 3}, '
+        b'"trim": {"duration": 0.25, "start_time": 0.25}, '
+        b'"vendor": {"enabled": false, "tag": "retain"}}'
+    )
+    assert spec.decode(spec.encode(value)) == value
+    repeated = register_inference_types(registry)
+    register_video_edit_type(registry)
+    assert len(first) == len({item.type_id for item in first})
+    assert [item.type_id for item in first] == [item.type_id for item in repeated]
+    assert all(before is after for before, after in zip(first, repeated, strict=True))
+    assert registry.spec(VIDEO_EDIT_TYPE) is spec
+
+    registry = TypeRegistry()
+    original = registry.register(VIDEO_EDIT_TYPE, encode=lambda _: b"first", decode=lambda _: value)
+    specs = register_inference_types(registry)
+    assert registry.spec(VIDEO_EDIT_TYPE) is original
+    assert next(item for item in specs if item.type_id == VIDEO_EDIT_TYPE) is original
+    assert original.encode(value) == b"first"
+
+
+class VideoEditLiteralFixture(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="video-edit-public.apply",
+            inputs=(InputSpec("edit", TypeExpr.concrete(VIDEO_EDIT_TYPE)),),
+            outputs=(OutputSpec("edit", TypeExpr.concrete(VIDEO_EDIT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, edit: object) -> Mapping[str, object]:
+        assert edit == {
+            "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
+            "trim": {"start_time": 0.25, "duration": 0.25},
+            "vendor": {"tag": "retain", "enabled": False},
+        }
+        fields = cast(dict[str, object], edit)
+        images = np.arange(2 * 12 * 18 * 3, dtype=np.float32).reshape(2, 12, 18, 3) / 2000
+        result = edit_video(assemble_video(images, fps=4), {"crop": fields["crop"]})
+        np.testing.assert_array_equal(disassemble_video(result)["images"], images[:, 2:8, 4:14])
+        trimmed = edit_video(result, {"trim": fields["trim"]})
+        np.testing.assert_array_equal(disassemble_video(trimmed)["images"], images[1:, 2:8, 4:14])
+        return cls.outputs(edit=edit)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_video_edit_literal_crosses_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
+    async def scenario() -> None:
+        checkout = Path(__file__).resolve().parents[1]
+        native = checkout / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        native_bytes = native.read_bytes()
+        module = "video_edit_public_fixture"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_video_ops import VideoEditLiteralFixture\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "NODES = (VideoEditLiteralFixture,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "video-edit-public-dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname = "video-edit-public-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["video-edit-public"]\n\n[pack.entry]\n'
+            f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        manifests = (native, fixture)
+        paths = (
+            tmp_path,
+            checkout / "tests",
+            checkout / "src",
+            *sorted(checkout.glob("packages/*/src")),
+        )
+        composer = ServingComposer(
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join(map(str, paths)),
+            },
+        )
+        try:
+            for manifest in manifests:
+                pack = PackSpec(manifest=manifest, in_process=True)
+                if not in_process:
+                    pack = PackSpec(
+                        manifest=manifest,
+                        worker_group="video-edit-public",
+                        group_manifests=manifests,
+                    )
+                await composer.add_pack(pack)
+            value = {
+                "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
+                "trim": {"start_time": 0.25, "duration": 0.25},
+                "vendor": {"tag": "retain", "enabled": False},
+            }
+            graph = Graph(nodes={"apply": GraphNode("video-edit-public.apply", {"edit": value})})
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["apply"])
+                assert result.outputs["apply"]["edit"].resolve() == value
+                assert set(result.cached) == (set() if attempt == 0 else {"apply"})
+        finally:
+            await composer.close()
+        assert native.read_bytes() == native_bytes
+
+    asyncio.run(scenario())
 
 
 def _frames(count: int = 10, *, alpha: bool = False) -> np.ndarray:

@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.sampler_factories import (
-    _SAMPLER_NAMES,
     SAMPLER_FACTORY_NODES,
+    SAMPLER_NAMES,
     KSamplerSelect,
     SamplerDPMAdaptative,
     SamplerDPMPP_2M_SDE,
@@ -80,7 +80,7 @@ def test_sampler_factories_construct_pinned_runtime_samplers_with_exact_options(
     initialize_inference_process()
     from dinkster_inference import samplers
 
-    assert tuple(samplers.SAMPLER_NAMES) == _SAMPLER_NAMES
+    assert tuple(samplers.SAMPLER_NAMES) == SAMPLER_NAMES
     cases = (
         (KSamplerSelect, {"sampler_name": "euler"}, "sample_euler", {}),
         (
@@ -448,6 +448,7 @@ def test_all_sampler_factories_cross_ordinary_manifest_hosts_twice(
             (tmp_path / f"{module}.py").write_text(
                 "from test_sampler_factories_torch import ModelSource, SamplerConsumer\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, ModelSource, SamplerConsumer)\n",
                 encoding="ascii",
             )
@@ -457,6 +458,10 @@ def test_all_sampler_factories_cross_ordinary_manifest_hosts_twice(
                 native_manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["sampler-factory",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    f"{module}:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     f"{module}:register_inference_types",

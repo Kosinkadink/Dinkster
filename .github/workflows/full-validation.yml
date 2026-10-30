@@ -14,6 +14,10 @@ permissions:
   actions: read
   contents: read
 
+env:
+  # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
+  FRONTEND_REF: 34a761fb0b7f83b56ccd36e9155ace51e0ba85f9
+
 # Pushes batch behind the active run while scheduled and release validation always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
@@ -70,43 +74,61 @@ jobs:
           - os: linux
             runner: linux
             python-version: "3.12"
+            shard: 1
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/4"
             run_checks: true
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: linux
             runner: linux
             python-version: "3.12"
+            shard: 2
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: linux
             runner: linux
             python-version: "3.12"
+            shard: 3
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: linux
             runner: linux
             python-version: "3.12"
+            shard: 4
             shard_name: ", shard 4"
             pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
             run_checks: false
-            timeout-minutes: 20
-          - os: windows
-            runner: windows
-            python-version: "3.12"
-            shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
-            run_checks: true
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.12"
+            shard_name: ", shard 1"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
+            run_checks: true
+            timeout-minutes: 45
+          - os: windows
+            runner: windows
+            python-version: "3.12"
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.12"
+            shard_name: ", shard 3"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.12"
+            shard_name: ", shard 4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
             run_checks: false
             timeout-minutes: 30
     steps:
@@ -155,10 +177,34 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
           uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
-      - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
+      - run: >
+          uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --deselect=tests/test_sandbox.py::TestLiveJail
+          --deselect=tests/test_doctor.py::TestLiveJailedProbe
         if: runner.os == 'Windows'
-      - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
+        env:
+          DINKSTER_SLOW_TESTS: "1"
+      - run: >
+          uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --deselect=tests/test_sandbox.py::TestLiveJail
+          --deselect=tests/test_doctor.py::TestLiveJailedProbe
+          --cov=dinkster_api --cov=dinkster_assets
+          --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
+          --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
+          --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
+          --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
+          --cov=dinkster_workers --cov-branch --cov-report=
         if: runner.os == 'Linux'
+        env:
+          DINKSTER_SLOW_TESTS: "1"
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: .coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
       - run: uv run dinkster demo
         if: matrix.run_checks
       - run: uv run dinkster-isolated
@@ -173,7 +219,7 @@ jobs:
         with:
           clean: true
           repository: Kosinkadink/Dinkster-Frontend
-          ref: main
+          ref: ${{ env.FRONTEND_REF }}
           path: .frontend-validation
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -185,7 +231,7 @@ jobs:
         if: matrix.os == 'linux' && matrix.run_checks
         with:
           node-version: 22
-      - name: Decode real registries with frontend main
+      - name: Decode real registries with pinned frontend
         if: matrix.os == 'linux' && matrix.run_checks
         working-directory: .frontend-validation
         run: |
@@ -197,8 +243,28 @@ jobs:
   torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
+    name: torch-cpu (${{ matrix.suite }}${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: comfy
+            shard: ", shard 1"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 1/4"
+          - suite: comfy
+            shard: ", shard 2"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 2/4"
+          - suite: comfy
+            shard: ", shard 3"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 3/4"
+          - suite: comfy
+            shard: ", shard 4"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 4/4"
+          - suite: vision
+            shard: ""
+            pytest-args: ""
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -211,6 +277,8 @@ jobs:
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
+          suite: ${{ matrix.suite }}
+          comfy-pytest-args: ${{ matrix.pytest-args }}
 
   model-tests:
     needs: validation-plan
@@ -231,6 +299,7 @@ jobs:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
       DINKSTER_MODEL_TEST_GROUP: ${{ matrix.group }}
+      PYTEST_ADDOPTS: --durations=10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -251,59 +320,16 @@ jobs:
       - name: Verify every model-test group passed
         run: test '${{ needs.model-tests.result }}' = success
 
-  coverage:
+  coverage-gate:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
-    name: coverage (shard ${{ matrix.shard }})
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: ./.github/actions/prepare-validation-inputs
-        with:
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --all-packages
-      - run: >
-          uv run pytest -q -p tools.pytest_file_shard
-          --file-shard=${{ matrix.shard }}/4
-          --cov=dinkster_api --cov=dinkster_assets
-          --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
-          --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
-          --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
-          --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
-          --cov=dinkster_workers --cov-branch --cov-report=
-        env:
-          COVERAGE_FILE: .coverage.${{ matrix.shard }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-shard-${{ matrix.shard }}
-          path: .coverage.${{ matrix.shard }}
-          include-hidden-files: true
-          if-no-files-found: error
-
-  coverage-gate:
-    needs: [validation-plan, coverage]
+    needs: [validation-plan, test]
     if: always() && needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 5
     steps:
       - name: Require every coverage shard to pass
-        run: test '${{ needs.coverage.result }}' = success
+        run: test '${{ needs.test.result }}' = success
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -321,6 +347,9 @@ jobs:
           merge-multiple: true
       - name: Combine coverage and enforce the unchanged branch floor
         run: |
+          for shard in 1 2 3 4; do
+            test -f "coverage-data/.coverage.$shard"
+          done
           uv run coverage combine coverage-data
           uv run coverage report --fail-under=80
 
@@ -423,6 +452,8 @@ jobs:
       - run: |
           uv sync --locked --all-packages
           uv sync --project registry --frozen
+          uv run --no-sync python -m pytest -v \
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe
           uv run --no-sync python scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
             --state "$RUNNER_TEMP/registry-install-state" \
             --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"

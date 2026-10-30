@@ -2,14 +2,22 @@
 
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.cache import CACHE_NODES, EasyCache, LazyCache
-from dinkster_workers import load_manifest
+from dinkster_nodes_comfy.cache import CACHE_NODES, EasyCache, FluxKVCache, LazyCache
 
 
 def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
-    assert CACHE_NODES == (EasyCache, LazyCache)
+    assert CACHE_NODES == (EasyCache, LazyCache, FluxKVCache)
     assert set(CACHE_NODES).issubset(COMFY_NODES)
-    for node in CACHE_NODES:
+    flux = FluxKVCache.define_schema()
+    assert flux.node_type == "FluxKVCache"
+    assert flux.category == "experimental"
+    assert [(item.id, item.type) for item in flux.inputs] == [
+        ("model", TypeExpr.concrete(MODEL_TYPE))
+    ]
+    assert [(item.id, item.type) for item in flux.outputs] == [
+        ("MODEL", TypeExpr.concrete(MODEL_TYPE))
+    ]
+    for node in (EasyCache, LazyCache):
         schema = node.define_schema()
         assert schema.node_type == node.__name__
         assert schema.category == "advanced/debug"
@@ -33,8 +41,3 @@ def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
         assert [(item.id, item.type) for item in schema.outputs] == [
             ("MODEL", TypeExpr.concrete(MODEL_TYPE))
         ]
-
-
-def test_cache_nodes_are_in_the_ordinary_pack_manifest() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert {"EasyCache", "LazyCache"}.issubset(manifest.namespaces)

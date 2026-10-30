@@ -1,5 +1,13 @@
 ## Server API and execution
 
+- Environment catalog/status/doctor queries share a JSON command interface.
+  Catalog preserves the selected channel's variant manifests; status reports
+  configured channel/variant and observed engines without starting them.
+  Doctor reports content and pack drift without repairing it.
+- Confirmed environment start/stop commands manage named engine bindings with
+  explicit device assignments. Repeating an identical ready assignment does
+  not restart it; changing an assignment requires stop first. Plan-only calls
+  do not launch or stop processes, and empty device lists hide GPUs.
 - Schema wire version 1 with stored output descriptors, compact-storage and
   stream input declarations, alpha and mask policies, range-aware inputs, and
   chunk-safe declarations scoped to supported dynamic-combo options. Stream
@@ -12,12 +20,113 @@
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
+- The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
+  There is no separate ComfyUI schema catalog or prompt submission endpoint.
+- String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
+  Long paths and documents can be read in full without the status descriptor's
+  256-character inline preview limit. Retrieval retains job/scope authority.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
+- Host-validated saved-file artifacts are cataloged in the submitted project
+  with job and node provenance before the job reports completion. Unavailable
+  or revoked files and catalog failures fail the job rather than report a
+  successful save; recoverable catalog writes are retried on restart without
+  copying files into the vault.
+  Native writer saves include exact saved-file descriptors in both in-process
+  and isolated execution, including custom mounted destinations and empty
+  text files. The host verifies the current writable mount, safe file location,
+  content digest and byte size before exposing the descriptor. Returning an
+  existing asset without writing it does not report a new saved file.
+  Saved images, audio and video are classified from verified bytes for scoped
+  media authority and kind-filtered browsing. Text and unrecognized files stay
+  generic; a worker-provided media type alone never grants media authority.
+  Required encoded result attachments published into the vault are retained
+  as collision-safe named files in the project's selected output folder before
+  completion. Their result descriptors name the visible files; the catalog
+  records both mounted and vault locations with job/node provenance. Transient
+  preview events are not retained. A missing writable destination fails the job
+  instead of silently redirecting the output.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Operators can resolve an absolute local file path to a mounted asset in the
+  selected project's live folders without copying bytes. Changed or unindexed
+  files are verified and cataloged on demand, including read-only inputs.
+  Outside, revoked, excluded, missing and unsafe paths return an explicit
+  refusal without revealing host paths. Authentication, malformed requests and
+  server failures remain distinct errors, not upload-fallback signals.
+- Setup and serving with mount changes enabled initialize a writable
+  `<library-root>/imports` folder and a selected writable
+  `<library-root>/output` folder when those defaults are not configured.
+  Existing output selections, folder paths and read-only grants are preserved; unavailable
+  configured directories are not recreated or replaced. Removing the import
+  or output grant remains effective across restarts and repeated setup.
+  New default folders become available to existing projects without resetting
+  folder order, exclusions, project-only grants or output selections.
+- Named file and classified media uploads in the managed server use original
+  filenames in the configured imports folder, with collision-safe numbering and no durable
+  vault duplicate. Requests can select another writable project folder and
+  relative subfolder; the returned asset records the actual virtual path.
+  Operator location details identify the exact default import mount independently
+  of output selection, including custom mount IDs and unavailable defaults.
+  Read-only, unavailable, revoked, escaping, or other-project destinations
+  fail without silently redirecting the upload.
+  Named model/file uploads stream under the configured upload size limit
+  without buffering the whole file. Anonymous workflow and digest transfers
+  retain deduplicated vault storage; named generic imports do not grant
+  classified media authority.
+- Explicit scoped digest transfers retain their name, receive time and
+  caller-reported source-machine label across restarts, with recoverable
+  catalog publication. The label is advisory, not verified machine identity.
+  Transfers verify the declared digest, use the existing upload limit and
+  streaming vault path, and do not create classified media authority.
+- Named and classified-media uploads retain their original names, observed
+  virtual locations and upload history across server restarts. The scoped
+  asset catalog groups aliases by digest, supports name/kind/origin/date
+  filters and paged queries, and keeps workflow records separate. Catalog
+  locations do not grant filesystem access or expose physical paths.
+  Interrupted publication recovers completed files on restart or the next
+  catalog query, after checking their bytes and current folder authority.
+  Unpublished, changed, unavailable or revoked files are not restored or granted.
+  Existing scoped media grants and workflow records become discoverable after
+  verified vault backfill, with Unknown origin where history was not recorded.
+  Missing historical media names display the digest, not an invented filename.
+  Workflow records remain document-kind entries; existing project observations
+  do not acquire default-project membership, and anonymous bytes do not acquire
+  membership in any user's scope through this backfill.
+  Human operators can separately inventory verified, unrecorded vault blobs
+  by digest. This view excludes bytes recorded in any scope, reports unknown
+  names and history without guessing them, and creates no records or grants.
+  Agents, delegated users and ordinary asset readers cannot access it.
+- Read-only asset availability checks distinguish held vault/granted-folder
+  identities from missing ones without downloading, saving, granting or
+  cataloging bytes. Replaced, missing and revoked files are unavailable;
+  the same digest at a different granted location remains usable. Results
+  are scope-authorized, uncached and do not expose physical paths.
+  Job preflight uses the same verified local presence rule, never a fetching
+  fallback. Corrupted vault content can be replaced only through consented
+  acquisition; a digest-shaped filename is not proof that the bytes are held.
+- Human operators can inspect the vault directory and verified physical
+  locations for a scoped project asset, including identical bytes under
+  different observed filenames. Changed, missing, excluded and revoked
+  copies and vault symlinks escaping the vault root are not offered as reveal
+  targets. Ordinary catalogs remain path-free;
+  location reporting does not download assets or open the desktop shell.
+- Operators can persist project folder membership, independent display order,
+  shared folders, and project output selections through the mount API.
+  Removing a project association does not delete files or revoke the grant.
+  A selected project output requires a writable replacement before removal;
+  projects without an output can remain without one.
+  Failed mounts can be explicitly rescanned after reconnecting a drive.
+  Saving to a missing output root fails without recreating that root or
+  redirecting the output to another folder.
+  With fixed pack sandboxes, folder grant edits persist as restart-required
+  changes without altering live worker authority or restarting the server.
+- Jobs retain their project's folder preferences in both in-process and
+  isolated execution. Name and directory selections follow that order;
+  saved digest references retain their identity independently of folder order.
+  Filesystem revocation still takes effect. Host locations are operator-only.
 - Scans exclude partial downloads and files changing between observations.
   Missing and replaced asset identities survive rescans and restart without
   being offered as live content; restored content recovers its digest.
@@ -48,6 +157,9 @@
 - Asset acquisition checks the local vault and mounted files before packaged
   assets and HTTP sources. Remote bytes verify against the requested digest
   before publication, and job acquisition requires explicit consent.
+  Newly acquired assets retain a discoverable name and sanitized winning
+  download URL in the submitting scope and project. Interrupted catalog
+  publication recovers verified vault bytes without downloading again.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

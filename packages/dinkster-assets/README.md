@@ -6,6 +6,14 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+Selected indexed files use ordinary `AssetRef` values from the engine-written
+index. The live mounts snapshot remains their resolver, so revoked grants stop
+resolving without a worker restart. Unindexed selections retain invocation-local
+`LocalAssetRef` bindings and cannot be admitted as portable VIDEO until scanned.
+Admission never copies selected input files into the vault or worker scratch.
+`produced_output_scratch` is only the writable publication store for produced
+outputs; uploads, downloads and remote transfers retain their separate vault paths.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.
@@ -39,6 +47,32 @@ same file revision. Local bindings cross worker boundaries as opaque,
 server-scoped grants, not filesystem paths or content identities. File
 replacement and mount revocation invalidate them. Their cache fingerprints
 use an `unverified-local:` prefix and cannot be redeemed on another host.
+
+For `model/text-encoder`, the same method also accepts slash-separated
+source-relative filenames. These select an exact file in the first ranked
+exact-kind root, without basename ambiguity. Absolute paths, dot/parent
+components and links escaping the grant are rejected. Ordinary ASSET inputs
+and filename preflight use the same existing file carriers and grants.
+
+`asset_selection_names(kind)` enumerates source-relative options from live
+exact-kind grants. `resolve_asset_selection(kind, name)` returns a checked
+directory subtree, an existing invocation-local file reference, an
+encoder/decoder pair of those references, or `None` for the file-free
+`pixel_space` option. Pair members must coexist in one `model/vae-approx`
+root. An existing `AssetRef` or `LocalAssetRef` is returned unchanged only
+when its resolved file is an admitted option in the current exact-kind
+grants; its verification policy is unchanged. Resolution never searches a
+library, vault or ungranted directory for a selection name.
+
+`model/diffusers` discovers `model_index.json`, including the granted root
+itself as `.`. `directory/input` lists recursive non-root directories without
+following directory links. `directory/dataset` lists non-root directories
+containing `metadata.json` or a `.safetensors` file and stops descending below
+matches. Dataset lookup selects the first ranked existing same-named directory,
+even when only a later root supplied the discovery marker. Selected subtrees
+reject escaping links, cycles and non-file members.
+The returned paths and pair references are invocation-scoped, not graph values.
+`asset_selection_options` exposes only option names and shapes for pickers.
 
 Library scans reject partial-download extensions even with custom ignore
 rules and admit files only after two size/mtime observations agree. Unchanged
@@ -75,6 +109,14 @@ publishes bounded seekable sources atomically without buffering the complete
 file. `parse_latent_asset` strictly validates native and ComfyUI latent
 safetensors headers before tensor data is materialized.
 
+`AssetWriter.save_named_stream(target, source, limit=...)` treats the target's
+prefix as the complete relative filename for an explicit import. It preserves
+that name when unused and adds a numbered suffix before the extension on a
+collision, never overwriting an existing file. It uses the same live writable
+mount, containment, bounded streaming and digest-index publication as output
+saves. Portable filename rules also reject reserved writer/index names. Existing
+`save_stream` output naming is unchanged.
+
 `AssetWriter.output_target(filename_prefix, mount=None)` combines separate save
 inputs into the writer's target. Omitting `mount` uses the snapshot's configured
 output mount; an explicit mount selects that grant instead. Both forms retain
@@ -93,6 +135,60 @@ records. Record CRUD remains stdlib SQLite. The initial revision creates
 `records_scope_modified` index. An existing unversioned catalog is adopted
 only when its schema matches; an incompatible schema fails without changing
 its records or recording a version. Back up the catalog before upgrading.
+
+`LibraryStore(path, read_only=True)` opens an existing catalog without creating
+directories, migrating schemas or changing journal mode. Scoped lookups retain
+the same membership rules, and SQLite refuses writes through this connection.
+SQLite may create or update its WAL/shared-memory coordination files; these are
+not catalog content. Read-only open failures report the underlying SQLite reason
+without retrying with write access or bypassing WAL recovery.
+
+Asset observations share this database but are separate from mutable workflow
+records. `LibraryStore.record_asset` records an original basename, observed
+AssetRef, kind, project, time and origin event in one transaction. Observed
+virtual locations are not filesystem authority. Download origin URLs omit
+userinfo, query strings and fragments. `query_assets` pages digest identities
+within one scope/project and retains all their aliases and origin events even
+when only one event matches the name, kind, origin or date filter. Dates are
+observation times, not claims about a file's original creation time.
+Each digest's observations are ordered by ascending observation time, then by
+observation ID for tied times, not by insertion order.
+Publication callers can supply an observation ID and time for idempotent
+recovery; a repeated ID must describe the identical event.
+Startup and catalog recovery backfill verified vault bytes already named by
+scoped records or media grants. Existing project observations are not widened
+to the default project. Historical media without a recorded name uses its digest
+as a label and Unknown origin, not an invented filename or download URL.
+Workflow records stay document-kind observations; neither backfill nor an
+anonymous blob on disk creates new media or filesystem authority.
+`unrecorded_vault_assets` inventories verified vault digests with no records,
+media grants or observations in any scope. It returns digest labels and byte
+sizes without fabricating names, kinds or dates, and writes no catalog state.
+The server exposes it only to human, nondelegated storage operators through
+`GET /api/assets/catalog?source=unrecorded`. The response has
+`source: "unrecorded"`, ordinary five-field asset refs and empty observations.
+Digest text search and descending digest cursor pagination are supported;
+project, kind, origin and date filtering are not applicable. This is a local
+operator inventory, not a tenant asset source or a federated catalog.
+
+Named imports can prepare metadata with `before_publish` before the writer's
+atomic link. The server journals upload observations in the private vault's
+`.upload-observations` directory before publishing bytes, removing the journal
+only after grant/catalog commits. Startup and catalog queries retry unfinished
+observations. Mounted recovery verifies the exact filename/digest and current
+writable/project grant, repairs digest indexing, and never creates missing bytes.
+Unavailable, changed or revoked locations retain their journal for a later retry.
+The catalog cannot turn that journal into filesystem authority.
+
+Consented job acquisition uses the same journal for the verified winning
+source before vault publication. Download observations retain only a sanitized
+URL; packaged acquisitions record unknown origin rather than inventing a URL.
+The request's scope and project own the observation, not the global vault.
+Metadata preparation failures abort publication with `AssetPublicationError`
+and do not try another mirror. A catalog failure after publication retains the
+journal for verified, idempotent recovery at startup, catalog access or job
+resubmission. Observation display names are not filesystem components and do
+not inherit the mutable workflow record's name-length limit.
 
 From the repository root:
 
