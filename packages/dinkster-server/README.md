@@ -254,12 +254,18 @@ Library and history inspection hold their SQLite write transactions; cache
 inspection holds the cache admission/publication barriers. External roots
 must remain held while library dependency closure is computed and candidates
 are considered. A copied root set after those barriers close is not safe.
-Managed vault writers acquire the same per-identity OS ownership as verified
-readers before staging bytes and retain it through their context, including
-the durable adoption commit. Scratch writers use job-root ownership instead.
-Reconciliation must hold the exclusive claim through any removal; a claim
-refuses while a publisher or reader owns the identity. These local barriers
-do not certify global owner completeness or enable deletion on their own.
+Managed vault writers and verified readers acquire vault-wide OS ownership
+before per-identity ownership, retaining both through their existing lifetime.
+Server jobs retain vault ownership from dispatch through engine/native
+settlement, terminal recovery and durable history publication. Media publication
+workers retain it through their record/reference commit, including when the
+request is cancelled. Scratch writers use job-root ownership instead.
+An exclusive vault claim is nonblocking and must be acquired after all reference
+barriers, then held through the final operation. If a publisher already owns the
+vault while waiting on a reference barrier, inspection refuses the claim and
+releases its barriers rather than waiting in the reverse order. This closes the
+server-job publication-to-history gap, not every possible external handoff.
+Unknown global owner completeness still blocks deletion.
 
 ## Storage accounting
 
@@ -274,6 +280,12 @@ publication snapshot or evidence that bytes are eligible for deletion.
 `knownRetainedAssets` counts the union of held memory/disk cache, all-scope
 history and library roots plus transitive dependencies. It is null when root
 inspection refuses. A partial known set is not a complete owner census.
+`vaultOwnershipAvailable` observes the exclusive vault claim while these owners
+are held: true means the claim was acquired, false means a managed reader,
+publisher or server job was active (`vault_in_use`), and null means ownership or
+reference state was unavailable. A missing inventory or lease gate reports
+`vault_ownership_state_unavailable`; inspection never creates either. This field
+does not establish complete frontend registration or make bytes reclaimable.
 
 Memory barriers remain held until the blocking disk/history/library inspection
 settles, including repeated request cancellation. Disk roots are deduplicated;

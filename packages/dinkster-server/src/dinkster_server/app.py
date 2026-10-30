@@ -214,7 +214,7 @@ import importlib.metadata
 import ipaddress
 import json
 from collections import deque
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -1269,6 +1269,7 @@ class ServerState:
         full_free: FullFree | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
         settle_job: Callable[[Job], Awaitable[None]] | None = None,
+        job_context: Callable[[Job], contextlib.AbstractContextManager[object]] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1396,6 +1397,7 @@ class ServerState:
             store=history,
             complete_result=complete_result,
             settle_job=settle_job,
+            job_context=job_context,
         )
         default_budgets = {
             device: budget
@@ -4610,6 +4612,14 @@ def create_app(
             )
             app[RECOVERY_KEY].update(recovery)
 
+    @contextlib.contextmanager
+    def job_context(job: Job) -> Generator[None]:
+        from dinkster_assets.scratch import hold_produced_vault
+
+        assert library is not None
+        with contextlib.closing(hold_produced_vault(library.vault.root)):
+            yield
+
     state = ServerState(
         make_engine,
         schemas,
@@ -4640,6 +4650,7 @@ def create_app(
         full_free=full_free,
         complete_result=complete_result if library is not None else None,
         settle_job=settle_job if library is not None else None,
+        job_context=job_context if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

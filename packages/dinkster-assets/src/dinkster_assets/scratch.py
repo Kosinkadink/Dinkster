@@ -169,28 +169,59 @@ def _lock(path: Path) -> FileLock:
 
 
 class ProducedScratchLease:
-    """Keep a scratch directory busy until its owner explicitly releases it."""
+    """Keep managed directories busy until their owner explicitly releases them."""
 
-    def __init__(self, root: Path) -> None:
-        folder = _lease_directory(root)
-        self._lock = _lock(folder / f"owner-{uuid.uuid4().hex}.lock")
+    def __init__(self, root: Path, *additional_roots: Path) -> None:
+        self._locks: list[FileLock] = []
         try:
-            # Other producers briefly hold this gate while registering too.
-            # Only reconciliation attempts must be strictly nonblocking.
-            with _lock(folder / "gate.lock").acquire(timeout=5):
-                self._lock.acquire(timeout=0)
-        except Timeout:
-            raise AssetError("produced scratch is busy with reconciliation") from None
+            for directory in (root, *additional_roots):
+                folder = _lease_directory(directory)
+                lock = _lock(folder / f"owner-{uuid.uuid4().hex}.lock")
+                self._locks.append(lock)
+                # Other producers briefly hold this gate while registering too.
+                # Only reconciliation attempts must be strictly nonblocking.
+                with _lock(folder / "gate.lock").acquire(timeout=5):
+                    lock.acquire(timeout=0)
+        except BaseException as exc:
+            self.close()
+            if isinstance(exc, Timeout):
+                raise AssetError("produced scratch is busy with reconciliation") from None
+            raise
 
     def close(self) -> None:
-        self._lock.release()
+        while self._locks:
+            self._locks.pop().release()
+
+
+def hold_produced_vault(root: Path) -> ProducedScratchLease:
+    """Retain the host's produced vault through publication and reference handoff."""
+    root = root.absolute()
+    if root.is_symlink():
+        raise AssetError("produced vault ownership must not follow symlinks")
+    return ProducedScratchLease(root / ".produced-collection")
+
+
+@contextmanager
+def claim_inactive_produced_vault(root: Path) -> Generator[bool]:
+    """Exclude managed readers, publishers and host runs, not reference owners.
+
+    Callers must also hold every reference owner through their final operation;
+    missing ownership metadata or inventory cannot certify a quiet vault.
+    """
+    root = root.absolute()
+    inventory = root / ".produced-assets.sqlite"
+    if root.is_symlink() or inventory.is_symlink() or not inventory.is_file():
+        raise AssetError("produced vault ownership state is unavailable")
+    with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
+        yield inactive
 
 
 def hold_produced_asset_read(path: Path) -> ProducedScratchLease | None:
     """Protect managed scratch or an adopted CAS blob while its descriptor is open.
 
     Ordinary mounted/imported files acquire no lease and create no metadata.
-    Scratch readers retain the whole job root; engine readers retain one digest.
+    Scratch readers retain the whole job root; engine readers retain the vault
+    and one digest, in that order.
     Missing publication state cannot authorize collection of either kind.
     """
     path = path.absolute()
@@ -208,7 +239,7 @@ def hold_produced_asset_read(path: Path) -> ProducedScratchLease | None:
     readers = root / ".produced-readers"
     if readers.is_symlink():
         raise AssetError("produced asset reader ownership must not be a symlink")
-    return ProducedScratchLease(readers / path.name)
+    return ProducedScratchLease(root / ".produced-collection", readers / path.name)
 
 
 _path_owner: ContextVar[Callable[[Path], None] | None] = ContextVar(

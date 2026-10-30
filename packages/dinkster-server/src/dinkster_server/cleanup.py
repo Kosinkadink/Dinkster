@@ -15,6 +15,7 @@ from dinkster_assets.scratch import (
     ProducedScratchState,
     claim_inactive_produced_job,
     claim_inactive_produced_scratch,
+    claim_inactive_produced_vault,
     produced_job_scratch_root,
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
@@ -246,6 +247,7 @@ def _inspect(
     vault_bytes: int | None = None
     adopted_bytes: int | None = None
     retained_assets: int | None = None
+    vault_ownership_available: bool | None = None
     try:
         if scratch_root is None:
             raise AssetError("scratch root is not configured")
@@ -275,6 +277,14 @@ def _inspect(
                 roots.update(owners.enter_context(history.hold_asset_references()))
             references = owners.enter_context(store.hold_asset_references(sorted(roots)))
             retained_assets = len(references)
+            try:
+                vault_ownership_available = owners.enter_context(
+                    claim_inactive_produced_vault(vault.root)
+                )
+                if not vault_ownership_available:
+                    blocked.append("vault_in_use")
+            except (AssetError, OSError):
+                blocked.append("vault_ownership_state_unavailable")
     except (AssetError, OSError):
         blocked.append("reference_state_unavailable")
     return {
@@ -283,6 +293,7 @@ def _inspect(
         "adoptedBytes": adopted_bytes,
         "reclaimableBytes": None,
         "knownRetainedAssets": retained_assets,
+        "vaultOwnershipAvailable": vault_ownership_available,
         "blocked": sorted(set(blocked)),
         "collectionEnabled": False,
     }

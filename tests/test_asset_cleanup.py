@@ -8,7 +8,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -16,10 +16,15 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes, open_verified
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
-from dinkster_assets.scratch import ProducedScratchState, hold_produced_job
+from dinkster_assets.scratch import (
+    ProducedScratchState,
+    claim_inactive_produced_vault,
+    hold_produced_job,
+    hold_produced_vault,
+)
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_server import (
@@ -33,13 +38,59 @@ from dinkster_server import (
 )
 from dinkster_server.auth import StaticBearerAuthenticator
 from dinkster_server.cleanup import inspect_cleanup
-from dinkster_server.library import run_owned_thread
+from dinkster_server.library import run_media_publication, run_owned_thread
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
 from test_history import make_record
 from test_server import SCHEMAS, Sleeper, echo_graph, make_engine, reset_sleeper, wait_for_state
 
 
-def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellation() -> None:
+def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        library = ServerLibrary(vault, store)
+        entered = threading.Event()
+        release = threading.Event()
+        data = b"published before reference commit"
+        digest = digest_bytes(data)
+        ProducedAssetInventory(vault.root).pending(digest, len(data))
+
+        def publish() -> None:
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            entered.set()
+            assert release.wait(10)
+            store.create("private", "kept", digest, "application/octet-stream")
+
+        task = asyncio.create_task(run_media_publication(library, publish))
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+            assert store.query("private") == []
+            release.set()
+            async with asyncio.timeout(10), library.media_ingest_lock:
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert inactive
+                assert [record.digest for record in store.query("private")] == [digest]
+                path = vault.resolve(digest)
+                assert path is not None and path.read_bytes() == data
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            async with library.media_ingest_lock:
+                store.close()
+
+    asyncio.run(scenario())
+
+
+def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellation(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         entered = threading.Event()
         release = threading.Event()
@@ -51,12 +102,28 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
         async def settle(job: Job) -> None:
             await run_owned_thread(work)
 
-        queue = JobQueue(make_engine(), settle_job=settle)
+        vault = AssetVault(tmp_path / "vault")
+        ProducedAssetInventory(vault.root).pending(digest_bytes(b"pending"), 7)
+        terminal_claims: list[bool] = []
+
+        def terminal(job: Job) -> None:
+            if job.state in {"completed", "failed", "cancelled"}:
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    terminal_claims.append(inactive)
+
+        queue = JobQueue(
+            make_engine(),
+            settle_job=settle,
+            job_context=lambda job: closing(hold_produced_vault(vault.root)),
+            on_job_event=terminal,
+        )
         queue.start()
         try:
             job = queue.submit("client", "job", echo_graph(), ["s"])
             assert await asyncio.to_thread(entered.wait, 10)
             assert job.state == "running"
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
             assert queue.submit("client", "job", echo_graph(), ["s"]) is job
             with pytest.raises(ValueError, match="in use"):
                 queue.submit("client", "job", echo_graph("different"), ["s"])
@@ -68,6 +135,8 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
                 assert not job.task.done()
                 assert following.state == "queued"
                 assert queue.running() == [job]
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await job.task
@@ -75,6 +144,9 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
             assert job.result is not None
             await wait_for_state(following, "completed")
             assert queue.running() == []
+            assert terminal_claims == [False, False]
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
         finally:
             release.set()
             await queue.close()
@@ -92,12 +164,15 @@ def test_terminal_jobs_recover_only_their_offered_publications(
         vault = AssetVault(tmp_path / "vault")
         data = b"terminal offered publication"
         digest = digest_bytes(data)
+        ProducedAssetInventory(vault.root).pending(digest, len(data))
         sources: list[Path] = []
 
         @contextmanager
         def running(job: str) -> Generator[None]:
             host = hold_produced_job(scratch, job)
             try:
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
                 with use_produced_output_job(job, 1):
                     source = produced_output_scratch(
                         {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
@@ -180,6 +255,8 @@ def test_terminal_jobs_recover_only_their_offered_publications(
                 "verifiedPublications": 0 if corrupt else 1,
                 "blockedInspections": 1 if corrupt else 0,
             }
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
             response = await client.get(f"/api/assets/{digest}")
             if corrupt:
                 assert response.status == 404
@@ -456,9 +533,16 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
                 "adoptedBytes": 13,
                 "reclaimableBytes": None,
                 "knownRetainedAssets": 5,
+                "vaultOwnershipAvailable": True,
                 "blocked": ["owner_completeness_unknown", "temporary_accounting_unavailable"],
                 "collectionEnabled": False,
             }
+            held_path = vault.resolve(digests[0])
+            assert held_path is not None
+            with open_verified(held_path, digests[0]):
+                reading = await inspect_cleanup(vault, store, history, cache)
+                assert reading["vaultOwnershipAvailable"] is False
+                assert "vault_in_use" in cast(list[str], reading["blocked"])
             store.retain_assets("unrelated", "preview", "unknown", [], revision=0)
             blocked = await inspect_cleanup(vault, store, history, cache)
             assert blocked["knownRetainedAssets"] is None

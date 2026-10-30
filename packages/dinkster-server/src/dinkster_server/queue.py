@@ -35,6 +35,7 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractContextManager, ExitStack
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -176,6 +177,7 @@ class JobQueue:
         store: QueuePersistence | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
         settle_job: Callable[[Job], Awaitable[None]] | None = None,
+        job_context: Callable[[Job], AbstractContextManager[object]] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -193,6 +195,7 @@ class JobQueue:
         self._store = store
         self._complete_result = complete_result
         self._settle_job = settle_job
+        self._job_context = job_context
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -530,9 +533,12 @@ class JobQueue:
                 self._emit(job)
 
     async def _run_job(self, job: Job) -> None:
+        ownership = ExitStack()
         terminal_state: JobState = "completed"
         error: dict[str, Any] | None = None
         try:
+            if self._job_context is not None:
+                ownership.enter_context(self._job_context(job))
             if job.compiled_graph is not None:
                 result = await self._engine.run_compiled(
                     job.compiled_graph,
@@ -634,5 +640,8 @@ class JobQueue:
                 try:
                     self._finish(job, terminal_state, error=error)
                 finally:
-                    self._running.discard(job.key)
-                    self._wakeup.set()
+                    try:
+                        ownership.close()
+                    finally:
+                        self._running.discard(job.key)
+                        self._wakeup.set()

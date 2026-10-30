@@ -68,6 +68,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -925,8 +926,14 @@ async def run_media_publication(
     handoff: asyncio.Event | None = None,
 ) -> _T:
     """Keep serialization owned until an uncancellable worker actually settles."""
+    from dinkster_assets.scratch import hold_produced_vault
+
+    def owned_publish() -> _T:
+        with closing(hold_produced_vault(library.vault.root)):
+            return publish()
+
     await library.media_ingest_lock.acquire()
-    task = asyncio.ensure_future(asyncio.to_thread(publish))
+    task = asyncio.ensure_future(asyncio.to_thread(owned_publish))
     if handoff is not None:
         handoff.set()
     handed_off = False

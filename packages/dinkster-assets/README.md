@@ -43,6 +43,13 @@ publication. Retrying an interrupted copy preserves the first adoption order;
 already verified destination bytes can complete a pending entry after restart.
 Existing untracked inputs and mounted sources are not added to this inventory.
 Inventory entries describe adoption, not reachability or permission to delete.
+Managed engine-vault readers and writers retain vault-wide OS ownership before
+per-digest ownership. `hold_produced_vault()` lets the server extend that
+ownership through result/reference handoff. `claim_inactive_produced_vault()`
+refuses active users or missing inventory/lease state without creating metadata.
+An exclusive claim blocks new managed readers and publishers until released;
+the caller must also hold every reference owner and verify eligibility before
+removal. Partial lease acquisition failures release all acquired ownership.
 
 The library stores explicit scoped reference manifests for document, history,
 shown-result and preview owners. Replacement and release require the current

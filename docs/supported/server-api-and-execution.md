@@ -42,6 +42,10 @@
   bytes while host-job and store ownership are exclusively held; live, unsafe
   or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
   cleanup remains disabled regardless of individual complete registrations.
+  Vault ownership inspection reports busy for active managed readers, writers
+  and server jobs, or unavailable for unknown ownership state. Server jobs keep
+  that ownership through terminal recovery and durable history publication;
+  media publication keeps it through reference commits despite cancellation.
 - Startup recovers explicitly offered publications from inactive job scratch
   through verified engine-vault adoption, without rerunning jobs or deleting
   scratch. Active, unknown or corrupt stores remain blocked; recovery of another

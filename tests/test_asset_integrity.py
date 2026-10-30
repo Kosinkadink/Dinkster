@@ -33,7 +33,11 @@ from dinkster_assets import integrity as integrity_module
 from dinkster_assets import vault as vault_module
 from dinkster_assets.declared import use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
-from dinkster_assets.scratch import ProducedScratchState, claim_inactive_produced_scratch
+from dinkster_assets.scratch import (
+    ProducedScratchState,
+    claim_inactive_produced_scratch,
+    claim_inactive_produced_vault,
+)
 from dinkster_server import ServerLibrary, create_app
 from dinkster_server import asset_stream as asset_stream_module
 from dinkster_server.asset_stream import open_verified_sized, stream_verified
@@ -52,6 +56,57 @@ def write_asset(tmp_path: Path, data: bytes, name: str = "model.safetensors") ->
     return path
 
 
+@pytest.mark.parametrize("fault", ["inventory", "ownership", "symlink"])
+def test_vault_claim_refuses_unknown_or_escaping_state(tmp_path: Path, fault: str) -> None:
+    vault = AssetVault(tmp_path / "vault")
+    if fault != "inventory":
+        ProducedAssetInventory(vault.root).pending(digest_bytes(b"pending"), 7)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if fault == "symlink":
+        (vault.root / ".leases").symlink_to(outside, target_is_directory=True)
+    before = set(vault.root.rglob("*"))
+    with pytest.raises(AssetError):
+        with claim_inactive_produced_vault(vault.root):
+            pytest.fail("unknown ownership must not admit collection")
+    assert set(vault.root.rglob("*")) == before
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("operation", ["read", "publish"])
+def test_vault_claim_blocks_new_identity_operations_and_releases_failed_acquisitions(
+    tmp_path: Path, operation: str
+) -> None:
+    vault = AssetVault(tmp_path / "vault")
+    data = b"first produced identity"
+    digest = digest_bytes(data)
+    other_data = b"different produced identity"
+    other = digest_bytes(other_data)
+    inventory = ProducedAssetInventory(vault.root)
+    inventory.pending(digest, len(data))
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        path = writer.commit()
+    with claim_inactive_produced_vault(vault.root) as inactive:
+        assert inactive
+        with pytest.raises(AssetError, match="busy with reconciliation"):
+            if operation == "read":
+                open_verified(path, digest)
+            else:
+                vault.writer(other)
+    with vault.writer(other) as writer:
+        writer.write(other_data)
+        other_path = writer.commit()
+    with open_verified(other_path, other) as handle:
+        assert handle.read() == other_data
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert not inactive
+    with claim_inactive_produced_vault(vault.root) as inactive:
+        assert inactive
+    assert path.read_bytes() == data
+    assert not list(vault.root.glob(".ingest-*"))
+
+
 @pytest.mark.parametrize("commit", ["commit", "commit_with_result"])
 @pytest.mark.parametrize("outcome", ["success", "invalid", "abandoned"])
 def test_vault_publication_ownership_spans_writer_context(
@@ -62,6 +117,8 @@ def test_vault_publication_ownership_spans_writer_context(
     ProducedAssetInventory(vault.root).pending(digest, len(b"published bytes"))
     ownership = vault.root / ".produced-readers" / digest.split(":", 1)[1]
     with vault.writer(digest) as writer:
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert not inactive
         with claim_inactive_produced_scratch(ownership) as inactive:
             assert not inactive
         writer.write(b"different bytes" if outcome == "invalid" else b"published bytes")
@@ -76,6 +133,8 @@ def test_vault_publication_ownership_spans_writer_context(
         with claim_inactive_produced_scratch(ownership) as inactive:
             assert not inactive
     with claim_inactive_produced_scratch(ownership) as inactive:
+        assert inactive
+    with claim_inactive_produced_vault(vault.root) as inactive:
         assert inactive
     if outcome != "success":
         assert not vault.has(digest)
@@ -221,6 +280,9 @@ def test_produced_readers_keep_ownership_until_last_descriptor_closes(
     try:
         with claim_inactive_produced_scratch(claim_root) as inactive:
             assert not inactive
+        if store == "engine":
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
         first.close()
         first.close()
         with claim_inactive_produced_scratch(claim_root) as inactive:
@@ -245,6 +307,9 @@ def test_produced_readers_keep_ownership_until_last_descriptor_closes(
             assert inactive
             with pytest.raises(AssetError, match="busy with reconciliation"):
                 open_verified(path, digest)
+        if store == "engine":
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
         with pytest.raises(AssetIntegrityError):
             open_verified(path, digest_bytes(b"wrong identity"))
         with claim_inactive_produced_scratch(claim_root) as inactive:
@@ -345,10 +410,14 @@ def test_produced_reader_ownership_crosses_processes_and_releases_on_exit(
         assert parent.recv() == data
         with claim_inactive_produced_scratch(claim_root) as inactive:
             assert not inactive
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert not inactive
         parent.send("release")
         process.join(20)
         assert process.exitcode == 0
         with claim_inactive_produced_scratch(claim_root) as inactive:
+            assert inactive
+        with claim_inactive_produced_vault(vault.root) as inactive:
             assert inactive
     finally:
         if process.is_alive():
