@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
 import subprocess
 import sys
@@ -51,40 +50,72 @@ def test_attention_runtime_starts_on_cpu_without_comfy_arguments() -> None:
 
 
 def test_attention_runtime_resolves_upstream_named_attention() -> None:
-    runtime = attention.create_attention_runtime()
-    assert "sdpa" in runtime.capabilities.available_policies
-    selected = runtime.resolve(runtime.route_token)
-    q = torch.arange(24, dtype=torch.float32).reshape(1, 3, 8) / 10
-    k = q + 0.2
-    v = q - 0.1
-    expected = (
-        torch.nn.functional.scaled_dot_product_attention(
-            q.reshape(1, 3, 2, 4).transpose(1, 2),
-            k.reshape(1, 3, 2, 4).transpose(1, 2),
-            v.reshape(1, 3, 2, 4).transpose(1, 2),
-        )
-        .transpose(1, 2)
-        .reshape(1, 3, 8)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import torch
+from dinkster_native import attention
+
+runtime = attention.create_attention_runtime()
+assert "sdpa" in runtime.capabilities.available_policies
+selected = runtime.resolve(runtime.route_token)
+q = torch.arange(24, dtype=torch.float32).reshape(1, 3, 8) / 10
+k = q + 0.2
+v = q - 0.1
+expected = (
+    torch.nn.functional.scaled_dot_product_attention(
+        q.reshape(1, 3, 2, 4).transpose(1, 2),
+        k.reshape(1, 3, 2, 4).transpose(1, 2),
+        v.reshape(1, 3, 2, 4).transpose(1, 2),
     )
-    torch.testing.assert_close(selected(q, k, v, 2), expected)
+    .transpose(1, 2)
+    .reshape(1, 3, 8)
+)
+torch.testing.assert_close(selected(q, k, v, 2), expected)
+""",
+        ],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
-    from dinkster_native.fork_nodes import GenerationKSampler
-    from dinkster_schema import ComboOption, ComboWidget
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib
+from dinkster_inference_wire.process import initialize_inference_process
+from dinkster_native.fork_nodes import GenerationKSampler
+from dinkster_schema import ComboOption, ComboWidget
 
-    samplers = importlib.import_module("dinkster_inference.samplers")
-    schema = GenerationKSampler.schema()
-    for name, expected in (
-        ("sampler_name", samplers.KSampler.SAMPLERS),
-        ("scheduler", samplers.KSampler.SCHEDULERS),
-    ):
-        spec = schema.input(name)
-        assert spec is not None and isinstance(spec.widget, ComboWidget)
-        assert all(isinstance(option, ComboOption) for option in spec.widget.options)
-        assert [cast("ComboOption", option).value for option in spec.widget.options] == [
-            f"dinkster.{value}" for value in expected
-        ]
+initialize_inference_process()
+samplers = importlib.import_module("dinkster_inference.samplers")
+schema = GenerationKSampler.schema()
+for name, expected in (
+    ("sampler_name", samplers.KSampler.SAMPLERS),
+    ("scheduler", samplers.KSampler.SCHEDULERS),
+):
+    spec = schema.input(name)
+    assert spec is not None and isinstance(spec.widget, ComboWidget)
+    assert all(isinstance(option, ComboOption) for option in spec.widget.options)
+    assert [option.value for option in spec.widget.options] == [
+        f"dinkster.{value}" for value in expected
+    ]
+""",
+        ],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("skip_output_reshape", (False, True))
@@ -275,3 +306,49 @@ def test_workgroup_attempt_gates_one_invocation_and_releases_attention(
 
     asyncio.run(scenario())
     assert events == [("activate", "single-job", 1), ("release", "single-job", 1)]
+
+
+def test_sampling_clone_resolves_distributed_activation_at_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_api.v1 import prepare_sampling_model
+    from dinkster_native import multigpu
+    from dinkster_workers.execution import ExecutionContext, use_execution_context
+
+    class Model:
+        def __init__(self) -> None:
+            self.selected: object | None = None
+            self.distributed = False
+
+        def clone(self) -> Model:
+            return Model()
+
+        def set_model_optimized_attention(self, selected: object) -> None:
+            self.selected = selected
+
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+    runtime = attention.create_attention_runtime()
+    selected = object()
+    active = False
+    monkeypatch.setattr(runtime, "for_model", lambda _token: selected)
+    monkeypatch.setattr(runtime, "distributed_active", lambda: active)
+
+    def configure(model: Model) -> None:
+        model.distributed = True
+
+    monkeypatch.setattr(multigpu, "configure_distributed_model", configure)
+    model = Model()
+    context = ExecutionContext(
+        arm=None,
+        expected_execution_identity=None,
+        attention_route_token=runtime.route_token,
+        attention_runtime=runtime,
+    )
+    with use_execution_context(context):
+        ordinary = cast("Model", prepare_sampling_model(model))
+        active = True
+        distributed = cast("Model", prepare_sampling_model(model))
+    assert ordinary is not model and distributed is not model and ordinary is not distributed
+    assert ordinary.selected is selected and distributed.selected is selected
+    assert not ordinary.distributed and distributed.distributed
+    assert model.selected is None and not model.distributed

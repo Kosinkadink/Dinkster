@@ -259,6 +259,7 @@ class TextEncodeMOSSImageEdit(Node):
                     member_prefix="image_",
                     min_members=1,
                     max_members=10,
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),

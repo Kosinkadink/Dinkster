@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError, GraphValidationError
+from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import MemoryGovernor
 from dinkster_protocol import (
@@ -632,12 +632,24 @@ def test_service_death_fails_pending_invocations(tmp_path: Path) -> None:
             worker = remote_worker(host, port, registry)
             await worker.start()
             try:
-                engine = make_engine(registry, worker)
+                entered = asyncio.Event()
+
+                def on_event(event: EngineEvent) -> None:
+                    if event.kind == "node_event" and event.detail.get("name") == "progress":
+                        entered.set()
+
+                engine = Engine(
+                    schemas=dict(worker.schemas),
+                    registry=registry,
+                    worker=worker,
+                    cache=MemoryLRUCache(),
+                    on_event=on_event,
+                )
                 graph = Graph(
-                    nodes={"sleep": GraphNode("iso.sleepy", {"value": "zzz", "seconds": 30.0})}
+                    nodes={"sleep": GraphNode("iso.chatty", {"value": "zzz", "seconds": 30.0})}
                 )
                 run = asyncio.create_task(engine.run(graph, ["sleep"]))
-                await asyncio.sleep(0.5)  # let the invocation reach the service
+                await asyncio.wait_for(entered.wait(), 5)
                 proc.kill()
                 await proc.wait()
                 with pytest.raises(Exception, match="remote worker 'isopack'"):

@@ -66,8 +66,9 @@ and `comfy-aimdo==0.6.0` from PyPI. macOS installs the pure-Python
 kitchen wheel and does not enable native Aimdo residency because the mechanism
 does not support that OS.
 
-Both setup scripts pin root synchronization to this checkout's torch-free
-`.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. They manage
+Both setup scripts pin root synchronization to this checkout's locked workspace
+`.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. Its inference
+dependency installs torch; cold authoring imports do not initialize it. They manage
 `.venv-torch` and `.venv-gpu` separately with `uv pip`. Do not target those
 Torch environments with project `uv sync`: exact sync can remove their
 platform-specific torch and kitchen wheels.
@@ -81,6 +82,25 @@ installation and runtime use do not require that checkout.
 - `uv run pyright` - static type checking (strict for `packages/`, standard
   for `src/` and `tests/`)
 - `uv run ruff check .` - lint
+- `python -B tools/replay_node_constants.py <ComfyUI checkout> <node test>` -
+  replay explicitly annotated ComfyUI node assertions on demand. A supported
+  assertion has an immediately preceding `# comfy-replay:` JSON object with
+  `class`, `method`, and exact JSON `inputs`; the assertion's right side is
+  the committed Python-literal expected value. For example:
+
+  ```python
+  # ComfyUI provenance: ExampleNode, F bc5f880dbdd43e426077f42ccec53bb577ffee9f, inputs {"value": 2}.
+  # comfy-replay: {"class": "nodes.ExampleNode", "method": "execute", "inputs": {"value": 2}, "result": {"0": "value"}}
+  assert result == {"value": 4}
+  ```
+
+  The tool parses rather than imports the Dinkster test, runs only annotated
+  cases from the supplied checkout, prints matching or mismatching constants,
+  disables bytecode writes, and creates no golden files. Unannotated tests and
+  pytest fixtures are intentionally unsupported. Omit `result` when the
+  source return value already equals the asserted literal. Otherwise `result`
+  explicitly maps each decimal source result slot to an asserted output name;
+  the tool never guesses output names or projections.
 - `uv run dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
 - `uv run dinkster-pack prepare-catalogs --defaults` - prepare installed

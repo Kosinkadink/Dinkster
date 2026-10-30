@@ -536,6 +536,7 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
                 "from test_comfy_conditioning_nodes import ConditioningScalarInspector\n"
                 "from test_comfy_conditioning_nodes import ConditioningScalarSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, ConditioningScalarSource, ConditioningScalarInspector)\n",
                 encoding="ascii",
             )
@@ -544,6 +545,10 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["conditioning-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "conditioning_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "conditioning_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "conditioning_fixture_sources:register_inference_types",

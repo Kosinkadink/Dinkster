@@ -25,8 +25,10 @@ class CatalogTypeRegistry:
         self._declarations = declarations
 
     def __contains__(self, type_id: str) -> bool:
-        return type_id in self._registry or any(
-            type_id in item.type_ids for item in self._declarations
+        return (
+            type_id in self._registry
+            or self._registry.has_type_identity(type_id)
+            or any(type_id in item.type_ids for item in self._declarations)
         )
 
     def equivalent_type(self, type_id: str) -> str | None:

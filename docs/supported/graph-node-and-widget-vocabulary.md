@@ -2,6 +2,25 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend input families can require only the initial declared positions,
+  leaving later members optional. Missing initial required slots remain
+  validation errors even when later slots are connected. Ordinary families
+  retain their stored order and uniform requiredness. Frontend support is
+  not claimed here.
+- Replacement input-family copies can declare historical template input IDs
+  and a flat member-port path without retaining a predecessor schema. Existing
+  mappings without that metadata retain their wire shape. Historical same-type
+  templates are distinct from the current node interface. This describes the
+  backend declaration contract, not frontend migration support.
+- Backend replacement input-family copies can explicitly map authored source
+  order to target naming positions instead of preserving suffix IDs. The option
+  composes with historical-template metadata; omitted options retain their wire
+  shape. This is a declaration contract, not a claim of frontend migration support.
+- Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
+  Expression publish same-type rules for historical family member identities.
+  Rules preserve the math expression and output identities, and identify the
+  old flat boolean-family socket path. Node execution is unchanged. Automatic
+  application requires a frontend that supports positional family migrations.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
@@ -44,6 +63,8 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Backend `CAMERA_INFO_STATE` values retain nested JSON camera-view state across
+  pack boundaries. This does not claim a camera editor or CreateCameraInfo node.
 - Inputs can declare socketless presentation while retaining their type,
   widget, default and interface order, including nested combos and families.
   The flag defaults to false, conflicts with forced socket presentation, and
@@ -79,9 +100,13 @@
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
-  core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
-  `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
-  `asset<T>`
+  core.absent, immutable `CURVE` with monotone-cubic default or explicit linear
+  interpolation, stable-sorted points including duplicate positions and empty
+  curves that evaluate to zero; the 4096-point limit applies only to curve
+  preview renditions, not value transport. HISTOGRAM is a plain ordered integer
+  list with no length or positivity restriction through shared structural
+  transport. Ordered `dinkster.layers`, strict versioned `dinkster.compositor`,
+  parametric `list<T>` and `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable

@@ -21,6 +21,10 @@ Surface (present only when create_app got a ServerLibrary):
                                          header verified against the bytes;
                                          413 over the limit; -> {"digest"}
                                          (201 new, 200 already-held)
+- POST   /api/assets?scope=&name=        named file import through a granted
+                                         project folder; optional project,
+                                         mount and relative folder;
+                                         -> {"digest", "asset"} (201)
 - POST   /api/assets/media               bounded classified media ingest with
                                          exact scoped immutable authority
 - GET    /api/assets/{digest}            bytes back, digest-immutable:
@@ -54,26 +58,37 @@ Surface (present only when create_app got a ServerLibrary):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import math
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
+import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, BinaryIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import web
 from dinkster_assets import (
     LATENT_ASSET_KIND,
     LATENT_MEDIA_TYPE,
     MAX_LATENT_DATA_BYTES,
+    AcquisitionResult,
     AssetError,
     AssetIntegrityError,
+    AssetNeed,
+    AssetRef,
     AssetResolver,
+    AssetSource,
     AssetVault,
+    AssetWriter,
     LibraryStore,
     MediaGrant,
     PackAssetCatalog,
@@ -82,7 +97,9 @@ from dinkster_assets import (
     PublicAcquisitionReceiptStore,
     PublicAcquisitionSourceV1,
     RemoteSource,
+    SaveTarget,
     StaleRevision,
+    acquire_need,
     classify_media_file,
     digest_bytes,
     is_digest,
@@ -92,6 +109,7 @@ from dinkster_assets import (
     probe_handle,
     valid_vae_hint,
 )
+from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
     MEBIBYTE,
@@ -102,8 +120,13 @@ from dinkster_values import (
 )
 
 from .asset_stream import open_verified_sized, stream_verified
-from .auth import LOCAL_PRINCIPAL, principal_for
+from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
+
+if TYPE_CHECKING:
+    from dinkster_engine import RunResult
+
+    from .queue import Job
 
 __all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
 
@@ -158,11 +181,17 @@ class ServerLibrary:
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
-    #: Optional read-only fallback for digest GETs (e.g. filesystem
-    #: mounts, composed by the umbrella). Uploads never write here, and
-    #: hits are STREAMED, not buffered - a mount can hold model-sized
-    #: files, unlike the capped upload vault.
+    #: Optional read fallback for digest GETs (e.g. filesystem mounts).
+    #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
+    #: Local-only presence checks must never call a fetching resolver.
+    #: Embedding hosts explicitly provide their granted local resolver here.
+    local_resolver: AssetResolver | None = None
+    project_folders_for: Callable[[str], AssetFolderContext] | None = None
+    #: Hosts with mount grants publish named files through the same writer as saves.
+    #: Vault-only embedding hosts retain digest-only media storage.
+    upload_writer: AssetWriter | None = None
+    import_mount: str = "imports"
     #: Optional digest-keyed source leads (where bytes can be obtained).
     #: Enables the sources routes and job-preflight acquisition; records
     #: are leads, never authorities - fetched bytes verify against the
@@ -209,12 +238,134 @@ class ServerLibrary:
     )
 
     def locate(self, digest: str) -> Path | None:
-        """One local-presence answer for every surface (GETs, metadata,
-        job preflight): the vault first, then the read-only fallback."""
+        """Locate byte GETs and metadata through the host's read fallback.
+
+        Preflight and availability use asset_available to exclude acquisition.
+        """
         path = self.vault.resolve(digest)
         if path is None and self.resolver is not None:
             path = self.resolver.resolve(digest)
         return path
+
+    def asset_available(self, digest: str) -> bool:
+        """Check local bytes with read authority, never acquisition or catalog recovery."""
+        for resolver in (self.vault, self.local_resolver):
+            if resolver is None:
+                continue
+            try:
+                with AssetRef(digest, "", 0, resolver=resolver).open():
+                    return True
+            except (AssetError, OSError):
+                continue
+        return False
+
+    def record_saved_outputs(self, job: Job, result: RunResult) -> RunResult:
+        """Retain required encoded attachments and catalog saves before completion."""
+
+        def prepare(ref: AssetRef, node_id: str, journal: Path) -> None:
+            _write_asset_observation_journal(
+                journal,
+                {
+                    "scope": job.scope,
+                    "asset": ref.to_wire(),
+                    "originalName": ref.name,
+                    "kind": "asset/file",
+                    "extension": None,
+                    "project": job.project,
+                    "created": time.time(),
+                    "origin": {"kind": "produced", "job": job.run_id, "node": node_id},
+                },
+            )
+
+        artifacts: list[SavedArtifact] = []
+        for artifact in result.artifacts:
+            journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+            ref = AssetRef(
+                artifact.digest,
+                artifact.name,
+                artifact.size,
+                artifact.media_type,
+                artifact.virtual_path,
+            )
+            if artifact.virtual_path.startswith("previews/"):
+                if artifact.virtual_path != f"previews/{ref.digest[7:]}/{ref.name}":
+                    raise AssetError("encoded output does not name its published vault bytes")
+                if self.upload_writer is None or self.project_folders_for is None:
+                    raise AssetError("retaining encoded output requires a writable output folder")
+                folders = self.project_folders_for(job.project)
+                if folders.output_mount is None:
+                    raise AssetError(
+                        "select a writable output folder before keeping encoded output"
+                    )
+                target = SaveTarget(folders.output_mount, ref.name)
+
+                def before_publish(
+                    saved: AssetRef,
+                    expected: AssetRef = ref,
+                    target: SaveTarget = target,
+                    node_id: str = artifact.node_id,
+                    journal: Path = journal,
+                ) -> None:
+                    if saved.digest != expected.digest or saved.size != expected.size:
+                        raise AssetError("encoded output changed before retention")
+                    assert self.project_folders_for is not None
+                    current = self.project_folders_for(job.project)
+                    if target.mount not in current.mounts or current.output_mount != target.mount:
+                        raise AssetError("output folder changed before retention")
+                    prepare(saved, node_id, journal)
+
+                with AssetRef(
+                    ref.digest, ref.name, ref.size, ref.media_type, resolver=self.vault
+                ).open() as source:
+                    retained = self.upload_writer.save_named_stream(
+                        target,
+                        source,
+                        media_type=ref.media_type,
+                        limit=ref.size,
+                        before_publish=before_publish,
+                    )
+                artifact = replace(artifact, name=retained.name, virtual_path=retained.virtual_path)
+            else:
+                prepare(ref, artifact.node_id, journal)
+            recover_asset_observations(self, journals=(journal,))
+            if journal.exists():
+                raise AssetError(
+                    "saved output is unavailable or its catalog could not be committed"
+                )
+            if ref.virtual_path.startswith("previews/"):
+                vault_journal = (
+                    self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+                )
+                prepare(replace(ref, virtual_path=""), artifact.node_id, vault_journal)
+                recover_asset_observations(self, journals=(vault_journal,))
+                if vault_journal.exists():
+                    raise AssetError("encoded output vault location could not be cataloged")
+            if artifact.preview is not None:
+                preview_journal = (
+                    self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+                )
+                preview = artifact.preview
+                try:
+                    preview_ref = AssetRef(
+                        preview.digest,
+                        preview.name,
+                        preview.size,
+                        preview.media_type,
+                        resolver=self.vault,
+                    )
+                    with preview_ref.open() as source:
+                        if os.fstat(source.fileno()).st_size != preview.size:
+                            raise AssetError("saved-file preview size changed")
+                    prepare(preview_ref, artifact.node_id, preview_journal)
+                    recover_asset_observations(self, journals=(preview_journal,))
+                    if preview_journal.exists():
+                        raise AssetError("saved-file preview could not be cataloged")
+                except Exception:
+                    artifact = replace(artifact, preview=None)
+                    with contextlib.suppress(OSError):
+                        preview_journal.unlink(missing_ok=True)
+            artifacts.append(artifact)
+        return replace(result, artifacts=tuple(artifacts))
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
@@ -310,10 +461,17 @@ def _string_labels(value: object) -> list[str] | None:
 
 
 async def handle_upload(request: web.Request) -> web.Response:
-    """Verified, idempotent ingest. The response digest is canonical
-    truth: a client that declared X-Dinkster-Digest gets integrity for free
-    (mismatch is 400, nothing lands); one that didn't learns the digest
-    the backend computed. Re-uploading held bytes is a cheap 200."""
+    """Named project import or anonymous idempotent digest transfer.
+
+    Both verify declared digests. Anonymous uploads deduplicate in the vault;
+    named imports preserve filenames and never overwrite an existing file.
+    """
+    if request.query:
+        query = _file_upload_query(request, classified=False)
+        if isinstance(query, web.Response):
+            return query
+        scope, _kind, name = query
+        return await _ingest_file_upload(request, scope, None, name)
     library = request.app[LIBRARY_KEY]
     if request.content_length is not None and request.content_length > library.upload_limit:
         return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
@@ -342,25 +500,39 @@ async def handle_upload(request: web.Request) -> web.Response:
     return web.json_response({"digest": digest}, status=201 if stored else 200)
 
 
-def _media_query(request: web.Request) -> tuple[str, str, str] | web.Response:
-    expected = {"scope", "kind", "name"}
-    if set(request.query) != expected or any(
-        len(request.query.getall(field, [])) != 1 for field in expected
+def _file_upload_query(
+    request: web.Request, *, classified: bool
+) -> tuple[str, str | None, str] | web.Response:
+    error: Callable[[int, str, str], web.Response] = (
+        _media_error if classified else lambda status, _code, message: _json_error(status, message)
+    )
+    expected = {"scope", "name"}
+    if classified:
+        expected.add("kind")
+    optional = {"project", "mount", "folder"}
+    if (
+        not expected.issubset(request.query)
+        or set(request.query) - expected - optional
+        or any(len(request.query.getall(field, [])) != 1 for field in request.query)
     ):
-        return _media_error(
+        return error(
             400,
             "invalid_query",
-            "exactly one scope, kind, and name query field is required",
+            "exactly one scope, kind, and name query field is required"
+            if classified
+            else "exactly one scope and name query field is required",
         )
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", request.query.get("project", "default")) is None:
+        return error(400, "invalid_project", "project must be a lowercase project id")
     scope = request.query["scope"]
-    kind = request.query["kind"]
+    kind = request.query.get("kind")
     name = request.query["name"]
     if not scope or scope != scope.strip() or any(character.isspace() for character in scope):
-        return _media_error(400, "invalid_scope", "scope must be non-empty and whitespace-free")
-    if kind not in _MEDIA_KINDS:
-        return _media_error(400, "invalid_kind", "kind is not a supported media kind")
+        return error(400, "invalid_scope", "scope must be non-empty and whitespace-free")
+    if classified and kind not in _MEDIA_KINDS:
+        return error(400, "invalid_kind", "kind is not a supported media kind")
     if not _safe_asset_name(name):
-        return _media_error(
+        return error(
             400,
             "invalid_name",
             "name must be a safe display basename of at most 255 characters",
@@ -513,22 +685,60 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
 
 async def handle_media_upload(request: web.Request) -> web.Response:
     """Bounded byte-derived media ingest with exact scoped authority."""
-    query = _media_query(request)
+    query = _file_upload_query(request, classified=True)
     if isinstance(query, web.Response):
         return query
     scope, claimed_kind, name = query
+    assert claimed_kind is not None
+    return await _ingest_file_upload(request, scope, claimed_kind, name)
+
+
+async def handle_transfer_upload(request: web.Request) -> web.Response:
+    query = _file_upload_query(request, classified=False)
+    if isinstance(query, web.Response):
+        return query
+    if {"mount", "folder"}.intersection(request.query):
+        return _json_error(400, "digest transfers do not accept a folder destination")
+    machine = request.headers.get("X-Dinkster-Source-Machine", "")
+    if (
+        not machine
+        or machine != machine.strip()
+        or len(machine) > 255
+        or any(ord(character) < 32 for character in machine)
+    ):
+        return _json_error(400, "X-Dinkster-Source-Machine must be a nonempty machine label")
+    if not is_digest(request.headers.get(DIGEST_HEADER, "")):
+        return _json_error(400, "digest transfers require a canonical X-Dinkster-Digest")
+    scope, _kind, name = query
+    return await _ingest_file_upload(request, scope, None, name, transfer_from=machine)
+
+
+async def _ingest_file_upload(
+    request: web.Request,
+    scope: str,
+    claimed_kind: str | None,
+    name: str,
+    *,
+    transfer_from: str | None = None,
+) -> web.Response:
+    error: Callable[[int, str, str], web.Response] = (
+        _media_error
+        if claimed_kind is not None
+        else lambda status, _code, message: _json_error(status, message)
+    )
+    upload_label = "media upload" if claimed_kind is not None else "upload"
     principal = principal_for(request)
     if principal is not LOCAL_PRINCIPAL and not principal.allows_in(scope, "assets:write"):
-        return _media_error(
+        return error(
             403,
             "scope_forbidden",
             f"scope {scope} does not grant assets:write",
         )
 
     raw_media_type = request.headers.get("Content-Type", "")
-    media_type = raw_media_type.split(";", 1)[0].strip().lower()
-    if media_type not in _MEDIA_TYPES:
-        return _media_error(
+    media_type = raw_media_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
+    if claimed_kind is not None and media_type not in _MEDIA_TYPES:
+        return error(
             415,
             "unsupported_content_type",
             "Content-Type is not a supported media type",
@@ -536,17 +746,39 @@ async def handle_media_upload(request: web.Request) -> web.Response:
 
     declared = request.headers.get(DIGEST_HEADER)
     if declared is not None and not is_digest(declared):
-        return _media_error(
-            400, "invalid_digest", "X-Dinkster-Digest must be a canonical asset digest"
-        )
+        return error(400, "invalid_digest", "X-Dinkster-Digest must be a canonical asset digest")
 
     library = request.app[LIBRARY_KEY]
+    project = request.query.get("project", "default")
+    target: SaveTarget | None = None
+    if transfer_from is None and (
+        claimed_kind is None
+        or library.upload_writer is not None
+        or {"mount", "folder", "project"}.intersection(request.query)
+    ):
+        if library.upload_writer is None or library.project_folders_for is None:
+            return error(503, "destination_unavailable", "upload folders are not configured")
+        folder = request.query.get("folder", "")
+        try:
+            target = SaveTarget(
+                request.query.get("mount", library.import_mount),
+                f"{folder}/{name}" if folder else name,
+            )
+            context = library.project_folders_for(project)
+        except (AssetError, ValueError):
+            return error(400, "invalid_destination", "invalid project or upload folder")
+        if target.mount not in context.mounts:
+            return error(403, "destination_forbidden", "upload folder is not in this project")
     # The claimed kind is binding: classification later rejects any body
     # whose actual kind differs (kind_mismatch), so an oversized image
     # cannot ride in under a roomier video claim.
-    limit = library.media_upload_limits[claimed_kind]
+    limit = (
+        library.media_upload_limits[claimed_kind]
+        if claimed_kind is not None
+        else library.upload_limit
+    )
     if request.content_length is not None and request.content_length > limit:
-        return _media_error(413, "too_large", f"media upload exceeds {limit} bytes")
+        return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
         mode="w+b", prefix=".media-upload-", dir=library.vault.root, delete=False
     )
@@ -559,77 +791,150 @@ async def handle_media_upload(request: web.Request) -> web.Response:
             async for chunk in request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE):
                 received += len(chunk)
                 if received > limit:
-                    return _media_error(
+                    return error(
                         413,
                         "too_large",
-                        f"media upload exceeds {limit} bytes",
+                        f"{upload_label} exceeds {limit} bytes",
                     )
                 await _write_media_upload_chunk(temporary, hasher, chunk)
         except (ConnectionError, OSError, web.RequestPayloadError):
-            return _media_error(400, "interrupted", "media upload was interrupted")
+            return error(400, "interrupted", f"{upload_label} was interrupted")
         finally:
             temporary.close()
         if not received:
-            return _media_error(400, "empty", "media upload is empty")
+            return error(400, "empty", f"{upload_label} is empty")
 
         digest = "blake3:" + hasher.hexdigest()
         if declared is not None and declared != digest:
-            return _media_error(
+            return error(
                 409, "digest_mismatch", "X-Dinkster-Digest does not match the uploaded bytes"
             )
-        try:
-            classification = await asyncio.to_thread(classify_media_file, temporary_path)
-        except AssetError:
-            return _media_error(
-                415, "unsupported_media", "uploaded bytes are malformed or unsupported"
-            )
-        if claimed_kind != classification.kind:
-            return _media_error(409, "kind_mismatch", "kind does not match the uploaded bytes")
-        if media_type != classification.media_type:
-            return _media_error(
-                409,
-                "content_type_mismatch",
-                "Content-Type does not match the uploaded bytes",
+        grant: MediaGrant | None = None
+        if claimed_kind is not None:
+            try:
+                classification = await asyncio.to_thread(classify_media_file, temporary_path)
+            except AssetError:
+                return error(
+                    415, "unsupported_media", "uploaded bytes are malformed or unsupported"
+                )
+            if claimed_kind != classification.kind:
+                return error(409, "kind_mismatch", "kind does not match the uploaded bytes")
+            if media_type != classification.media_type:
+                return error(
+                    409,
+                    "content_type_mismatch",
+                    "Content-Type does not match the uploaded bytes",
+                )
+
+            grant = MediaGrant(
+                scope=scope,
+                digest=digest,
+                kind=classification.kind,
+                media_type=classification.media_type,
+                extension=classification.extension,
+                byte_size=received,
             )
 
-        grant = MediaGrant(
-            scope=scope,
-            digest=digest,
-            kind=classification.kind,
-            media_type=classification.media_type,
-            extension=classification.extension,
-            byte_size=received,
+        observation_id = uuid.uuid4().hex
+        created_at = time.time()
+        journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
+        origin = (
+            {"kind": "transfer", "machine": transfer_from}
+            if transfer_from is not None
+            else {"kind": "upload"}
         )
 
-        def publish() -> tuple[bool, bool]:
+        def prepare(ref: AssetRef) -> None:
+            payload = {
+                "scope": scope,
+                "asset": ref.to_wire(),
+                "originalName": name,
+                "kind": grant.kind if grant is not None else "asset/file",
+                "extension": grant.extension if grant is not None else None,
+                "project": project,
+                "created": created_at,
+                "origin": origin,
+            }
+            _write_asset_observation_journal(journal, payload)
+            if target is not None:
+                assert library.project_folders_for is not None
+                if target.mount not in library.project_folders_for(project).mounts:
+                    raise AssetError("upload folder was removed from this project")
+
+        def publish() -> tuple[AssetRef, bool]:
             try:
+                if target is not None:
+                    assert (
+                        library.upload_writer is not None
+                        and library.project_folders_for is not None
+                    )
+                    if target.mount not in library.project_folders_for(project).mounts:
+                        raise AssetError("upload folder was removed from this project")
+                    with temporary_path.open("rb") as source:
+                        ref = library.upload_writer.save_named_stream(
+                            target,
+                            source,
+                            media_type=media_type,
+                            limit=limit,
+                            before_publish=prepare,
+                        )
+                    if grant is not None:
+                        library.store.grant_media_result(grant, temporary_path)
+                    library.store.record_asset(
+                        scope,
+                        ref,
+                        original_name=name,
+                        kind=grant.kind if grant is not None else "asset/file",
+                        origin=origin,
+                        project=project,
+                        observation_id=observation_id,
+                        created=created_at,
+                    )
+                    journal.unlink()
+                    return ref, True
+                ref = AssetRef(digest, name, received, media_type, "")
+                prepare(ref)
                 with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
                     while chunk := source.read(64 * 1024):
                         writer.write(chunk)
                     _path, bytes_created = writer.commit_with_result()
-                _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
-                return bytes_created, grant_created
+                grant_created = False
+                if grant is not None:
+                    _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
+                library.store.record_asset(
+                    scope,
+                    ref,
+                    original_name=name,
+                    kind=grant.kind if grant is not None else "asset/file",
+                    origin=origin,
+                    project=project,
+                    observation_id=observation_id,
+                    created=created_at,
+                )
+                journal.unlink()
+                return ref, bytes_created or grant_created
             finally:
                 temporary_path.unlink(missing_ok=True)
 
         try:
-            bytes_created, grant_created = await run_media_publication(
+            ref, created = await run_media_publication(
                 library, publish, handoff=publication_handoff
             )
         except (AssetError, OSError, sqlite3.Error):
-            return _media_error(503, "storage_unavailable", "media storage is unavailable")
+            return error(
+                503,
+                "storage_unavailable",
+                "media storage is unavailable"
+                if claimed_kind is not None
+                else "upload storage is unavailable",
+            )
 
-        body = {
-            "asset": {
-                "digest": digest,
-                "name": name,
-                "size": received,
-                "mediaType": classification.media_type,
-                "virtualPath": "",
-            },
-            "kind": classification.kind,
-        }
-        return web.json_response(body, status=201 if bytes_created or grant_created else 200)
+        body = (
+            {"asset": ref.to_wire(), "kind": grant.kind}
+            if grant is not None
+            else {"asset": ref.to_wire(), "digest": ref.digest}
+        )
+        return web.json_response(body, status=201 if created else 200)
     finally:
         temporary.close()
         if not publication_handoff.is_set():
@@ -638,10 +943,10 @@ async def handle_media_upload(request: web.Request) -> web.Response:
 
 async def run_media_publication(
     library: ServerLibrary,
-    publish: Callable[[], tuple[bool, bool]],
+    publish: Callable[[], _T],
     *,
     handoff: asyncio.Event | None = None,
-) -> tuple[bool, bool]:
+) -> _T:
     """Keep serialization owned until an uncancellable worker actually settles."""
     await library.media_ingest_lock.acquire()
     task = asyncio.ensure_future(asyncio.to_thread(publish))
@@ -653,7 +958,7 @@ async def run_media_publication(
     except asyncio.CancelledError:
         handed_off = True
 
-        def release_lock(settled: asyncio.Task[tuple[bool, bool]]) -> None:
+        def release_lock(settled: asyncio.Task[_T]) -> None:
             library.media_ingest_lock.release()
             if not settled.cancelled():
                 settled.exception()
@@ -663,6 +968,287 @@ async def run_media_publication(
     finally:
         if not handed_off:
             library.media_ingest_lock.release()
+
+
+def _write_asset_observation_journal(journal: Path, payload: Mapping[str, object]) -> None:
+    journal.parent.mkdir(exist_ok=True)
+    if journal.parent.is_symlink():
+        raise AssetError("asset recovery directory must not be a symlink")
+    temporary = journal.with_suffix(".tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(dict(payload), handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(journal)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def acquire_library_asset(
+    library: ServerLibrary, need: AssetNeed, *, scope: str, project: str
+) -> AcquisitionResult:
+    """Journal the verified winning source before acquisition publishes bytes."""
+    observation_id = uuid.uuid4().hex
+    journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
+
+    def prepare(source: AssetSource, size: int) -> None:
+        origin = {"kind": "unknown"}
+        if isinstance(source, RemoteSource):
+            url = urlsplit(source.url)
+            origin = {
+                "kind": "download",
+                "url": urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")),
+            }
+        name = need.name.replace("\\", "/").rsplit("/", 1)[-1]
+        if not name or name in {".", ".."}:
+            name = need.digest.split(":", 1)[1]
+        ref = AssetRef(need.digest, name, size, need.media_type, "")
+        _write_asset_observation_journal(
+            journal,
+            {
+                "scope": scope,
+                "asset": ref.to_wire(),
+                "originalName": name,
+                "kind": need.kind or "asset/file",
+                "extension": None,
+                "project": project,
+                "created": time.time(),
+                "origin": origin,
+            },
+        )
+
+    result = acquire_need(
+        need,
+        library.vault,
+        resolver=library.local_resolver,
+        pack_roots=library.pack_assets.pack_roots() if library.pack_assets is not None else {},
+        provenance=library.provenance,
+        public_sources=(
+            library.public_sources_for(need.digest)
+            if library.public_sources_for is not None
+            else ()
+        ),
+        receipts=library.receipts,
+        before_publish=prepare,
+    )
+    if result.ok and journal.exists():
+        recover_asset_observations(library, journals=(journal,))
+        if journal.exists():
+            raise OSError("acquired asset catalog is unavailable")
+    return result
+
+
+def recover_asset_observations(
+    library: ServerLibrary, *, journals: Sequence[Path] | None = None
+) -> None:
+    """Replay completed publications without creating bytes or restoring revoked grants."""
+    folder = library.vault.root / ".upload-observations"
+    if folder.is_symlink():
+        return
+    for journal in journals if journals is not None else folder.glob("*.json"):
+        if journal.is_symlink():
+            continue
+        try:
+            loaded: object = json.loads(journal.read_text("utf-8"))
+            if not isinstance(loaded, dict):
+                continue
+            payload = cast("dict[str, Any]", loaded)
+            if not isinstance(payload.get("asset"), dict):
+                continue
+            ref = AssetRef.from_wire(payload["asset"])
+            project = payload["project"]
+            if not isinstance(project, str) or not isinstance(payload["scope"], str):
+                continue
+            if ref.virtual_path:
+                if library.upload_writer is None or library.project_folders_for is None:
+                    continue
+                mount = ref.virtual_path.split("/", 2)[1]
+                if mount not in library.project_folders_for(project).mounts:
+                    continue
+                path = library.upload_writer.recover_named_asset(ref)
+            else:
+                path = library.vault.resolve(ref.digest)
+                if path is not None:
+                    with open_verified(path, ref.digest) as handle:
+                        if os.fstat(handle.fileno()).st_size != ref.size:
+                            continue
+            if path is None:
+                continue
+            origin = payload.get("origin")
+            if (
+                isinstance(origin, dict)
+                and cast("dict[str, object]", origin).get("kind") == "produced"
+            ):
+                try:
+                    classification = classify_media_file(path)
+                except AssetError:
+                    classification = None
+                if classification is not None:
+                    ref = replace(ref, media_type=classification.media_type)
+                    payload["kind"] = classification.kind
+                    payload["extension"] = classification.extension
+            if payload["extension"] is not None:
+                library.store.grant_media_result(
+                    MediaGrant(
+                        payload["scope"],
+                        ref.digest,
+                        payload["kind"],
+                        ref.media_type,
+                        payload["extension"],
+                        ref.size,
+                    ),
+                    path,
+                )
+            library.store.record_asset(
+                payload["scope"],
+                ref,
+                original_name=payload["originalName"],
+                kind=payload["kind"],
+                origin=payload.get("origin", {"kind": "upload"}),
+                project=project,
+                observation_id=journal.stem,
+                created=payload["created"],
+            )
+            journal.unlink(missing_ok=True)
+        except (AssetError, OSError, sqlite3.Error, ValueError, KeyError, TypeError, IndexError):
+            # Unavailable/revoked bytes keep their recovery record, not a grant.
+            continue
+    if journals is None:
+        library.store.backfill_asset_observations(library.vault)
+
+
+async def handle_asset_availability(request: web.Request) -> web.Response:
+    resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    if (
+        set(request.query) - {"scope", "digest"}
+        or len(request.query.getall("scope", [])) > 1
+        or not request.query.getall("digest", [])
+    ):
+        return _json_error(400, "availability requires digest query fields and optional scope")
+    digests = list(dict.fromkeys(request.query.getall("digest")))
+    if any(not is_digest(digest) for digest in digests):
+        return _json_error(400, "availability requires canonical asset digests")
+    library = request.app[LIBRARY_KEY]
+
+    def check() -> list[dict[str, str]]:
+        return [
+            {
+                "digest": digest,
+                "status": "available" if library.asset_available(digest) else "missing",
+            }
+            for digest in digests
+        ]
+
+    return web.json_response(
+        {"assets": await asyncio.to_thread(check)}, headers={"Cache-Control": "no-store"}
+    )
+
+
+async def handle_asset_catalog(request: web.Request) -> web.Response:
+    principal = principal_for(request)
+    scope = resolve_scope(principal, "assets:read", request.query.get("scope"))
+    source = request.query.get("source", "scoped")
+    if source not in {"scoped", "unrecorded"}:
+        return _json_error(400, "unknown catalog source")
+    if source == "unrecorded" and not principal.is_operator:
+        return _json_error(403, "operator-required")
+    allowed = {
+        "scope",
+        "project",
+        "q",
+        "kind",
+        "origin",
+        "since",
+        "until",
+        "limit",
+        "cursor",
+        "source",
+    }
+    if set(request.query) - allowed or any(
+        len(request.query.getall(field, [])) != 1 for field in request.query
+    ):
+        return _json_error(400, "unknown or repeated catalog query field")
+    project = request.query.get("project", "default")
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None:
+        return _json_error(400, "project must be a lowercase project id")
+    if source == "unrecorded" and scope != "local":
+        return _json_error(400, "unrecorded bytes belong only in the local operator inventory")
+    if source == "unrecorded" and (
+        project != "default" or set(request.query) & {"kind", "origin", "since", "until"}
+    ):
+        return _json_error(400, "unrecorded bytes have no project, kind, origin or date")
+    try:
+        limit = min(200, max(1, int(request.query.get("limit", "50"))))
+        since = float(request.query["since"]) if "since" in request.query else None
+        until = float(request.query["until"]) if "until" in request.query else None
+        if any(value is not None and not math.isfinite(value) for value in (since, until)):
+            raise ValueError
+        if since is not None and until is not None and since > until:
+            raise ValueError
+    except ValueError:
+        return _json_error(400, "invalid catalog limit or date range")
+    bound = {
+        field: request.query.get(field, "") for field in ("q", "kind", "origin", "since", "until")
+    }
+    bound.update(scope=scope, project=project, source=source)
+    cursor = request.query.get("cursor")
+    after = decode_cursor(cursor, bound) if cursor else None
+    library = request.app[LIBRARY_KEY]
+    if source == "unrecorded":
+        refs = await asyncio.to_thread(
+            library.store.unrecorded_vault_assets,
+            library.vault,
+            text=bound["q"],
+            limit=limit + 1,
+            after=after[1] if after else None,
+        )
+        body: dict[str, object] = {
+            "source": source,
+            "assets": [
+                {"asset": ref.to_wire(), "aliases": [ref.name], "observations": []}
+                for ref in refs[:limit]
+            ],
+        }
+        if len(refs) > limit:
+            body["cursor"] = encode_cursor(bound, (0, refs[limit - 1].digest))
+        return web.json_response(body, headers={"Cache-Control": "no-store"})
+    await run_media_publication(library, lambda: recover_asset_observations(library))
+    try:
+        groups = await asyncio.to_thread(
+            request.app[LIBRARY_KEY].store.query_assets,
+            scope,
+            project=project,
+            text=bound["q"],
+            kind=bound["kind"],
+            origin=bound["origin"],
+            since=since,
+            until=until,
+            limit=limit + 1,
+            after=after,
+        )
+    except AssetError:
+        return _json_error(400, "invalid asset kind")
+    assets: list[dict[str, object]] = []
+    for observations in groups[:limit]:
+        assets.append(
+            {
+                "asset": observations[-1].asset.to_wire(),
+                "aliases": list(
+                    dict.fromkeys(
+                        name
+                        for item in observations
+                        for name in (item.original_name, item.asset.name)
+                    )
+                ),
+                "observations": [item.to_wire() for item in observations],
+            }
+        )
+    body = {"assets": assets}
+    if len(groups) > limit:
+        last = groups[limit - 1][-1]
+        body["cursor"] = encode_cursor(bound, (last.created, last.asset.digest))
+    return web.json_response(body, headers={"Cache-Control": "no-store"})
 
 
 async def handle_asset_get(request: web.Request) -> web.StreamResponse:
@@ -1039,9 +1625,12 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
 
     app[LIBRARY_KEY] = library
     app.router.add_post("/api/assets", handle_upload)
+    app.router.add_post("/api/assets/transfers", handle_transfer_upload)
     app.router.add_post("/api/assets/media", handle_media_upload)
     app.router.add_post("/api/assets/latent", handle_latent_upload)
     app.router.add_post("/api/assets/image-document", handle_image_document)
+    app.router.add_get("/api/assets/catalog", handle_asset_catalog)
+    app.router.add_get("/api/assets/availability", handle_asset_availability)
     app.router.add_get("/api/assets/{digest}", handle_asset_get)
     app.router.add_get("/api/assets/{digest}/dependencies", handle_dependencies)
     app.router.add_post("/api/assets/{digest}/render", handle_render)
@@ -1057,6 +1646,9 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_get("/api/library/{record_id}", handle_library_get)
     app.router.add_patch("/api/library/{record_id}", handle_library_update)
     app.router.add_delete("/api/library/{record_id}", handle_library_delete)
+
+    async def recover_upload_observations(app: web.Application) -> None:
+        await run_media_publication(library, lambda: recover_asset_observations(library))
 
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:
@@ -1076,5 +1668,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             library.latent_ingest_slots.release()
             library.latent_ingest_slots.release()
 
+    app.on_startup.append(recover_upload_observations)
     app.on_startup.append(remove_stale_latent_uploads)
     app.on_cleanup.append(close_store)

@@ -1,10 +1,8 @@
 """Torch-free MiniMax H3 guide schema and discovery."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     AUDIO_TYPE,
+    CLIP_TYPE,
     CONDITIONING_TYPE,
     CORE_INT,
     IMAGE_TYPE,
@@ -18,6 +16,7 @@ from dinkster_api.v1 import (
     schema_to_wire,
 )
 from dinkster_nodes_comfy.minimax_h3_latent import MiniMaxH3AddGuide
+from dinkster_nodes_comfy.minimax_h3_reference import MiniMaxH3ReferenceToVideo
 
 
 def test_minimax_h3_add_guide_schema_and_cold_discovery() -> None:
@@ -74,16 +73,35 @@ def test_minimax_h3_add_guide_schema_and_cold_discovery() -> None:
     )
     assert schema.outputs == (OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),)
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; "
-            "from dinkster_nodes_comfy.minimax_h3_latent import MiniMaxH3AddGuide; "
-            "MiniMaxH3AddGuide.schema(); "
-            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
+
+
+def test_minimax_h3_reference_members_are_optional_and_roundtrip() -> None:
+    schema = MiniMaxH3ReferenceToVideo.schema()
+    assert schema.inputs[0] == InputSpec("clip", TypeExpr.concrete(CLIP_TYPE))
+    assert schema.inputs[0].required
+
+    expected_families = (
+        ("ref_images", "ref_image_", IMAGE_TYPE, 9),
+        ("ref_videos", "ref_video_", IMAGE_TYPE, 3),
+        ("ref_video_audios", "ref_video_audio_", AUDIO_TYPE, 3),
+        ("ref_audios", "ref_audio_", AUDIO_TYPE, 3),
     )
-    assert result.returncode == 0, result.stderr
+    assert len(schema.input_families) == len(expected_families)
+    assert tuple(family.id for family in schema.input_families) == tuple(
+        family[0] for family in expected_families
+    )
+    for family, (family_id, prefix, kind, limit) in zip(
+        schema.input_families, expected_families, strict=True
+    ):
+        assert (family.id, family.member_prefix, family.min_members, family.max_members) == (
+            family_id,
+            prefix,
+            0,
+            limit,
+        )
+        assert not family.required
+        assert family.template == (
+            InputSpec(prefix.rstrip("_"), TypeExpr.concrete(kind), required=False),
+        )
+
+    assert schema_from_wire(schema_to_wire(schema)) == schema

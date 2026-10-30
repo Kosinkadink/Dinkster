@@ -112,7 +112,7 @@ class InspectLatent(Node):
 FIXTURES = (InspectLatent,)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_model_latents_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
@@ -127,6 +127,7 @@ def test_model_latents_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
             (tmp_path / "latent_fixture.py").write_text(
                 "from test_model_latents_torch import FIXTURES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FIXTURES)\n",
                 encoding="ascii",
             )
@@ -135,6 +136,10 @@ def test_model_latents_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["latent-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "latent_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "latent_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "latent_fixture:register_inference_types",

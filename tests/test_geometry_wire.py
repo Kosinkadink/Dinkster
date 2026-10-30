@@ -13,7 +13,6 @@ from dinkster_api.v1 import (
     VOXEL_TYPE,
     TriangleMeshBatch,
     TypeRegistry,
-    Voxel,
     register_inference_types,
 )
 from dinkster_values import EncodedLatentTensor, encode_latent
@@ -74,16 +73,17 @@ def test_voxel_roundtrip_accepts_dense_sparse_and_empty_payloads(shape: tuple[in
     registry = TypeRegistry()
     register_inference_types(registry)
     spec = registry.spec(VOXEL_TYPE)
-    value = Voxel(tensor(shape), voxel_colors=tensor((5, 3)), resolution=(32, 64, 128))
+    value = {
+        "data": tensor(shape),
+        "voxel_colors": tensor((5, 3)),
+        "resolution": (32, 64, 128),
+        "source_metadata": {"layout": "source"},
+    }
     restored = spec.decode(spec.encode(value))
-    assert type(restored) is Voxel
-    assert restored.data == value.data
-    assert restored.voxel_colors == value.voxel_colors
-    assert restored.resolution == (32, 64, 128)
-    plain = Voxel(tensor(shape))
+    assert restored == value
+    plain = {"data": tensor(shape), "voxel_colors": None, "resolution": None}
     restored = spec.decode(spec.encode(plain))
-    assert isinstance(restored, Voxel)
-    assert restored.voxel_colors is None and restored.resolution is None
+    assert restored == plain
 
 
 def test_geometry_transport_is_cold_and_rejects_invalid_mesh_layouts() -> None:
@@ -93,7 +93,7 @@ sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import MESH_TYPE, VOXEL_TYPE, TypeRegistry, register_inference_types
 from dinkster_values import EncodedLatentTensor
-from dinkster_api.v1 import TriangleMeshBatch, Voxel
+from dinkster_api.v1 import TriangleMeshBatch
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_workers import load_manifest
 runtimes = {node.schema().node_type: node.schema() for node in COMFY_NODES}
@@ -107,9 +107,11 @@ r = TypeRegistry()
 register_inference_types(r)
 m = TriangleMeshBatch(EncodedLatentTensor('float32', (1, 0, 3), b''),
                       EncodedLatentTensor('int64', (1, 0, 3), b''))
-for t, v in ((MESH_TYPE, m), (VOXEL_TYPE, Voxel(m.vertices))):
-    s = r.spec(t)
-    assert type(s.decode(s.encode(v))) is type(v)
+s = r.spec(MESH_TYPE)
+assert type(s.decode(s.encode(m))) is TriangleMeshBatch
+s = r.spec(VOXEL_TYPE)
+v = {'data': m.vertices, 'voxel_colors': None, 'resolution': None}
+assert s.decode(s.encode(v)) == v
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """

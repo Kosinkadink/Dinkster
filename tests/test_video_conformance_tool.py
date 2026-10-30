@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 import pytest
 
@@ -46,9 +47,62 @@ def test_default_rss_generates_fixture_in_separate_process(
     }
 
 
-def test_rss_gate_detects_real_allocation_after_fixture_generation() -> None:
+def test_rss_gate_saves_video_in_a_fresh_process(tmp_path: Path) -> None:
+    import av
+    import numpy as np
+
+    source = tmp_path / "source.mp4"
+    with av.open(str(source), "w", format="mp4") as container:
+        stream = cast(av.VideoStream, container.add_stream("libx264", rate=30))
+        stream.width = stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        for _ in range(300):
+            frame = av.VideoFrame.from_ndarray(np.zeros((16, 16, 3), np.uint8))
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
     result = subprocess.run(
-        [sys.executable, str(TOOL_PATH), "--rss", "--self-test-allocation-mib", "256"],
+        [sys.executable, str(TOOL_PATH), "--rss", "--source", str(source)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    measured = json.loads(result.stdout)
+    assert measured["frames"] == 225
+    assert measured["mime"] == "video/mp4"
+    assert measured["encoded_bytes"] > 0
+
+
+def test_rss_gate_detects_real_allocation_after_fixture_generation(tmp_path: Path) -> None:
+    import av
+    import numpy as np
+
+    source = tmp_path / "source.mp4"
+    with av.open(str(source), "w", format="mp4") as container:
+        stream = cast(av.VideoStream, container.add_stream("libx264", rate=1))
+        stream.width = stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        for packet in stream.encode(av.VideoFrame.from_ndarray(np.zeros((16, 16, 3), np.uint8))):
+            container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    # A low-RSS parent keeps pytest's earlier allocations out of the child's high-water mark.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, sys; sys.exit(subprocess.run(sys.argv[1:]).returncode)",
+            sys.executable,
+            str(TOOL_PATH),
+            "--rss",
+            "--source",
+            str(source),
+            "--self-test-allocation-mib",
+            "256",
+        ],
         capture_output=True,
         text=True,
         check=False,

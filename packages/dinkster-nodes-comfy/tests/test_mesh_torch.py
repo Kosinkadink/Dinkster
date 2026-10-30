@@ -24,7 +24,6 @@ from dinkster_api.v1 import (
     TriangleMeshBatch,
     TypeExpr,
     TypeRegistry,
-    Voxel,
     materialize_mesh,
     materialize_voxel,
     register_inference_types,
@@ -112,16 +111,17 @@ def test_materialization_retains_every_mesh_field_and_voxel_layout() -> None:
             torch.testing.assert_close(left, right, rtol=0, atol=0)
         else:
             assert left == right
-    voxel = Voxel(
-        torch.tensor([[1, 3, 7], [9, 5, 2]], dtype=torch.int32),
-        torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
-        resolution=64,
-    )
-    assert materialize_voxel(voxel) is voxel
+    voxel = {
+        "data": torch.tensor([[1, 3, 7], [9, 5, 2]], dtype=torch.int32),
+        "voxel_colors": torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
+        "resolution": 64,
+    }
+    live = materialize_voxel(voxel)
+    assert live.data is voxel["data"] and live.voxel_colors is voxel["voxel_colors"]
     spec = registry.spec(VOXEL_TYPE)
     restored_voxel = materialize_voxel(spec.decode(spec.encode(voxel)))
-    torch.testing.assert_close(restored_voxel.data, voxel.data, rtol=0, atol=0)
-    torch.testing.assert_close(restored_voxel.voxel_colors, voxel.voxel_colors, rtol=0, atol=0)
+    torch.testing.assert_close(restored_voxel.data, voxel["data"], rtol=0, atol=0)
+    torch.testing.assert_close(restored_voxel.voxel_colors, voxel["voxel_colors"], rtol=0, atol=0)
     assert restored_voxel.resolution == 64
 
 
@@ -149,7 +149,7 @@ def test_voxel_basic_threshold_orientation_and_padded_batch(portable: bool) -> N
     data[0, 0, 1, 2] = 0.6
     data[1, 0, 1, 2] = 0.7
     source = data.clone()
-    voxel = Voxel(data)
+    voxel = {"data": data}
     registry = TypeRegistry()
     register_inference_types(registry)
     spec = registry.spec(VOXEL_TYPE)
@@ -181,7 +181,7 @@ def test_voxel_basic_threshold_orientation_and_padded_batch(portable: bool) -> N
     assert result.faces.dtype == torch.float32  # Empty first row determines packed dtype in F.
     torch.testing.assert_close(data, source, rtol=0, atol=0)
     regular = VoxelToMesh.execute(
-        voxel=Voxel(data[1:].repeat(2, 1, 1, 1)), algorithm="basic", threshold=0.6
+        voxel={"data": data[1:].repeat(2, 1, 1, 1)}, algorithm="basic", threshold=0.6
     )["MESH"]
     assert isinstance(regular, TriangleMeshBatch)
     assert regular.vertex_counts is None and regular.face_counts is None
@@ -191,14 +191,16 @@ def test_voxel_basic_threshold_orientation_and_padded_batch(portable: bool) -> N
 def test_surface_net_small_and_empty_grids_do_not_depend_on_progress_divisors() -> None:
     data = torch.zeros(1, 2, 2, 2)
     data[0, 0, 0, 0] = 1.0
-    result = VoxelToMesh.execute(voxel=Voxel(data), algorithm="surface net", threshold=0.5)["MESH"]
+    result = VoxelToMesh.execute(voxel={"data": data}, algorithm="surface net", threshold=0.5)[
+        "MESH"
+    ]
     assert isinstance(result, TriangleMeshBatch)
     assert result.vertices.shape == (1, 8, 3)
     assert result.faces.shape == (1, 12, 3)
     assert result.faces.dtype == torch.int64
     assert torch.isfinite(result.vertices).all()
     empty = VoxelToMesh.execute(
-        voxel=Voxel(torch.zeros_like(data)), algorithm="surface net", threshold=0.5
+        voxel={"data": torch.zeros_like(data)}, algorithm="surface net", threshold=0.5
     )["MESH"]
     assert isinstance(empty, TriangleMeshBatch)
     assert empty.vertices.shape == (1, 0, 3) and empty.faces.shape == (1, 0, 3)
@@ -216,8 +218,9 @@ def test_hunyuan_decode_preserves_options_and_wraps_voxel_data() -> None:
     value = VAEDecodeHunyuan3D.execute(
         samples={"samples": latent}, vae=VAE(), num_chunks=1234, octree_resolution=48
     )["VOXEL"]
-    assert isinstance(value, Voxel)
-    assert value.data is data and value.voxel_colors is None and value.resolution is None
+    materialized = materialize_voxel(value)
+    assert materialized.data is data
+    assert materialized.voxel_colors is None and materialized.resolution is None
 
 
 class GeometryVAE:

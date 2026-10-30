@@ -4,8 +4,8 @@ publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.image.upscale_model"]
 requires = [
-    "numpy==2.5.1",
-    "torch==2.13.0",
+    "numpy",
+    "torch",
 ]
 
 [pack.sandbox]

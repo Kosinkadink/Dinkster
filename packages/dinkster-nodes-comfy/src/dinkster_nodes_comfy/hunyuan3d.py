@@ -19,7 +19,6 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    Voxel,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_latent,
@@ -124,15 +123,17 @@ class VAEDecodeHunyuan3D(Node):
         initialize_inference_process()
         samples = cast("Mapping[str, Any]", materialize_latent(samples))
         return cls.outputs(
-            VOXEL=Voxel(
-                vae.decode(
+            VOXEL={
+                "data": vae.decode(
                     samples["samples"],
                     vae_options={
                         "num_chunks": num_chunks,
                         "octree_resolution": octree_resolution,
                     },
-                )
-            )
+                ),
+                "voxel_colors": None,
+                "resolution": None,
+            }
         )
 
 

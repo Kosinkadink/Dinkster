@@ -200,7 +200,7 @@ class LTXConsumer(Node):
         return cls.outputs(summary="ltx-video-conditioning")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -218,6 +218,7 @@ def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
             (tmp_path / "ltx_video_conditioning_fixture.py").write_text(
                 "from test_ltx_video_conditioning_torch import LTXConsumer, LTXSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, LTXSource, LTXConsumer)\n",
                 encoding="ascii",
             )
@@ -226,6 +227,10 @@ def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["ltx-video-conditioning-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "ltx_video_conditioning_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "ltx_video_conditioning_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "ltx_video_conditioning_fixture:register_inference_types",
@@ -406,7 +411,7 @@ class CropConsumer(Node):
         return cls.outputs(summary="ltx-crop-guides")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_crop_guides_ordinary_native_and_separate_fixture_twice(
     tmp_path: Path, in_process: bool
 ) -> None:

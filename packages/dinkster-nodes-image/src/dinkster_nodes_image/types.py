@@ -304,25 +304,27 @@ def _pose_meta(obj: object) -> Mapping[str, object]:
 
 def register_image_types(registry: TypeRegistry) -> None:
     from dinkster_api.v1 import (
+        IMAGE_DOCUMENT_MEDIA_TYPE,
         PNG_CONTAINER_VERSION,
         SAVE_TARGET_TYPE,
         AssetRef,
+        ImageDocument,
         decode_image_array,
         encode_image_array,
         image_array_fingerprint,
         image_array_meta,
+        image_input,
         mask_array_meta,
         prepare_image_array_encoding,
         register_asset_type,
+        register_comfy_compositor,
+        register_comfy_layers,
         register_save_target_type,
         render_image_png,
         render_mask_png,
         resolver_from_env,
         validate_image_encoded,
     )
-    from dinkster_image_document.compat import register_comfy_compositor, register_comfy_layers
-    from dinkster_image_document.document import ImageDocument
-    from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
 
     from .layer_document import decode_layers, layer_meta, migrate_layers
     from .layer_recipe import coerce_delta, decode_delta, encode_delta
@@ -343,6 +345,7 @@ def register_image_types(registry: TypeRegistry) -> None:
                 prepare_buffer_encoding=prepare_image_array_encoding,
                 fingerprint=image_array_fingerprint(type_id),
                 meta=mask_array_meta if type_id == MASK_TYPE else image_array_meta,
+                input_convert=image_input,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
             )

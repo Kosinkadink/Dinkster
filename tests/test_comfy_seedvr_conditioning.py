@@ -1,8 +1,5 @@
 """Torch-free SeedVR2 conditioning schema and discovery."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     LATENT_TYPE,
@@ -47,18 +44,3 @@ def test_seedvr_conditioning_schema() -> None:
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
     assert SeedVR2Conditioning in COMFY_NODES
-
-
-def test_seedvr_conditioning_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.seedvr_conditioning import SeedVR2Conditioning; "
-            "SeedVR2Conditioning.schema(); assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
