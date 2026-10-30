@@ -19,7 +19,9 @@ def command(*args: str, root: Path = ROOT, env: dict[str, str] | None = None) ->
     for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT"):
         environment.pop(name, None)
     environment.update(env or {})
-    subprocess.run(args, cwd=root, check=True, env=environment)
+    # Windows bare-name process lookup does not honor PATH's .cmd shims.
+    executable = shutil.which(args[0], path=environment.get("PATH")) or args[0]
+    subprocess.run((executable, *args[1:]), cwd=root, check=True, env=environment)
 
 
 def bootstrap(root: Path) -> Path:

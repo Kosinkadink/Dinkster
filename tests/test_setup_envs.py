@@ -129,6 +129,7 @@ def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
         text=True,
     )
     assert result.returncode == 1, result.stderr
+    assert probe.is_file(), f"stdout={result.stdout}\nstderr={result.stderr}"
     observed = json.loads(probe.read_text())
     assert Path(observed["project"]) == root
     assert Path(observed["environment"]) == root / ".run/bootstrap"
