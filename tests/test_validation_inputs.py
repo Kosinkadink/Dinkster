@@ -56,7 +56,8 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert upload["with"]["path"] == run["env"]["COVERAGE_FILE"]
     assert upload["with"]["if-no-files-found"] == "error"
     assert set(jobs["coverage-gate"]["needs"]) == {"validation-plan", "test"}
-    assert jobs["model-tests"]["env"]["PYTEST_ADDOPTS"] == "--durations=10"
+    assert "model-tests" not in jobs
+    assert "model-tests-gate" not in jobs
 
 
 def resolved_evidence_root(environment: dict[str, str]) -> Path:
