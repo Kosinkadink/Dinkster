@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import stat
@@ -30,8 +31,50 @@ from .history import HistoryStore
 from .library import run_owned_thread
 
 RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
+POLICY_KEY = web.AppKey("produced_policy_collection", dict[str, object])
 # Individual owner manifests cannot certify unregistered frontend owners.
 FRONTEND_RETENTION_COMPLETE = False
+
+
+async def maintain_cleanup_policy(app: web.Application) -> None:
+    """Apply the persisted policy through the common collector, never bypassing owners."""
+    if not FRONTEND_RETENTION_COMPLETE:
+        return
+
+    from .app import STATE_KEY
+    from .library import LIBRARY_KEY
+
+    library = app[LIBRARY_KEY]
+    state = app[STATE_KEY]
+    while True:
+        await asyncio.sleep(60)
+        result: dict[str, object] = {
+            "collectionEnabled": False,
+            "reclaimedBytes": 0,
+            "reclaimedFiles": 0,
+        }
+        try:
+            limit = await run_owned_thread(library.store.cleanup_limit)
+        except (AssetError, sqlite3.Error):
+            result["blocked"] = ["policy_state_unavailable"]
+        else:
+            result["limitBytes"] = limit
+            if limit is None:
+                result["blocked"] = ["policy_unlimited"]
+            else:
+                result.update(
+                    await inspect_cleanup(
+                        library.vault,
+                        library.store,
+                        state.history,
+                        state.engine.cache,
+                        scratch_root=library.scratch_root,
+                        collect=True,
+                        limit_bytes=limit,
+                    )
+                )
+        app[POLICY_KEY].clear()
+        app[POLICY_KEY].update(result)
 
 
 async def inspect_cleanup(
@@ -444,6 +487,7 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         scratch_root=library.scratch_root,
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
+    status["lastPolicyCollection"] = request.app[POLICY_KEY] or None
     try:
         status["limitBytes"] = await run_owned_thread(library.store.cleanup_limit)
         status["policyAvailable"] = True

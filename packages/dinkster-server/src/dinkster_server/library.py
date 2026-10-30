@@ -68,7 +68,7 @@ import sqlite3
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -1736,10 +1736,27 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
 
 
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
-    from .cleanup import RECOVERY_KEY, handle_cleanup_status, recover_produced_publications
+    from .cleanup import (
+        POLICY_KEY,
+        RECOVERY_KEY,
+        handle_cleanup_status,
+        maintain_cleanup_policy,
+        recover_produced_publications,
+    )
     from .image_document import handle_dependencies, handle_image_document, handle_render
 
+    async def cleanup_policy(app: web.Application) -> AsyncIterator[None]:
+        task = asyncio.create_task(maintain_cleanup_policy(app))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
     app[LIBRARY_KEY] = library
+    app[POLICY_KEY] = {}
+    app.cleanup_ctx.append(cleanup_policy)
     app.router.add_post("/api/assets", handle_upload)
     app.router.add_post("/api/assets/transfers", handle_transfer_upload)
     app.router.add_post("/api/assets/media", handle_media_upload)

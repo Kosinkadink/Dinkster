@@ -930,6 +930,95 @@ def test_cleanup_policy_persists_without_authorizing_collection(
 
 
 @pytest.mark.parametrize("limit", [None, 17])
+def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: int | None
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+
+    async def scenario() -> None:
+        ticks: asyncio.Queue[None] = asyncio.Queue()
+        paused: asyncio.Queue[None] = asyncio.Queue()
+        sleep = asyncio.sleep
+
+        async def advanceable_sleep(delay: float) -> None:
+            if delay == 60:
+                paused.put_nowait(None)
+                await ticks.get()
+            else:
+                await sleep(delay)
+
+        monkeypatch.setattr(asyncio, "sleep", advanceable_sleep)
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        store.set_cleanup_limit(limit)
+        data = [b"old", b"newest bytes", b"kept", b"u"]
+        digests = [digest_bytes(value) for value in data]
+        inventory = ProducedAssetInventory(vault.root)
+        for index, (digest, value) in enumerate(zip(digests, data, strict=True)):
+            if index < 3:
+                inventory.pending(digest, len(value))
+            with vault.writer(digest) as writer:
+                writer.write(value)
+                writer.commit()
+                if index < 3:
+                    inventory.adopted(digest, len(value))
+        store.create("private", "kept output", digests[2], "application/octet-stream")
+        client = TestClient(
+            TestServer(
+                create_app(
+                    make_engine,
+                    SCHEMAS,
+                    library=ServerLibrary(vault, store, scratch_root=tmp_path / "scratch"),
+                    history=HistoryStore(tmp_path / "history"),
+                )
+            )
+        )
+        await client.start_server()
+
+        async def tick() -> dict[str, object]:
+            ticks.put_nowait(None)
+            await asyncio.wait_for(paused.get(), 10)
+            status = await (await client.get("/api/library/storage")).json()
+            return cast(dict[str, object], status["lastPolicyCollection"])
+
+        try:
+            await asyncio.wait_for(paused.get(), 10)
+            assert (await (await client.get("/api/library/storage")).json())[
+                "lastPolicyCollection"
+            ] is None
+            first = await tick()
+            assert first["limitBytes"] == limit
+            assert first["reclaimedFiles"] == (0 if limit is None else 2)
+            assert vault.has(digests[0]) == (limit is None)
+            assert vault.has(digests[1])
+            response = await client.put("/api/library/storage/policy", json={"limitBytes": 1})
+            assert response.status == 200
+            path = vault.resolve(digests[1])
+            assert path is not None
+            with open_verified(path, digests[1]):
+                busy = await tick()
+                assert busy["reclaimedFiles"] == 0
+                assert "vault_in_use" in cast(list[str], busy["blocked"])
+            second = await tick()
+            assert second["limitBytes"] == 1
+            assert second["reclaimedFiles"] == (4 if limit is None else 2)
+            assert not vault.has(digests[0]) and not vault.has(digests[1])
+            for digest, value in zip(digests[2:], data[2:], strict=True):
+                kept = vault.resolve(digest)
+                assert kept is not None and kept.read_bytes() == value
+            with closing(sqlite3.connect(tmp_path / "library")) as db, db:
+                db.execute("DELETE FROM asset_cleanup_policy")
+            unavailable = await tick()
+            assert unavailable["blocked"] == ["policy_state_unavailable"]
+            assert unavailable["reclaimedFiles"] == 0
+            assert vault.has(digests[2]) and vault.has(digests[3])
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit", [None, 17])
 @pytest.mark.parametrize("owner", ["catalog", "document", "history", "cache"])
 def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: int | None, owner: str

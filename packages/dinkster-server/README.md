@@ -293,17 +293,26 @@ The collector retains memory/disk, history and library reference barriers and
 inactive scratch claims and their dependency closure through an exclusive vault
 claim and deletion. Offered scratch-journal identities remain roots until
 scratch removal retires their rows, so Clear cannot break an interrupted
-handoff's retry. Its
-frontend integration gate is disabled in source, not exposed as a request
-option. Behind that gate, only verified adoption rows are candidates, in original
-adoption order. A supplied byte target stops collection once canonical vault
+handoff's retry. Its frontend integration gate is disabled in source, not exposed
+as a request option. Behind that gate, only verified adoption rows are candidates,
+in original adoption order. A supplied byte target stops collection once canonical vault
 bytes meet the target; Clear has no target. Untracked bytes and retained digests
 are excluded. Pending inventory blocks collection. Corrupt bytes or unsafe
 sidecars fail the item without dropping its recovery record. The adoption row
 is removed only after vault deletion, so an interrupted deletion can finish on
 the next pass. Reports count deleted blobs and sidecars separately as files and
-include their actual sizes, retained candidates and failed items. This does not
-enable automatic cap enforcement or scratch removal.
+include their actual sizes, retained candidates and failed items.
+
+Behind the same disabled gate, a server-owned worker checks the persisted size
+policy every minute. Each pass reads the policy anew; unlimited skips automatic
+deletion, while a finite limit uses the same owner-held oldest-eligible collector
+as Clear. A policy update affects the next pass, not one already underway. The
+first pass waits one minute; active startup publishers still block collection.
+`lastPolicyCollection` reports the last completed pass, including the limit it
+read, blocked reasons and actual reclaimed counts; null means no completed pass.
+Unavailable policy never means unlimited and never permits deletion. Shutdown
+cancels the worker and waits for an in-progress owned inspection to settle before
+closing stores. Production starts no policy loop while the gate remains false.
 
 `vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
 `adoptedBytes` sums recorded verified adoption sizes. Either is null when its
