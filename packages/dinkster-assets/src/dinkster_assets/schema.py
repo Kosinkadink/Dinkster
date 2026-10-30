@@ -42,6 +42,7 @@ sa.Table(
     metadata,
     sa.Column("cache_key", sa.Text, primary_key=True, nullable=True),
     sa.Column("manifest", sa.Text, nullable=False),
+    sa.Column("asset_digests", sa.Text, nullable=True),
 )
 asset_observations = sa.Table(
     "asset_observations",
@@ -64,6 +65,24 @@ sa.Index(
     asset_observations.c.scope,
     asset_observations.c.digest,
     asset_observations.c.created,
+)
+sa.Table(
+    "asset_retentions",
+    metadata,
+    sa.Column("scope", sa.Text, primary_key=True),
+    sa.Column("owner_kind", sa.Text, primary_key=True),
+    sa.Column("owner_id", sa.Text, primary_key=True),
+    sa.Column("revision", sa.Integer, nullable=False),
+    sa.Column("digests", sa.Text, nullable=False),
+    sa.Column("complete", sa.Integer, nullable=False, server_default="0"),
+)
+sa.Table(
+    "asset_cleanup_policy",
+    metadata,
+    sa.Column("singleton", sa.Integer, primary_key=True),
+    sa.Column("limit_bytes", sa.Integer, nullable=True),
+    sa.CheckConstraint("singleton = 1"),
+    sa.CheckConstraint("limit_bytes IS NULL OR limit_bytes > 0"),
 )
 
 
