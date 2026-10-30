@@ -48,7 +48,9 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
         root = sources / entry.pack
         unpack_artifact(artifacts[entry.pack], root, entry.artifact_digest)
         _manifest(root, entry)
-    (generation / "dinkster.lock").write_text(lock.record_json() + "\n", encoding="utf-8")
+    (generation / "dinkster.lock").write_text(
+        lock.record_json() + "\n", encoding="utf-8", newline="\n"
+    )
 
 
 def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:

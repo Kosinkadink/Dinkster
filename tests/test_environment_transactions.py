@@ -281,7 +281,7 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
             assert (tmp_path / "project.json").read_bytes() == edited
             assert read_current(tmp_path) == 2
             assert sorted((tmp_path / "journal").glob("*.json")) == journals
-            (tmp_path / "project.json").write_text(next_settings)
+            (tmp_path / "project.json").write_bytes(next_settings.encode("utf-8"))
         code, planned = _run(tmp_path, "rollback", "--plan")
         assert code == 0 and planned["status"] == "planned"
         assert read_current(tmp_path) == 2
