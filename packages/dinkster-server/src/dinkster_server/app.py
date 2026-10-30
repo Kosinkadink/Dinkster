@@ -4604,8 +4604,9 @@ def create_app(
 
         if library is not None and library.scratch_root is not None:
             scratch = library.scratch_root
+            vault = library.vault
             recovery = await run_owned_thread(
-                lambda: recover_produced_publications(library.vault, scratch, job=job.run_id)
+                lambda: recover_produced_publications(vault, scratch, job=job.run_id)
             )
             app[RECOVERY_KEY].update(recovery)
 
