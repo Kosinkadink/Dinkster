@@ -16,9 +16,9 @@ cd Dinkster-Frontend
 pnpm install --frozen-lockfile
 pnpm --filter @dinkster/app build
 cd ../Dinkster
-uv sync --python 3.12 --all-packages --frozen
-uv run dinkster setup
-uv run dinkster
+uv run --no-project python scripts/setup_envs.py
+uv run --no-sync dinkster setup
+uv run --no-sync dinkster
 ```
 
 The editor opens at `http://127.0.0.1:3639`. See the
@@ -57,31 +57,28 @@ Status: in progress. No stable package or Desktop release exists yet. See
 workflows and ComfyUI-compatibility workflows run through the same typed graph,
 server, and worker boundaries. The exact model, node, dtype, training, and
 compatibility coverage is linked from the
-[SUPPORTED.md index](SUPPORTED.md). `uv sync --all-packages` (or
-`scripts/setup_envs.sh` on Linux/macOS or `scripts/setup_envs.ps1` on Windows,
-which also build the optional torch/GPU test venvs), then:
+[SUPPORTED.md index](SUPPORTED.md). Run
+`uv run --no-project python scripts/setup_envs.py` to install the machine's
+verified Dinkster-Environments base and locked editable workspace in `.venv`.
+The base manifest owns Python, torch and its dependency closure. Linux uses
+`linux-cpu`; Windows selects a compatible NVIDIA base or `win-cpu` from the
+manifest's hardware bounds. Use `--variant linux-cpu` or `--variant win-cpu`
+to select CPU explicitly. macOS setup stops until its base bundle is available;
+see [Apple Silicon bundles](https://github.com/Kosinkadink/comfy-vibe-station/issues/575).
 
-On Linux and Windows, the setup script installs `comfy-kitchen==0.2.40`
-and `comfy-aimdo==0.6.0` from PyPI. macOS installs the pure-Python
-kitchen wheel and does not enable native Aimdo residency because the mechanism
-does not support that OS.
-
-Both setup scripts pin root synchronization to this checkout's locked workspace
-`.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. Its inference
-dependency installs torch; cold authoring imports do not initialize it. They manage
-`.venv-torch` and `.venv-gpu` separately with `uv pip`. Do not target those
-Torch environments with project `uv sync`: exact sync can remove their
-platform-specific torch and kitchen wheels.
+Use `uv run --no-sync` after setup. Project `uv sync` would replace the selected
+base's platform-specific wheels with the universal lock's defaults. Rerun setup
+after dependency changes; `--force` rebuilds only its `.venv`.
 
 Maintainers running the full root suite must first run
 `uv run --no-sync python scripts/prepare_validation_inputs.py`. This prepares
 the exact private evidence revision used by hosted full validation; ordinary
 installation and runtime use do not require that checkout.
 
-- `uv run pytest` - test suite (incl. the one-way dependency rule, hazard H6)
-- `uv run pyright` - static type checking (strict for `packages/`, standard
+- `uv run --no-sync pytest` - test suite (incl. the one-way dependency rule, hazard H6)
+- `uv run --no-sync pyright` - static type checking (strict for `packages/`, standard
   for `src/` and `tests/`)
-- `uv run ruff check .` - lint
+- `uv run --no-sync ruff check .` - lint
 - `python -B tools/replay_node_constants.py <ComfyUI checkout> <node test>` -
   replay explicitly annotated ComfyUI node assertions on demand. A supported
   assertion has an immediately preceding `# comfy-replay:` JSON object with

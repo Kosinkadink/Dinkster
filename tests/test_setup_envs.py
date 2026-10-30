@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shlex
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -85,3 +90,48 @@ def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
     monkeypatch.setattr(setup_envs.platform, "machine", lambda: "aarch64")
     with pytest.raises(RuntimeError, match="No published base"):
         setup_envs.select_base(bases)
+
+
+def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    probe = tmp_path / "probe.json"
+    script = tools / "probe.py"
+    script.write_text(
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['SETUP_PROBE']).write_text(json.dumps({\n"
+        "'project': os.environ.get('UV_PROJECT'),\n"
+        "'environment': os.environ.get('UV_PROJECT_ENVIRONMENT'),\n"
+        "'args': sys.argv[1:], 'cwd': os.getcwd()}))\n"
+        "sys.exit(73)\n"
+    )
+    uv = tools / ("uv.cmd" if os.name == "nt" else "uv")
+    uv.write_text(
+        f'@"{sys.executable}" "{script}" %*\n'
+        if os.name == "nt"
+        else f'#!/bin/sh\n{shlex.quote(sys.executable)} {shlex.quote(str(script))} "$@"\n'
+    )
+    uv.chmod(0o755)
+    root = Path(setup_envs.__file__).resolve().parents[1]
+    environment = os.environ | {
+        "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+        "UV_PROJECT": str(tmp_path / "wrong-project"),
+        "UV_PROJECT_ENVIRONMENT": str(tmp_path / "wrong-environment"),
+        "SETUP_PROBE": str(probe),
+    }
+    environment.pop("DINKSTER_SETUP_BOOTSTRAPPED", None)
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/setup_envs.py")],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1, result.stderr
+    observed = json.loads(probe.read_text())
+    assert Path(observed["project"]) == root
+    assert Path(observed["environment"]) == root / ".run/bootstrap"
+    assert Path(observed["cwd"]) == root
+    assert observed["args"] == ["sync", "--locked", "--package", "dinkster-supervisor", "--no-dev"]
+    assert not (tmp_path / "wrong-environment").exists()

@@ -14,8 +14,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def command(*args: str, root: Path = ROOT, **kwargs) -> None:
-    subprocess.run(args, cwd=root, check=True, **kwargs)
+def command(*args: str, root: Path = ROOT, env: dict[str, str] | None = None) -> None:
+    environment = os.environ.copy()
+    for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT"):
+        environment.pop(name, None)
+    environment.update(env or {})
+    subprocess.run(args, cwd=root, check=True, env=environment)
 
 
 def bootstrap(root: Path) -> Path:
@@ -29,7 +33,7 @@ def bootstrap(root: Path) -> Path:
         "dinkster-supervisor",
         "--no-dev",
         root=root,
-        env=os.environ | {"UV_PROJECT_ENVIRONMENT": str(environment), "UV_PROJECT": str(root)},
+        env={"UV_PROJECT_ENVIRONMENT": str(environment), "UV_PROJECT": str(root)},
     )
     return environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
@@ -38,7 +42,7 @@ def select_base(bases: list[dict], variant: str | None = None) -> dict:
     host = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     arch = {"AMD64": "x86_64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
     compatible = [base for base in bases if base["platform"] == {"os": host, "arch": arch}]
-    mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+    mask = os.environ.get("CUDA_VISIBLE_DEVICES", "unset").strip()
     devices = []
     if mask not in ("", "-1") and any(base["nvidia"] for base in compatible):
         try:
@@ -205,7 +209,7 @@ def main() -> int:
             str(python),
             str(Path(__file__).resolve()),
             *sys.argv[1:],
-            env=os.environ | {"DINKSTER_SETUP_BOOTSTRAPPED": "1"},
+            env={"DINKSTER_SETUP_BOOTSTRAPPED": "1"},
         )
         return 0
     sys.path.insert(0, str(ROOT))

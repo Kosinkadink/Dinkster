@@ -265,8 +265,10 @@ DINKSTER_ACCELERATOR=cpu dinkster-serve --comfy-root /path/to/ComfyUI \
 On Apple Silicon, install native arm64 PyTorch in the worker environment.
 MPS is selected automatically when available; `DINKSTER_ACCELERATOR=mps`
 requires it and refuses an unavailable backend rather than silently using CPU.
-`scripts/setup_envs.sh` prepares the repository's macOS test environments and
-runs the MPS capability smoke check without a system-wide install.
+The source setup command `uv run --no-project python scripts/setup_envs.py`
+requires a published platform base. macOS setup currently stops pending the
+[Apple Silicon base bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575);
+it does not resolve a local MPS environment.
 
 `DINKSTER_ACCELERATOR` applies to the process and its children, including native
 inference and compatibility workers. Set it on each remote worker service or

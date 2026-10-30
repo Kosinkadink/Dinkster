@@ -145,8 +145,6 @@ def test_shell_bootstrap_installs_or_reuses_user_local_uv(tmp_path: Path, existi
     assert (home / "uv-args").read_text().splitlines() == [
         "run",
         "--no-project",
-        "--python",
-        "3.12",
         "scripts/run.py",
         "--no-browser",
         "--port",

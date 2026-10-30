@@ -5,9 +5,9 @@ package index. A GitHub 404 can mean that your account does not have access.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
-26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
+26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux or
 `.\run.ps1` on Windows. The scripts install uv user-locally if missing;
-Python 3.12 is obtained by uv when needed. The scripts
+the selected Dinkster-Environments bundle supplies runtime Python. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
 
@@ -55,7 +55,7 @@ The run scripts above are the default source installation path. For a manual
 development setup, clone the backend and frontend as sibling directories, then run:
 
 ```sh
-uv sync --python 3.12 --all-packages --frozen
+uv run --no-project python scripts/setup_envs.py
 cd ../Dinkster-Frontend
 pnpm install --frozen-lockfile
 pnpm --filter @dinkster/app build
@@ -68,23 +68,28 @@ The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
-For native generation, build the execution environments from the Dinkster
-repository root with `./scripts/setup_envs.sh`, or
-`.\scripts\setup_envs.ps1` on Windows. The scripts require `uv` and create
-`.venv-torch` for CPU execution and for MPS execution on macOS Apple Silicon.
-On Linux and Windows with a detected NVIDIA GPU, they also create `.venv-gpu`
-for CUDA execution. A maintainer evidence checkout is not required. When
-`DINKSTER_EVIDENCE_ROOT` selects one, the scripts also install its optional
-`dinkster-acceptance` package; otherwise they print a skip notice and complete
-normally. Set `DINKSTER_EXECUTION_PYTHON` to the selected environment's Python
-when launching:
+The shared Python setup installs only one runtime in `.venv`: the published
+Linux CPU base, or a Windows NVIDIA/CPU base compatible with the detected
+hardware. Exact Python and torch versions come from the verified base manifest,
+not a local version override. `scripts/base_bundles.json` selects published
+content identities from Dinkster-Environments. Hash-locked workspace dependencies
+and editable packages are installed on top without resolving torch again.
+Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
+does not install CUDA wheels. Rerun setup after checkout or dependency changes;
+`--force` rebuilds its `.venv`, retaining the verified bundle store.
+
+macOS setup stops with an unsupported-platform message until the
+[Apple Silicon bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575)
+is available; it never falls back to a separate dependency resolution.
+
+A maintainer evidence checkout is optional. If `DINKSTER_EVIDENCE_ROOT` selects
+one, setup also installs its `dinkster-acceptance` package. The run scripts set
+`DINKSTER_EXECUTION_PYTHON` automatically; for manual launch use:
 
 | Platform | Execution interpreter |
 | --- | --- |
-| Linux CUDA | `$PWD/.venv-gpu/bin/python` |
-| Windows CUDA | `$PWD\.venv-gpu\Scripts\python.exe` |
-| Linux/macOS CPU or macOS Apple Silicon MPS | `$PWD/.venv-torch/bin/python` |
-| Windows CPU | `$PWD\.venv-torch\Scripts\python.exe` |
+| Linux CPU | `$PWD/.venv/bin/python` |
+| Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
 
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
