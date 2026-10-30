@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,7 @@ from dinkster_engine import (
     Engine,
     EngineEvent,
     ExecutionError,
+    ExecutionRuntime,
     ExecutionSelection,
     GraphValidationError,
 )
@@ -23,6 +25,7 @@ from dinkster_protocol import (
     LazyStatusInvocation,
     LazyStatusResult,
     OnInvocationEvent,
+    SavedArtifact,
 )
 from dinkster_schema import (
     InputFamilySpec,
@@ -50,6 +53,7 @@ from dinkster_values import (
     register_core_types,
     register_resource_handle_type,
 )
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
 
@@ -62,10 +66,21 @@ def make_engine(
     registry = TypeRegistry()
     register_core_types(registry)
     register_scaffold_types(registry)
+    worker = InProcessWorkerFactory(registry)
+
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return SavedArtifactAuthority(os.environ["DINKSTER_MOUNTS_SNAPSHOT"]).capture_mounted(
+            claims, node_id, started_at_ns
+        )
+
+    runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     return Engine(
         schemas=build_schemas(SCAFFOLD_NODES),
         registry=registry,
-        worker=InProcessWorkerFactory(registry),
+        worker=worker,
+        pin_execution=lambda: runtime,
         cache=cache if cache is not None else MemoryLRUCache(),
         on_event=events.append if events is not None else None,
         explain_misses=explain_misses,
@@ -1677,8 +1692,9 @@ def test_concurrent_duplicate_run_id_is_rejected() -> None:
         events: list[EngineEvent] = []
         engine = make_engine(events)
         first = asyncio.create_task(engine.run(image_graph(), ["s"], run_id="shared"))
-        while not any(event.kind == "run_started" for event in events):
-            await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while not any(event.kind == "run_started" for event in events):
+                await asyncio.sleep(0)
         with pytest.raises(ActiveRunIdError, match="already active"):
             await engine.run(image_graph(), ["s"], run_id="shared")
         assert (await first).run_id == "shared"

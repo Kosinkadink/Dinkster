@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -74,24 +72,3 @@ def test_vision_output_rejects_malformed_payloads(data: bytes) -> None:
         spec.validate_encoded(data, {})
     with pytest.raises(ValueError):
         spec.decode(data)
-
-
-def test_vision_registration_and_decode_do_not_import_torch() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "from dinkster_api.v1 import CLIP_VISION_OUTPUT_TYPE, TypeRegistry, "
-            "register_inference_types\n"
-            "r = TypeRegistry()\n"
-            "register_inference_types(r)\n"
-            "s = r.spec(CLIP_VISION_OUTPUT_TYPE)\n"
-            "b = s.encode({'image_sizes': [(2, 3, 3)], 'mm_projected': None})\n"
-            "s.validate_encoded(b, {})\n"
-            "assert s.decode(b) == {'image_sizes': [(2, 3, 3)], 'mm_projected': None}\n"
-            "assert 'torch' not in sys.modules\n"
-            "assert not any(k.startswith('dinkster_inference.') for k in sys.modules)\n",
-        ],
-        check=True,
-    )

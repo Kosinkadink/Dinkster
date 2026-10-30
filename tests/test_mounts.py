@@ -16,7 +16,7 @@ import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from threading import Event
 from typing import cast
@@ -28,6 +28,9 @@ from dinkster_api.v1 import mount_roots_for_kind
 from dinkster_assets import (
     AssetError,
     AssetScanProgress,
+    AssetVault,
+    AssetWriter,
+    LibraryStore,
     LocalAssetLibrary,
     MountDef,
     MountsError,
@@ -44,7 +47,8 @@ from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_graph import Graph, GraphNode
+from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_protocol import AssetFolderContext
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -54,8 +58,8 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
-from dinkster_server import create_app
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_server import ServerLibrary, create_app
+from dinkster_values import INLINE_STRING_CAP, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker, load_manifest
 from dinkster_workers.host import load_pack
 
@@ -756,6 +760,9 @@ def test_mount_roots_do_not_infer_unconfigured_authority(
 def test_public_mount_roots_in_ordinary_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated: bool
 ) -> None:
+    late_text = "late embedding " * 24
+    first_text = "preferred embedding " * 20
+    mounts_root = tmp_path
     pack = tmp_path / "pack"
     pack.mkdir()
     manifest_path = pack / "dinkster-pack.toml"
@@ -798,15 +805,15 @@ def test_public_mount_roots_in_ordinary_hosts(
         try:
             expected: list[list[str]] = []
             for name, priority, kind, text in (
-                ("late", 4, "model/embedding", "late embedding"),
+                ("late", 4, "model/embedding", late_text),
                 ("unrelated", -9, "model/checkpoint", "not an embedding"),
-                ("first", -1, "model/embedding", "preferred embedding"),
+                ("first", -1, "model/embedding", first_text),
             ):
-                seed(tmp_path / name, {"sentinel.txt": text.encode()})
-                table.add(MountDef(id=name, path=tmp_path / name, priority=priority), kind=kind)
+                seed(mounts_root / name, {"sentinel.txt": text.encode()})
+                table.add(MountDef(id=name, path=mounts_root / name, priority=priority), kind=kind)
                 table.scan(name)
                 if kind == "model/embedding":
-                    expected.insert(0, [str(tmp_path / name), text])
+                    expected.insert(0, [str(mounts_root / name), text])
                 engine = Engine(
                     schemas=dict(worker.schemas),
                     registry=registry,
@@ -819,8 +826,191 @@ def test_public_mount_roots_in_ordinary_hosts(
                 actual = result.outputs["read"]["roots"].resolve()
                 assert isinstance(actual, str)
                 assert json.loads(actual) == expected
+            graph = Graph(nodes={"read": GraphNode("rootprobe.read", {})})
+            base = engine.pin_execution()
+            contexts = (
+                AssetFolderContext(("late", "first")),
+                AssetFolderContext(("first", "late")),
+                AssetFolderContext(()),
+            )
+            results = await asyncio.gather(
+                *(
+                    engine.run(graph, ["read"], execution=replace(base, asset_folders=context))
+                    for context in contexts
+                )
+            )
+            assert [
+                json.loads(cast(str, result.outputs["read"]["roots"].resolve()))
+                for result in results
+            ] == [
+                [
+                    [str(mounts_root / "late"), late_text],
+                    [str(mounts_root / "first"), first_text],
+                ],
+                [
+                    [str(mounts_root / "first"), first_text],
+                    [str(mounts_root / "late"), late_text],
+                ],
+                [],
+            ]
+            service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+            service.projects.update(
+                "project-a", ["late", "first"], available=service.mount_ids(), output=None
+            )
+            service.projects.update(
+                "project-b", ["first", "late"], available=service.mount_ids(), output=None
+            )
+            store = LibraryStore(tmp_path / "library.sqlite")
+            library = ServerLibrary(
+                AssetVault(tmp_path / "vault"),
+                store,
+                resolver=table,
+                project_folders_for=service.project_context,
+            )
+
+            def serve_engine(on_event: EventListener | None = None) -> Engine:
+                return Engine(
+                    schemas=dict(worker.schemas),
+                    registry=registry,
+                    worker=worker,
+                    cache=MemoryLRUCache(),
+                    on_event=on_event,
+                )
+
+            app = create_app(
+                serve_engine, dict(worker.schemas), library=library, max_running_jobs=2
+            )
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                for project in ("project-a", "project-b"):
+                    response = await client.post(
+                        "/api/jobs",
+                        json={
+                            "clientId": "projects",
+                            "jobId": project,
+                            "project": project,
+                            "graph": graph_to_wire(graph),
+                            "targets": ["read"],
+                        },
+                    )
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(10):
+                    for project, roots in (("project-a", expected[::-1]), ("project-b", expected)):
+                        assert len(json.dumps(roots)) > INLINE_STRING_CAP
+                        while True:
+                            status = await (
+                                await client.get(f"/api/jobs/projects/{project}")
+                            ).json()
+                            assert status["state"] != "failed", status
+                            if status["state"] == "completed":
+                                descriptor = status["outputs"]["read"]["roots"]
+                                assert descriptor["typeId"] == "STRING"
+                                assert "value" not in descriptor
+                                response = await client.get(
+                                    "/api/values",
+                                    params={
+                                        "clientId": "projects",
+                                        "jobId": project,
+                                        "nodeId": "read",
+                                        "outputId": "roots",
+                                        "rendition": "text",
+                                    },
+                                )
+                                assert response.status == 200, await response.text()
+                                actual = json.loads(await response.text())
+                                assert actual == roots
+                                break
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "projects",
+                        "jobId": "bad",
+                        "project": "Bad Project",
+                        "graph": graph_to_wire(graph),
+                        "targets": ["read"],
+                    },
+                )
+                assert response.status == 400
+            finally:
+                await client.close()
+                store.close()
+            # A project preference never grants a revoked root, even in a pinned run context.
+            table.remove("late")
+            result = await engine.run(
+                graph,
+                ["read"],
+                execution=replace(base, asset_folders=contexts[0]),
+                cache_enabled=False,
+            )
+            assert json.loads(cast(str, result.outputs["read"]["roots"].resolve())) == [
+                [str(mounts_root / "first"), first_text]
+            ]
         finally:
             await worker.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("operation", ["add", "add-project", "remove", "output", "project"])
+def test_failed_folder_persistence_preserves_live_and_saved_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restart: bool, operation: str
+) -> None:
+    import os
+
+    config = tmp_path / "mounts.toml"
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, output_mount="first")
+    for name in ("first", "second"):
+        seed(tmp_path / name, {"file.bin": name.encode()})
+        table.add(MountDef(name, tmp_path / name, "readwrite"))
+        table.scan(name)
+    service = MountService(table, config, allow_changes=True, restart_for_changes=restart)
+    service.persist()
+    before = config.read_bytes()
+    snapshot_before = snapshot.read_bytes()
+    replace = os.replace
+
+    def fail_settings_replace(source: object, destination: object) -> None:
+        target = tmp_path / (
+            "project-folders.json" if operation in ("project", "add-project") else "mounts.toml"
+        )
+        if destination == target:
+            raise OSError("settings volume is unavailable")
+        replace(source, destination)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "replace", fail_settings_replace)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            if operation in ("add", "add-project"):
+                seed(tmp_path / "third", {"file.bin": b"third"})
+                response = await client.post(
+                    "/api/mounts",
+                    json={"id": "third", "path": str(tmp_path / "third"), "mode": "readwrite"},
+                )
+            elif operation == "remove":
+                response = await client.delete("/api/mounts/second")
+            elif operation == "output":
+                response = await client.put("/api/mounts/output", json={"id": "second"})
+            else:
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={"mounts": ["second"], "outputMount": "second"},
+                )
+            assert response.status == 500
+            current = await (await client.get("/api/mounts")).json()
+            assert [row["id"] for row in current["mounts"]] == ["first", "second"]
+            assert current["outputMount"] == "first"
+            assert current["restartRequired"] is False
+            assert snapshot.read_bytes() == snapshot_before
+            assert config.read_bytes() == before
+            assert (await client.get("/api/mounts/second/entries")).status == 200
+        finally:
+            await service.close()
+            await client.close()
 
     asyncio.run(scenario())
 
@@ -873,11 +1063,16 @@ def test_selection_options_api_uses_live_grants_without_exposing_paths(
 
 
 async def wait_for_state(
-    client: TestClient, mount_id: str, state: str, timeout: float = 5.0
+    client: TestClient,
+    mount_id: str,
+    state: str,
+    timeout: float = 5.0,
+    *,
+    project: str = "default",
 ) -> None:
     async with asyncio.timeout(timeout):
         while True:
-            resp = await client.get("/api/mounts")
+            resp = await client.get("/api/mounts", params={"project": project})
             rows = (await resp.json())["mounts"]
             row = next((r for r in rows if r["id"] == mount_id), None)
             if row is not None and row["state"] == state:
@@ -1023,9 +1218,21 @@ def test_mount_service_does_not_republish_unchanged_elapsed_progress(
     )
 
     async def scenario() -> None:
+        polled = asyncio.Event()
+        polls = 0
+        original_progress = table.scan_progress
+
+        def scan_progress(mount_id: str):
+            nonlocal polls
+            polls += 1
+            if polls == 2:
+                polled.set()
+            return original_progress(mount_id)
+
+        monkeypatch.setattr(table, "scan_progress", scan_progress)
         scan = asyncio.create_task(service.scan(cast("web.Application", {}), "models"))
         assert await asyncio.to_thread(hashing.wait, 5)
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(polled.wait(), 5)
         assert refreshes == []
         assert publishes == []
         release.set()
@@ -1477,7 +1684,11 @@ def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> No
         client = await make_client(service)
         response = await client.put("/api/mounts/output", json={"id": "renders"})
         assert response.status == 200
-        assert await response.json() == {"outputMount": "renders"}
+        assert await response.json() == {
+            "outputMount": "renders",
+            "restartRequired": False,
+            "pendingRemovals": [],
+        }
         listing = await (await client.get("/api/mounts")).json()
         assert listing["outputMount"] == "renders"
         await client.close()
@@ -1593,3 +1804,798 @@ def test_mount_revoke_persists_even_when_catalog_refresh_fails(
 
     asyncio.run(scenario())
     store.close()
+
+
+def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_path: Path) -> None:
+    config = tmp_path / "mounts.toml"
+    table = MountTable()
+    table.add(MountDef("derived", tmp_path / "derived"), source="derived")
+    service = MountService(table, config, allow_changes=True)
+    for name in ("first", "second", "common"):
+        seed(tmp_path / name, {"same.bin": name.encode()})
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            for name in ("first", "second", "common"):
+                response = await client.post(
+                    "/api/mounts",
+                    json={
+                        "id": name,
+                        "path": str(tmp_path / name),
+                        "project": "project-a",
+                        "shared": name == "common",
+                        "mode": "readwrite",
+                        "kind": "model/vae",
+                    },
+                )
+                assert response.status == 201
+                await wait_for_state(client, name, "ready", project="project-a")
+            response = await client.get("/api/mounts?project=project-b")
+            assert [row["id"] for row in (await response.json())["mounts"]] == ["derived", "common"]
+            for project, order in (
+                ("project-a", ["second", "first", "common"]),
+                ("project-b", ["common", "first"]),
+            ):
+                response = await client.put(
+                    f"/api/mounts/projects/{project}",
+                    json={
+                        "mounts": order,
+                        "outputMount": "common",
+                    },
+                )
+                assert response.status == 200
+                assert [row["id"] for row in (await response.json())["mounts"]] == order
+            assert (await client.delete("/api/mounts/common")).status == 409
+            assert table.get("derived") is not None
+            assert all(mount.id != "derived" for mount in load_mounts(config))
+            saved = config.with_name("project-folders.json").read_bytes()
+            for mounts in ([], ["first"], ["common", "first"]):
+                response = await client.put(
+                    "/api/mounts/projects/project-b",
+                    json={"mounts": mounts, "outputMount": None},
+                )
+                assert response.status == 409
+                assert config.with_name("project-folders.json").read_bytes() == saved
+                current = await (await client.get("/api/mounts?project=project-b")).json()
+                assert current["outputMount"] == "common"
+                assert current["activeOutputMount"] == "common"
+                assert [row["id"] for row in current["mounts"]] == ["common", "first"]
+            response = await client.put(
+                "/api/mounts/projects/project-b",
+                json={"mounts": ["first"], "outputMount": "first"},
+            )
+            assert response.status == 200
+            assert (await response.json())["outputMount"] == "first"
+            response = await client.put(
+                "/api/mounts/projects/without-output",
+                json={"mounts": [], "outputMount": None},
+            )
+            assert response.status == 200
+            assert (await response.json())["outputMount"] is None
+        finally:
+            await service.close()
+            await client.close()
+
+    asyncio.run(scenario())
+    restarted_table = MountTable()
+    for mount in load_mounts(config):
+        restarted_table.add(mount)
+    restarted_table.add(MountDef("derived", tmp_path / "derived"), source="derived")
+    restarted = MountService(restarted_table, config, allow_changes=True)
+    project_a = cast(list[dict[str, object]], restarted.project_response("project-a")["mounts"])
+    assert [row["id"] for row in project_a] == [
+        "second",
+        "first",
+        "common",
+    ]
+    project_b = restarted.project_response("project-b")
+    assert [row["id"] for row in cast(list[dict[str, object]], project_b["mounts"])] == ["first"]
+    assert project_b["outputMount"] == "first"
+    assert restarted.project_response("project-a")["outputMount"] == "common"
+    assert restarted.project_response("without-output")["mounts"] == []
+    assert restarted.project_response("without-output")["outputMount"] is None
+    new_project = cast(list[dict[str, object]], restarted.project_response("new-project")["mounts"])
+    assert [row["id"] for row in new_project] == [
+        "derived",
+        "common",
+    ]
+    assert [mount.priority for mount in load_mounts(config)] == [0, 0, 0]
+    for name in ("first", "second", "common"):
+        assert (tmp_path / name / "same.bin").read_bytes() == name.encode()
+
+
+def test_project_folder_validation_keeps_previous_settings(tmp_path: Path) -> None:
+    table = MountTable()
+    table.add(MountDef("existing", tmp_path, mode="readwrite"))
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            for mounts, output in (
+                (["unknown"], None),
+                (["existing", "existing"], None),
+                (["existing"], "unknown"),
+                ([], "existing"),
+                (False, None),
+            ):
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={
+                        "mounts": mounts,
+                        "outputMount": output,
+                    },
+                )
+                assert response.status == 400
+            response = await client.get("/api/mounts?project=Bad%20Project")
+            assert response.status == 400
+            response = await client.get("/api/mounts?project=default")
+            assert [row["id"] for row in (await response.json())["mounts"]] == ["existing"]
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_project_name_order_never_substitutes_for_digest_identity(tmp_path: Path) -> None:
+    from dinkster_assets import resolve_asset_selection
+    from dinkster_values.asset_folders import use_asset_folders
+
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    for name, data in (("first", b"first model"), ("second", b"different model")):
+        seed(tmp_path / name, {"same.safetensors": data})
+        table.add(
+            MountDef(
+                name, tmp_path / name, kind="model/vae", priority=-8 if name == "second" else 2
+            )
+        )
+        table.scan(name)
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+    assert service.project_context("new-project").mounts == ("second", "first")
+    first = table.ref("mounts/first/same.safetensors")
+    resolver = MountSnapshotResolver(snapshot)
+    for order, expected in (
+        (("second", "first"), b"different model"),
+        (("first", "second"), b"first model"),
+    ):
+        with use_asset_folders(AssetFolderContext(order)):
+            ref = table.bind_name("same.safetensors", "model/vae")
+            assert isinstance(ref, AssetRef)
+            assert ref.digest == digest_bytes(expected)
+            assert table.resolve(first.digest) == tmp_path / "first" / "same.safetensors"
+            assert resolver.resolve(first.digest) == tmp_path / "first" / "same.safetensors"
+    with use_asset_folders(AssetFolderContext(())):
+        assert table.bind_name("same.safetensors", "model/vae") is None
+        assert resolver.resolve(first.digest) == tmp_path / "first" / "same.safetensors"
+        assert (
+            resolve_asset_selection(
+                "model/vae", first, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+            )
+            is first
+        )
+    assert not (tmp_path / "vault").exists()
+    assert not (tmp_path / "produced-assets").exists()
+
+
+def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    table = MountTable()
+    table.add(MountDef("private-location", tmp_path / "private-location"))
+    service = MountService(table, allow_changes=True)
+    authenticator = StaticBearerAuthenticator(
+        {
+            "asset-editor-token": Principal(
+                "editor", {"local": frozenset({"assets:read", "assets:write"})}
+            ),
+            "agent-token": Principal(
+                "agent",
+                {
+                    "local": frozenset(
+                        {
+                            "assets:read",
+                            "assets:write",
+                            "settings:write",
+                        }
+                    )
+                },
+                kind="agent",
+            ),
+        }
+    )
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, authenticator=authenticator)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for token in ("asset-editor-token", "agent-token"):
+                headers = {"Authorization": f"Bearer {token}"}
+                for path in ("/api/mounts", "/api/mounts?project=default"):
+                    response = await client.get(path, headers=headers)
+                    assert response.status == 200
+                    assert str(tmp_path) not in await response.text()
+                for method, path, body in (
+                    ("GET", "/api/mounts/locations", None),
+                    (
+                        "POST",
+                        "/api/mounts/resolve-path",
+                        {"path": str(tmp_path), "project": "default", "scope": "local"},
+                    ),
+                    ("POST", "/api/mounts", {"id": "new", "path": str(tmp_path)}),
+                    ("PUT", "/api/mounts/projects/default", {"mounts": [], "outputMount": None}),
+                    ("DELETE", "/api/mounts/private-location", None),
+                    ("POST", "/api/mounts/private-location/retry", None),
+                ):
+                    response = await client.request(method, path, json=body, headers=headers)
+                    assert response.status == 403
+                    assert str(tmp_path) not in await response.text()
+            assert table.get("private-location") is not None
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("library_state", ("absent", "empty", "escaping"))
+def test_operator_location_support_and_vault_containment(
+    tmp_path: Path, library_state: str
+) -> None:
+    data = b"bytes outside the authoritative vault root"
+    digest = digest_bytes(data)
+    library = (
+        ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"), store=LibraryStore(tmp_path / "catalog.sqlite")
+        )
+        if library_state != "absent"
+        else None
+    )
+    if library_state == "escaping":
+        assert library is not None
+        outside = tmp_path / "private-file.bin"
+        outside.write_bytes(data)
+        hexpart = digest.split(":", 1)[1]
+        shard = library.vault.root / hexpart[:2]
+        shard.mkdir()
+        try:
+            (shard / hexpart).symlink_to(outside)
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+        library.store.record_asset(
+            "local",
+            AssetRef(digest, "file.bin", len(data)),
+            original_name="file.bin",
+            kind="asset/file",
+            origin={"kind": "unknown"},
+        )
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, MountService(MountTable()))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/mounts/locations", params={"digest": digest})
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            body = await response.json()
+            assert body["locations"] == []
+            assert body["importMount"] is None
+            if library is None:
+                assert "vault" not in body
+            else:
+                assert body["vault"] == str(library.vault.root.resolve())
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_operator_default_import_destination_matches_upload_and_survives_revocation(
+    tmp_path: Path,
+) -> None:
+    table = MountTable(output_mount="renders")
+    (tmp_path / "actual-imports").mkdir()
+    (tmp_path / "output").mkdir()
+    table.add(MountDef("incoming", tmp_path / "actual-imports", "readwrite"))
+    table.add(MountDef("renders", tmp_path / "output", "readwrite"))
+    table.scan("incoming")
+    table.scan("renders")
+    service = MountService(table, allow_changes=True)
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(tmp_path / "catalog.sqlite"),
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+            import_mount="incoming",
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/mounts/locations")
+            assert response.status == 200
+            body = await response.json()
+            assert body["importMount"] == "incoming"
+            row = next(row for row in body["activeMounts"] if row["id"] == body["importMount"])
+            assert row["path"] == str(tmp_path / "actual-imports")
+            assert table.output_mount == "renders"
+            response = await client.post(
+                "/api/assets",
+                params={"scope": "local", "name": "original.txt"},
+                data=b"named default import",
+            )
+            assert response.status == 201
+            assert (await response.json())["asset"]["virtualPath"] == "mounts/incoming/original.txt"
+            assert (
+                tmp_path / "actual-imports" / "original.txt"
+            ).read_bytes() == b"named default import"
+            assert not (tmp_path / "output" / "original.txt").exists()
+            assert (await client.delete("/api/mounts/incoming")).status == 200
+            body = await (await client.get("/api/mounts/locations")).json()
+            assert body["importMount"] == "incoming"
+            assert all(row["id"] != "incoming" for row in body["activeMounts"])
+            response = await client.post(
+                "/api/assets",
+                params={"scope": "local", "name": "must-not-fallback.txt"},
+                data=b"refused",
+            )
+            assert response.status == 403
+            assert not (tmp_path / "output" / "must-not-fallback.txt").exists()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) -> None:
+    table = MountTable()
+    seed(tmp_path / "imports", {"first.bin": b"first", "other.bin": b"other"})
+    table.add(MountDef("imports", tmp_path / "imports", "readwrite"))
+    table.scan("imports")
+    service = MountService(table, allow_changes=True)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+    vault = AssetVault(tmp_path / "vault")
+    first = table.ref("mounts/imports/first.bin")
+    other = table.ref("mounts/imports/other.bin")
+    for ref in (first, other):
+        store.record_asset(
+            "local", ref, original_name=ref.name, kind="asset/file", origin={"kind": "upload"}
+        )
+    with vault.writer(first.digest) as writer:
+        writer.write(b"first")
+        writer.commit()
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=vault,
+            store=store,
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+
+            async def locations(**params: str) -> dict[str, object]:
+                response = await client.get("/api/mounts/locations", params=params)
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                return await response.json()
+
+            response = await client.post(
+                "/api/assets",
+                params={"scope": "local", "name": "just-uploaded.bin"},
+                data=b"newly published bytes",
+            )
+            assert response.status == 201
+            uploaded = await response.json()
+            body = await locations(scope="local", digest=uploaded["digest"])
+            assert body["locations"] == [
+                {
+                    "storage": "mount",
+                    "mount": "imports",
+                    "virtualPath": "mounts/imports/just-uploaded.bin",
+                    "path": str(tmp_path / "imports" / "just-uploaded.bin"),
+                }
+            ]
+
+            body = await locations(scope="local", digest=first.digest)
+            assert body["vault"] == str(vault.root)
+            assert body["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))},
+                {
+                    "storage": "mount",
+                    "mount": "imports",
+                    "virtualPath": first.virtual_path,
+                    "path": str(tmp_path / "imports" / "first.bin"),
+                },
+            ]
+            seed(tmp_path / "imports", {"alias.bin": b"first"})
+            table.scan("imports")
+            alias = table.ref("mounts/imports/alias.bin")
+            store.record_asset(
+                "local",
+                alias,
+                original_name=alias.name,
+                kind="asset/file",
+                origin={"kind": "upload"},
+            )
+            alias_location = {
+                "storage": "mount",
+                "mount": "imports",
+                "virtualPath": alias.virtual_path,
+                "path": str(tmp_path / "imports" / "alias.bin"),
+            }
+            body = await locations(digest=first.digest)
+            assert body["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))},
+                {
+                    "storage": "mount",
+                    "mount": "imports",
+                    "virtualPath": first.virtual_path,
+                    "path": str(tmp_path / "imports" / "first.bin"),
+                },
+                alias_location,
+            ]
+            service.projects.update("default", [], available=("imports",), output=None)
+            assert (await locations(digest=first.digest))["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))}
+            ]
+            service.projects.update("default", ["imports"], available=("imports",), output=None)
+            (tmp_path / "imports" / "alias.bin").unlink()
+            table.scan("imports")
+            assert (await locations(scope="elsewhere", digest=first.digest))["locations"] == []
+            assert (await locations(project="other", digest=first.digest))["locations"] == []
+            ordinary = await client.get("/api/assets/catalog", params={"scope": "local"})
+            assert str(tmp_path) not in await ordinary.text()
+            (tmp_path / "imports" / "first.bin").write_bytes(b"wrong")
+            table.scan("imports")
+            body = await locations(digest=first.digest)
+            assert body["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))}
+            ]
+            path = vault.resolve(first.digest)
+            assert path is not None
+            path.write_bytes(b"wrong")
+            assert (await locations(digest=first.digest))["locations"] == []
+            table.remove("imports")
+            assert (await locations(digest=other.digest))["locations"] == []
+            for params in ({"digest": "bad"}, {"unknown": "field"}):
+                response = await client.get("/api/mounts/locations", params=params)
+                assert response.status == 400
+        finally:
+            await client.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        store.close()
+
+
+def test_sandbox_folder_edits_preserve_live_grants_until_restart(tmp_path: Path) -> None:
+    config = tmp_path / "mounts.toml"
+    snapshot = tmp_path / "snapshot.json"
+    for name in ("old", "next"):
+        seed(tmp_path / name, {"file.bin": name.encode()})
+    table = MountTable(snapshot, output_mount="old")
+    table.add(MountDef("old", tmp_path / "old", "readwrite"))
+    table.scan("old")
+    old_digest = table.ref("mounts/old/file.bin").digest
+    original_snapshot = snapshot.read_bytes()
+    service = MountService(table, config, allow_changes=True, restart_for_changes=True)
+    service.persist()
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.post(
+                "/api/mounts",
+                json={"id": "next", "path": str(tmp_path / "next"), "mode": "readwrite"},
+            )
+            assert response.status == 201
+            added = await response.json()
+            assert added["state"] == "restart-required"
+            assert added["restartRequired"] is True
+            assert (await client.get("/api/mounts/next/list")).status == 404
+            response = await client.put(
+                "/api/mounts/projects/default",
+                json={"mounts": ["next"], "outputMount": None},
+            )
+            assert response.status == 409
+            assert snapshot.read_bytes() == original_snapshot
+            assert (await client.delete("/api/mounts/old")).status == 409
+            assert (await client.put("/api/mounts/output", json={"id": "next"})).status == 200
+            response = await client.delete("/api/mounts/old")
+            assert response.status == 200
+            removed = await response.json()
+            assert removed["restartRequired"] is True
+            assert removed["pendingRemovals"] == ["old"]
+            listing = await (await client.get("/api/mounts")).json()
+            assert listing["outputMount"] == "next"
+            assert listing["activeOutputMount"] == "old"
+            locations = await (await client.get("/api/mounts/locations")).json()
+            assert [row["id"] for row in locations["mounts"]] == ["next"]
+            assert [(row["id"], row["path"]) for row in locations["activeMounts"]] == [
+                ("old", str(tmp_path / "old"))
+            ]
+            response = await client.post(
+                "/api/mounts", json={"id": "old", "path": str(tmp_path / "next")}
+            )
+            assert response.status == 409
+            assert table.output_mount == "old"
+            assert (
+                MountSnapshotResolver(snapshot).resolve(old_digest) == tmp_path / "old" / "file.bin"
+            )
+            assert snapshot.read_bytes() == original_snapshot
+        finally:
+            await service.close()
+            await client.close()
+
+    asyncio.run(scenario())
+    assert [mount.id for mount in load_mounts(config)] == ["next"]
+    restarted = MountTable(output_mount=load_output_mount(config))
+    for mount in load_mounts(config):
+        restarted.add(mount)
+        restarted.scan(mount.id)
+    assert restarted.get("old") is None
+    assert restarted.output_mount == "next"
+    assert restarted.ref("mounts/next/file.bin").digest == digest_bytes(b"next")
+    assert (tmp_path / "old" / "file.bin").read_bytes() == b"old"
+
+
+def test_offline_folder_retry_retains_location_and_digest(tmp_path: Path) -> None:
+    root = tmp_path / "mounted-network-share" / "Project A"
+    detached = tmp_path / "detached-share"
+    seed(root, {"source.bin": b"network source"})
+    table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
+    table.add(MountDef("network", root, kind="model/vae"))
+    table.scan("network")
+    digest = table.ref("mounts/network/source.bin").digest
+    root.rename(detached)
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+    service.persist()
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.post("/api/mounts/network/retry")
+            assert response.status == 202
+            await wait_for_state(client, "network", "failed")
+            response = await client.get("/api/mounts/locations")
+            (row,) = (await response.json())["mounts"]
+            assert row["path"] == str(root)
+            assert row["state"] == "failed"
+            assert not root.exists()
+            assert table.resolve(digest) is None
+            detached.rename(root)
+            assert (await client.post("/api/mounts/network/retry")).status == 202
+            await wait_for_state(client, "network", "ready")
+            response = await client.get("/api/mounts/network/entries")
+            (entry,) = (await response.json())["entries"]
+            assert entry["digest"] == digest
+            assert entry["virtualPath"] == "mounts/network/source.bin"
+            assert (root / "source.bin").read_bytes() == b"network source"
+        finally:
+            await service.close()
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) -> None:
+    import os
+
+    root = tmp_path / "read-only-input"
+    seed(root, {"indexed.txt": b"old bytes", "sibling.bin": b"keep sibling"})
+    table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
+    table.add(MountDef("input", root))
+    table.scan("input")
+    service = MountService(table, tmp_path / "mounts.toml")
+    original_stat = (root / "indexed.txt").stat()
+    (root / "indexed.txt").write_bytes(b"new bytes")
+    os.utime(root / "indexed.txt", ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    seed(root, {"new.txt": b"uncataloged", "empty.txt": b""})
+    original_names = {path.name for path in root.iterdir()}
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.get("/api/mounts/locations")
+            assert (await response.json())["resolvePath"] is True
+            for name, data in (
+                ("indexed.txt", b"new bytes"),
+                ("new.txt", b"uncataloged"),
+                ("empty.txt", b""),
+            ):
+                before = (root / name).stat()
+                response = await client.post(
+                    "/api/mounts/resolve-path",
+                    json={"path": str(root / name), "project": "default", "scope": "local"},
+                )
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                assert await response.json() == {
+                    "status": "resolved",
+                    "asset": {
+                        "digest": digest_bytes(data),
+                        "name": name,
+                        "size": len(data),
+                        "mediaType": "text/plain",
+                        "virtualPath": f"mounts/input/{name}",
+                    },
+                }
+                assert str(root) not in await response.text()
+                after = (root / name).stat()
+                assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+                    before.st_ino,
+                    before.st_size,
+                    before.st_mtime_ns,
+                )
+                assert (root / name).read_bytes() == data
+            assert {path.name for path in root.iterdir()} == original_names
+            assert not (tmp_path / "vault").exists()
+            assert not (tmp_path / "imports").exists()
+            restored = MountSnapshotResolver(tmp_path / "snapshot.json")
+            assert restored.resolve(digest_bytes(b"uncataloged")) == root / "new.txt"
+            assert table.ref("mounts/input/sibling.bin").digest == digest_bytes(b"keep sibling")
+            response = await client.get("/api/mounts/input/entries")
+            assert {row["digest"] for row in (await response.json())["entries"]} == {
+                digest_bytes(data) for data in (b"new bytes", b"keep sibling", b"uncataloged", b"")
+            }
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_path_refusals_validation_and_scope(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    root = tmp_path / "input"
+    seed(root, {"source.txt": b"source"})
+    seed(tmp_path / "outside", {"secret.txt": b"secret"})
+    seed(root, {"partial.tmp": b"not complete", ".private.txt": b"hidden"})
+    (root / "escape.txt").symlink_to(tmp_path / "outside" / "secret.txt")
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef("input", root))
+    table.scan("input")
+    service = MountService(table)
+    service.projects.update("excluded", [], available=("input",), output=None)
+
+    async def scenario() -> None:
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "operator": Principal(
+                        "operator", {"local": frozenset({"assets:read", "settings:write"})}
+                    )
+                }
+            ),
+        )
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer operator"})
+        await client.start_server()
+        try:
+            for path, project in (
+                (root, "default"),
+                (root / "missing.txt", "default"),
+                (tmp_path / "outside" / "secret.txt", "default"),
+                (root / "escape.txt", "default"),
+                (root / "source.txt", "excluded"),
+                (root / "partial.tmp", "default"),
+                (root / ".private.txt", "default"),
+            ):
+                response = await client.post(
+                    "/api/mounts/resolve-path",
+                    json={"path": str(path), "project": project, "scope": "local"},
+                )
+                assert response.status == 200
+                assert await response.json() == {"status": "refused", "reason": "not-resolvable"}
+            valid = {"path": str(root / "source.txt"), "project": "default", "scope": "local"}
+            for malformed in (
+                {},
+                [],
+                {**valid, "extra": True},
+                {**valid, "path": "relative.txt"},
+                {**valid, "path": ""},
+                {**valid, "path": "\0"},
+                {**valid, "path": 42},
+                {**valid, "project": "Bad Project"},
+                {**valid, "scope": " "},
+            ):
+                response = await client.post("/api/mounts/resolve-path", json=malformed)
+                assert response.status == 400
+                assert await response.json() == {"error": "invalid-path-request"}
+                assert str(tmp_path) not in await response.text()
+            foreign_path = (
+                "C:\\outside\\file.txt" if Path("/").is_absolute() else "/outside/file.txt"
+            )
+            response = await client.post(
+                "/api/mounts/resolve-path", json={**valid, "path": foreign_path}
+            )
+            assert response.status == 200
+            assert await response.json() == {"status": "refused", "reason": "not-resolvable"}
+            response = await client.post("/api/mounts/resolve-path?extra=yes", json=valid)
+            assert response.status == 400
+            response = await client.post("/api/mounts/resolve-path", data="not json")
+            assert response.status == 400
+            response = await client.post(
+                "/api/mounts/resolve-path", json={**valid, "scope": "ungranted"}
+            )
+            assert response.status == 403
+            table.remove("input")
+            response = await client.post("/api/mounts/resolve-path", json=valid)
+            assert await response.json() == {"status": "refused", "reason": "not-resolvable"}
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("change", ("revoke", "exclude", "replace", "persistence"))
+def test_resolve_path_rechecks_live_authority_and_reports_storage_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    import dinkster_assets.library as library_module
+
+    root = tmp_path / "input"
+    seed(root, {"source.txt": b"source"})
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef("input", root))
+    table.scan("input")
+    service = MountService(table)
+    entered, release = Event(), Event()
+
+    def digest(path: Path):
+        entered.set()
+        assert release.wait(10)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", digest)
+    if change == "persistence":
+        monkeypatch.setattr(LocalAssetLibrary, "_save_index", lambda *_: False)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        pending = asyncio.ensure_future(
+            client.post(
+                "/api/mounts/resolve-path",
+                json={"path": str(root / "source.txt"), "project": "default", "scope": "local"},
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            if change in ("revoke", "replace"):
+                table.remove("input")
+                if change == "replace":
+                    table.add(MountDef("input", root))
+            elif change == "exclude":
+                service.projects.update("default", [], available=("input",), output=None)
+            release.set()
+            response = await pending
+            assert response.status == (500 if change == "persistence" else 200)
+            assert await response.json() == (
+                {"error": "mount-resolution-failed"}
+                if change == "persistence"
+                else {"status": "refused", "reason": "not-resolvable"}
+            )
+            assert str(tmp_path) not in await response.text()
+        finally:
+            release.set()
+            await pending
+            await client.close()
+
+    asyncio.run(scenario())

@@ -36,6 +36,8 @@ from dinkster_values.storage import image_input
 from PIL import Image, ImageCms, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 class _Resolver:
     def __init__(self, path: Path) -> None:

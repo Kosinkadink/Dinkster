@@ -182,6 +182,20 @@ def governed(
     return worker, fake
 
 
+def observe_reservation_wait(
+    governor: MemoryGovernor, monkeypatch: pytest.MonkeyPatch
+) -> asyncio.Event:
+    waiting = asyncio.Event()
+    original_wait = governor._cond.wait
+
+    async def wait() -> bool:
+        waiting.set()
+        return await original_wait()
+
+    monkeypatch.setattr(governor._cond, "wait", wait)
+    return waiting
+
+
 def test_governed_worker_holds_reservation_across_execute() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
@@ -271,19 +285,23 @@ def test_governed_worker_releases_on_cancellation() -> None:
     asyncio.run(scenario())
 
 
-def test_governed_worker_serializes_over_a_constrained_budget() -> None:
+def test_governed_worker_serializes_over_a_constrained_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
+        waiting = observe_reservation_wait(governor, monkeypatch)
         fake = FakeWorker(governor)
         fake.gate = asyncio.Event()
         worker, _ = governed(governor, fake)
         first = asyncio.create_task(worker.invoke(make_invocation(60, "i1")))
-        while governor.reserved("ram") != 60:
-            await asyncio.sleep(0.001)
+        async with asyncio.timeout(5):
+            while governor.reserved("ram") != 60:
+                await asyncio.sleep(0)
         # Second does not fit until the first releases: both cannot believe
         # the same bytes are free.
         second = asyncio.create_task(worker.invoke(make_invocation(60, "i2")))
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(waiting.wait(), 5)
         assert governor.reserved("ram") == 60
         assert fake.reserved_during == [60]  # second not executing
         fake.gate.set()
@@ -430,8 +448,9 @@ def test_result_waits_for_lease_cleanup_when_peer_dies(
                 "requests": [{"residency": "ram", "nbytes": 60}],
             }
         )
-        while governor.reserved("ram") != 60:
-            await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while governor.reserved("ram") != 60:
+                await asyncio.sleep(0)
 
         _feed_frame(
             reader,
@@ -565,9 +584,10 @@ def test_isolated_leases_serialize_over_a_constrained_budget(tmp_path: Path) -> 
                 for n in (1, 2)
             ]
             # Two 60-byte hogs on a 100-byte budget can never both hold.
-            while not all(t.done() for t in tasks):
-                assert governor.reserved("ram") <= 100
-                await asyncio.sleep(0.005)
+            async with asyncio.timeout(5):
+                while not all(t.done() for t in tasks):
+                    assert governor.reserved("ram") <= 100
+                    await asyncio.sleep(0.005)
             results = [t.result() for t in tasks]
             assert all(r.error is None for r in results)
             assert governor.reserved("ram") == 0
@@ -577,16 +597,19 @@ def test_isolated_leases_serialize_over_a_constrained_budget(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
-def test_isolated_lease_survives_cancellation_while_blocked(tmp_path: Path) -> None:
+def test_isolated_lease_survives_cancellation_while_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
+        waiting = observe_reservation_wait(governor, monkeypatch)
         registry = core_registry()
         worker = iso_worker(tmp_path, registry, governor)
         await worker.start()
         try:
             async with governor.reserve("ram", 100):  # occupy the whole budget
                 blocked = asyncio.create_task(worker.invoke(hog_invocation(worker, registry, 60)))
-                await asyncio.sleep(0.1)  # child is waiting on its grant
+                await asyncio.wait_for(waiting.wait(), 5)
                 assert not blocked.done()
                 blocked.cancel()
                 with pytest.raises(asyncio.CancelledError):

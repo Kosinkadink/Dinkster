@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-memory"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster memory governance: budgets, reservations, pressure-driven shedding"
 requires-python = ">=3.12"
 dependencies = ["dinkster-values", "psutil>=5.9"]

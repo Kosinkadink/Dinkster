@@ -11,7 +11,13 @@ from .formats import (
     save_frame_records,
     save_video_frames,
 )
-from .runtime import assemble_video, disassemble_video, iter_video_pixels, save_video_stream
+from .runtime import (
+    assemble_video,
+    concatenate_video,
+    disassemble_video,
+    iter_video_pixels,
+    save_video_stream,
+)
 
 if TYPE_CHECKING:
     from . import document as timeline_document
@@ -38,6 +44,7 @@ __all__ = [
     "DITHERS",
     "FRAME_FORMATS",
     "assemble_video",
+    "concatenate_video",
     "disassemble_video",
     "iter_video_pixels",
     "read_video_metadata",

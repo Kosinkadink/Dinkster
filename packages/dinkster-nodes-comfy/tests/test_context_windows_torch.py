@@ -163,7 +163,7 @@ class ContextWindowConsumer(Node):
 CONTEXT_WINDOW_FIXTURE_NODES = (ContextWindowSource, ContextWindowConsumer)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

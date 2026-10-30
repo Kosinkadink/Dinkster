@@ -25,15 +25,18 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from dinkster_assets.save_target import register_save_target_type
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine
+from dinkster_engine import Engine, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_protocol import SavedArtifact
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_values.model import UnresolvablePayload
 from dinkster_workers import BoundaryDiagnostic, IsolatedWorker
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 
 
 def find_dev_manifest() -> Path:
@@ -127,10 +130,21 @@ async def run() -> None:
     await worker.start()
     try:
         print(f"pack '{worker.pack}' announced {len(worker.schemas)} node schemas over the wire\n")
+        authority = SavedArtifactAuthority(snapshot)
+
+        async def validate_saved(
+            node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+        ) -> tuple[SavedArtifact, ...]:
+            return await asyncio.to_thread(
+                authority.capture_mounted, claims, node_id, started_at_ns
+            )
+
+        runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
         engine = Engine(
             schemas=dict(worker.schemas),
             registry=registry,
             worker=worker,
+            pin_execution=lambda: runtime,
             cache=MemoryLRUCache(),
         )
         graph = build_graph()

@@ -129,7 +129,17 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         (True, 0.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
         (True, 1.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
     ]
-    assert "torch" not in sys.modules
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from dinkster_nodes_comfy.hook_conditioning import HOOK_CONDITIONING_NODES; "
+            "[node.schema() for node in HOOK_CONDITIONING_NODES]; "
+            "import sys; assert 'torch' not in sys.modules",
+        ],
+        check=True,
+        timeout=30,
+    )
 
 
 def test_hook_conditioning_cold_discovery_avoids_torch_and_inference_imports() -> None:
@@ -142,19 +152,3 @@ def test_hook_conditioning_cold_discovery_avoids_torch_and_inference_imports() -
     namespaces = manifest["pack"]["namespaces"]
     start = namespaces.index(node_types[0])
     assert namespaces[start : start + len(node_types)] == node_types
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "sys.modules['torch'] = None\n"
-            "from dinkster_nodes_comfy import COMFY_NODES\n"
-            "schemas = [node.define_schema() for node in COMFY_NODES]\n"
-            "assert {'ConditioningSetProperties', 'SetClipHooks', "
-            "'ConditioningTimestepsRange'} <= {schema.node_type for schema in schemas}\n",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )

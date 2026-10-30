@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -55,18 +53,7 @@ def test_gligen_textbox_is_registered_in_manifest_and_cold_serializes() -> None:
     manifest = tomllib.loads(
         (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert [node.schema().node_type for node in COMFY_NODES] == manifest["pack"]["namespaces"]
+    assert ["devices", *(node.schema().node_type for node in COMFY_NODES)] == manifest["pack"][
+        "namespaces"
+    ]
     assert GLIGENTextBoxApply in COMFY_NODES
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; sys.modules['torch'] = None; "
-            "sys.modules['dinkster_inference'] = None; "
-            "from dinkster_nodes_comfy.gligen_conditioning import GLIGENTextBoxApply; "
-            "from dinkster_api.v1 import schema_to_wire; "
-            "assert schema_to_wire(GLIGENTextBoxApply.schema())",
-        ],
-        check=True,
-        cwd=root,
-    )

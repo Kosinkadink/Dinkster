@@ -13,6 +13,8 @@ GIBIBYTE = 1024 * MEBIBYTE
 # Format-integrity limits.
 CONDITIONING_HEADER_LIMIT_BYTES = 64 * MEBIBYTE
 WORKER_FRAME_HEADER_LIMIT_BYTES = 64 * MEBIBYTE
+# Explicit saved-file claims accommodate the admitted image batch size.
+SAVED_ARTIFACT_CLAIM_LIMIT = 4096
 # Protect the engine JSON parser from unbounded request materialization.
 ENGINE_JOB_SUBMISSION_LIMIT_BYTES = MEBIBYTE
 # Keep event WebSocket frame parsing bounded at the engine transport tier.

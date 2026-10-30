@@ -179,6 +179,7 @@ class ReferenceMultiLatent(Node):
                     max_members=100,
                     required=False,
                     member_prefix="image",
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(

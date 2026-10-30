@@ -6,6 +6,16 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+`ModelAttentionBackend` offers PyTorch and Comfy Kitchen INT8 attention without
+loading the tensor runtime during schema discovery. Selecting Kitchen attention
+uses its kernel when available and falls back to PyTorch attention otherwise.
+
+`LoraSave` extracts standard low-rank or full-difference LoRA checkpoints from
+model and text-encoder differences, optionally includes bias differences, and
+saves a safetensors file to the selected writable mount.
+Filenames retain the source trailing underscore before `.safetensors`.
+The saved file is attached as a validated run artifact within shared result limits.
+
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
 `FluxKVCache` reuses reference-image attention keys and values independently
@@ -18,7 +28,8 @@ or median blending while preserving the image edges.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
 resident values to the selected default, CPU, or portable `gpu:N` device where
 supported. Unavailable devices leave the value unchanged; VAE routing does not
-offer CPU.
+offer CPU. Device choices are fetched from the owning inference worker and include
+`gpu:N` for every visible device when more than one device is available there.
 
 `HypernetworkLoader` loads a bound hypernetwork asset and applies its key/value
 networks to self- and cross-attention on a cloned model, with adjustable strength.
@@ -49,6 +60,10 @@ values. Supported checkpoint formats include Anima LLLite, Qwen blockwise and
 Qwen Image 2.1 control, SigLIP feature projection, ZImage control, MiniMax H3
 control, Wan Uni3C and MultiTalk, LTX duration heads, and SUPIR. Loading a patch
 does not apply it to a model.
+
+`OPTICAL_FLOW` is a governed resident value identity for optical-flow models.
+It remains in the holding worker and is resolved through the shared
+resident pool by its consumers.
 
 Self-Attention Guidance, Perturbed Attention Guidance, and both Skip Layer
 Guidance DiT nodes clone a model and install sampler or attention callbacks.

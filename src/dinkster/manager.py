@@ -1108,8 +1108,26 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
 
 
 def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
+    if args.generation is not None:
+        from .generation_packs import generation_pack_specs
+
+        if args.defaults or args.root:
+            raise InstallError("--generation cannot be combined with --defaults or --root")
+        if (args.generation / "generation.json").exists():
+            raise InstallError("catalog preparation requires an unsealed generation")
+        generation_python = args.generation / (
+            "python/python.exe" if os.name == "nt" else "python/bin/python3"
+        )
+        specs = tuple(
+            replace(spec, python=str(generation_python)) if spec.in_process else spec
+            for spec in generation_pack_specs(args.generation, tuple(args.in_process_pack))
+        )
+    else:
+        if args.in_process_pack:
+            raise InstallError("--in-process-pack requires --generation")
+        specs = _prepared_pack_specs(args)
     failed = False
-    for spec in _prepared_pack_specs(args):
+    for spec in specs:
         report = prepare_catalog(spec.manifest, interpreter=spec.python, environment=spec.env)
         if report.ok:
             print(f"Prepared runtime catalog: {report.pack_name} ({len(report.node_types)} nodes)")
@@ -1208,6 +1226,11 @@ def main() -> None:
         check.add_argument(
             "--remote-gateway-base", help="remote gateway URL, as used by dinkster-serve"
         )
+        if name == "prepare-catalogs":
+            check.add_argument(
+                "--generation", type=Path, help="prepare only this unsealed engine generation"
+            )
+            check.add_argument("--in-process-pack", action="append", default=[])
         check.set_defaults(handler=handler)
 
     def add_plan_apply_arguments(command: argparse.ArgumentParser) -> None:

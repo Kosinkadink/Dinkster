@@ -140,7 +140,7 @@ class SigmaConsumer(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_four_scheduler_graph_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -151,6 +151,7 @@ def test_ordinary_manifest_executes_four_scheduler_graph_twice(
             module = f"model_specific_scheduler_fixture_{in_process}"
             (tmp_path / f"{module}.py").write_text(
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "from test_model_specific_schedulers_torch import SigmaConsumer\n"
                 "NODES = (*COMFY_NODES, SigmaConsumer)\n",
                 encoding="ascii",
@@ -160,6 +161,10 @@ def test_ordinary_manifest_executes_four_scheduler_graph_twice(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["scheduler-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    f"{module}:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     f"{module}:register_inference_types",

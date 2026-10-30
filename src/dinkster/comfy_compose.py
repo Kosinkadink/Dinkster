@@ -235,7 +235,10 @@ def find_compat_manifest(name: str = "dinkster-pack.toml") -> Path:
     package_dir = Path(spec.origin).parent  # .../src/dinkster_compat_comfy
     manifest = package_dir.parents[1] / name
     if not manifest.is_file():
-        distribution = importlib.metadata.distribution("dinkster-compat-comfy")
+        try:
+            distribution = importlib.metadata.distribution("dinkster-compat-comfy")
+        except importlib.metadata.PackageNotFoundError:
+            distribution = importlib.metadata.distribution("dinkster")
         manifest = Path(str(distribution.locate_file(f"dinkster_compat_comfy_pack/{name}")))
     if not manifest.is_file():
         raise CompositionError(f"compat manifest not found at {manifest}")

@@ -19,6 +19,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
 )
 
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -91,12 +92,13 @@ class SaveText(Node):
     ) -> Mapping[str, object]:
         data = _render(text, format)
         writer = _writer()
-        writer.save_bytes(
+        ref = writer.save_bytes(
             writer.output_target(filename_prefix, mount=mount, image_width=1, image_height=1),
             data,
             suffix=f".{format}",
             media_type="application/json" if format == "json" else "text/plain",
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(text=text)
 
 
