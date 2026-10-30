@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native EmptyImage supports CPU-only execution as the first image node in a
+  fresh worker, preserving its dimensions, batch size and RGB color values.
 - Native POSE_KEYPOINT values preserve frame canvas dimensions, people and flat
   body, foot, face and hand keypoints across isolated hosts, including absent
   and empty optional fields. This is distinct from the existing POSE format.
