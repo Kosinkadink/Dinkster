@@ -573,16 +573,16 @@ def test_native_concatenate_video_cross_public_hosts_twice(
                     "concatenate_with_audio": GraphNode(
                         "ConcatenateVideo",
                         {
-                            "videos.video_z": Link("source", "first"),
-                            "videos.video_a": Link("source", "second"),
+                            "videos.video2": Link("source", "first"),
+                            "videos.video0": Link("source", "second"),
                             "complete_audio": Link("source", "replacement"),
                         },
                     ),
                     "concatenate_without_audio": GraphNode(
                         "ConcatenateVideo",
                         {
-                            "videos.video_z": Link("source", "first"),
-                            "videos.video_a": Link("source", "second"),
+                            "videos.video2": Link("source", "first"),
+                            "videos.video0": Link("source", "second"),
                         },
                     ),
                     "with_audio": GraphNode(

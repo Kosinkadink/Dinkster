@@ -485,5 +485,9 @@ def _public_row(record: dict[str, object]) -> dict[str, object]:
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> object:
     request = Request(url, method=method, headers=headers or {})
     # Supervisor identity and shutdown credentials must never traverse an ambient proxy.
-    with build_opener(ProxyHandler({})).open(request, timeout=2) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with build_opener(ProxyHandler({})).open(request, timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except TimeoutError as exc:
+        # urllib wraps connection timeouts, but response-body reads can raise directly.
+        raise URLError(exc) from exc
