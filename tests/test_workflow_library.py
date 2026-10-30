@@ -160,7 +160,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0004_derivation_references (head)" in current.stdout
+    assert "0005_retention_completeness (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -393,6 +393,7 @@ def test_retained_assets_http_survive_restart_and_reject_stale_release(
                 "ownerId": "owner",
                 "revision": 1,
                 "digests": sorted([DIGEST_A, DIGEST_B]),
+                "complete": False,
             }
         finally:
             await client.close()
@@ -434,8 +435,8 @@ def test_retained_assets_http_survive_restart_and_reject_stale_release(
 def test_retained_assets_cross_store_revisions_and_all_scope_write_barrier(tmp_path: Path) -> None:
     first, second = make_store(tmp_path), make_store(tmp_path)
     try:
-        first.retain_assets("one", "document", "owner", [DIGEST_A], revision=0)
-        second.retain_assets("two", "preview", "owner", [DIGEST_B], revision=0)
+        first.retain_assets("one", "document", "owner", [DIGEST_A], revision=0, complete=True)
+        second.retain_assets("two", "preview", "owner", [DIGEST_B], revision=0, complete=True)
         with first.hold_asset_references() as roots:
             assert roots == {DIGEST_A, DIGEST_B}
             with sqlite3.connect(tmp_path / "library.sqlite", timeout=0) as connection:
@@ -446,7 +447,9 @@ def test_retained_assets_cross_store_revisions_and_all_scope_write_barrier(tmp_p
         def update(store: LibraryStore) -> str:
             barrier.wait(timeout=10)
             try:
-                store.retain_assets("one", "document", "owner", [DIGEST_B], revision=1)
+                store.retain_assets(
+                    "one", "document", "owner", [DIGEST_B], revision=1, complete=True
+                )
             except StaleRevision:
                 return "stale"
             return "updated"
@@ -575,6 +578,8 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
                 {"revision": 0, "digests": ["not-a-digest"]},
                 {"revision": 0, "digests": [None]},
                 {"revision": 0, "digests": [DIGEST_A] * 4097},
+                {"revision": 0, "digests": [], "complete": "true"},
+                {"revision": 0, "digests": [], "complete": 1},
                 {"digests": []},
             ):
                 assert (await client.put(url, json=invalid, headers=writer)).status == 400
@@ -586,6 +591,86 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        client = await make_client(tmp_path)
+        url = "/api/library/retentions/document/session-generation?scope=local"
+        try:
+            store = client.app[LIBRARY_KEY].store
+            response = await client.put(url, json={"revision": 0, "digests": []})
+            assert response.status == 200
+            assert not (await response.json())["complete"]
+            with pytest.raises(AssetError, match="incomplete"):
+                with store.hold_asset_references():
+                    pytest.fail("an unknown empty manifest was treated as complete")
+            # Retain both versions before changing the displayed document.
+            response = await client.put(
+                url, json={"revision": 1, "digests": [DIGEST_A, DIGEST_B], "complete": True}
+            )
+            assert response.status == 200
+            acknowledgment = await response.json()
+            assert acknowledgment["complete"] and acknowledgment["revision"] == 2
+            with store.hold_asset_references() as roots:
+                assert roots == {DIGEST_A, DIGEST_B}
+        finally:
+            await client.close()
+        client = await make_client(tmp_path)
+        try:
+            store = client.app[LIBRARY_KEY].store
+            assert (await (await client.get(url)).json()) == acknowledgment
+            # Only after switching away from A may its owner release that identity.
+            response = await client.put(
+                url, json={"revision": 2, "digests": [DIGEST_B], "complete": True}
+            )
+            assert response.status == 200
+            assert (await client.delete(url + "&revision=2")).status == 409
+            with store.hold_asset_references() as roots:
+                assert roots == {DIGEST_B}
+            response = await client.delete(url + "&revision=3")
+            assert response.status == 200
+            assert (await response.json())["complete"]
+            with store.hold_asset_references() as roots:
+                assert roots == set()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_legacy_retention_migration_preserves_unknown_ownership(tmp_path: Path) -> None:
+    import sqlalchemy as sa
+    from alembic import command
+    from dinkster_assets.schema import migration_config
+
+    path = tmp_path / "library.sqlite"
+    config = migration_config()
+    engine = sa.create_engine(sa.URL.create("sqlite", database=str(path)))
+    try:
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0004_derivation_references")
+    finally:
+        engine.dispose()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO asset_retentions VALUES (?, ?, ?, ?, ?)",
+            ("local", "document", "legacy", 7, json.dumps([DIGEST_A])),
+        )
+    store = LibraryStore(path)
+    try:
+        retained = store.retained_assets("local", "document", "legacy")
+        assert retained is not None
+        assert (retained.revision, retained.digests, retained.complete) == (7, (DIGEST_A,), False)
+        with pytest.raises(AssetError, match="incomplete"):
+            with store.hold_asset_references():
+                pytest.fail("a migrated legacy owner was assumed complete")
+        store.retain_assets("local", "document", "legacy", [DIGEST_A], revision=7, complete=True)
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A}
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("kind", ("media/image", "media/audio", "media/video", "asset/file"))

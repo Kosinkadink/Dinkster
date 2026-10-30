@@ -112,12 +112,14 @@ The main protocol routes include:
   persist explicit references for `document`, `history`, `shown-result`, or
   `preview` owners. `owner_id` is an opaque non-empty identifier of at most
   512 characters. Reads require `assets:read` in scope; writes require
-  `assets:write`. PUT accepts exactly `{revision, digests}`, with at most
+  `assets:write`. PUT accepts `{revision, digests, complete?}`, with at most
   4096 canonical asset digests. Revision zero creates an owner; replacements
   require the current revision. DELETE requires `revision` in the query and
   publishes an empty manifest with a newer revision, preserving stale-tab
   protection even when an identifier is reused. All successful operations
-  return `{scope, ownerKind, ownerId, revision, digests}` with HTTP 200.
+  return `{scope, ownerKind, ownerId, revision, digests, complete}` with HTTP 200.
+  `complete` is a boolean defaulting to false; incomplete or legacy owner
+  manifests block collection inspection even when their digest list is empty.
   Missing owners return 404, stale revisions 409, invalid requests 400 and
   unavailable storage 503. Digests are deduplicated and sorted. Missing bytes
   may be retained without fetching, copying, cataloging, or granting media
@@ -178,6 +180,86 @@ The main protocol routes include:
 
 This is the native Dinkster protocol, not ComfyUI's `/prompt` or `/object_info`
 surface.
+
+## Retained asset registration
+
+The retention endpoint acknowledges durable ownership, not display, byte
+availability, read permission or permission to collect. A client declares a
+complete typed identity set before exposing an asset through a document,
+shown result or live preview. `complete: true` certifies only this owner's
+set; it cannot certify the existence or completeness of other owners.
+There is no request that enables destructive cleanup by setting this flag.
+Unknown global ownership keeps cleanup disabled, independently of individual
+complete manifests. Disconnect, restart and elapsed time never release roots.
+
+### Identity and ownership
+
+`digests` contains canonical `blake3:<64 lowercase hex>` external asset
+identities, recursively enumerated using the owning value type's schema.
+Include nested arrays/records, typed document resources and transitively
+owned values. Do not use payload-cache keys, arbitrary fingerprints, image-only
+display helpers or truncated descriptors as an identity census. Known missing
+assets still belong in the set. A successful registration neither fetches nor
+materializes them; check availability separately before displaying bytes.
+Unsupported or opaque value formats require `complete: false`, even if all
+currently understood identities have been listed. Oversized sets must not be
+silently truncated to the endpoint's 4096-identity bound; retain an incomplete
+owner and block collection until a complete declaration is representable.
+
+Use distinct opaque `owner_id` values for independently retained generations,
+not a shared tab label. Scope, owner kind and owner ID together are the key;
+the durable revision prevents stale replacement/release after ID reuse.
+Persist owner IDs and acknowledged revisions with the state they protect.
+
+- `document` covers current, undo/redo and frozen documents, restored sessions,
+  shared-session replacements and imported documents, including graphs not
+  instantiated in the current root. Owners may declare their union or use
+  separate IDs. Closing one view does not release another view's values.
+- `shown-result` covers complete retained result values, including restored
+  results and frozen execution views, not just currently rendered descriptors.
+- `preview` covers the latest retained still, ring frames, pending reads and
+  decoded media lifetimes. Renderer unmount is not a release if any other
+  owner can still display the value.
+- `history` is available for client-owned persisted values. Server terminal
+  targets separately retain their identities with their real history rows;
+  this does not infer dependencies of an opaque workflow `sourceDocument`.
+
+### Acknowledgment and replacement
+
+1. Create a fresh generation with PUT `{revision: 0, digests: [...], complete:
+   true}`. Do not publish it to the document/result/preview until HTTP 200
+   acknowledges the exact canonical set, completeness and new revision.
+2. While replacing a still-retained value, either register a new generation
+   before releasing the old one, or PUT the union of old and new identities
+   at the current revision. Only after acknowledgment may the consumer expose
+   the new value. After all old consumers and pending reads have finished,
+   replace the union with the new set at the acknowledged revision.
+3. DELETE at that revision releases an owner only after all its consumers,
+   undo/redo entries and recoverable persisted state relinquish the values.
+   The acknowledged response is a complete empty set at the next revision,
+   not deletion of the revision counter or of any asset bytes.
+
+If the response is lost, GET the same key and compare the entire canonical
+set, completeness and revision before proceeding. Do not blindly replay a
+mutation after a conflict. HTTP 409 requires reconciliation with the real
+owner; a stale callback must not adopt a newer owner's revision and release
+it. Failure, cancellation or disconnection before acknowledgment leaves the
+old values retained and the new value unpublished. An incomplete manifest
+must be acknowledged before exposing values whose identities are unknown.
+Cleanup cannot reclaim from incomplete or unregistered owner state.
+
+### Backend synchronization
+
+Library and history inspection hold their SQLite write transactions; cache
+inspection holds the cache admission/publication barriers. External roots
+must remain held while library dependency closure is computed and candidates
+are considered. A copied root set after those barriers close is not safe.
+Managed vault writers acquire the same per-identity OS ownership as verified
+readers before staging bytes and retain it through their context, including
+the durable adoption commit. Scratch writers use job-root ownership instead.
+Reconciliation must hold the exclusive claim through any removal; a claim
+refuses while a publisher or reader owns the identity. These local barriers
+do not certify global owner completeness or enable deletion on their own.
 
 ## Learn more
 

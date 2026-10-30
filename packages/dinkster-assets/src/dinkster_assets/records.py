@@ -215,6 +215,7 @@ class AssetRetention:
     owner_id: str
     revision: int
     digests: tuple[str, ...]
+    complete: bool = False
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -223,6 +224,7 @@ class AssetRetention:
             "ownerId": self.owner_id,
             "revision": self.revision,
             "digests": list(self.digests),
+            "complete": self.complete,
         }
 
 
@@ -261,11 +263,13 @@ def _retention_from_row(row: sqlite3.Row) -> AssetRetention:
     key = _retention_key(row["scope"], row["owner_kind"], row["owner_id"])
     if type(row["revision"]) is not int or row["revision"] < 1:
         raise AssetError("asset retention revision is invalid")
+    if type(row["complete"]) is not int or row["complete"] not in (0, 1):
+        raise AssetError("asset retention completeness is invalid")
     try:
         digests = _retention_digests(json.loads(row["digests"]))
     except (TypeError, ValueError) as exc:
         raise AssetError("asset retention state is unreadable") from exc
-    return AssetRetention(*key, row["revision"], digests)
+    return AssetRetention(*key, row["revision"], digests, bool(row["complete"]))
 
 
 class LibraryStore:
@@ -318,7 +322,14 @@ class LibraryStore:
             self._engine.dispose()
 
     def retain_assets(
-        self, scope: str, owner_kind: str, owner_id: str, digests: list[str], *, revision: int
+        self,
+        scope: str,
+        owner_kind: str,
+        owner_id: str,
+        digests: list[str],
+        *,
+        revision: int,
+        complete: bool = False,
     ) -> AssetRetention:
         """Replace an owner's manifest atomically; revision zero creates a new owner.
 
@@ -329,6 +340,8 @@ class LibraryStore:
         cleaned = _retention_digests(digests)
         if type(revision) is not int or revision < 0:
             raise AssetError("asset retention revision must be a nonnegative integer")
+        if type(complete) is not bool:
+            raise AssetError("asset retention completeness must be a boolean")
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute(
@@ -339,12 +352,15 @@ class LibraryStore:
             current = _retention_from_row(row) if row is not None else None
             if revision != (current.revision if current is not None else 0):
                 raise StaleRevision("retained asset values changed")
-            retained = AssetRetention(*key, revision + 1, cleaned)
+            retained = AssetRetention(*key, revision + 1, cleaned, complete)
             self._conn.execute(
-                "INSERT INTO asset_retentions VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO asset_retentions "
+                "(scope, owner_kind, owner_id, revision, digests, complete) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(scope, owner_kind, owner_id) DO UPDATE SET "
-                "revision = excluded.revision, digests = excluded.digests",
-                (*key, retained.revision, json.dumps(cleaned)),
+                "revision = excluded.revision, digests = excluded.digests, "
+                "complete = excluded.complete",
+                (*key, retained.revision, json.dumps(cleaned), int(complete)),
             )
         return retained
 
@@ -375,11 +391,11 @@ class LibraryStore:
                 return None
             if _retention_from_row(row).revision != revision:
                 raise StaleRevision("retained asset values changed")
-            retained = AssetRetention(*key, revision + 1, ())
+            retained = AssetRetention(*key, revision + 1, (), True)
             # Retain the revision even when empty so reusing an owner cannot
             # let a stale tab release its newer values.
             self._conn.execute(
-                "UPDATE asset_retentions SET revision = ?, digests = '[]' "
+                "UPDATE asset_retentions SET revision = ?, digests = '[]', complete = 1 "
                 "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
                 (retained.revision, *key),
             )
@@ -398,7 +414,10 @@ class LibraryStore:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
                 rows = self._conn.execute("SELECT * FROM asset_retentions").fetchall()
-                roots = set(digest for row in rows for digest in _retention_from_row(row).digests)
+                retained = [_retention_from_row(row) for row in rows]
+                if any(not owner.complete for owner in retained):
+                    raise AssetError("retained owner manifest is incomplete")
+                roots = set(digest for owner in retained for digest in owner.digests)
                 roots.update(require_digest(digest) for digest in additional_roots)
                 for table in ("records", "media_grants", "asset_observations"):
                     for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):

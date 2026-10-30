@@ -135,8 +135,10 @@ class ProducedAssetAuthority:
                 with open_verified(held, ref.digest) as handle:
                     if os.fstat(handle.fileno()).st_size != ref.size:
                         raise AssetError("source byte size does not match engine vault")
-                if self._vault is not None and self._vault.resolve(ref.digest) == held:
-                    ProducedAssetInventory(self._vault.root).confirm_existing(ref.digest, ref.size)
+                    if self._vault is not None and self._vault.resolve(ref.digest) == held:
+                        ProducedAssetInventory(self._vault.root).confirm_existing(
+                            ref.digest, ref.size
+                        )
                 continue
             if self._vault is None:
                 raise AssetError("produced sources require an engine DINKSTER_ASSET_VAULT")
@@ -157,4 +159,4 @@ class ProducedAssetAuthority:
                 if count != ref.size:
                     raise AssetError("source transfer is truncated")
                 writer.commit()
-            inventory.adopted(ref.digest, ref.size)
+                inventory.adopted(ref.digest, ref.size)

@@ -1609,13 +1609,23 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
             retained = await asyncio.to_thread(store.retained_assets, *key)
         elif request.method == "PUT":
             body = await _json_body(request)
-            if set(body) != {"revision", "digests"}:
-                return _json_error(400, "retained values require revision and digests only")
+            if not {"revision", "digests"} <= set(body) or set(body) - {
+                "revision",
+                "digests",
+                "complete",
+            }:
+                return _json_error(
+                    400, "retained values require revision, digests and optional complete"
+                )
             revision, digests = body["revision"], body["digests"]
             if type(revision) is not int or not isinstance(digests, list):
                 return _json_error(400, "revision must be an integer and digests must be a list")
             retained = await asyncio.to_thread(
-                store.retain_assets, *key, cast(list[str], digests), revision=revision
+                store.retain_assets,
+                *key,
+                cast(list[str], digests),
+                revision=revision,
+                complete=body.get("complete", False),
             )
         else:
             try:

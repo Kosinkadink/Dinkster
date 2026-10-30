@@ -52,6 +52,36 @@ def write_asset(tmp_path: Path, data: bytes, name: str = "model.safetensors") ->
     return path
 
 
+@pytest.mark.parametrize("commit", ["commit", "commit_with_result"])
+@pytest.mark.parametrize("outcome", ["success", "invalid", "abandoned"])
+def test_vault_publication_ownership_spans_writer_context(
+    tmp_path: Path, commit: str, outcome: str
+) -> None:
+    vault = AssetVault(tmp_path / "vault")
+    digest = digest_bytes(b"published bytes")
+    ProducedAssetInventory(vault.root).pending(digest, len(b"published bytes"))
+    ownership = vault.root / ".produced-readers" / digest.split(":", 1)[1]
+    with vault.writer(digest) as writer:
+        with claim_inactive_produced_scratch(ownership) as inactive:
+            assert not inactive
+        writer.write(b"different bytes" if outcome == "invalid" else b"published bytes")
+        if outcome == "invalid":
+            with pytest.raises(AssetError, match="did not verify"):
+                getattr(writer, commit)()
+        elif outcome == "success":
+            getattr(writer, commit)()
+            published = vault.resolve(digest)
+            assert published is not None
+            assert published.read_bytes() == b"published bytes"
+        with claim_inactive_produced_scratch(ownership) as inactive:
+            assert not inactive
+    with claim_inactive_produced_scratch(ownership) as inactive:
+        assert inactive
+    if outcome != "success":
+        assert not vault.has(digest)
+    assert not list(vault.root.glob(".ingest-*"))
+
+
 @pytest.mark.parametrize("result", ["stable", "changing", "corrupt"])
 def test_concurrent_vault_publication_requires_stable_matching_reverification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: str
@@ -360,7 +390,9 @@ def test_produced_readers_refuse_symlinked_managed_state(tmp_path: Path, link: s
         path.parent.replace(destination)
         path.parent.symlink_to(destination, target_is_directory=True)
     else:
-        (vault.root / ".produced-readers").symlink_to(outside, target_is_directory=True)
+        readers = vault.root / ".produced-readers"
+        readers.replace(outside / readers.name)
+        readers.symlink_to(outside, target_is_directory=True)
     before = set(outside.rglob("*"))
     with pytest.raises(AssetError, match="symlink"):
         open_verified(path, digest)

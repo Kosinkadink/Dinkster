@@ -74,6 +74,7 @@ sa.Table(
     sa.Column("owner_id", sa.Text, primary_key=True),
     sa.Column("revision", sa.Integer, nullable=False),
     sa.Column("digests", sa.Text, nullable=False),
+    sa.Column("complete", sa.Integer, nullable=False, server_default="0"),
 )
 
 
