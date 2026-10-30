@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `WeldVertices` merges grid-coincident mesh vertices, averaging positions
+  and colors while retaining faces and remapping their vertex indices.
 - Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
   angles or a normalized quaternion while retaining material attributes.
   `GetMeshInfo` reports padded-batch counts and available mesh attributes.
