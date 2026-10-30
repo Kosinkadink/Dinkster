@@ -38,7 +38,10 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
                 )
                 process.kill()
                 if os.name == "nt":
-                    exc.stdout, exc.stderr = process.communicate()
+                    stdout, stderr = process.communicate()
+                    # Windows subprocess.run retains text despite the bytes-only exception stubs.
+                    setattr(exc, "stdout", stdout)
+                    setattr(exc, "stderr", stderr)
                 else:
                     process.wait()
                 raise
