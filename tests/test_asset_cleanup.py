@@ -855,7 +855,14 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             ref = AssetRef(digests[2], "source", len(data[2]))
             await memory.put(
                 "kept",
-                {"out": Value("asset<file>", digests[2], ValueMeta(ref.to_wire()), None)},
+                {
+                    "out": Value(
+                        "asset<file>",
+                        digests[2],
+                        ValueMeta(ref.to_wire()),
+                        EncodedPayload("asset<file>", b"opaque", None),
+                    )
+                },
             )
         before = {p: p.stat().st_size for p in vault.root.rglob("*") if p.is_file()}
         try:
