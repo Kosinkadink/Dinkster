@@ -7,12 +7,14 @@ from collections.abc import Mapping
 from typing import BinaryIO, cast
 
 from dinkster_api.v1 import (
+    CORE_COMBO,
     CORE_FLOAT,
     CORE_STRING,
     ENCODED_MEDIA_LIMIT_BYTES,
     VIDEO_TYPE,
     AssetError,
     AssetWriter,
+    ComboWidget,
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,
@@ -80,7 +82,6 @@ def _codec_input(codecs: tuple[str, ...], *, required: bool = True) -> DynamicCo
     return DynamicComboSpec(
         "codec",
         tuple(options),
-        default="auto" if not required else None,
         required=required,
         doc=(
             "The output video codec. Auto preserves a compatible source stream. "
@@ -112,6 +113,14 @@ class SaveVideo(Node):
                     ),
                 ),
                 InputSpec(
+                    "codec",
+                    TypeExpr.concrete(CORE_COMBO),
+                    required=False,
+                    default="auto",
+                    widget=ComboWidget(options=("auto", "h264", "av1")),
+                    hidden=True,
+                ),
+                InputSpec(
                     "mount",
                     _STRING,
                     required=False,
@@ -139,7 +148,6 @@ class SaveVideo(Node):
                         "MP4, MKV, and WebM select a specific container."
                     ),
                 ),
-                _codec_input(("auto", "h264", "av1"), required=False),
             ),
             input_order=("video", "filename_prefix", "format", "codec", "mount"),
             outputs=(OutputSpec("video", _VIDEO, preview=True, doc="The input video, unchanged."),),

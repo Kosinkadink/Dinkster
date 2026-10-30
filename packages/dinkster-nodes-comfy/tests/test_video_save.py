@@ -13,7 +13,9 @@ import av
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
+    CORE_COMBO,
     VIDEO_TYPE,
+    ComboWidget,
     ExportSnapshot,
     MountWidget,
     Node,
@@ -83,18 +85,22 @@ def _tags(path: Path) -> tuple[dict[str, object], Any, int]:
 def test_save_video_schema_exposes_native_format_controls() -> None:
     schema = SaveVideo.define_schema()
     inputs = {input.id: input for input in schema.inputs}
-    format_combo, legacy_codec = schema.combos
+    (format_combo,) = schema.combos
     assert schema.node_type == "SaveVideo"
     assert inputs["filename_prefix"].default == "video/ComfyUI"
     assert [option.key for option in format_combo.options] == ["auto", "mp4", "mkv", "webm"]
-    assert legacy_codec.id == "codec" and not legacy_codec.required
-    assert legacy_codec.default == "auto"
-    assert [option.key for option in legacy_codec.options] == ["auto", "h264", "av1"]
+    top_codec = inputs["codec"]
+    assert top_codec.type == TypeExpr.concrete(CORE_COMBO)
+    assert not top_codec.required and top_codec.hidden and top_codec.default == "auto"
+    assert isinstance(top_codec.widget, ComboWidget)
+    assert top_codec.widget.options == ("auto", "h264", "av1")
     nested_codecs = [option.inputs[0] for option in format_combo.options]
     assert all(codec.id == "codec" and codec.required for codec in nested_codecs)
     assert all(codec.default is None for codec in nested_codecs)
     wire = schema_to_wire(schema)
     codec_wire = next(entry for entry in wire["interface"] if entry["id"] == "codec")
+    assert codec_wire["role"] == "input"
+    assert codec_wire["hidden"] is True
     assert codec_wire["default"] == "auto"
     assert schema_from_wire(wire) == schema
     effective = elaborate(
@@ -110,6 +116,7 @@ def test_save_video_schema_exposes_native_format_controls() -> None:
         "video",
         "filename_prefix",
         "format.codec.encoding.crf",
+        "codec",
         "mount",
     ]
     mount = inputs["mount"]
