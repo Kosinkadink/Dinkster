@@ -63,6 +63,7 @@ from dinkster_values import (
 
 from .camera_wire import register_load3d_camera_type, register_load3d_model_info_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
+from .geometry_wire import materialize_mesh, register_mesh_type
 from .hook_values import (
     normalize_clip_hook_owners,
     normalize_hook_owners,
@@ -230,6 +231,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
+    registered.append(register_mesh_type(registry))
     registered.append(register_splat_type(registry))
     registered.append(register_voxel_type(registry))
     register_video_edit_type(registry)
@@ -250,6 +252,7 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_mesh",
     "materialize_splat",
     "materialize_voxel",
     "register_inference_types",
