@@ -853,7 +853,7 @@ class MountTable:
                         with self._lock:
                             if self._rows.get(row.mount.id) is not row:
                                 return None
-                        return ref
+                        return replace(ref, resolver=self)
                 except (AssetError, OSError):
                     pass
             require_local_revision(

@@ -263,6 +263,10 @@ def test_unsupported_revision_mount_waits_for_background_verification(
             "filesystem": "exFAT",
             "reason": "no file USN",
         }
+    table.remove("vae")
+    for ref in (selected, named):
+        with pytest.raises(AssetError):
+            ref.read_bytes()
 
 
 @pytest.mark.parametrize("verified", [False, True])

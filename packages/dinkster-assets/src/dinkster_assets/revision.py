@@ -13,6 +13,8 @@ from .identity import AssetError
 
 def windows_file_revision(path: Path | int) -> int:
     """Read a tracked NTFS USN without opening a volume or requiring elevation."""
+    if os.name != "nt":
+        raise OSError("native file USN is only available on Windows")
     import msvcrt
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
