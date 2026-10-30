@@ -55,7 +55,8 @@ def annotate_files(value: Any) -> Any:
 
 def annotated_file_arguments(cls: type) -> set[str]:
     """Recognize file choices resolved directly by the declared execution method."""
-    function = getattr(cls, getattr(cls, "FUNCTION", ""), None)
+    method = "execute" if hasattr(cls, "GET_SCHEMA") else getattr(cls, "FUNCTION", "")
+    function = getattr(cls, method, None)
     if function is None:
         return set()
     try:
@@ -63,17 +64,22 @@ def annotated_file_arguments(cls: type) -> set[str]:
         parameters = inspect.signature(function).parameters
     except (OSError, TypeError):
         return set()
+    filename_positions = {
+        "get_annotated_filepath": 0,
+        "get_full_path": 1,
+        "get_full_path_or_raise": 1,
+    }
     return {
-        call.args[0].id
+        argument.id
         for call in ast.walk(ast.parse(source))
         if isinstance(call, ast.Call)
         and isinstance(call.func, ast.Attribute)
         and isinstance(call.func.value, ast.Name)
         and call.func.value.id == "folder_paths"
-        and call.func.attr == "get_annotated_filepath"
-        and call.args
-        and isinstance(call.args[0], ast.Name)
-        and call.args[0].id in parameters
+        and call.func.attr in filename_positions
+        and len(call.args) > filename_positions[call.func.attr]
+        for argument in [call.args[filename_positions[call.func.attr]]]
+        if isinstance(argument, ast.Name) and argument.id in parameters
     }
 
 
