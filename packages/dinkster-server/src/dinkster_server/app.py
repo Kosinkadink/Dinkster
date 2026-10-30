@@ -620,6 +620,19 @@ def job_to_wire(
                 "size": artifact.size,
                 "mediaType": artifact.media_type,
                 "virtualPath": artifact.virtual_path,
+                **(
+                    {
+                        "preview": {
+                            "digest": artifact.preview.digest,
+                            "name": artifact.preview.name,
+                            "size": artifact.preview.size,
+                            "mediaType": artifact.preview.media_type,
+                            "virtualPath": artifact.preview.virtual_path,
+                        }
+                    }
+                    if artifact.preview is not None
+                    else {}
+                ),
             }
             for artifact in job.result.artifacts
         ]
