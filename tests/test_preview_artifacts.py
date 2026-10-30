@@ -25,6 +25,12 @@ from dinkster_assets import (
     MountTable,
     digest_bytes,
 )
+from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.scratch import (
+    ProducedScratchState,
+    claim_inactive_produced_vault,
+    produced_job_scratch_root,
+)
 from dinkster_assets.vault import VaultWriter
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionError, RunResult
@@ -460,8 +466,9 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("existing", ["absent", "pending", "untracked"])
 def test_saved_file_preview_transport_adopts_bytes_before_worker_shutdown(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes, existing: str
 ) -> None:
     from dinkster_protocol import Invocation
     from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
@@ -470,6 +477,13 @@ def test_saved_file_preview_transport_adopts_bytes_before_worker_shutdown(
     manifest = _write_preview_pack(tmp_path, mp4)
     vault = AssetVault(tmp_path / "host-vault")
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    digest = digest_bytes(mp4)
+    if existing == "pending":
+        ProducedAssetInventory(vault.root).pending(digest, len(mp4))
+    if existing != "absent":
+        with vault.writer(digest) as writer:
+            writer.write(mp4)
+            writer.commit()
     scratch = tmp_path / "worker-scratch"
     scratch.mkdir()
 
@@ -498,6 +512,15 @@ def test_saved_file_preview_transport_adopts_bytes_before_worker_shutdown(
             assert len(result.saved_file_previews) == 1
             assert len(result.saved_artifact_claims) == 1
             assert result.preview_artifacts == ()
+            state = ProducedScratchState(produced_job_scratch_root(scratch, "transport", 1))
+            assert state.publications() == ((digest, len(mp4), True),)
+            if existing == "untracked":
+                assert not (vault.root / ".produced-assets.sqlite").exists()
+            else:
+                entries = ProducedAssetInventory(vault.root).entries()
+                assert len(entries) == 1
+                assert (entries[0].digest, entries[0].size) == (digest, len(mp4))
+                assert entries[0].adopted_at_ns is not None
         finally:
             await worker.close()
         shutil.rmtree(scratch)
@@ -522,7 +545,6 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         attach_saved_artifact,
         publish_saved_file_preview,
     )
-    from dinkster_assets.scratch import produced_job_scratch_root
     from dinkster_protocol import Invocation
     from dinkster_values import TypeRegistry, register_core_types
     from dinkster_workers import InProcessWorker
@@ -607,6 +629,9 @@ def test_saved_file_previews_are_lazy_file_backed_results(
             assert vault.digests() == [digest_bytes(payload)]
             path = vault.resolve(digest_bytes(payload))
             assert path is not None and path.read_bytes() == payload
+            assert ProducedScratchState(scratch).publications() == (
+                (digest_bytes(payload), len(payload), True),
+            )
 
     asyncio.run(scenario())
     assert calls == (count if enabled else 0)
@@ -916,12 +941,20 @@ def test_failed_batch_preserves_content_adopted_by_an_independent_ingest(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("existing", ["absent", "pending", "untracked"])
 def test_concurrent_identical_previews_do_not_delete_the_other_result(
-    tmp_path: Path, mp4: bytes
+    tmp_path: Path, mp4: bytes, existing: str
 ) -> None:
     vault = AssetVault(tmp_path / "vault")
     publisher = PreviewArtifactPublisher(vault)
     claim = EncodedPreviewArtifact(mp4, "preview.mp4", "video/mp4")
+    digest = digest_bytes(mp4)
+    if existing == "pending":
+        ProducedAssetInventory(vault.root).pending(digest, len(mp4))
+    if existing != "absent":
+        with vault.writer(digest) as writer:
+            writer.write(mp4)
+            writer.commit()
 
     async def scenario() -> None:
         first, second = await asyncio.gather(publisher("one", (claim,)), publisher("two", (claim,)))
@@ -929,6 +962,15 @@ def test_concurrent_identical_previews_do_not_delete_the_other_result(
         stored = vault.resolve(digest_bytes(mp4))
         assert stored is not None
         assert stored.read_bytes() == mp4
+        if existing == "untracked":
+            assert not (vault.root / ".produced-assets.sqlite").exists()
+        else:
+            entries = ProducedAssetInventory(vault.root).entries()
+            assert len(entries) == 1
+            assert (entries[0].digest, entries[0].size) == (digest, len(mp4))
+            assert entries[0].adopted_at_ns is not None
+            await publisher("again", (claim,))
+            assert ProducedAssetInventory(vault.root).entries() == entries
 
     asyncio.run(scenario())
 
@@ -943,9 +985,10 @@ def test_cancellation_during_staging_discards_before_commit(
     original = publisher._stage
 
     def blocked_stage(node_id: str, claims: Sequence[EncodedPreviewArtifact]) -> object:
+        staged = original(node_id, claims)
         entered.set()
-        release.wait()
-        return original(node_id, claims)
+        assert release.wait(10)
+        return staged
 
     monkeypatch.setattr(publisher, "_stage", blocked_stage)
 
@@ -953,11 +996,17 @@ def test_cancellation_during_staging_discards_before_commit(
         task = asyncio.create_task(
             publisher("node", (EncodedPreviewArtifact(mp4, "preview.mp4", "video/mp4"),))
         )
-        await asyncio.to_thread(entered.wait)
+        assert await asyncio.to_thread(entered.wait, 10)
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert not inactive
         task.cancel()
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await task
         assert vault.digests() == []
+        entries = ProducedAssetInventory(vault.root).entries()
+        assert len(entries) == 1 and entries[0].adopted_at_ns is None
+        with claim_inactive_produced_vault(vault.root) as inactive:
+            assert inactive
 
     asyncio.run(scenario())

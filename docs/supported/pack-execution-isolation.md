@@ -49,6 +49,10 @@
 - Boundary workers with configured pack scratch keep produced asset bytes
   separate for each job attempt. Returning a result still requires verified
   engine adoption before acknowledgement; this does not delete temporary files.
+- Saved-file previews preserve scratch handoff intent and verified engine
+  adoption state. Host-generated previews also retain adoption inventory;
+  existing untracked vault bytes are not reclassified. Incomplete staging
+  remains pending and does not authorize deletion.
 - Completed, failed and cancelled invocation scopes refuse further publication
   into their job-owned scratch, including from detached tasks and held writers.
 - Produced scratch claims refuse live invocations and open writers, including

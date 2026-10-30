@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +18,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.declared import offer_produced_outputs
 from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.scratch import hold_produced_vault
 from dinkster_assets.value import value_asset_references
 from dinkster_values import (
     MEBIBYTE,
@@ -142,22 +144,32 @@ class ProducedAssetAuthority:
                 ref = AssetRef.from_wire(cast("Mapping[str, object]", claim["preview"]))
                 if self._vault is None:
                     continue
+                inventory = ProducedAssetInventory(self._vault.root)
+                held = self._vault.resolve(ref.digest)
+                if held is not None:
+                    with open_verified(held, ref.digest) as source:
+                        if os.fstat(source.fileno()).st_size != ref.size:
+                            continue
+                        inventory.confirm_existing(ref.digest, ref.size)
+                    accepted.append(claim)
+                    continue
                 path = transferred.resolve(ref.digest) if transferred is not None else None
                 if path is None and self._source is not None:
                     path = self._source.resolve(ref.digest)
                 if path is None:
-                    path = self._vault.resolve(ref.digest)
-                if path is None:
                     continue
                 with (
                     open_verified(path, ref.digest) as source,
-                    self._vault.writer(ref.digest) as writer,
+                    closing(hold_produced_vault(self._vault.root)),
                 ):
                     if os.fstat(source.fileno()).st_size != ref.size:
                         continue
-                    while chunk := source.read(_COPY_BYTES):
-                        writer.write(chunk)
-                    writer.commit()
+                    inventory.pending(ref.digest, ref.size)
+                    with self._vault.writer(ref.digest) as writer:
+                        while chunk := source.read(_COPY_BYTES):
+                            writer.write(chunk)
+                        writer.commit()
+                        inventory.adopted(ref.digest, ref.size)
                 accepted.append(claim)
             except Exception:
                 # Optional media cannot invalidate successfully produced sources.
