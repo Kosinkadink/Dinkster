@@ -92,4 +92,7 @@
 - Qwen Image 2.1, Ming Image Edit, Mage Flow Edit, and Fibo 2 accept
   unconnected authored reference image sockets while retaining named members,
   required text/CLIP controls, optional VAE, and conditioning fanout.
+- MOSS image editing requires its first reference image, but later authored
+  image sockets may be unconnected. ReferenceMultiLatent keeps all references
+  optional, with authored socket order preserved for both nodes.
 - Other model-family conditioning surfaces are unsupported.
