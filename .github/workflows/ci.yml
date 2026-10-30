@@ -181,4 +181,8 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked pyright
       - name: Verify Windows interpreter and native extension loading
-        run: uv run --locked pytest -q tests/test_interpreter_preflight.py
+        run: >-
+          uv run --locked pytest -q tests/test_interpreter_preflight.py
+          tests/test_isolated.py::test_group_connects_all_peers_before_synchronous_hello_preparation
+          tests/test_reload.py::test_group_worker_start_is_all_or_nothing
+          tests/test_reload.py::test_group_worker_authenticates_every_tcp_endpoint
