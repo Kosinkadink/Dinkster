@@ -148,6 +148,7 @@ from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
+from .moge_loader import LoadMoGeModel
 from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
 from .morphology import MORPHOLOGY_NODES
@@ -519,6 +520,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
+    LoadMoGeModel,
 )
 
 

@@ -598,6 +598,7 @@ namespaces = [
     "VoxelToMesh",
     "VAEDecodeHunyuan3D",
     "Trellis2ShapeStage",
+    "LoadMoGeModel",
 ]
 
 [pack.sandbox]

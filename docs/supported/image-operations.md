@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `LoadMoGeModel` loads granted geometry-estimation checkpoints into
+  the shared `MOGE_MODEL` value.
 - Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
   angles or a normalized quaternion while retaining material attributes.
   `GetMeshInfo` reports padded-batch counts and available mesh attributes.
