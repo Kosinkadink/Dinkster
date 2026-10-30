@@ -119,9 +119,6 @@ def register_file3d_types(
             "resources": {name: ref.to_wire() for name, ref in sorted(resources.items())},
         }
 
-    def encode(value: object) -> bytes:
-        return json.dumps(wire(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
-
     def meta(value: object) -> dict[str, object]:
         obj = coerce(value)
         refs = [obj["source"], *cast("dict[str, object]", obj["resources"]).values()]
@@ -136,6 +133,11 @@ def register_file3d_types(
             if formats is not None and obj["format"] not in formats:
                 raise AssetError(f"{type_id} does not accept format {obj['format']!r}")
             return obj
+
+        def encode(value: object) -> bytes:
+            return json.dumps(wire(typed(value)), sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
 
         def validate(data: bytes, metadata: Mapping[str, object]) -> None:
             obj = typed(json.loads(data))

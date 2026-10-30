@@ -10,11 +10,15 @@ from typing import cast
 
 import dinkster_nodes_media_io.model3d as model3d_module
 import pytest
+from dinkster_api.v1 import FILE_3D_GLB_TYPE, FILE_3D_GLTF_TYPE, FILE_3D_TYPE
 from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetVault,
+    LocalAssetRef,
+    MountDef,
     MountSnapshotResolver,
+    MountTable,
     digest_bytes,
     register_asset_type,
     register_file3d_types,
@@ -203,8 +207,6 @@ def test_schemas_declare_upload_save_and_preview_intent() -> None:
 def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     tmp_path: Path,
 ) -> None:
-    from dinkster_api.v1 import FILE_3D_GLB_TYPE, FILE_3D_GLTF_TYPE
-
     source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
     resource = b"\x00\x01\xfe\xff"
     vault = AssetVault(tmp_path / "file3d")
@@ -237,8 +239,16 @@ def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     assert receiver.wrap(FILE_3D_GLTF_TYPE, restored).fingerprint == value.fingerprint
     altered = {**obj, "resources": {"mesh/other.bin": buffer}}
     assert sender.wrap(FILE_3D_GLTF_TYPE, altered).fingerprint != value.fingerprint
+    wrong_format = sender.spec(FILE_3D_GLB_TYPE)
     with pytest.raises(AssetError, match="does not accept"):
         sender.wrap(FILE_3D_GLB_TYPE, obj)
+    with pytest.raises(AssetError, match="does not accept"):
+        wrong_format.encode(obj)
+    assert wrong_format.fingerprint is not None
+    with pytest.raises(AssetError, match="does not accept"):
+        wrong_format.fingerprint(obj)
+    with pytest.raises(AssetError, match="does not accept"):
+        wrong_format.decode(payload)
     with pytest.raises(AssetError, match="metadata"):
         spec.validate_encoded(payload, {**value.meta.entries, "asset_refs": []})
 
@@ -258,10 +268,103 @@ def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     ),
 )
 def test_file3d_resources_cannot_grant_paths(name: str) -> None:
-    from dinkster_api.v1 import FILE_3D_TYPE
-
     registry = TypeRegistry()
     register_file3d_types(registry)
     ref = AssetRef(digest_bytes(b"source"), "source.gltf", 6)
     with pytest.raises(AssetError, match="contained relative"):
         registry.wrap(FILE_3D_TYPE, {"format": "gltf", "source": ref, "resources": {name: ref}})
+
+
+@pytest.mark.parametrize("change", ("revoke", "replace", "index"))
+def test_file3d_local_binding_uses_live_grant_and_only_reconciles_indexed_content(
+    tmp_path: Path, change: str
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    source = root / "model.obj"
+    source.write_bytes(b"v 1 2 3\nf 1 1 1\n")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef(id="models", path=root), kind="media/model3d")
+    ref = table.bind_name("model.obj", "media/model3d")
+    resolver = MountSnapshotResolver(snapshot)
+    assert isinstance(ref, LocalAssetRef)
+    registry = TypeRegistry()
+    register_file3d_types(registry, resolver)
+    spec = registry.spec(FILE_3D_TYPE)
+    obj = {"format": "obj", "source": ref}
+    local = registry.wrap(FILE_3D_TYPE, obj)
+    payload = spec.encode(obj)
+    wire = json.loads(payload)
+    assert wire["source"]["verification"] == "unverified"
+    assert "digest" not in wire["source"]
+    assert local.meta.entries["asset_refs"] == []
+    assert (
+        cast(LocalAssetRef, cast(dict, spec.decode(payload))["source"]).read_bytes()
+        == source.read_bytes()
+    )
+    foreign = TypeRegistry()
+    register_file3d_types(foreign, MountSnapshotResolver(tmp_path / "foreign-mounts.json"))
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        foreign.spec(FILE_3D_TYPE).decode(payload)
+    if change == "index":
+        expected = source.read_bytes()
+        table.scan("models")
+        reconciled = registry.wrap(FILE_3D_TYPE, obj)
+        portable = cast(AssetRef, cast(dict, reconciled.resolve())["source"])
+        assert portable.digest == digest_bytes(expected)
+        assert portable.read_bytes() == expected
+        assert reconciled.meta.entries["asset_refs"] == [portable.to_wire()]
+        assert reconciled.fingerprint != local.fingerprint
+    else:
+        if change == "revoke":
+            table.remove("models")
+        else:
+            source.write_bytes(b"changed geometry")
+        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+            spec.decode(payload)
+
+
+@pytest.mark.parametrize("source", ("/host/model.obj", {"path": "/host/model.obj"}))
+def test_file3d_source_cannot_introduce_filesystem_authority(source: object) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    with pytest.raises(AssetError):
+        registry.wrap(FILE_3D_TYPE, {"format": "obj", "source": source})
+
+
+@pytest.mark.parametrize(
+    "type_id,format_id",
+    (
+        ("FILE_3D", "custom"),
+        ("FILE_3D_GLB", "glb"),
+        ("FILE_3D_GLTF", "gltf"),
+        ("FILE_3D_FBX", "fbx"),
+        ("FILE_3D_OBJ", "obj"),
+        ("FILE_3D_STL", "stl"),
+        ("FILE_3D_USDZ", "usdz"),
+        ("FILE_3D_PLY", "ply"),
+        ("FILE_3D_SPLAT", "splat"),
+        ("FILE_3D_SPZ", "spz"),
+        ("FILE_3D_KSPLAT", "ksplat"),
+        ("FILE_3D_SPLAT_ANY", "ply"),
+        ("FILE_3D_SPLAT_ANY", "splat"),
+        ("FILE_3D_SPLAT_ANY", "spz"),
+        ("FILE_3D_SPLAT_ANY", "ksplat"),
+        ("FILE_3D_POINT_CLOUD_ANY", "ply"),
+    ),
+)
+def test_file3d_format_families_retain_original_format(type_id: str, format_id: str) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"original"), "source", 8)
+    obj = {"format": format_id, "source": ref}
+    spec = registry.spec(type_id)
+    decoded = cast("dict[str, object]", spec.decode(spec.encode(obj)))
+    assert decoded == {**obj, "resources": {}}
+    assert spec.fingerprint is not None
+    assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
+    wrong = {**obj, "format": "glb" if format_id != "glb" else "gltf"}
+    if type_id != FILE_3D_TYPE:
+        with pytest.raises(AssetError, match="does not accept"):
+            spec.encode(wrong)
