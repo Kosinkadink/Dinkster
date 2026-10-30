@@ -540,6 +540,7 @@ namespaces = [
     "TripoSplatPreprocessImage",
     "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
+    "VAEDecodeTripoSplat",
     "LoadAudio",
     "RecordAudio",
     "PreviewAudio",
