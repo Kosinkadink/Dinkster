@@ -20,6 +20,10 @@
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatSamplingPreview` patches a cloned model to report decoded
+  gaussian splat previews during sampling without replacing the sampler callback.
+- Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
+  with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
