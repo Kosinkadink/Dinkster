@@ -33,6 +33,8 @@ from dinkster_api.v1 import (
     video_from_source,
 )
 
+from .family_migrations import ordered_family_migration
+
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 _VIDEO = TypeExpr.concrete(VIDEO_TYPE)
@@ -190,6 +192,7 @@ class ConcatenateVideo(Node):
                     min_members=1,
                     max_members=100,
                     member_prefix="video",
+                    optional_after_minimum=True,
                 ),
             ),
             inputs=(
@@ -204,6 +207,15 @@ class ConcatenateVideo(Node):
             ),
             outputs=(OutputSpec("video", _VIDEO),),
             input_order=("videos", "codec", "complete_audio"),
+            replacements=(
+                ordered_family_migration(
+                    "ConcatenateVideo",
+                    "videos",
+                    "video",
+                    ("video",),
+                    inputs=("codec", "complete_audio"),
+                ),
+            ),
         )
 
     @classmethod
