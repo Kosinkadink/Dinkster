@@ -1429,6 +1429,62 @@ def test_advanced_exports_attach_every_published_file_on_repeated_host_execution
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("colorspace", ("sRGB", "HDR", "linear ACEScg"))
+def test_exr_previews_apply_input_transfer_before_srgb_quantization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, colorspace: str
+) -> None:
+    from dinkster_workers.preview_artifacts import capture_saved_file_previews
+
+    default, alternate = _mount(tmp_path, monkeypatch)
+    vault = AssetVault(tmp_path / "previews")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    monkeypatch.delenv("DINKSTER_PACK_SCRATCH", raising=False)
+    has_alpha = colorspace != "sRGB"
+    samples = [0.035, 0.375, 0.83] + ([0.43] if has_alpha else [])
+    images = torch.tensor(samples, dtype=torch.float32).expand(1, 3, 5, len(samples)).clone()
+    before = images.clone()
+    with capture_saved_artifacts() as saved, capture_saved_file_previews(enabled=True) as previews:
+        result = SaveImageAdvanced.execute(
+            images=images,
+            filename_prefix="transfer",
+            mount="alternate",
+            format={
+                "format": "exr",
+                "bit_depth": "32-bit float",
+                "input_color_space": colorspace,
+            },
+        )
+    assert result["images"] is images and torch.equal(images, before)
+    assert len(saved) == len(previews) == 1
+    assert previews[0]["saved"] == saved[0]
+    assert saved[0]["virtualPath"] == "mounts/alternate/transfer_00001.exr"
+    assert saved[0]["digest"] == digest_file(alternate / "transfer_00001.exr")
+    assert not list(default.iterdir())
+    pixel = []
+    for value in samples[:3]:
+        if colorspace == "sRGB":
+            value = value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+        elif colorspace == "HDR":
+            value = (
+                value**2 / 3
+                if value <= 0.5
+                else (math.exp((value - 0.55991072928) / 0.17883277) + 0.28466892) / 12
+            )
+        value = max(0.0, min(1.0, value))
+        value = value * 12.92 if value <= 0.0031308 else 1.055 * value ** (1 / 2.4) - 0.055
+        pixel.append(math.floor(value * 255 + 0.5))
+    if has_alpha:
+        pixel.append(math.floor(samples[3] * 255 + 0.5))
+    expected = BytesIO()
+    Image.fromarray(np.full((3, 5, len(pixel)), pixel, np.uint8)).save(
+        expected, format="WEBP" if has_alpha else "JPEG", quality=80 if has_alpha else 85
+    )
+    preview = previews[0]["preview"]
+    path = vault.resolve(preview["digest"])
+    assert path is not None and path.read_bytes() == expected.getvalue()
+    assert preview["mediaType"] == ("image/webp" if has_alpha else "image/jpeg")
+
+
 class _EXRPreviewSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
