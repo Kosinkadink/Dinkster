@@ -20,7 +20,9 @@ from dinkster_assets import (
     digest_bytes,
     resolver_from_env,
 )
-from dinkster_assets.declared import produced_output_scratch
+from dinkster_assets.declared import offer_produced_outputs, produced_output_scratch
+from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.scratch import hold_produced_vault
 from dinkster_assets.vault import VaultWriter
 from dinkster_protocol import SavedArtifact
 from dinkster_schema.reporting import (
@@ -81,6 +83,7 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
                     if closed.is_set():
                         return False
                     writer.commit()
+                    offer_produced_outputs((digest,))
                 claims.append(
                     MappingProxyType(
                         {
@@ -199,7 +202,10 @@ class PreviewArtifactPublisher:
         stack = ExitStack()
         writers: list[VaultWriter] = []
         try:
+            stack.enter_context(contextlib.closing(hold_produced_vault(self._vault.root)))
             for claim, artifact in zip(validated, artifacts, strict=True):
+                if self._vault.resolve(artifact.digest) is None:
+                    ProducedAssetInventory(self._vault.root).pending(artifact.digest, artifact.size)
                 writer = stack.enter_context(self._vault.writer(artifact.digest))
                 writer.write(claim.data)
                 writers.append(writer)
@@ -226,8 +232,11 @@ class PreviewArtifactPublisher:
                 raise
             try:
                 # No await splits the publication commit from its result handoff.
-                for writer in staged.writers:
+                assert self._vault is not None
+                inventory = ProducedAssetInventory(self._vault.root)
+                for writer, artifact in zip(staged.writers, staged.artifacts, strict=True):
                     writer.commit_with_result()
+                    inventory.confirm_existing(artifact.digest, artifact.size)
                 return staged.artifacts
             finally:
                 staged.stack.close()

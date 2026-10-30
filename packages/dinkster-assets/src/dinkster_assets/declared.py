@@ -27,33 +27,195 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Generator, Iterable, Mapping
+import threading
+from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import TracebackType
 
 from .fetch import ChainResolver
 from .identity import AssetError
 from .kind import require_asset_kind
 from .library import IndexedAssetResolver
-from .model import AssetRef, AssetResolver
+from .model import AssetRef, AssetResolution, AssetResolver
 from .mounts import MountSnapshotResolver
 from .pack_assets import DeclaredAsset
-from .vault import AssetVault
+from .scratch import (
+    ProducedScratchLease,
+    ProducedScratchState,
+    hold_produced_asset_read,
+    produced_job_scratch_root,
+    use_produced_asset_path_owner,
+)
+from .vault import AssetVault, VaultWriter
 
 __all__ = [
     "clear_declared_assets",
     "declared_asset",
     "install_declared_assets",
     "mount_roots_for_kind",
+    "offer_produced_outputs",
     "resolver_from_env",
     "use_declared_asset_pack",
+    "use_produced_output_job",
 ]
 
 VAULT_ENV = "DINKSTER_ASSET_VAULT"
 MOUNTS_ENV = "DINKSTER_MOUNTS_SNAPSHOT"
 ROOT_ENV = "DINKSTER_ASSET_ROOT"
+
+
+@dataclass
+class _ProducedJob:
+    identity: tuple[str, int]
+    active: bool = True
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    leases: dict[Path, ProducedScratchLease] = field(
+        default_factory=dict[Path, ProducedScratchLease]
+    )
+    states: dict[Path, ProducedScratchState] = field(
+        default_factory=dict[Path, ProducedScratchState]
+    )
+
+    @contextmanager
+    def publication(self) -> Generator[None]:
+        # Writers are synchronous; no lock is held over an invocation await.
+        with self.lock:
+            if not self.active:
+                raise AssetError("produced output job is no longer active")
+            yield
+
+    def retain_path(self, path: Path) -> None:
+        with self.publication():
+            path = path.absolute()
+            if path not in self.leases:
+                lease = hold_produced_asset_read(path)
+                if lease is not None:
+                    self.leases[path] = lease
+
+    def close(self) -> None:
+        with self.lock:
+            self.active = False
+            for lease in self.leases.values():
+                lease.close()
+
+
+_produced_job: ContextVar[_ProducedJob | None] = ContextVar("dinkster_produced_job", default=None)
+
+
+class _ProducedWriter(VaultWriter):
+    def __init__(self, root: Path, target: Path, digest: str, job: _ProducedJob) -> None:
+        self._job = job
+        self._state = job.states.get(root)
+        self._lease = ProducedScratchLease(root)
+        try:
+            super().__init__(root, target, digest)
+        except BaseException:
+            self._lease.close()
+            raise
+
+    def write(self, chunk: bytes) -> None:
+        with self._job.publication():
+            super().write(chunk)
+
+    def commit(self, *, before_publish: Callable[[int], None] | None = None) -> Path:
+        with self._job.publication():
+            path = super().commit(before_publish=before_publish)
+            if self._state is not None:
+                self._state.published(self._expected, path.stat().st_size)
+            return path
+
+    def commit_with_result(self) -> tuple[Path, bool]:
+        with self._job.publication():
+            path, created = super().commit_with_result()
+            if self._state is not None:
+                self._state.published(self._expected, path.stat().st_size)
+            return path, created
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        try:
+            super().__exit__(exc_type, exc, tb)
+        finally:
+            self._lease.close()
+
+
+class _ProducedVault(AssetVault):
+    def __init__(self, root: Path, job: _ProducedJob, *, managed_scratch: bool) -> None:
+        self._job = job
+        if root not in job.leases:
+            job.leases[root] = ProducedScratchLease(root)
+        super().__init__(root)
+        if managed_scratch and root not in job.states:
+            state = ProducedScratchState(root)
+            state.bind(*job.identity)
+            job.states[root] = state
+
+    def writer(self, expected_digest: str) -> VaultWriter:
+        with self._job.publication():
+            path = self._path(expected_digest)
+            return _ProducedWriter(self.root, path, expected_digest, self._job)
+
+
+@contextmanager
+def use_produced_output_job(job: str, attempt: int) -> Generator[bool]:
+    """Bind source lookup to a job attempt, yielding whether this scope owns adoption."""
+    if not job or type(attempt) is not int or attempt < 1:
+        raise AssetError("produced output requires a job and positive attempt")
+    current = _produced_job.get()
+    owns_adoption = current is None or current.identity != (job, attempt)
+    scope = _ProducedJob((job, attempt)) if owns_adoption else current
+    assert scope is not None
+    with scope.publication():
+        token = _produced_job.set(scope)
+    try:
+        with use_produced_asset_path_owner(scope.retain_path):
+            yield owns_adoption
+    finally:
+        if owns_adoption:
+            scope.close()
+        _produced_job.reset(token)
+
+
+def offer_produced_outputs(digests: Iterable[str]) -> None:
+    """Persist handoff intent before a produced result can leave its invocation."""
+    job = _produced_job.get()
+    if job is not None and job.states:
+        digests = tuple(digests)
+        if not digests:
+            return
+        with job.publication():
+            for state in job.states.values():
+                state.offer(digests)
+
+
+def _produced_root(scratch: str) -> Path:
+    root = Path(scratch) / "produced-assets"
+    job = _produced_job.get()
+    if job is None:
+        return root
+    return produced_job_scratch_root(Path(scratch), *job.identity)
+
+
+class _ProducedOutputResolver:
+    """A worker's installed resolver follows the current job, not its startup context."""
+
+    def __init__(self, scratch: str) -> None:
+        self._scratch = scratch
+
+    def resolve(self, digest: str) -> Path | None:
+        resolution = self.resolve_asset(digest)
+        return resolution.path if resolution is not None else None
+
+    def resolve_asset(self, digest: str) -> AssetResolution | None:
+        root = _produced_root(self._scratch)
+        return AssetVault(root).resolve_asset(digest) if root.is_dir() else None
 
 
 def mount_roots_for_kind(kind: str, *, env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
@@ -72,10 +234,14 @@ def produced_output_scratch(env: Mapping[str, str] | None = None) -> AssetVault 
     """Worker publications use writable scratch, not the sandbox's read-only input vault."""
     environment = os.environ if env is None else env
     scratch = environment.get("DINKSTER_PACK_SCRATCH")
-    if scratch:
-        return AssetVault(Path(scratch) / "produced-assets")
-    root = environment.get(VAULT_ENV)
-    return AssetVault(root) if root else None
+    root = _produced_root(scratch) if scratch else environment.get(VAULT_ENV)
+    if not root:
+        return None
+    job = _produced_job.get()
+    if job is not None:
+        with job.publication():
+            return _ProducedVault(Path(root), job, managed_scratch=bool(scratch))
+    return AssetVault(root)
 
 
 def resolver_from_env(env: Mapping[str, str] | None = None) -> AssetResolver | None:
@@ -87,10 +253,8 @@ def resolver_from_env(env: Mapping[str, str] | None = None) -> AssetResolver | N
     if env is None:
         env = os.environ
     resolvers: list[AssetResolver] = []
-    if env.get("DINKSTER_PACK_SCRATCH"):
-        produced = produced_output_scratch(env)
-        assert produced is not None
-        resolvers.append(produced)
+    if scratch := env.get("DINKSTER_PACK_SCRATCH"):
+        resolvers.append(_ProducedOutputResolver(scratch))
     vault_root = env.get(VAULT_ENV, "")
     if vault_root:
         resolvers.append(AssetVault(vault_root))

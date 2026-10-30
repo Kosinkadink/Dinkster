@@ -68,7 +68,8 @@ import sqlite3
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -213,6 +214,8 @@ class ServerLibrary:
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
+    #: Explicit host configuration, never a client-selected filesystem target.
+    scratch_root: Path | None = None
     #: Serialize the two-resource media publication so one request owns the
     #: byte/grant created result used for exact 200/201 semantics.
     media_ingest_lock: asyncio.Lock = field(
@@ -948,8 +951,14 @@ async def run_media_publication(
     handoff: asyncio.Event | None = None,
 ) -> _T:
     """Keep serialization owned until an uncancellable worker actually settles."""
+    from dinkster_assets.scratch import hold_produced_vault
+
+    def owned_publish() -> _T:
+        with closing(hold_produced_vault(library.vault.root)):
+            return publish()
+
     await library.media_ingest_lock.acquire()
-    task = asyncio.ensure_future(asyncio.to_thread(publish))
+    task = asyncio.ensure_future(asyncio.to_thread(owned_publish))
     if handoff is not None:
         handoff.set()
     handed_off = False
@@ -1620,10 +1629,158 @@ async def handle_library_delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def handle_retained_assets(request: web.Request) -> web.Response:
+    """Explicit scoped reference manifests; document contents remain opaque."""
+    scope = resolve_scope(
+        principal_for(request),
+        "assets:read" if request.method in {"GET", "HEAD"} else "assets:write",
+        request.query.get("scope"),
+    )
+    store = request.app[LIBRARY_KEY].store
+    key = (scope, request.match_info["owner_kind"], request.match_info["owner_id"])
+    try:
+        if request.method in {"GET", "HEAD"}:
+            retained = await asyncio.to_thread(store.retained_assets, *key)
+        elif request.method == "PUT":
+            body = await _json_body(request)
+            if not {"revision", "digests"} <= set(body) or set(body) - {
+                "revision",
+                "digests",
+                "complete",
+            }:
+                return _json_error(
+                    400, "retained values require revision, digests and optional complete"
+                )
+            revision, digests = body["revision"], body["digests"]
+            if type(revision) is not int or not isinstance(digests, list):
+                return _json_error(400, "revision must be an integer and digests must be a list")
+            retained = await asyncio.to_thread(
+                store.retain_assets,
+                *key,
+                cast(list[str], digests),
+                revision=revision,
+                complete=body.get("complete", False),
+            )
+        else:
+            try:
+                revision = int(request.query.get("revision", ""))
+            except ValueError:
+                return _json_error(400, "release requires a positive revision")
+            retained = await asyncio.to_thread(store.release_assets, *key, revision=revision)
+    except StaleRevision as exc:
+        return _json_error(409, str(exc))
+    except AssetError as exc:
+        return _json_error(400, str(exc))
+    except sqlite3.Error:
+        return _json_error(503, "retained asset state is unavailable")
+    if retained is None:
+        return _json_error(404, "no such retained asset owner")
+    return web.json_response(retained.to_wire())
+
+
+async def handle_cleanup_policy(request: web.Request) -> web.Response:
+    if not principal_for(request).is_operator:
+        raise web.HTTPForbidden(text="asset cleanup policy requires an operator")
+    if request.query:
+        raise web.HTTPBadRequest(text="cleanup policy accepts no filesystem targets")
+    body = await _json_body(request)
+    if set(body) != {"limitBytes"}:
+        raise web.HTTPBadRequest(text="cleanup policy requires only limitBytes")
+    limit = body["limitBytes"]
+    if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
+        raise web.HTTPBadRequest(text="limitBytes must be a positive safe integer or null")
+    try:
+        await run_owned_thread(lambda: request.app[LIBRARY_KEY].store.set_cleanup_limit(limit))
+    except (AssetError, sqlite3.Error):
+        raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
+    return web.json_response(
+        {"limitBytes": limit, "collectionEnabled": False}, headers={"Cache-Control": "no-store"}
+    )
+
+
+async def handle_cleanup_clear(request: web.Request) -> web.Response:
+    if not principal_for(request).is_operator:
+        raise web.HTTPForbidden(text="asset cleanup requires an operator")
+    if request.query or await _json_body(request):
+        raise web.HTTPBadRequest(text="asset cleanup accepts only an empty object")
+    from .app import STATE_KEY
+    from .cleanup import (
+        FRONTEND_RETENTION_COMPLETE,
+        RECOVERY_KEY,
+        inspect_cleanup,
+        recover_produced_publications,
+    )
+
+    if FRONTEND_RETENTION_COMPLETE:
+        library = request.app[LIBRARY_KEY]
+        state = request.app[STATE_KEY]
+        recovery: dict[str, int] = {}
+        if library.scratch_root is not None:
+            scratch = library.scratch_root
+            recovery = await run_owned_thread(
+                lambda: recover_produced_publications(library.vault, scratch)
+            )
+            request.app[RECOVERY_KEY].update(recovery)
+        result = await inspect_cleanup(
+            library.vault,
+            library.store,
+            state.history,
+            state.engine.cache,
+            scratch_root=library.scratch_root,
+            collect=True,
+        )
+        for key in ("reclaimedBytes", "reclaimedFiles"):
+            result[key] = cast(int, result[key]) + recovery.get(key, 0)
+        result["scratchRecovery"] = recovery or None
+        if recovery.get("blockedInspections", 0):
+            cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
+            result["collectionEnabled"] = False
+            result["reclaimableBytes"] = None
+            result["failedItems"] = (
+                cast(int, result.get("failedItems", 0)) + recovery["blockedInspections"]
+            )
+        return web.json_response(
+            result,
+            status=200 if result["collectionEnabled"] else 409,
+            headers={"Cache-Control": "no-store"},
+        )
+    # Registered complete rows cannot certify that no unregistered client exists.
+    return web.json_response(
+        {
+            "collectionEnabled": False,
+            "blocked": ["owner_completeness_unknown"],
+            "reclaimedBytes": 0,
+            "reclaimedFiles": 0,
+        },
+        status=409,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
+    from .cleanup import (
+        POLICY_KEY,
+        POLICY_WAKE_KEY,
+        RECOVERY_KEY,
+        handle_cleanup_status,
+        maintain_cleanup_policy,
+        recover_produced_publications,
+    )
     from .image_document import handle_dependencies, handle_image_document, handle_render
 
+    async def cleanup_policy(app: web.Application) -> AsyncIterator[None]:
+        task = asyncio.create_task(maintain_cleanup_policy(app))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
     app[LIBRARY_KEY] = library
+    app[POLICY_KEY] = {}
+    app[POLICY_WAKE_KEY] = asyncio.Event()
+    app.cleanup_ctx.append(cleanup_policy)
     app.router.add_post("/api/assets", handle_upload)
     app.router.add_post("/api/assets/transfers", handle_transfer_upload)
     app.router.add_post("/api/assets/media", handle_media_upload)
@@ -1643,12 +1800,26 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         app.router.add_post("/api/assets/{digest}/sources", handle_asset_sources_add)
     app.router.add_post("/api/library", handle_library_create)
     app.router.add_get("/api/library", handle_library_list)
+    app.router.add_get("/api/library/storage", handle_cleanup_status)
+    app.router.add_put("/api/library/storage/policy", handle_cleanup_policy)
+    app.router.add_post("/api/library/storage/clear", handle_cleanup_clear)
+    retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
+    app.router.add_get(retention_path, handle_retained_assets)
+    app.router.add_put(retention_path, handle_retained_assets)
+    app.router.add_delete(retention_path, handle_retained_assets)
     app.router.add_get("/api/library/{record_id}", handle_library_get)
     app.router.add_patch("/api/library/{record_id}", handle_library_update)
     app.router.add_delete("/api/library/{record_id}", handle_library_delete)
 
     async def recover_upload_observations(app: web.Application) -> None:
         await run_media_publication(library, lambda: recover_asset_observations(library))
+
+    async def recover_produced_handoffs(app: web.Application) -> None:
+        scratch_root = library.scratch_root
+        if scratch_root is not None:
+            app[RECOVERY_KEY] = await run_owned_thread(
+                lambda: recover_produced_publications(library.vault, scratch_root)
+            )
 
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:
@@ -1669,5 +1840,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             library.latent_ingest_slots.release()
 
     app.on_startup.append(recover_upload_observations)
+    app.on_startup.append(recover_produced_handoffs)
     app.on_startup.append(remove_stale_latent_uploads)
     app.on_cleanup.append(close_store)

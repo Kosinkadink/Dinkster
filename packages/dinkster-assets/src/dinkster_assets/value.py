@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -28,10 +28,13 @@ from dinkster_values import (
     GIBIBYTE,
     MEBIBYTE,
     TypeRegistry,
+    Value,
     bind_video_sources,
     decode_video,
     effective_video_facts,
     encode_video,
+    iter_value_tree,
+    parse_asset_type_id,
     render_video_original,
     validate_video_encoded,
     video_fingerprint,
@@ -43,7 +46,7 @@ from dinkster_values.video_codec import VIDEO_INLINE_LIMIT, coerce_video, video_
 from dinkster_values.video_probe import probe_video
 
 from .audio import bind_audio_value
-from .declared import MOUNTS_ENV, produced_output_scratch
+from .declared import MOUNTS_ENV, produced_output_scratch, resolver_from_env
 from .identity import AssetError, digest_bytes, digest_file
 from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
 from .mounts import MountSnapshotResolver
@@ -52,6 +55,44 @@ ASSET_TYPE = ASSET_BASE_TYPE
 """Aliases dinkster_values.ASSET_BASE_TYPE (typed assets pinned the constant
 down there so TypeRegistry can resolve ``asset<...>`` ids without importing
 upward); this package keeps its historical name."""
+
+
+def metadata_asset_references(
+    type_id: str, metadata: Mapping[str, object], *, include_asset_value: bool = True
+) -> Iterator[AssetRef]:
+    """Read declared external identities, never payload fingerprints or blob digests."""
+    raw = metadata.get("asset_refs", [])
+    if not isinstance(raw, list):
+        raise AssetError("asset_refs must be a list")
+    items = list(cast("list[object]", raw))
+    if include_asset_value and (
+        type_id == ASSET_BASE_TYPE or parse_asset_type_id(type_id) is not None
+    ):
+        items.append(metadata)
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise AssetError("asset reference must be a mapping")
+        wire = cast("Mapping[str, object]", item)
+        if wire.get("verification") == "unverified":
+            LocalAssetRef.from_wire(wire)
+        else:
+            yield AssetRef.from_wire(wire)
+
+
+def value_asset_references(
+    values: Mapping[str, Value], *, include_asset_values: bool = True
+) -> dict[str, AssetRef]:
+    """Collect identities through recursive value containers without decoding payloads."""
+    references: dict[str, AssetRef] = {}
+    for value in values.values():
+        for child in iter_value_tree(value):
+            for ref in metadata_asset_references(
+                child.type_id, child.meta.entries, include_asset_value=include_asset_values
+            ):
+                previous = references.setdefault(ref.digest, ref)
+                if previous.size != ref.size:
+                    raise AssetError("source references disagree about byte size")
+    return references
 
 
 def register_asset_type(
@@ -152,7 +193,10 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
                     writer.write(chunk)
         writer.commit()
     return AssetRef(
-        digest, source.name if isinstance(source, Path) else "video", size, resolver=vault
+        digest,
+        source.name if isinstance(source, Path) else "video",
+        size,
+        resolver=resolver_from_env(),
     )
 
 
