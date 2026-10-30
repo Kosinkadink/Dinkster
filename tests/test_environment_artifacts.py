@@ -331,7 +331,9 @@ def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
     accepted: bool,
 ):
     mirror, store = tmp_path / "mirror", tmp_path / "store"
-    _mirror(mirror, variant="mac-arm64" if target[0] == "macos" else "fixture-cpu", target=target)
+    base, _, _ = _mirror(
+        mirror, variant="mac-arm64" if target[0] == "macos" else "fixture-cpu", target=target
+    )
     catalog = discover((str(mirror),), "main")
     monkeypatch.setattr(environment_artifacts, "sys", SimpleNamespace(platform=host))
     monkeypatch.setattr(environment_artifacts, "machine", lambda: architecture)
@@ -341,6 +343,12 @@ def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
             acquire(catalog, variant, store)
         assert not store.exists()
         return
+    # Exercise host admission without trying to execute a foreign interpreter on the test host.
+    cached_wheels = store / "bases" / base["id"][7:] / "wheels"
+    cached_wheels.mkdir(parents=True)
+    (cached_wheels / base["wheels"][0]["filename"]).write_bytes(
+        b"base wheel bytes; execution is covered by generation tests"
+    )
     constraints = acquire(catalog, variant, store)
     assert "fixture-base==1.0 --hash=sha256:" in constraints.read_text()
     assert "nvidia-cublas" not in constraints.read_text()
