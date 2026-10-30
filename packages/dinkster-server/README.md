@@ -289,6 +289,19 @@ an empty JSON object, with no query parameters. It currently returns HTTP409,
 `reclaimedBytes`/`reclaimedFiles`. Repeating Clear is nondestructive. No policy
 request or individual complete owner manifest can bypass this global gate.
 
+The collector retains memory/disk, history and library reference barriers and
+their dependency closure through an exclusive vault claim and deletion. Its
+frontend integration gate is disabled in source, not exposed as a request
+option. Behind that gate, only verified adoption rows are candidates, in original
+adoption order. A supplied byte target stops collection once canonical vault
+bytes meet the target; Clear has no target. Untracked bytes and retained digests
+are excluded. Pending inventory blocks collection. Corrupt bytes or unsafe
+sidecars fail the item without dropping its recovery record. The adoption row
+is removed only after vault deletion, so an interrupted deletion can finish on
+the next pass. Reports count deleted blobs and sidecars separately as files and
+include their actual sizes, retained candidates and failed items. This does not
+enable automatic cap enforcement or scratch removal.
+
 `vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
 `adoptedBytes` sums recorded verified adoption sizes. Either is null when its
 state is unavailable. These byte totals are observations, not an atomic

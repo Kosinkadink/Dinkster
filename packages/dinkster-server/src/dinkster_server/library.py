@@ -1703,6 +1703,25 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
         raise web.HTTPForbidden(text="asset cleanup requires an operator")
     if request.query or await _json_body(request):
         raise web.HTTPBadRequest(text="asset cleanup accepts only an empty object")
+    from .app import STATE_KEY
+    from .cleanup import FRONTEND_RETENTION_COMPLETE, inspect_cleanup
+
+    if FRONTEND_RETENTION_COMPLETE:
+        library = request.app[LIBRARY_KEY]
+        state = request.app[STATE_KEY]
+        result = await inspect_cleanup(
+            library.vault,
+            library.store,
+            state.history,
+            state.engine.cache,
+            scratch_root=library.scratch_root,
+            collect=True,
+        )
+        return web.json_response(
+            result,
+            status=200 if result["collectionEnabled"] else 409,
+            headers={"Cache-Control": "no-store"},
+        )
     # Registered complete rows cannot certify that no unregistered client exists.
     return web.json_response(
         {

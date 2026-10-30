@@ -820,6 +820,254 @@ def test_cleanup_policy_persists_without_authorizing_collection(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("limit", [None, 17])
+@pytest.mark.parametrize("owner", ["catalog", "document", "history", "cache"])
+def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: int | None, owner: str
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        memory = MemoryLRUCache()
+        inventory = ProducedAssetInventory(vault.root)
+        data = [b"old", b"newest bytes", b"kept", b"u"]
+        digests = [digest_bytes(value) for value in data]
+        for index, (digest, value) in enumerate(zip(digests, data, strict=True)):
+            if index < 3:
+                inventory.pending(digest, len(value))
+            with vault.writer(digest) as writer:
+                writer.write(value)
+                writer.commit()
+                if index < 3:
+                    inventory.adopted(digest, len(value))
+        if owner == "catalog":
+            store.create("private", "kept output", digests[2], "application/octet-stream")
+        elif owner == "document":
+            store.retain_assets(
+                "private", "document", "workflow", [digests[2]], revision=0, complete=True
+            )
+        elif owner == "history":
+            history.put(make_record("retained-run", scope="private", asset_digests=(digests[2],)))
+        else:
+            ref = AssetRef(digests[2], "source", len(data[2]))
+            await memory.put(
+                "kept",
+                {"out": Value("asset<file>", digests[2], ValueMeta(ref.to_wire()), None)},
+            )
+        before = {p: p.stat().st_size for p in vault.root.rglob("*") if p.is_file()}
+        try:
+            path = vault.resolve(digests[0])
+            assert path is not None
+            with open_verified(path, digests[0]):
+                busy = await inspect_cleanup(
+                    vault, store, history, memory, scratch_root=tmp_path / "scratch", collect=True
+                )
+                assert busy["reclaimedBytes"] == 0
+                assert "vault_in_use" in cast(list[str], busy["blocked"])
+                assert path.read_bytes() == data[0]
+            result = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                memory,
+                scratch_root=tmp_path / "scratch",
+                collect=True,
+                limit_bytes=limit,
+            )
+            assert result["collectionEnabled"]
+            deleted = {p: size for p, size in before.items() if not p.exists()}
+            assert result["reclaimedBytes"] == sum(deleted.values())
+            assert result["reclaimedFiles"] == (4 if limit is None else 2)
+            assert result["failedItems"] == 0
+            assert not vault.has(digests[0])
+            assert vault.has(digests[1]) == (limit is not None)
+            for digest, value in zip(digests[2:], data[2:], strict=True):
+                kept = vault.resolve(digest)
+                assert kept is not None and kept.read_bytes() == value
+            if owner == "catalog":
+                assert store.query("private")[0].digest == digests[2]
+            again = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                memory,
+                scratch_root=tmp_path / "scratch",
+                collect=True,
+                limit_bytes=limit,
+            )
+            assert again["reclaimedBytes"] == again["reclaimedFiles"] == 0
+            assert [entry.digest for entry in inventory.entries()] == (
+                [digests[2]] if limit is None else [digests[1], digests[2]]
+            )
+        finally:
+            history.close()
+            store.close()
+
+    asyncio.run(scenario())
+
+
+def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        digest = digest_bytes(b"unreferenced")
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, 12)
+        with vault.writer(digest) as writer:
+            writer.write(b"unreferenced")
+            writer.commit()
+            inventory.adopted(digest, 12)
+        client = TestClient(
+            TestServer(
+                create_app(
+                    make_engine,
+                    SCHEMAS,
+                    library=ServerLibrary(vault, store, scratch_root=tmp_path / "scratch"),
+                    history=history,
+                )
+            )
+        )
+        await client.start_server()
+        try:
+            response = await client.post("/api/library/storage/clear", json={})
+            assert response.status == 200
+            result = await response.json()
+            assert result["reclaimedFiles"] == 2
+            assert result["reclaimedBytes"] > 12
+            assert not vault.has(digest)
+            response = await client.post("/api/library/storage/clear", json={})
+            assert response.status == 200
+            assert (await response.json())["reclaimedFiles"] == 0
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_collection_keeps_reference_barriers_until_delete_settles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+    entered = threading.Event()
+    finish = threading.Event()
+
+    class PausedVault(AssetVault):
+        def delete(self, digest: str) -> bool:
+            entered.set()
+            assert finish.wait(10)
+            return super().delete(digest)
+
+    async def scenario() -> None:
+        vault = PausedVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        cache = MemoryLRUCache()
+        digest = digest_bytes(b"orphan")
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, 6)
+        with vault.writer(digest) as writer:
+            writer.write(b"orphan")
+            writer.commit()
+            inventory.adopted(digest, 6)
+        task = asyncio.create_task(
+            inspect_cleanup(
+                vault, store, history, cache, scratch_root=tmp_path / "scratch", collect=True
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            for path in (tmp_path / "library", tmp_path / "history"):
+                with sqlite3.connect(path, timeout=0) as db:
+                    with pytest.raises(sqlite3.OperationalError, match="locked"):
+                        db.execute("BEGIN IMMEDIATE")
+            mutation_entered = asyncio.Event()
+
+            async def mutate() -> None:
+                mutation_entered.set()
+                await cache.put("new", {})
+
+            mutation = asyncio.create_task(mutate())
+            await mutation_entered.wait()
+            assert not mutation.done()
+            task.cancel()
+            checkpoint = asyncio.Event()
+            asyncio.get_running_loop().call_soon(checkpoint.set)
+            await checkpoint.wait()
+            assert not task.done()
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            await mutation
+            assert not vault.has(digest)
+            assert inventory.entries() == ()
+        finally:
+            finish.set()
+            await asyncio.gather(task, return_exceptions=True)
+            history.close()
+            store.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("damage", ["corrupt", "linked-sidecar", "pending"])
+def test_collection_refuses_unsafe_adoptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        data = b"safe produced bytes"
+        digest = digest_bytes(data)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(data))
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            path = writer.commit()
+            if damage != "pending":
+                inventory.adopted(digest, len(data))
+        outside = tmp_path / "outside"
+        outside.write_bytes(b"never touch this")
+        if damage == "corrupt":
+            path.write_bytes(b"x" * len(data))
+        elif damage == "linked-sidecar":
+            path.with_name(path.name + ".unsafe").symlink_to(outside)
+        before = path.read_bytes()
+        try:
+            result = await inspect_cleanup(
+                vault,
+                store,
+                history,
+                MemoryLRUCache(),
+                scratch_root=tmp_path / "scratch",
+                collect=True,
+            )
+            assert result["reclaimedBytes"] == result["reclaimedFiles"] == 0
+            if damage == "pending":
+                assert not result["collectionEnabled"]
+                assert "adoption_pending" in cast(list[str], result["blocked"])
+            else:
+                assert result["failedItems"] == 1
+            assert path.read_bytes() == before
+            assert outside.read_bytes() == b"never touch this"
+            assert len(inventory.entries()) == 1
+        finally:
+            history.close()
+            store.close()
+
+    asyncio.run(scenario())
+
+
 def test_storage_accounting_refuses_escaping_vault_shard(tmp_path: Path) -> None:
     async def scenario() -> None:
         vault = AssetVault(tmp_path / "vault")

@@ -1,4 +1,4 @@
-"""Operator accounting with reference owners held, without destructive collection."""
+"""Operator accounting and gated collection with reference owners held."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetVault, LibraryStore, open_verified
+from dinkster_assets.identity import digest_file
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
     ProducedScratchState,
@@ -28,6 +29,8 @@ from .history import HistoryStore
 from .library import run_owned_thread
 
 RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
+# Individual owner manifests cannot certify unregistered frontend owners.
+FRONTEND_RETENTION_COMPLETE = False
 
 
 async def inspect_cleanup(
@@ -37,16 +40,19 @@ async def inspect_cleanup(
     cache: CacheStore,
     *,
     scratch_root: Path | None = None,
+    collect: bool = False,
+    limit_bytes: int | None = None,
 ) -> dict[str, object]:
     """Hold memory, then disk, history and library in publication order.
 
     Blocking owners are acquired and released in one owned worker; cancellation
     must not release RAM ownership before that worker settles. This inspects
-    known owners only, not global completeness or eligibility for deletion.
+    known owners only. Collection additionally requires the frontend integration
+    gate and every reference/publication barrier to remain held through deletion.
     """
     memories: dict[int, MemoryLRUCache] = {}
     disks: dict[Path, DiskCacheStore] = {}
-    blocked = ["owner_completeness_unknown"]
+    blocked = [] if FRONTEND_RETENTION_COMPLETE else ["owner_completeness_unknown"]
 
     def visit(layer: CacheStore) -> None:
         if isinstance(layer, LayeredCache):
@@ -70,7 +76,9 @@ async def inspect_cleanup(
         except AssetError:
             blocked.append("cache_reference_state_unavailable")
         return await run_owned_thread(
-            lambda: _inspect(vault, store, history, disks, roots, blocked, scratch_root)
+            lambda: _inspect(
+                vault, store, history, disks, roots, blocked, scratch_root, collect, limit_bytes
+            )
         )
 
 
@@ -235,6 +243,53 @@ def _vault_bytes(vault: AssetVault) -> int:
     return size
 
 
+def _collect_vault(
+    vault: AssetVault, references: frozenset[str], limit_bytes: int | None
+) -> dict[str, int]:
+    """Delete only verified adoptions under the caller's held roots and vault claim."""
+    inventory = ProducedAssetInventory(vault.root)
+    entries = inventory.entries()
+    if any(row.adopted_at_ns is None for row in entries):
+        raise AssetError("produced adoption is pending")
+    remaining = _vault_bytes(vault)
+    reclaimed_bytes = reclaimed_files = failed = 0
+    for row in entries:
+        if row.digest in references or (limit_bytes is not None and remaining <= limit_bytes):
+            continue
+        hexpart = row.digest.split(":", 1)[1]
+        path = vault.root / hexpart[:2] / hexpart
+        removed: list[tuple[Path, int]] = []
+        try:
+            if path.parent.is_symlink() or path.is_symlink():
+                raise AssetError("collection must not follow symlinks")
+            siblings = list(path.parent.glob(f"{path.name}.*"))
+            if any(p.is_symlink() or not p.is_file() for p in siblings):
+                raise AssetError("collection sidecars are unsafe")
+            if path.exists():
+                # The exclusive vault claim replaces managed reader acquisition here.
+                if path.stat().st_size != row.size or digest_file(path) != row.digest:
+                    raise AssetError("produced bytes disagree with adoption")
+                removed.append((path, row.size))
+            removed.extend((p, p.stat().st_size) for p in siblings)
+            vault.delete(row.digest)
+            inventory.forget_adoption(row)
+        except (AssetError, OSError):
+            failed += 1
+        finally:
+            for candidate, size in removed:
+                if not candidate.exists():
+                    reclaimed_bytes += size
+                    reclaimed_files += 1
+                    if candidate == path:
+                        remaining -= size
+    return {
+        "reclaimedBytes": reclaimed_bytes,
+        "reclaimedFiles": reclaimed_files,
+        "retainedFiles": sum(row.digest in references for row in entries),
+        "failedItems": failed,
+    }
+
+
 def _inspect(
     vault: AssetVault,
     store: LibraryStore,
@@ -243,12 +298,15 @@ def _inspect(
     roots: set[str],
     blocked: list[str],
     scratch_root: Path | None,
+    collect: bool,
+    limit_bytes: int | None,
 ) -> dict[str, object]:
     temporary_bytes: int | None = None
     vault_bytes: int | None = None
     adopted_bytes: int | None = None
     retained_assets: int | None = None
     vault_ownership_available: bool | None = None
+    collection: dict[str, int] = {"reclaimedBytes": 0, "reclaimedFiles": 0}
     try:
         if scratch_root is None:
             raise AssetError("scratch root is not configured")
@@ -284,11 +342,13 @@ def _inspect(
                 )
                 if not vault_ownership_available:
                     blocked.append("vault_in_use")
+                elif collect and not blocked:
+                    collection = _collect_vault(vault, references, limit_bytes)
             except (AssetError, OSError):
                 blocked.append("vault_ownership_state_unavailable")
     except (AssetError, OSError):
         blocked.append("reference_state_unavailable")
-    return {
+    status: dict[str, object] = {
         "temporaryBytes": temporary_bytes,
         "vaultBytes": vault_bytes,
         "adoptedBytes": adopted_bytes,
@@ -296,8 +356,11 @@ def _inspect(
         "knownRetainedAssets": retained_assets,
         "vaultOwnershipAvailable": vault_ownership_available,
         "blocked": sorted(set(blocked)),
-        "collectionEnabled": False,
+        "collectionEnabled": not blocked,
     }
+    if collect:
+        status.update(collection)
+    return status
 
 
 async def handle_cleanup_status(request: web.Request) -> web.Response:

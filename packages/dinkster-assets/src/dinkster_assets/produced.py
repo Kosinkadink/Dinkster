@@ -93,6 +93,21 @@ class ProducedAssetInventory:
         except sqlite3.Error as exc:
             raise AssetError("produced asset inventory is unavailable") from exc
 
+    def forget_adoption(self, adoption: ProducedAssetAdoption) -> None:
+        """Finish deletion after owned bytes are gone, without discarding pending work."""
+        if adoption.adopted_at_ns is None:
+            raise AssetError("pending adoption cannot be forgotten")
+        try:
+            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+                changed = db.execute(
+                    "DELETE FROM adoptions WHERE digest = ? AND size = ? AND adopted_at_ns = ?",
+                    (adoption.digest, adoption.size, adoption.adopted_at_ns),
+                ).rowcount
+                if changed != 1:
+                    raise AssetError("produced asset adoption changed during deletion")
+        except sqlite3.Error as exc:
+            raise AssetError("produced asset inventory is unavailable") from exc
+
     def entries(self) -> tuple[ProducedAssetAdoption, ...]:
         """Read existing recovery state; missing or unreadable state is not emptiness."""
         try:
