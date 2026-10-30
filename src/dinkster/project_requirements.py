@@ -1,8 +1,9 @@
-"""Read environment-owned project references without changing library state."""
+"""Plan and materialize environment-owned requirements without changing library records."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,6 +11,7 @@ from typing import cast
 
 from dinkster_assets import (
     AssetError,
+    AssetNeed,
     AssetRef,
     AssetSource,
     AssetVault,
@@ -18,6 +20,7 @@ from dinkster_assets import (
     PackAssetCatalog,
     ProvenanceStore,
     RemoteSource,
+    acquire_need,
 )
 from dinkster_registry.artifact import unpack_artifact
 from dinkster_registry.install import Lockfile
@@ -84,8 +87,9 @@ def load_project_requirements(
     if not (library / "vault").is_dir():
         raise RequirementError("project workflow vault is unavailable")
     vault = AssetVault(library / "vault")
-    store = LibraryStore(library / "library.sqlite", read_only=True)
+    store = None
     try:
+        store = LibraryStore(library / "library.sqlite", read_only=True)
         records: list[LibraryRecord] = []
         documents: list[object] = []
         for scope, record_id in sorted(selected):
@@ -114,8 +118,14 @@ def load_project_requirements(
             }
             for record in records
         )
+    except sqlite3.Error as exc:
+        raise RequirementError(
+            f"cannot open library read-only: {exc}; SQLite coordination files "
+            "must be accessible and WAL recovery must complete before planning"
+        ) from exc
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 def plan_project_requirements(
@@ -203,3 +213,106 @@ def plan_project_requirements(
         pack_unavailable=unavailable,
     )
     return {"requirements": requirements.to_wire(), "plan": plan.to_wire(), "inputs": list(inputs)}
+
+
+def apply_project_requirements(
+    root: Path,
+    *,
+    approved: dict[str, object],
+    generation: Path,
+    variant: str,
+    source_generation: Path | None = None,
+    catalog_lock: Path | None = None,
+    artifacts: Path | None = None,
+) -> dict[str, object]:
+    """Materialize only an unchanged approved plan over an admitted target generation."""
+    from .generation_packs import load_generation_packs
+
+    current = plan_project_requirements(
+        root,
+        variant=variant,
+        source_generation=source_generation,
+        catalog_lock=catalog_lock,
+        artifacts=artifacts,
+    )
+    if current != approved:
+        raise RequirementError("project requirement plan changed; request a new plan")
+    actions = _object(current["plan"], "project plan")
+    if actions["errors"]:
+        raise RequirementError("project requirement plan has blocking errors")
+    target_variant, specs = load_generation_packs(generation)
+    if target_variant != variant:
+        raise RequirementError("target generation variant differs from approved plan")
+    target = Lockfile.from_record_json((generation / "dinkster.lock").read_text("utf-8"))
+    selected = (
+        Lockfile.from_record_json(catalog_lock.read_text("utf-8"))
+        if catalog_lock is not None
+        else Lockfile()
+    )
+    required = _object(current["requirements"], "project requirements")
+    for raw in cast("list[object]", required["packs"]):
+        pack = _object(raw, "required pack")
+        installed = target.get(cast(str, pack["pack"]))
+        if installed is None or installed.version != pack["version"]:
+            raise RequirementError(f"target generation lacks approved pack {pack['pack']}")
+        if installed != selected.get(installed.pack):
+            raise RequirementError(f"target pack {installed.pack} differs from selected catalog")
+    for raw in cast("list[object]", actions["assets"]):
+        action = _object(raw, "asset action")
+        for name in cast("list[str]", action.get("packagedFrom", [])):
+            if target.get(name) is None or target.get(name) != selected.get(name):
+                raise RequirementError(f"target pack {name} differs from selected catalog")
+    declared = PackAssetCatalog()
+    declared.replace_all(
+        (canonical_name(manifest.name), manifest.path.parent, manifest.assets)
+        for spec in specs
+        for manifest in (load_manifest(spec.manifest),)
+    )
+
+    def revalidate(_source: AssetSource | None = None, _size: int = 0) -> None:
+        requirements, inputs = load_project_requirements(root)
+        if requirements.to_wire() != current["requirements"] or list(inputs) != current["inputs"]:
+            raise RequirementError("project workflow inputs changed; request a new plan")
+
+    vault = AssetVault(root / "library/vault")
+    for raw in cast("list[object]", actions["assets"]):
+        revalidate()
+        action = _object(raw, "asset action")
+        ref = AssetRef.from_wire(action)
+        sources: list[AssetSource] = [
+            RemoteSource(url) for url in cast("list[str]", action["sources"])
+        ]
+        need = declared.need_for(ref.digest)
+        if need is not None:
+            sources.extend(
+                source
+                for source in need.sources
+                if not isinstance(source, RemoteSource)
+                and source.pack in cast("list[str]", action.get("packagedFrom", []))
+            )
+        result = acquire_need(
+            AssetNeed(
+                name=ref.name,
+                digest=ref.digest,
+                size=ref.size,
+                media_type=ref.media_type,
+                sources=tuple(sources),
+            ),
+            vault,
+            pack_roots=declared.pack_roots(),
+            before_publish=revalidate,
+        )
+        if not result.ok:
+            raise RequirementError(f"asset {ref.digest}: {result.detail}")
+    after = plan_project_requirements(
+        root,
+        variant=variant,
+        source_generation=generation,
+        catalog_lock=catalog_lock,
+        artifacts=artifacts,
+    )
+    if any(after[key] != current[key] for key in ("requirements", "inputs")):
+        raise RequirementError("project workflow inputs changed; request a new plan")
+    if any(_object(after["plan"], "project plan").values()):
+        raise RequirementError("target generation does not satisfy the approved requirements")
+    return after

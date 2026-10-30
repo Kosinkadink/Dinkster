@@ -571,6 +571,21 @@ namespaces = [
     "VOIDWarpedNoise",
     "LoadVideo",
     "SaveSVGNode",
+    "SaveImage",
+    "PreviewImage",
+    "LoadImage",
+    "LoadImageMask",
+    "LoadImageOutput",
+    "LoadLatent",
+    "SaveLatent",
+    "CLIPSave",
+    "VAESave",
+    "SaveAnimatedWEBP",
+    "SaveAnimatedPNG",
+    "LoraSave",
+    "CheckpointSave",
+    "ModelSave",
+    "SaveImageAdvanced",
 ]
 
 [pack.sandbox]

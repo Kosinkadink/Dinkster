@@ -8,8 +8,11 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -35,7 +38,7 @@ from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
 
 from dinkster.mounts_api import MountService, add_mount_routes
-from dinkster.project_requirements import load_project_requirements
+from dinkster.project_requirements import load_project_requirements, plan_project_requirements
 from dinkster.workflow_requirements import (
     PackRequirement,
     RequirementError,
@@ -587,6 +590,360 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     blob.write_bytes(b"x" * len(data))
     with pytest.raises(AssetError):
         load_project_requirements(tmp_path)
+
+
+def test_project_plan_observes_live_commits_and_reports_read_only_open_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster.workflow_requirements import main
+
+    library = tmp_path / "library"
+    vault = AssetVault(library / "vault")
+    documents = []
+    for content in (b"old asset", b"new asset"):
+        asset = AssetRef(digest_bytes(content), "model.bin", len(content)).to_wire()
+        document = {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "graphs": {"main": {"nodes": {}, "valueSources": {"model": {"value": asset}}}},
+        }
+        data = json.dumps(document).encode()
+        identity = digest_bytes(data)
+        with vault.writer(identity) as writer:
+            writer.write(data)
+            writer.commit()
+        documents.append((identity, asset))
+    database = library / "library.sqlite"
+    store = LibraryStore(database)
+    record = store.create(
+        "local", "Workflow", documents[0][0], "application/x-dinkster-workflow+json"
+    )
+    store.close()
+    project = tmp_path / "project.json"
+    project.write_text(
+        json.dumps(
+            {"format": "dinkster.project/1", "workflows": [{"scope": "local", "id": record.id}]}
+        )
+    )
+    arguments = [
+        "project-plan",
+        "--project-root",
+        str(tmp_path),
+        "--variant",
+        "linux-cpu",
+        "--json",
+    ]
+    if os.name == "posix" and os.geteuid() != 0:
+        mode = library.stat().st_mode
+        library.chmod(0o555)
+        try:
+            assert main(arguments) == 1
+            output = capsys.readouterr()
+            assert output.out == ""
+            assert "cannot open library read-only" in output.err
+            assert "readonly database" in output.err
+            assert "SQLite coordination files" in output.err
+        finally:
+            library.chmod(mode)
+
+    store = LibraryStore(database)
+    try:
+        before = {path: path.read_bytes() for path in vault.root.rglob("*") if path.is_file()}
+        project_bytes = project.read_bytes()
+        planned = plan_project_requirements(tmp_path, variant="linux-cpu")
+        assert planned["plan"] == {
+            "packs": [],
+            "assets": [{**documents[0][1], "sources": []}],
+            "errors": [],
+        }
+        assert store.get("local", record.id) == record
+        assert project.read_bytes() == project_bytes
+        assert {path: path.read_bytes() for path in before} == before
+
+        reading, committed = threading.Event(), threading.Event()
+        read_bytes = AssetRef.read_bytes
+
+        def wait_for_commit(ref: AssetRef) -> bytes:
+            reading.set()
+            assert committed.wait(10), "writer did not commit"
+            return read_bytes(ref)
+
+        with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as executor:
+            patch.setattr(AssetRef, "read_bytes", wait_for_commit)
+            pending = executor.submit(load_project_requirements, tmp_path)
+            try:
+                assert reading.wait(10), "planner did not read its workflow"
+                updated = store.update("local", record.id, record.revision, digest=documents[1][0])
+                assert updated is not None
+            finally:
+                committed.set()
+            with pytest.raises(RequirementError, match="inputs changed; request a new plan"):
+                pending.result(timeout=10)
+        next_plan = plan_project_requirements(tmp_path, variant="linux-cpu")
+        assert next_plan["plan"] == {
+            "packs": [],
+            "assets": [{**documents[1][1], "sources": []}],
+            "errors": [],
+        }
+        assert next_plan["inputs"] == [
+            {
+                "scope": "local",
+                "id": record.id,
+                "revision": updated.revision,
+                "digest": documents[1][0],
+            }
+        ]
+        assert store.get("local", record.id) == updated
+        assert project.read_bytes() == project_bytes
+        assert {path: path.read_bytes() for path in before} == before
+    finally:
+        store.close()
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sqlite3, sys
+connection = sqlite3.connect(sys.argv[1])
+connection.execute('UPDATE records SET digest=?, revision=revision+1 WHERE id=?',
+                   (sys.argv[3], sys.argv[2]))
+connection.commit()
+connection.execute('UPDATE records SET digest=?, revision=revision+1 WHERE id=?',
+                   (sys.argv[4], sys.argv[2]))
+os._exit(0)
+""",
+            str(database),
+            record.id,
+            documents[0][0],
+            documents[1][0],
+        ],
+        check=True,
+        timeout=30,
+    )
+    assert database.with_name(database.name + "-wal").is_file()
+    post_crash = plan_project_requirements(tmp_path, variant="linux-cpu")
+    assert post_crash["plan"] == {
+        "packs": [],
+        "assets": [{**documents[0][1], "sources": []}],
+        "errors": [],
+    }
+    assert post_crash["inputs"] == [
+        {
+            "scope": "local",
+            "id": record.id,
+            "revision": updated.revision + 1,
+            "digest": documents[0][0],
+        }
+    ]
+    assert project.read_bytes() == project_bytes
+    assert {path: path.read_bytes() for path in before} == before
+
+    corrupt = tmp_path / "corrupt-project"
+    (corrupt / "library/vault").mkdir(parents=True)
+    (corrupt / "project.json").write_bytes(project_bytes)
+    (corrupt / "library/library.sqlite").write_bytes(b"not a SQLite database")
+    failed_arguments = list(arguments)
+    failed_arguments[2] = str(corrupt)
+    assert main(failed_arguments) == 1
+    output = capsys.readouterr()
+    assert output.out == "" and "file is not a database" in output.err
+    assert (corrupt / "library/library.sqlite").read_bytes() == b"not a SQLite database"
+    assert (corrupt / "project.json").read_bytes() == project_bytes
+    assert list((corrupt / "library/vault").iterdir()) == []
+
+
+def test_confirmed_project_apply_revalidates_and_materializes_only_approved_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_generations import project_operation
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from test_environment_generations import _standalone_tree
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
+    root, source, target = tmp_path / "project", tmp_path / "source", tmp_path / "target"
+    root.mkdir()
+    source.mkdir()
+    target.mkdir()
+    (source / "dinkster.lock").write_text(Lockfile().record_json())
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    payload = b"approved packaged asset"
+    (pack / "model.bin").write_bytes(payload)
+    identity = digest_bytes(payload)
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "example"\n[pack.entry]\nnodes = "poison:NODES"\n'
+        '\n[[pack.assets]]\nid = "model"\nname = "Model"\n'
+        f'digest = "{identity}"\nfile = "model.bin"\n'
+    )
+    (pack / "poison.py").write_text('raise RuntimeError("planning must not import node code")\n')
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "building.zip"
+    artifact_digest = build_artifact(pack, archive)
+    archive = archive.rename(artifacts / f"{artifact_digest.split(':')[1]}.zip")
+    lock = Lockfile.of([LockedPack("example", "1.0.0", artifact_digest, "author", ("example",))])
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(lock.record_json())
+    stage_generation_packs(target, lock, {"example": archive})
+    (target / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "inProcessPacks": ["example"],
+            }
+        )
+    )
+    for directory in (source, target):
+        _standalone_tree(directory / "python")
+    project = root / "project.json"
+    settings = {
+        "format": "dinkster.project/1",
+        "additions": {
+            "packs": [{"pack": "example", "version": "1.0.0"}],
+            "assets": [AssetRef(identity, "model.bin", len(payload)).to_wire()],
+        },
+    }
+    project.write_text(json.dumps(settings))
+    arguments = {
+        "generation": source,
+        "variant": "linux-cpu",
+        "catalog_lock": catalog,
+        "artifacts": artifacts,
+    }
+    approved = project_operation(root, **arguments)
+    actions = cast(dict, approved["plan"])
+    assert actions["packs"] == [{"pack": "example", "version": "1.0.0"}]
+    assert actions["assets"][0]["packagedFrom"] == ["example"]
+    assert not (root / "library").exists()
+    original_settings = project.read_bytes()
+    settings["additions"]["packs"][0]["version"] = "2.0.0"
+    project.write_text(json.dumps(settings))
+    with pytest.raises(EnvironmentError, match="plan changed"):
+        project_operation(root, **arguments, approved=approved, target_generation=target)
+    assert not (root / "library").exists()
+    project.write_bytes(original_settings)
+    failed = target / "pack-sources/example/model.bin"
+    verified = failed.read_bytes()
+    failed.write_bytes(b"corrupt packaged content")
+    with pytest.raises(EnvironmentError, match="digest differs from lock"):
+        project_operation(root, **arguments, approved=approved, target_generation=target)
+    assert not (root / "library").exists()
+    failed.write_bytes(verified)
+    target_lock = target / "dinkster.lock"
+    target_lock.write_text(
+        Lockfile.of([replace(lock.packs[0], publisher="different")]).record_json()
+    )
+    with pytest.raises(EnvironmentError, match="differs from selected catalog"):
+        project_operation(root, **arguments, approved=approved, target_generation=target)
+    assert not (root / "library").exists()
+    target_lock.write_text(lock.record_json())
+    applied = project_operation(root, **arguments, approved=approved, target_generation=target)
+    assert applied["plan"] == {"packs": [], "assets": [], "errors": []}
+    assert applied["requirements"] == approved["requirements"]
+    vault = AssetVault(root / "library/vault")
+    assert AssetRef(identity, "model.bin", len(payload), resolver=vault).read_bytes() == payload
+    assert project.read_bytes() == original_settings
+    assert (source / "dinkster.lock").read_text() == Lockfile().record_json()
+
+
+def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_path: Path) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from dinkster_assets.vault import AssetPublicationError
+
+    from dinkster.project_requirements import apply_project_requirements
+
+    requested, release = threading.Event(), threading.Event()
+    payload = b"download approved before a concurrent workflow edit"
+    identity = digest_bytes(payload)
+    vault = AssetVault(tmp_path / "library/vault")
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "graphs": {
+            "main": {
+                "nodes": {},
+                "valueSources": {
+                    "asset": {"value": AssetRef(identity, "model.bin", len(payload)).to_wire()}
+                },
+            }
+        },
+    }
+    data = json.dumps(document).encode()
+    workflow_digest = digest_bytes(data)
+    with vault.writer(workflow_digest) as writer:
+        writer.write(data)
+        writer.commit()
+    library = LibraryStore(tmp_path / "library/library.sqlite")
+    record = library.create(
+        "local", "Workflow", workflow_digest, "application/x-dinkster-workflow+json"
+    )
+    (tmp_path / "project.json").write_text(
+        json.dumps(
+            {"format": "dinkster.project/1", "workflows": [{"scope": "local", "id": record.id}]}
+        )
+    )
+    target = tmp_path / "generation"
+    target.mkdir()
+    (target / "dinkster.lock").write_text(Lockfile().record_json())
+    (target / "generation.json").write_text(
+        json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requested.set()
+            if not release.wait(30):
+                self.send_error(500)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        ProvenanceStore(tmp_path / "library/provenance.json").add(
+            ProvenanceRecord(identity, sources=(f"http://127.0.0.1:{server.server_port}/asset",))
+        )
+        approved = plan_project_requirements(tmp_path, variant="linux-cpu")
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(
+                apply_project_requirements,
+                tmp_path,
+                approved=approved,
+                generation=target,
+                variant="linux-cpu",
+            )
+            try:
+                assert requested.wait(30), "confirmed asset download did not begin"
+                updated = library.update("local", record.id, record.revision, name="Renamed")
+            finally:
+                release.set()
+            with pytest.raises(AssetPublicationError):
+                future.result(timeout=30)
+        assert library.get("local", record.id) == updated
+        with pytest.raises(AssetError):
+            AssetRef(identity, "model.bin", len(payload), resolver=vault).read_bytes()
+        assert (
+            AssetRef(workflow_digest, "workflow.json", len(data), resolver=vault).read_bytes()
+            == data
+        )
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=30)
+        library.close()
 
 
 def test_empty_project_requirements_do_not_create_library(

@@ -16,6 +16,8 @@ from dinkster_api.v1 import (
     list_children,
 )
 
+from .family_migrations import ordered_family_migration
+
 _ITEM = TypeExpr.wildcard()
 _ITEMS = TypeExpr.list_of(_ITEM)
 
@@ -40,6 +42,7 @@ class CreateList(Node):
             outputs=(OutputSpec("list", _ITEMS),),
             search_terms=("Image Iterator", "Text Iterator", "Iterator"),
             input_values=True,
+            replacements=(ordered_family_migration("CreateList", "inputs", "input", ("list",)),),
         )
 
     @classmethod

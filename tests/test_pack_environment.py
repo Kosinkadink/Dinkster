@@ -251,8 +251,16 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         constraints=constraints,
         find_links=[wheels],
     )
-    assert len(payloads) == 13
+    assert len(payloads) == 11
+    assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
+    assert {entry.pack for entry in inventory.packs} == {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+    }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"
         lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
@@ -381,7 +389,7 @@ def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> No
 
 
 def test_generation_adapter_preflights_rebuilds_and_reports_drift(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
     lock = PackLock(
@@ -432,7 +440,26 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
         rebuild_generation(context, plans)
     unrelated.rmdir()
     assert not context.wheel_store.exists()
-    assert rebuild_generation(context, plans) == ("rebuilt pack example from its dependency lock",)
+    context = replace(context, offline=True)
+
+    def refuse_network(*args, **kwargs):
+        pytest.fail("offline pack rebuilding attempted a download")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(urllib.request, "urlopen", refuse_network)
+        with pytest.raises(ProvisionError, match="offline pack wheel missing or corrupt"):
+            rebuild_generation(context, plans)
+        assert not context.wheel_store.exists()
+        context.wheel_store.mkdir()
+        cached = context.wheel_store / extra.filename
+        cached.write_bytes(b"corrupt cached pack wheel")
+        with pytest.raises(ProvisionError, match="offline pack wheel missing or corrupt"):
+            rebuild_generation(context, plans)
+        assert cached.read_bytes() == b"corrupt cached pack wheel"
+        cached.write_bytes((tmp_path / extra.filename).read_bytes())
+        assert rebuild_generation(context, plans) == (
+            "rebuilt pack example from its dependency lock",
+        )
     assert doctor_generation(context) == ()
     assert current.read_text() == "1\n"
     assert (old / "packs/example/pack-lock.json").is_file()
@@ -460,6 +487,14 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert result["packs"] == [
         {"pack": "example", "conflicts": [], "downloadBytes": 0, "ownEnvironmentBytes": 9000}
     ]
+    assert main(["references", *args]) == 0
+    assert json.loads(capsys.readouterr().out)["wheelHashes"] == [extra.sha256]
+    assert main(["references", *args, "--in-process-pack", "missing"]) == 1
+    assert "no recorded dependency lock" in json.loads(capsys.readouterr().out)["changes"][0]
+    (target / "packs/unreadable").write_text("not a pack directory")
+    assert main(["references", *args]) == 1
+    assert "readable pack directories" in json.loads(capsys.readouterr().out)["changes"][0]
+    (target / "packs/unreadable").unlink()
     pack_python = venv_python(target / "packs/example")
     unavailable = pack_python.with_name("unavailable")
     pack_python.rename(unavailable)

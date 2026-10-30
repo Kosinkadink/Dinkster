@@ -72,20 +72,6 @@ def stop(process: subprocess.Popen[str]) -> None:
 def verify_launch(state: Path, python: Path, *, require_frontend: bool = False) -> None:
     state.mkdir(parents=True)
     url = f"http://127.0.0.1:{available_port()}"
-    frontend_args: list[str] = []
-    if require_frontend:
-        bundle = subprocess.check_output(
-            [
-                str(python.absolute()),
-                "-c",
-                "from dinkster.frontend import discover_frontend_bundle; "
-                "bundle = discover_frontend_bundle(); "
-                "assert bundle is not None, 'installed frontend bundle not found'; print(bundle)",
-            ],
-            cwd=state,
-            text=True,
-        ).strip()
-        frontend_args = ["--frontend-root", bundle]
     with (state / "backend.log").open("w") as log:
         backend = subprocess.Popen(
             [
@@ -101,7 +87,6 @@ def verify_launch(state: Path, python: Path, *, require_frontend: bool = False) 
                 "--install-root",
                 str(state / "packs"),
                 "--no-default-packs",
-                *frontend_args,
             ],
             cwd=state,
             stdout=log,
