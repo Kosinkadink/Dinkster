@@ -30,6 +30,7 @@ from dinkster_values import (
     LATENT_UPSCALE_MODEL_TYPE,
     LAYERS_TYPE,
     LOAD3D_CAMERA_TYPE,
+    LOAD3D_MODEL_INFO_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
     MOGE_GEOMETRY_TYPE,
@@ -60,7 +61,7 @@ from dinkster_values import (
     validate_latent_encoded,
 )
 
-from .camera_wire import register_load3d_camera_type
+from .camera_wire import register_load3d_camera_type, register_load3d_model_info_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
 from .hook_values import (
     normalize_clip_hook_owners,
@@ -195,6 +196,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         registry.spec(LOAD3D_CAMERA_TYPE)
         if LOAD3D_CAMERA_TYPE in registry
         else register_load3d_camera_type(registry)
+    )
+    registered.append(
+        registry.spec(LOAD3D_MODEL_INFO_TYPE)
+        if LOAD3D_MODEL_INFO_TYPE in registry
+        else register_load3d_model_info_type(registry)
     )
     registered.append(
         registry.spec(POSE_KEYPOINT_TYPE)
