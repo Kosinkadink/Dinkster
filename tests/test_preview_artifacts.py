@@ -307,6 +307,94 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("count,enabled", [(65, True), (4096, True), (65, False)])
+def test_saved_file_previews_are_lazy_file_backed_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int, enabled: bool, mp4: bytes
+) -> None:
+    from dinkster_api.v1 import (
+        CORE_STRING,
+        Node,
+        NodeSchema,
+        OutputSpec,
+        TypeExpr,
+        attach_saved_artifact,
+        publish_saved_file_preview,
+    )
+    from dinkster_protocol import Invocation
+    from dinkster_values import TypeRegistry, register_core_types
+    from dinkster_workers import InProcessWorker
+    from dinkster_workers.boundary import ValueCodec, decode_result, encode_result
+
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(tmp_path / "scratch"))
+    calls = 0
+
+    def encode() -> bytes:
+        nonlocal calls
+        calls += 1
+        return mp4
+
+    class Save(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="preview-fixture.saved",
+                outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+            )
+
+        @classmethod
+        def execute(cls) -> object:
+            for index in range(count):
+                ref = {
+                    "digest": digest_bytes(b"duplicate saved bytes"),
+                    "name": f"saved-{index}.exr",
+                    "size": 21,
+                    "mediaType": "image/x-exr",
+                    "virtualPath": f"mounts/output/saved-{index}.exr",
+                }
+                attach_saved_artifact(ref)
+                assert (
+                    publish_saved_file_preview(
+                        ref, encode, name="preview.mp4", media_type="video/mp4"
+                    )
+                    is enabled
+                )
+            return cls.outputs(out="saved")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schema = Save.schema()
+        worker = InProcessWorker({schema.node_type: Save}, registry)
+        result = await worker.invoke(
+            Invocation(
+                "saved-preview",
+                "save",
+                schema.node_type,
+                {},
+                schema,
+                saved_file_previews_enabled=enabled,
+            )
+        )
+        assert result.error is None
+        assert len(result.saved_artifact_claims) == count
+        assert len(result.saved_file_previews) == (count if enabled else 0)
+        assert result.preview_artifacts == ()
+        codec = ValueCodec(registry)
+        header, blobs, segments = encode_result(codec, result, "saved-preview", 0)
+        assert not segments
+        assert mp4 not in blobs
+        decoded, _ = decode_result(codec, header, blobs, [])
+        assert decoded.saved_file_previews == result.saved_file_previews
+        if enabled:
+            assert len({str(item["saved"]) for item in decoded.saved_file_previews}) == count
+            assert AssetVault(tmp_path / "scratch" / "produced-assets").digests() == [
+                digest_bytes(mp4)
+            ]
+
+    asyncio.run(scenario())
+    assert calls == (count if enabled else 0)
+
+
 @pytest.mark.parametrize("failure", ("", "revoked", "offline", "unselected", "corrupt", "catalog"))
 def test_encoded_retention_requires_live_output_and_recovers_catalog(
     tmp_path: Path, mp4: bytes, failure: str

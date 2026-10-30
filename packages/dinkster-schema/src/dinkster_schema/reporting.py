@@ -152,6 +152,39 @@ _preview_artifact_sink: ContextVar[Callable[[EncodedPreviewArtifact], None] | No
 )
 
 
+SavedFilePreviewSink = Callable[[Mapping[str, object], Callable[[], bytes], str, str], bool]
+_saved_file_preview_sink: ContextVar[SavedFilePreviewSink | None] = ContextVar(
+    "dinkster_saved_file_preview_sink", default=None
+)
+
+
+def publish_saved_file_preview(
+    ref: Mapping[str, object],
+    encode: Callable[[], bytes],
+    *,
+    name: str,
+    media_type: str,
+) -> bool:
+    """Try a lazy optional preview of an explicitly attached mounted saved file.
+
+    The host controls availability. Disabled or closed invocations never call
+    encode. Encoding and publication failures return False; save attachment
+    and its host authority remain mandatory and independent of this call.
+    True means staged, not yet host-authorized or published.
+    """
+    sink = _saved_file_preview_sink.get()
+    return sink(ref, encode, name, media_type) if sink is not None else False
+
+
+@contextmanager
+def use_saved_file_preview_sink(sink: SavedFilePreviewSink) -> Generator[None]:
+    token = _saved_file_preview_sink.set(sink)
+    try:
+        yield
+    finally:
+        _saved_file_preview_sink.reset(token)
+
+
 def publish_preview_artifact(data: bytes, *, name: str, media_type: str) -> None:
     """Attach encoded preview content for host publication after successful execution.
 

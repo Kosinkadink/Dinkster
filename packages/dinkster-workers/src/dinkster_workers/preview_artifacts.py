@@ -4,18 +4,102 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
-from contextlib import ExitStack
+import threading
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from types import MappingProxyType
 
-from dinkster_assets import AssetError, AssetVault, classify_media, digest_bytes
+from dinkster_assets import (
+    AssetError,
+    AssetVault,
+    classify_media,
+    digest_bytes,
+)
+from dinkster_assets.declared import produced_output_scratch
 from dinkster_assets.vault import VaultWriter
 from dinkster_protocol import SavedArtifact
 from dinkster_schema.reporting import (
     EncodedPreviewArtifact,
+    attach_saved_artifact,
     capture_preview_artifacts,
+    capture_saved_artifacts,
     publish_preview_artifact,
+    report_value_diagnostic,
+    use_saved_file_preview_sink,
 )
+from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_CLAIM_LIMIT
+
+SAVED_FILE_PREVIEW_LIMIT_BYTES = 16 * MEBIBYTE
+
+
+@contextmanager
+def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str, object]]]:
+    """Serialize lazy encoders and spool each item into the existing worker vault.
+
+    Only small references survive a call. Committed content has normal vault
+    retention, including when a node fails; partial writes always roll back.
+    The host must still authorize the exact saved claim before using a preview.
+    """
+    claims: list[Mapping[str, object]] = []
+    lock = threading.Lock()
+    active = True
+
+    def capture(
+        ref: Mapping[str, object], encode: Callable[[], bytes], name: str, media_type: str
+    ) -> bool:
+        with lock:
+            if not enabled or not active:
+                return False
+            try:
+                if len(claims) >= SAVED_ARTIFACT_CLAIM_LIMIT:
+                    raise ValueError("saved-file preview count exceeds invocation limits")
+                with capture_saved_artifacts() as validated:
+                    attach_saved_artifact(ref)
+                vault = produced_output_scratch()
+                if vault is None:
+                    raise AssetError("saved-file preview requires host staging storage")
+                data = encode()
+                if type(data) is not bytes or len(data) > SAVED_FILE_PREVIEW_LIMIT_BYTES:
+                    raise ValueError("saved-file preview exceeds encoded item limit")
+                with capture_preview_artifacts():
+                    publish_preview_artifact(data, name=name, media_type=media_type)
+                classification = classify_media(data)
+                if classification.media_type != media_type or not name.lower().endswith(
+                    "." + classification.extension
+                ):
+                    raise AssetError("saved-file preview does not match encoded content")
+                digest = digest_bytes(data)
+                with vault.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+                claims.append(
+                    MappingProxyType(
+                        {
+                            "saved": validated[0],
+                            "preview": MappingProxyType(
+                                {
+                                    "digest": digest,
+                                    "name": name,
+                                    "size": len(data),
+                                    "mediaType": media_type,
+                                    "virtualPath": f"previews/{digest[7:]}/{name}",
+                                }
+                            ),
+                        }
+                    )
+                )
+                return True
+            except Exception as exc:
+                report_value_diagnostic("saved-file-preview-unavailable", {"reason": str(exc)})
+                return False
+
+    with use_saved_file_preview_sink(capture):
+        try:
+            yield claims
+        finally:
+            with lock:
+                active = False
 
 
 @dataclass

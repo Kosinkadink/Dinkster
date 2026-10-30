@@ -453,6 +453,8 @@ class Invocation:
     media_sources: tuple[MediaSourceAuthority, ...] = ()
     """Exact current-run media authorities. They are execution data only and
     deliberately do not participate in graph, schema, or cache identity."""
+    saved_file_previews_enabled: bool = False
+    """Host permission for lazy optional saved-file preview encoding."""
     preview_mode: PreviewMode = "off"
     """This invocation's resolved sampling-preview spend. Execution data
     only: previews are droppable side effects, so the mode never joins
@@ -588,6 +590,7 @@ class InvocationResult:
     expansion: ExpandedReturn | None = None
     preview_artifacts: tuple[EncodedPreviewArtifact, ...] = ()
     saved_artifact_claims: tuple[Mapping[str, object], ...] = ()
+    saved_file_previews: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.expansion is None:
