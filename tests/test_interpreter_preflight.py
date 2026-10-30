@@ -93,7 +93,8 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
             "import json, os, sys; from pathlib import Path; "
             "import sqlalchemy.util._collections_cy as native; "
             "Path(sys.argv[1]).write_text(json.dumps("
-            "{'prefix': sys.prefix, 'native': native.__file__, 'argv': sys.argv[1:], "
+            "{'prefix': sys.prefix, 'native': native.__file__, 'source': __file__, "
+            "'native_origin': native.__spec__.origin, 'argv': sys.argv[1:], "
             "'environment': os.environ['DINKSTER_PATH_TEST'], 'module': __spec__.name}))"
         )
         (site / "native_path_probe.py").write_text(script)
@@ -117,9 +118,11 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
         assert result["argv"] == [str(result_path), "two words"]
         assert result["environment"] == "selected"
         assert result["module"] == "native_path_probe"
+        assert Path(result["source"]) == site / "native_path_probe.py"
         extension = Path(result["native"])
         assert extension.suffix == ".pyd"
-        assert extension.samefile(next((site / "sqlalchemy/util").glob("_collections_cy*.pyd")))
+        assert extension == next((site / "sqlalchemy/util").glob("_collections_cy*.pyd"))
+        assert Path(result["native_origin"]) == extension
         if long_root:
             assert len(str(root).encode("utf-16-le")) // 2 >= 59
             assert len(str(extension).removeprefix("\\\\?\\").encode("utf-16-le")) // 2 >= 251
@@ -134,8 +137,9 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
         (source / "healthy_nodes.py").write_text(
             "import sys\nfrom pathlib import Path\n"
             "import sqlalchemy.util._collections_cy as native\n"
+            f"assert Path(__file__) == Path({str(source / 'healthy_nodes.py')!r})\n"
             f"assert Path(sys.prefix) == Path({str(venv_root)!r})\n"
-            f"assert Path(native.__file__).samefile(Path({str(extension)!r}))\n" + HEALTHY_NODES
+            f"assert Path(native.__file__) == Path({str(extension)!r})\n" + HEALTHY_NODES
         )
         report = prepare_catalog(manifest, interpreter=python)
         assert report.ok, report.to_json()

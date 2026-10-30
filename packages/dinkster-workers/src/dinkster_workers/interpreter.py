@@ -14,17 +14,30 @@ _PREFLIGHT_TIMEOUT = 5.0
 _INTERPRETER_DISPLAY_LIMIT = 200
 _VERSION_SCRIPT = "import sys;print('[%d,%d]' % sys.version_info[:2])"
 _WINDOWS_MODULE_BOOTSTRAP = r"""
+import importlib.machinery
 import os
 import sys
 
-for index, path in enumerate(sys.path):
-    absolute = os.path.abspath(path)
+create_extension = importlib.machinery.ExtensionFileLoader.create_module
+
+def create_module(loader, spec):
+    origin = spec.origin
+    absolute = os.path.abspath(origin)
     if not absolute.startswith("\\\\?\\"):
         if absolute.startswith("\\\\"):
             absolute = "\\\\?\\UNC\\" + absolute[2:]
         else:
             absolute = "\\\\?\\" + absolute
-    sys.path[index] = absolute
+    # Only the Windows DLL loader needs the extended spelling, not module identity.
+    spec.origin = absolute
+    try:
+        module = create_extension(loader, spec)
+    finally:
+        spec.origin = origin
+    module.__file__ = origin
+    return module
+
+importlib.machinery.ExtensionFileLoader.create_module = create_module
 
 import runpy
 
@@ -38,7 +51,7 @@ class InterpreterPreflightError(Exception):
 
 
 def module_command(command: Sequence[str]) -> list[str]:
-    """Extend Windows module import paths without changing interpreter identity."""
+    """Extend Windows native loads without changing interpreter or module identity."""
     if (
         os.name == "nt"
         and tuple(command[1:2]) == ("-m",)
