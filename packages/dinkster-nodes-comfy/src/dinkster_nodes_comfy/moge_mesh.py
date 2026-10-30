@@ -17,11 +17,11 @@ from dinkster_api.v1 import (
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    TriangleMeshBatch,
     TypeExpr,
     initialize_inference_process,
     materialize_latent,
 )
-from dinkster_inference_wire import TriangleMeshBatch
 
 
 class MoGePointMapToMesh(Node):
