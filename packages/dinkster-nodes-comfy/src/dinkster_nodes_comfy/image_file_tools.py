@@ -8,7 +8,7 @@ import os
 import tempfile
 from collections.abc import Iterator, Mapping
 from io import BytesIO
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal, cast
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
@@ -249,7 +249,7 @@ def _save_animation(
                 image_width=int(batch.shape[2]),
                 image_height=int(batch.shape[1]),
             ),
-            buffer,
+            cast(BinaryIO, buffer),
             suffix=suffix,
             media_type=media_type,
             limit=ENCODED_MEDIA_LIMIT_BYTES,
