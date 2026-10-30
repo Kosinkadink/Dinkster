@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -17,18 +19,54 @@ from test_frontend_artifact import artifact
 
 from scripts.build_release import (
     build,
-    build_frontend_wheel,
     build_source_archive,
     development_version,
     download_external_wheels,
+    read_base_manifest,
     release_version,
     stage_external_wheels,
     versioned_sources,
     workspace_projects,
     write_constraints,
 )
+from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+def test_source_distribution_rebuilds_the_complete_direct_wheel(
+    tmp_path: Path, project: str
+) -> None:
+    direct = tmp_path / "direct"
+    subprocess.run(
+        ["uv", "build", "--package", project, "--wheel", "--out-dir", str(direct)],
+        cwd=ROOT,
+        check=True,
+    )
+    source = tmp_path / "source"
+    subprocess.run(
+        ["uv", "build", "--package", project, "--sdist", "--out-dir", str(source)],
+        cwd=ROOT,
+        check=True,
+    )
+    extracted = tmp_path / "isolated"
+    with tarfile.open(next(source.glob("*.tar.gz"))) as archive:
+        archive.extractall(extracted, filter="data")
+    [package] = extracted.iterdir()
+    rebuilt = tmp_path / "rebuilt"
+    subprocess.run(
+        ["uv", "build", str(package), "--wheel", "--out-dir", str(rebuilt)],
+        cwd=extracted,
+        check=True,
+    )
+    with (
+        zipfile.ZipFile(next(direct.glob("*.whl"))) as expected,
+        zipfile.ZipFile(next(rebuilt.glob("*.whl"))) as actual,
+    ):
+        assert set(actual.namelist()) == set(expected.namelist())
+        for name in expected.namelist():
+            assert actual.read(name) == expected.read(name), name
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
@@ -39,7 +77,14 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
     published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(published, "0.0.1", pin, tmp_path, uv)
+    with versioned_sources(ROOT, "0.0.1") as staged:
+        verify_and_extract(payload, pin, staged / "src/dinkster/frontend_bundle/static")
+        subprocess.run(
+            [uv, "build", "--package", "dinkster", "--wheel", "--out-dir", str(tmp_path)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = tmp_path.glob("*.whl")
     installed = tmp_path / "site-packages"
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
@@ -57,7 +102,7 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
         cwd=tmp_path,
         text=True,
     ).strip()
-    assert discovered == str(installed / "dinkster_frontend/static")
+    assert discovered == str(installed / "dinkster/frontend_bundle/static")
 
 
 def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
@@ -65,7 +110,15 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow[True]["push"] == {"branches": ["main"], "tags": ["v*.*.*"]}
     assert ".github/workflows/release.yml" in workflow[True]["pull_request"]["paths"]
     assert "src/dinkster/frontend.py" in workflow[True]["pull_request"]["paths"]
-    assert set(workflow["jobs"]) == {"validation", "build", "install", "release", "publish"}
+    assert set(workflow["jobs"]) == {
+        "validation",
+        "build",
+        "install",
+        "release",
+        "publish",
+        "publish-api",
+        "publish-supervisor",
+    }
     assert workflow["jobs"]["validation"] == {
         "uses": "./.github/workflows/ci.yml",
     }
@@ -75,7 +128,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     assert workflow["jobs"]["release"]["outputs"] == {
-        "pypi-ready": "${{ steps.projects.outputs.ready }}",
         "engine-id": "${{ steps.identity.outputs.engine-id }}",
         "engine-tag": "${{ steps.identity.outputs.tag }}",
     }
@@ -103,64 +155,60 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
-def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
+@pytest.mark.parametrize(
+    ("job", "project", "environment"),
+    [
+        ("publish", "dinkster", "pypi"),
+        ("publish-api", "dinkster-api", "pypi-dinkster-api"),
+        ("publish-supervisor", "dinkster-supervisor", "pypi-dinkster-supervisor"),
+    ],
+)
+def test_release_publication_is_tag_only_and_uses_trusted_publishing(
+    job: str, project: str, environment: str, tmp_path: Path
+) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
-    publish = workflow["jobs"]["publish"]
+    publish = workflow["jobs"][job]
     assert publish["needs"] == "release"
-    assert publish["if"] == (
-        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') "
-        "&& needs.release.outputs.pypi-ready == 'true'"
-    )
+    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert "pypi.org/pypi/" not in json.dumps(workflow)
+    assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
-    assert publish["environment"]["name"] == "pypi"
+    assert publish["environment"] == {
+        "name": environment,
+        "url": f"https://pypi.org/project/{project}/",
+    }
     action = publish["steps"][-1]
     assert action["uses"] == "pypa/gh-action-pypi-publish@release/v1"
     assert action["with"] == {"packages-dir": "publish/", "skip-existing": True}
     assert "secrets." not in json.dumps(publish)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for name in (
+        "dinkster-1.2.3-py3-none-any.whl",
+        "dinkster_api-1.2.3-py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py3-none-any.whl",
+        "dinkster_inference-1.2.3-py3-none-any.whl",
+        "official-packs.lock",
+        "dinkster-source-1.2.3.zip",
+    ):
+        (dist / name).write_bytes(name.encode())
+    selection = next(step["run"] for step in publish["steps"] if "run" in step)
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
+    subprocess.run([bash, "-e", "-c", selection], cwd=tmp_path, check=True)
+    selected = list((tmp_path / "publish").iterdir())
+    assert [path.name for path in selected] == [
+        f"{project.replace('-', '_')}-1.2.3-py3-none-any.whl"
+    ]
+    assert selected[0].read_bytes() == (dist / selected[0].name).read_bytes()
     assert all(
         "latest" in row["runner"]
         for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
     )
-
-
-@pytest.mark.parametrize("status", [200, 404, 403])
-def test_pypi_bootstrap_gate_skips_missing_projects_and_refuses_other_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
-) -> None:
-    import urllib.error
-    import urllib.request
-    from contextlib import nullcontext
-    from email.message import Message
-
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    step = next(
-        step for step in workflow["jobs"]["release"]["steps"] if step.get("id") == "projects"
-    )
-    assert step["if"] == "startsWith(github.ref, 'refs/tags/v')"
-    script = step["run"].split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    (tmp_path / "dist").mkdir()
-    (tmp_path / "dist/release-manifest.json").write_text(
-        json.dumps({"workspaceWheels": ["dinkster_api-0.0.1-py3-none-any.whl"]})
-    )
-    output = tmp_path / "output"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-
-    def open_project(url: str, *, timeout: int) -> nullcontext[None]:
-        assert url == "https://pypi.org/pypi/dinkster-api/json"
-        if status != 200:
-            raise urllib.error.HTTPError(url, status, "test index response", Message(), None)
-        return nullcontext()
-
-    monkeypatch.setattr(urllib.request, "urlopen", open_project)
-    if status == 403:
-        with pytest.raises(urllib.error.HTTPError):
-            exec(compile(script, "pypi bootstrap workflow", "exec"), {})
-        assert not output.exists()
-    else:
-        exec(compile(script, "pypi bootstrap workflow", "exec"), {})
-        assert output.read_text() == ("ready=true\n" if status == 200 else "ready=false\n")
 
 
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
@@ -252,7 +300,7 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "--require-hashes" in command
     assert "--find-links" in command
     assert "--requirement" in command
-    assert "from dinkster_frontend import bundle_path" in command
+    assert "from dinkster.frontend import discover_frontend_bundle" in command
     assert all(
         step.get("uses") != "./.github/actions/configure-dinkster-identity"
         for step in workflow["jobs"]["install"]["steps"]
@@ -291,11 +339,11 @@ def test_release_http_check_requires_the_application_root(
 ) -> None:
     from scripts.verify_release_install import verify_launch
 
-    module = tmp_path / "dinkster_frontend"
-    (module / "static").mkdir(parents=True)
-    (module / "__init__.py").touch()
+    module = tmp_path / "dinkster"
+    shutil.copytree(ROOT / "src/dinkster", module)
+    (module / "frontend_bundle/static").mkdir(parents=True)
     document = '<html><div id="root"></div></html>' if has_root else "<html>Error</html>"
-    (module / "static/index.html").write_text(document)
+    (module / "frontend_bundle/static/index.html").write_text(document)
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     state = tmp_path / "release"
     if has_root:
@@ -427,7 +475,10 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.1") == "0.0.1"
-    assert len(workspace_projects(ROOT)) == 29
+    projects = workspace_projects(ROOT)
+    assert "dinkster-nodes-std" not in projects
+    dev = tomllib.loads(projects["dinkster-nodes-dev"].read_text(encoding="utf-8"))
+    assert "Private :: Do Not Upload" in dev["project"]["classifiers"]
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
@@ -446,12 +497,13 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
-        subprocess.run(
-            ["uv", "build", "--wheel", "--package", "dinkster", "--out-dir", str(output)],
-            cwd=staged,
-            check=True,
-        )
-    [wheel] = output.glob("*.whl")
+        for project in ("dinkster", "dinkster-api"):
+            subprocess.run(
+                ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
+                cwd=staged,
+                check=True,
+            )
+    [wheel] = output.glob("dinkster-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
@@ -460,6 +512,60 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             for name in archive.namelist()
             if name.startswith("dinkster/") and name.endswith(".py")
         }
+        for member in (
+            "graph",
+            "engine",
+            "server",
+            "native",
+            "collab",
+            "compat-comfy",
+            "nodes-generation",
+        ):
+            namespace = "dinkster_" + member.replace("-", "_")
+            source = ROOT / "packages" / f"dinkster-{member}" / "src"
+            assert {
+                name
+                for name in archive.namelist()
+                if name.startswith(namespace + "/") and name.endswith(".py")
+            } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+    [api_wheel] = output.glob("dinkster_api-*.whl")
+    with zipfile.ZipFile(api_wheel) as archive:
+        [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        api_metadata = archive.read(name).decode()
+        assert "Requires-Dist: torch" not in api_metadata
+        assert {
+            line
+            for line in api_metadata.splitlines()
+            if line.startswith("Requires-Dist: dinkster-")
+        } == {"Requires-Dist: dinkster-opentimelineio==0.19.0"}
+        for member in (
+            "api",
+            "values",
+            "schema",
+            "protocol",
+            "memory",
+            "assets",
+            "caches",
+            "inference-wire",
+            "image-document",
+            "video",
+            "workers",
+            "registry",
+        ):
+            namespace = "dinkster_" + member.replace("-", "_")
+            source = ROOT / "packages" / f"dinkster-{member}" / "src"
+            assert {
+                name
+                for name in archive.namelist()
+                if name.startswith(namespace + "/")
+                and "/preview/" not in name
+                and name.endswith(".py")
+            } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+        assert "dinkster_video_preview/__init__.py" in archive.namelist()
+        assert (
+            "dinkster-doctor = dinkster_workers.doctor:main"
+            in archive.read(f"dinkster_api-{version}.dist-info/entry_points.txt").decode()
+        )
     source_archive = build_source_archive(ROOT, version, tmp_path)
     with zipfile.ZipFile(source_archive) as archive:
         source_modules = {
@@ -471,7 +577,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert source_modules == wheel_modules
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
-    assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
+    assert "dinkster-frontend" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.0\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [
@@ -602,164 +709,96 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
 
 
 @pytest.mark.parametrize(
-    "fault",
+    "change",
     [
-        None,
-        "export-url",
-        "source-url",
-        "foreign-host",
-        "source-pin",
-        "target",
-        "filename",
-        "hash",
-        "size",
-        "missing-provenance",
-        "duplicate",
-        "abi",
-        "archive",
-        "export-hash",
-        "corrupt",
+        "plan",
+        "multipart",
+        "largest-part",
+        "legacy-parts",
+        "missing-archive",
+        "archive-format",
+        "parts-type",
+        "part-type",
+        "part-name",
+        "part-order",
+        "part-zero",
+        "part-negative",
+        "part-limit",
+        "part-bool",
+        "part-hash",
+        "part-hash-type",
+        "legacy-id",
+        "parts-in-id",
     ],
 )
-def test_direct_otio_acquisition_and_staging_require_native_lock_and_producer_agreement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
-) -> None:
-    from io import BytesIO
-
-    pin_path = tmp_path / "scripts/opentimelineio_source.json"
-    pin_path.parent.mkdir()
-    shutil.copyfile(ROOT / "scripts/opentimelineio_source.json", pin_path)
-    pin = json.loads(pin_path.read_text())
-    namespace = (
-        "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-test"
-    )
-    lock = ""
-    requirements = ['inactive @ https://example.invalid/source.tar.gz ; sys_platform == "darwin"']
-    responses: dict[str, bytes] = {}
-    expected: dict[str, bytes] = {}
-    candidates = []
-    for target, platform, marker in (
-        ("windows", "win_amd64", "win32"),
-        ("linux", "manylinux2014_x86_64.manylinux_2_17_x86_64", "linux"),
-    ):
-        filename = f"opentimelineio-0.19.0.dev1-cp314-cp314-{platform}.whl"
-        if target == "windows" and fault == "abi":
-            filename = filename.replace("cp314-cp314", "cp312-abi3")
-        if target == "windows" and fault == "archive":
-            filename = "opentimelineio-0.19.0.dev1.tar.gz"
-        payload = f"{target} fixture wheel bytes".encode()
-        digest = hashlib.sha256(payload).hexdigest()
-        url = f"{namespace}/{filename}"
-        if target == "windows" and fault == "foreign-host":
-            url = url.replace("github.com", "example.invalid")
-        source_url = url + "?changed" if target == "windows" and fault == "source-url" else url
-        export_url = url + "?changed" if target == "windows" and fault == "export-url" else url
-        export_hash = "0" * 64 if target == "windows" and fault == "export-hash" else digest
-        lock += (
-            '[[package]]\nname = "opentimelineio"\nversion = "0.19.0.dev1"\n'
-            f'source = {{url = "{source_url}"}}\n'
-            f'wheels = [{{url = "{url}", hash = "sha256:{digest}"}}]\n'
+def test_base_archive_contract_and_canonical_identity(tmp_path: Path, change: str) -> None:
+    manifest: dict = {
+        "format": "dinkster.base/1",
+        "variant": "linux-cpu",
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "python": "3.14.10",
+        "interpreter": {},
+        "wheels": [],
+        "replaces": [],
+        "workerProtocol": 11,
+        "nvidia": None,
+        "archive": {"format": "tar+zstd"},
+    }
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
+    manifest["id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    part = {"filename": "base.tar.zst.001", "size": 1, "sha256": "a" * 64}
+    archive = manifest["archive"]
+    archive["parts"] = [part]
+    if change == "plan":
+        archive["parts"] = []
+    elif change == "multipart":
+        archive["parts"].append({**part, "filename": "base.tar.zst.002"})
+    elif change == "largest-part":
+        part["size"] = 1_999_999_999
+    elif change == "legacy-parts":
+        manifest["parts"] = manifest.pop("archive")["parts"]
+    elif change == "missing-archive":
+        del manifest["archive"]
+    elif change == "archive-format":
+        archive["format"] = "7z"
+    elif change == "parts-type":
+        archive["parts"] = {}
+    elif change == "part-type":
+        archive["parts"] = [None]
+    elif change == "part-name":
+        part["filename"] = "base.7z.001"
+    elif change == "part-order":
+        part["filename"] = "base.tar.zst.002"
+    elif change.startswith("part-") and change.removeprefix("part-") in {
+        "zero",
+        "negative",
+        "limit",
+        "bool",
+    }:
+        part["size"] = {"zero": 0, "negative": -1, "limit": 2_000_000_000, "bool": True}[
+            change.removeprefix("part-")
+        ]
+    elif change == "part-hash":
+        part["sha256"] = "A" * 64
+    elif change == "part-hash-type":
+        part["sha256"] = None
+    elif change in {"legacy-id", "parts-in-id"}:
+        identity = {key: value for key, value in manifest.items() if key != "id"}
+        if change == "legacy-id":
+            del identity["archive"]
+        manifest["id"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
         )
-        requirements.append(
-            f'opentimelineio @ {export_url} ; sys_platform == "{marker}" '
-            f"--hash=sha256:{export_hash}"
-        )
-        row = {"filename": filename, "size": len(payload), "sha256": digest}
-        provenance = {
-            **pin,
-            "target": target,
-            "submodules": [" " + "a" * 40 + " src/deps/example (heads/main)"],
-            "wheels": [row],
-        }
-        if target == "windows":
-            if fault == "source-pin":
-                provenance["commit"] = "0" * 40
-            elif fault == "target":
-                provenance["target"] = "linux"
-            elif fault == "filename":
-                row["filename"] = "other.whl"
-            elif fault == "hash":
-                row["sha256"] = "0" * 64
-            elif fault == "size":
-                del row["size"]
-            elif fault == "duplicate":
-                provenance["wheels"] = [row, row]
-            elif fault == "corrupt":
-                payload = b"x" * len(payload)
-        responses[url] = payload
-        if not (target == "windows" and fault == "missing-provenance"):
-            responses[f"{namespace}/opentimelineio-{target}.json"] = json.dumps(provenance).encode()
-        candidate = tmp_path / filename
-        candidate.write_bytes(payload)
-        candidates.append(candidate)
-        expected[filename] = payload
-    (tmp_path / "uv.lock").write_text(lock)
-
-    def fetch(url: str, *, timeout: int) -> BytesIO:
-        if url not in responses:
-            raise OSError(f"missing fixture: {url}")
-        return BytesIO(responses[url])
-
-    def export(root: Path, output: Path, wheels: list[Path], uv: str) -> Path:
-        path = output / "constraints.txt"
-        path.write_text("\n".join(requirements) + "\n")
-        return path
-
-    monkeypatch.setattr("scripts.build_release.urlopen", fetch)
-    monkeypatch.setattr("scripts.build_release.write_constraints", export)
-    downloads = tmp_path / "downloads"
-    release = tmp_path / "release"
-    release.mkdir()
-    if fault is None:
-        downloaded = download_external_wheels(tmp_path, downloads, "uv")
-        assert {path.name: path.read_bytes() for path in downloaded} == expected
-        staged = stage_external_wheels(tmp_path, release, downloaded, [], set())
-        assert {path.name: path.read_bytes() for path in staged} == expected
-
-        def uv_export(command: list[str], **kwargs: object) -> None:
-            Path(command[command.index("--output-file") + 1]).write_text(
-                "\n".join(requirements[1:]) + "\n"
-            )
-
-        with monkeypatch.context() as context:
-            context.setattr(subprocess, "run", uv_export)
-            offline = write_constraints(
-                tmp_path, release, [], "uv", verified_external=downloaded
-            ).read_text()
-            assert offline.splitlines() == [
-                f'opentimelineio ==0.19.0.dev1 ; sys_platform == "{marker}" '
-                f"--hash=sha256:{hashlib.sha256(payload).hexdigest()}"
-                for marker, payload in (
-                    ("win32", b"windows fixture wheel bytes"),
-                    ("linux", b"linux fixture wheel bytes"),
-                )
-            ] + [""]
-            with pytest.raises(ValueError, match="verified direct wheel bytes"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded[:1])
-            original = requirements[1]
-            requirements[1] = original.replace(namespace, "https://example.invalid")
-            with pytest.raises(ValueError, match="exact locked direct wheel"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
-            requirements[1] = original
-            downloaded[0].write_bytes(b"tampered")
-            with pytest.raises(ValueError, match="verified direct wheel bytes"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
-            downloaded[0].write_bytes(expected[downloaded[0].name])
-            requirements[1] = requirements[1].replace("--hash=sha256:", "--hash=sha256:0")
-            with pytest.raises(ValueError, match="verified direct wheel bytes"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    if change in {"plan", "multipart", "largest-part"}:
+        assert read_base_manifest(path) == manifest
     else:
-        with pytest.raises((ValueError, OSError)):
-            download_external_wheels(tmp_path, downloads, "uv")
-        assert {path.name: path.read_bytes() for path in downloads.iterdir()} == (
-            {name: payload for name, payload in expected.items() if "manylinux" in name}
-            if fault == "corrupt"
-            else {}
-        )
-        if fault not in {"export-url", "export-hash"}:
-            with pytest.raises((ValueError, OSError)):
-                stage_external_wheels(tmp_path, release, candidates, [], set())
-            assert not list(release.iterdir())
+        with pytest.raises(ValueError, match="archive|id does not match"):
+            read_base_manifest(path)
 
 
 def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
@@ -812,6 +851,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
             "replaces": [row["name"] for row in members],
             "workerProtocol": 1,
             "nvidia": None,
+            "archive": {"format": "tar+zstd"},
         }
         manifest["id"] = (
             "sha256:"
@@ -819,7 +859,9 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
                 json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
             ).hexdigest()
         )
-        manifest["parts"] = [{"filename": "base.7z.001", "size": 1, "sha256": "0" * 64}]
+        manifest["archive"]["parts"] = [
+            {"filename": "base.tar.zst.001", "size": 1, "sha256": "0" * 64}
+        ]
         manifest["signature"] = None
         path = tmp_path / f"{variant}.json"
         path.write_text(json.dumps(manifest))
@@ -840,7 +882,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
     plans = []
     for path in manifests:
         manifest = json.loads(path.read_text())
-        manifest["parts"] = []
+        manifest["archive"]["parts"] = []
         plan = tmp_path / f"plan-{path.name}"
         plan.write_text(json.dumps(manifest))
         plans.append(plan)
@@ -872,6 +914,8 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
 ) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
     root = tmp_path / "source"
     frontend = tmp_path / "frontend.zip"
     frontend_payload, frontend_pin = artifact()
@@ -879,6 +923,8 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
+            "[tool.uv.workspace]\n"
+            'members = ["packages/dinkster-api", "packages/dinkster-supervisor"]\n'
             "[dependency-groups]\nengine-base = []\n"
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         ),
@@ -886,6 +932,12 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
         "scripts/release_sources.json": json.dumps(frontend_pin),
     }
+    for member in ("api", "supervisor"):
+        files[f"packages/dinkster-{member}/pyproject.toml"] = (
+            f'[project]\nname = "dinkster-{member}"\nversion = "1.2.3"\n'
+            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        )
+        files[f"packages/dinkster-{member}/src/dinkster_{member}/__init__.py"] = ""
     for name, value in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -897,17 +949,44 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     (root / ".git/HEAD").write_text(tree + "\n")
     payload = tmp_path / "official-pack-1.2.3.tar.gz"
     payload.write_bytes(b"finished pack archive")
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        'namespaces = ["std"]\n[pack.entry]\nnodes = "nodes:NODES"\n'
+    )
+    (pack / "nodes.py").write_text("NODES = ()\n")
+    archive = tmp_path / "dinkster-nodes-foundation-1.2.3.zip"
+    digest = build_artifact(pack, archive)
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(
+        Lockfile.of(
+            [
+                LockedPack(
+                    "dinkster-nodes-foundation", "1.2.3", digest, "dinkster", ("std",), "release"
+                )
+            ]
+        ).record_json()
+    )
     bootstrap = tmp_path / ("dinkster-tools-1.2.4.dev123+g" + "a" * 40 + "-linux-x86_64.tar.gz")
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
-    built = build(root, output, "v1.2.3", frontend, payload_artifacts=[payload, bootstrap])
+    payloads = [payload, bootstrap, archive, catalog]
+    built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
     assert set(manifest["workspaceWheels"]) == {
         "dinkster-1.2.3-py2.py3-none-any.whl",
-        "dinkster_frontend-1.2.3-py3-none-any.whl",
+        "dinkster_api-1.2.3-py2.py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
-    for candidate in (payload, bootstrap):
+    with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
+        assert {
+            name.removeprefix("dinkster/official_packs/"): wheel.read(name)
+            for name in wheel.namelist()
+            if name.startswith("dinkster/official_packs/")
+        } == {path.name: path.read_bytes() for path in (archive, catalog)}
+    for candidate in payloads:
         assert (output / candidate.name).read_bytes() == candidate.read_bytes()
         row = next(row for row in manifest["artifacts"] if row["name"] == candidate.name)
         assert row == {
@@ -1049,6 +1128,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         replaces=list(pins),
         workerProtocol=11,
         nvidia=None,
+        archive=dict(format="tar+zstd"),
     )
     part_digest = hashlib.sha256(b"archive part").hexdigest()
     mutation = "valid"
@@ -1083,8 +1163,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
         ).hexdigest()
         manifest["id"] = "sha256:" + identity
-        manifest["parts"] = (
-            [] if change == "plan" else [dict(filename="base.7z.001", size=12, sha256=part_digest)]
+        manifest["archive"]["parts"] = (
+            []
+            if change == "plan"
+            else [dict(filename="base.tar.zst.001", size=12, sha256=part_digest)]
         )
         manifest["signature"] = None
         requested = f"base-win-cpu-{identity}"
@@ -1126,7 +1208,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         if mutation != "missing-part":
             assets.append(
                 dict(
-                    name="base.7z.001",
+                    name="base.tar.zst.001",
                     id=3,
                     size=12,
                     state="uploaded",

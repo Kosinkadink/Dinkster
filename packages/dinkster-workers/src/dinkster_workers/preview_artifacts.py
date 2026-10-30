@@ -4,18 +4,111 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
-from contextlib import ExitStack
-from dataclasses import dataclass
+import logging
+import threading
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, replace
+from types import MappingProxyType
+from typing import cast
 
-from dinkster_assets import AssetError, AssetVault, classify_media, digest_bytes
+from dinkster_assets import (
+    AssetError,
+    AssetRef,
+    AssetVault,
+    classify_media,
+    digest_bytes,
+    resolver_from_env,
+)
+from dinkster_assets.declared import produced_output_scratch
 from dinkster_assets.vault import VaultWriter
 from dinkster_protocol import SavedArtifact
 from dinkster_schema.reporting import (
     EncodedPreviewArtifact,
+    attach_saved_artifact,
     capture_preview_artifacts,
+    capture_saved_artifacts,
     publish_preview_artifact,
+    report_value_diagnostic,
+    use_saved_file_preview_sink,
 )
+from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_CLAIM_LIMIT
+
+SAVED_FILE_PREVIEW_LIMIT_BYTES = 16 * MEBIBYTE
+
+
+@contextmanager
+def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str, object]]]:
+    """Serialize lazy encoders and spool each item into the existing worker vault.
+
+    Only small references survive a call. Committed content has normal vault
+    retention, including when a node fails; partial writes always roll back.
+    The host must still authorize the exact saved claim before using a preview.
+    """
+    claims: list[Mapping[str, object]] = []
+    lock = threading.Lock()
+    closed = threading.Event()
+
+    def capture(
+        ref: Mapping[str, object], encode: Callable[[], bytes], name: str, media_type: str
+    ) -> bool:
+        with lock:
+            if not enabled or closed.is_set():
+                return False
+            try:
+                if len(claims) >= SAVED_ARTIFACT_CLAIM_LIMIT:
+                    raise ValueError("saved-file preview count exceeds invocation limits")
+                with capture_saved_artifacts() as validated:
+                    attach_saved_artifact(ref)
+                vault = produced_output_scratch()
+                if vault is None:
+                    raise AssetError("saved-file preview requires host staging storage")
+                data = encode()
+                if closed.is_set():
+                    return False
+                if type(data) is not bytes or len(data) > SAVED_FILE_PREVIEW_LIMIT_BYTES:
+                    raise ValueError("saved-file preview exceeds encoded item limit")
+                with capture_preview_artifacts():
+                    publish_preview_artifact(data, name=name, media_type=media_type)
+                classification = classify_media(data)
+                if classification.media_type != media_type or not name.lower().endswith(
+                    "." + classification.extension
+                ):
+                    raise AssetError("saved-file preview does not match encoded content")
+                digest = digest_bytes(data)
+                with vault.writer(digest) as writer:
+                    writer.write(data)
+                    if closed.is_set():
+                        return False
+                    writer.commit()
+                claims.append(
+                    MappingProxyType(
+                        {
+                            "saved": validated[0],
+                            "preview": MappingProxyType(
+                                {
+                                    "digest": digest,
+                                    "name": name,
+                                    "size": len(data),
+                                    "mediaType": media_type,
+                                    "virtualPath": f"previews/{digest[7:]}/{name}",
+                                }
+                            ),
+                        }
+                    )
+                )
+                return True
+            except Exception as exc:
+                report_value_diagnostic("saved-file-preview-unavailable", {"reason": str(exc)})
+                return False
+
+    with use_saved_file_preview_sink(capture):
+        try:
+            yield claims
+        finally:
+            # An async node may abandon a to_thread encoder on cancellation.
+            # Closing its context must not block the event loop on that encoder.
+            closed.set()
 
 
 @dataclass
@@ -36,6 +129,48 @@ class PreviewArtifactPublisher:
     def __init__(self, vault: AssetVault | None) -> None:
         self._vault = vault
         self._lock = asyncio.Lock()
+
+    async def saved_files(
+        self, artifacts: Sequence[SavedArtifact], claims: Sequence[Mapping[str, object]]
+    ) -> tuple[SavedArtifact, ...]:
+        """Associate optional media only with an exact host-authorized saved file."""
+        from .blobs import await_file_operation
+        from .boundary import decode_saved_file_previews
+
+        by_ref = {
+            (item.digest, item.name, item.size, item.media_type, item.virtual_path): index
+            for index, item in enumerate(artifacts)
+        }
+        result = list(artifacts)
+        for claim in decode_saved_file_previews({"savedFilePreviews": list(claims)}):
+            try:
+                saved = AssetRef.from_wire(cast("Mapping[str, object]", claim["saved"]))
+                index = by_ref.get(
+                    (saved.digest, saved.name, saved.size, saved.media_type, saved.virtual_path)
+                )
+                if index is None:
+                    raise AssetError("preview does not match an authorized saved file")
+                preview = AssetRef.from_wire(
+                    cast("Mapping[str, object]", claim["preview"]), resolver_from_env()
+                )
+
+                def read(ref: AssetRef = preview) -> bytes:
+                    with ref.open() as source:
+                        data = source.read(SAVED_FILE_PREVIEW_LIMIT_BYTES + 1)
+                    if len(data) != ref.size:
+                        raise AssetError("saved-file preview bytes do not match declared size")
+                    return data
+
+                data = await await_file_operation(asyncio.create_task(asyncio.to_thread(read)))
+                published = await self(
+                    artifacts[index].node_id,
+                    (EncodedPreviewArtifact(data, preview.name, preview.media_type),),
+                )
+                result[index] = replace(artifacts[index], preview=published[0])
+                del data
+            except Exception as exc:
+                logging.getLogger(__name__).warning("saved-file preview unavailable: %s", exc)
+        return tuple(result)
 
     def _stage(self, node_id: str, claims: Sequence[EncodedPreviewArtifact]) -> _StagedPreviews:
         if self._vault is None:
