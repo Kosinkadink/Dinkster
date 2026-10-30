@@ -128,6 +128,7 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
             (tmp_path / "sdxl_fixture.py").write_text(
                 "from test_comfy_clip_sdxl_nodes import SDXL_FIXTURES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *SDXL_FIXTURES)\n",
                 encoding="ascii",
             )
@@ -136,6 +137,10 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["sdxl-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "sdxl_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "sdxl_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "sdxl_fixture:register_inference_types",

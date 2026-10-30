@@ -111,6 +111,10 @@ touches a package outside the fast lane's unit subset. Sampling-runtime GPU
 validation belongs to the `dinkster-inference` repository; Dinkster validates its
 worker integration with the issue-specific production oracles.
 
+Distribution, dependency and pack-loading changes also require the counted
+pack runtime matrix in `docs/testing.md` before freezing. Root/member passes
+do not replace CPU Torch, native Windows or combined branch-coverage evidence.
+
 Stale wheel cache after rebase: when a pull or rebase changes a node pack or
 its committed lockfile, a plain `uv sync --all-packages --frozen` can re-link
 stale cached wheels whose artifact digests no longer match the committed

@@ -48,6 +48,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     ValueTransform,
     annotate_mask,
+    attach_saved_artifact,
     copy_media_semantics,
     is_digest,
     media_semantics,
@@ -900,6 +901,8 @@ class SaveImage(Node):
             writer.save_bytes(destination, data, suffix=suffix, media_type=media_type)
             for data, suffix, media_type in encoded
         ]
+        for asset in assets:
+            attach_saved_artifact(asset.to_wire())
         return cls.outputs(images=batch, assets=assets)
 
 
@@ -994,6 +997,8 @@ class SaveMask(Node):
             writer.save_bytes(destination, data, suffix=".png", media_type="image/png")
             for data in encoded
         ]
+        for asset in assets:
+            attach_saved_artifact(asset.to_wire())
         return cls.outputs(masks=batch, assets=assets)
 
 
@@ -1156,6 +1161,7 @@ class SaveAnimatedImage(Node):
             media_type=media_type,
             limit=MAX_ENCODED_IMAGE_BYTES,
         )
+        attach_saved_artifact(asset.to_wire())
         return cls.outputs(images=batch, asset=asset)
 
 

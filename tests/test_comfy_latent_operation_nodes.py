@@ -94,6 +94,7 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
             "from test_comfy_latent_operation_nodes import (\n"
             "ResidentSource, ResidentInspect, ResidentStorage)\n"
             "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+            "from dinkster_nodes_comfy.device_routing import device_choices\n"
             "NODES = (*COMFY_NODES, ResidentSource, ResidentInspect, ResidentStorage)\n",
             encoding="ascii",
         )
@@ -102,6 +103,10 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
             manifest.read_text(encoding="ascii")
             .replace("namespaces = [", 'namespaces = ["resident-fixture",')
             .replace("dinkster_nodes_comfy:COMFY_NODES", "resident_fixture_nodes:NODES")
+            .replace(
+                "dinkster_nodes_comfy.device_routing:device_choices",
+                "resident_fixture_nodes:device_choices",
+            )
             .replace(
                 "dinkster_nodes_comfy:register_inference_types",
                 "resident_fixture_nodes:register_inference_types",

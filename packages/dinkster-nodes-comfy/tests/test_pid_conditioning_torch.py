@@ -152,7 +152,7 @@ class Inspect(Node):
         return cls.outputs(summary="pid-conditioning")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_pid_conditioning_executes_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

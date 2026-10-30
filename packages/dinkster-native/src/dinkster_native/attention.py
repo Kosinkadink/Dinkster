@@ -126,6 +126,15 @@ class AttentionRuntime:
     def distributed_active(self) -> bool:
         return _active_attempt is not None
 
+    def prepare_sampling_model(self, model: object, token: AttentionRouteToken) -> object:
+        sampling_model = cast("Any", model).clone()
+        sampling_model.set_model_optimized_attention(self.for_model(token))
+        if self.distributed_active():
+            from .multigpu import configure_distributed_model
+
+            configure_distributed_model(sampling_model)
+        return sampling_model
+
 
 def create_attention_runtime() -> AttentionRuntime:
     return AttentionRuntime()

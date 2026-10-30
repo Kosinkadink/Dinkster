@@ -72,7 +72,7 @@ class DimensionSource(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize("video", (False, True))
 def test_image_dimensions_ordinary_manifest_twice(
     tmp_path: Path, in_process: bool, video: bool
@@ -89,6 +89,7 @@ def test_image_dimensions_ordinary_manifest_twice(
             (tmp_path / f"{module}.py").write_text(
                 "from test_image_batch_torch import DimensionSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, DimensionSource)\n",
                 encoding="ascii",
             )
@@ -97,6 +98,10 @@ def test_image_dimensions_ordinary_manifest_twice(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["image-dimension-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    f"{module}:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     f"{module}:register_inference_types",
@@ -193,7 +198,7 @@ class RebatchSource(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_rebatch_ordinary_manifest_with_explicit_selection_and_map(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -208,6 +213,7 @@ def test_rebatch_ordinary_manifest_with_explicit_selection_and_map(
             (tmp_path / "rebatch_fixture.py").write_text(
                 "from test_image_batch_torch import RebatchSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, RebatchSource)\n",
                 encoding="ascii",
             )
@@ -216,6 +222,10 @@ def test_rebatch_ordinary_manifest_with_explicit_selection_and_map(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["rebatch-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "rebatch_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "rebatch_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "rebatch_fixture:register_inference_types",

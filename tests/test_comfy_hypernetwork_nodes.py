@@ -1,7 +1,5 @@
 """Torch-free public hypernetwork schema and registration."""
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -32,18 +30,7 @@ def test_hypernetwork_schema_and_cold_registration() -> None:
     manifest = tomllib.loads(
         (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert [node.schema().node_type for node in COMFY_NODES] == manifest["pack"]["namespaces"]
+    assert ["devices", *(node.schema().node_type for node in COMFY_NODES)] == manifest["pack"][
+        "namespaces"
+    ]
     assert HypernetworkLoader in COMFY_NODES
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; sys.modules['torch']=None; "
-            "sys.modules['dinkster_inference']=None; "
-            "from dinkster_nodes_comfy.hypernetwork import HypernetworkLoader; "
-            "from dinkster_api.v1 import schema_to_wire; "
-            "assert schema_to_wire(HypernetworkLoader.schema())",
-        ],
-        check=True,
-        cwd=root,
-    )

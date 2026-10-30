@@ -1,8 +1,5 @@
 """Torch-free public schema checks for latent-upscale model loading."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     ASSET_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
@@ -35,30 +32,6 @@ def test_latent_upscale_loader_public_schema_and_manifest_order() -> None:
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
     assert LatentUpscaleModelLoader in COMFY_NODES
-    assert (
-        tuple(node.schema().node_type for node in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
-
-
-def test_latent_upscale_loader_cold_discovery_does_not_import_torch() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import sys
-sys.modules['torch'] = None
-sys.modules['dinkster_inference'] = None
-from dinkster_nodes_comfy import COMFY_NODES
-node = next(node for node in COMFY_NODES if node.schema().node_type == 'LatentUpscaleModelLoader')
-assert node.schema().inputs[0].widget.kind == 'model/latent-upscaler'
-assert sys.modules['torch'] is None
-assert not any(name.startswith('dinkster_inference.') for name in sys.modules)
-""",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces

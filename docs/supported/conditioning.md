@@ -1,5 +1,7 @@
 ## Conditioning
 
+- Conditioning safetensors can be loaded from granted embedding assets or saved
+  to mounted output folders, retaining tensor options, tensor lists and scalar metadata.
 - SD1.5 positive and negative text conditioning executes through the pinned
   `dinkster_inference` runtime.
 - Flux Kontext image scaling selects its preferred resolution from the native
@@ -18,6 +20,9 @@
 - Qwen Image, Ming, MageFlow, JoyImage, Boogu and Fibo 2 image conditioning
   retain model-specific reference sizing, prompt templates and prior latent
   references. Qwen Image 2.1 also supports precomputed reference caches.
+  JoyImage accepts up to six optional image references, including authored
+  image sockets left unconnected. Boogu's sixteen named image references
+  also allow authored sockets to remain unconnected.
 - Z-Image Omni conditioning combines up to three vision/image references,
   optional image resizing and VAE latents with its image prompt template.
 - PhotoMaker loads identity checkpoints from admitted assets and fuses identity
@@ -82,4 +87,12 @@
   positions to conditioning, preserving prior boxes and other prompt metadata.
 - `PiDConditioning` attaches Flux, SD3, SDXL, or Qwen Image latents and a
   degradation sigma to conditioning for PiD decoding and upscaling.
+- Bernini and HiDream-O1 accept authored reference image sockets left
+  unconnected, preserving prefixed/named members and conditioning fanout.
+- Qwen Image 2.1, Ming Image Edit, Mage Flow Edit, and Fibo 2 accept
+  unconnected authored reference image sockets while retaining named members,
+  required text/CLIP controls, optional VAE, and conditioning fanout.
+- MOSS image editing requires its first reference image, but later authored
+  image sockets may be unconnected. ReferenceMultiLatent keeps all references
+  optional, with authored socket order preserved for both nodes.
 - Other model-family conditioning surfaces are unsupported.

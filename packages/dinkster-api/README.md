@@ -46,6 +46,21 @@ class Double(Node):
 Import the version explicitly. Do not import pack APIs from `dinkster_schema`,
 `dinkster_values`, or other internal packages.
 
+Layered-image packs use `ImageDocument`, `empty_document`, `append_raster`,
+`apply_commands`, `flatten`, and the document import/export and blend helpers
+through the same door. VIDEO values, codecs, timeline modules and streaming
+helpers are also public. These exports are the original objects, not wrappers.
+Media implementations load only when their exports are requested, so importing
+the node-authoring API does not initialize numpy, PyAV, or an inference runtime.
+Remote clients use `current_execution_context()` to read the worker's current
+invocation and its cooperative `cancelled()` callback; outside an invocation it
+returns `None`. Packs do not create or replace the host's execution context.
+
+Sampling consumers call `prepare_sampling_model(model)` once before constructing
+their sampler or guider. The host prepares the invocation's model clone and
+attention route; outside a routed invocation the input object is returned
+unchanged. Preparation failures propagate to the caller.
+
 `OutputDescriptorsSpec` declares ordered heterogeneous outputs from a stored
 JSON input. Execution receives `OutputInterface.outputs`; use
 `output_descriptor_entries` to read node-owned entry fields and return a plain
@@ -181,6 +196,17 @@ preview metadata. No ComfyUI JavaScript, PromptServer, or global extension
 registry is involved.
 
 ## Learn more
+
+Save nodes call `attach_saved_artifact(ref.to_wire())` after successful
+`AssetWriter` publication. This required result attachment raises outside an
+active invocation; it is not a droppable event. The host independently checks
+the mounted file and writer publication before returning a `SavedArtifact` in
+the run result. Failed executions return no attachments. Ordinary ASSET outputs
+do not imply a saved-file attachment, and no bytes are copied to a second store.
+Attach every published file in a batch; an invocation admits up to 4096 saved-file
+claims, independently of the encoded-preview and legacy-candidate limits.
+The nonnegative integer `size` describes the mounted file, not an encoded payload
+carried by the claim. Host validation streams the file without materializing it.
 
 - [Pack authoring](../../docs/pack-authoring.md) describes manifests, nodes,
   custom value types, and the compatibility contract.

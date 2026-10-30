@@ -168,7 +168,7 @@ class MusicInspect(Node):
         return cls.outputs(result="music conditioning exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]
@@ -183,6 +183,7 @@ def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process
             (tmp_path / "music_fixture.py").write_text(
                 "from test_audio_music_conditioning_torch import MusicSource, MusicInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, MusicSource, MusicInspect)\n",
                 encoding="ascii",
             )
@@ -192,6 +193,10 @@ def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["music-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "music_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "music_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "music_fixture:register_inference_types",

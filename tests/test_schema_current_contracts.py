@@ -988,12 +988,17 @@ def test_widget_socket_binding_enforced() -> None:
         widget=ComboWidget(options=("a", "b")),
     )
     for wrong in (
+        TypeExpr.concrete("INT"),
         TypeExpr.concrete("STRING"),
         TypeExpr.wildcard(),
         TypeExpr.union("COMBO", "STRING"),
     ):
         with pytest.raises(ValueError, match="combo widget requires a concrete"):
             InputSpec("combo", wrong, widget=ComboWidget(options=("a", "b")))
+    with pytest.raises(ValueError, match="boolean widget"):
+        InputSpec("bad", TypeExpr.concrete("STRING"), widget=BooleanWidget(label_on="yes"))
+    with pytest.raises(ValueError, match="save target widget"):
+        InputSpec("bad", TypeExpr.concrete("STRING"), widget=SaveTargetWidget())
 
 
 def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
@@ -1227,6 +1232,7 @@ def test_malformed_widget_wire_rejected() -> None:
     """Structurally invalid built-in widget descriptors refuse loudly."""
     for bad in (
         "ASSET",
+        {"type": ""},
         {"type": "ASSET", "accept": "image/png"},
         {"type": "ASSET", "accept": [1]},
         {"type": "SAVE_TARGET", "suffix": 7},

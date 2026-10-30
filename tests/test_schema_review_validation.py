@@ -3,12 +3,9 @@ from typing import Any, cast
 import pytest
 from dinkster_schema import (
     AssetWidget,
-    BooleanWidget,
-    ComboWidget,
     InputSpec,
     NodeSchema,
     OutputSpec,
-    SaveTargetWidget,
     TypeExpr,
     schema_from_wire,
     schema_to_wire,
@@ -26,21 +23,6 @@ def _wire() -> dict[str, Any]:
             )
         ),
     )
-
-
-@pytest.mark.parametrize(
-    ("widget", "type_id", "message"),
-    [
-        (BooleanWidget(label_on="yes"), "STRING", "boolean widget"),
-        (ComboWidget(options=("a",)), "INT", "combo widget"),
-        (SaveTargetWidget(), "STRING", "save target widget"),
-    ],
-)
-def test_new_widget_socket_bindings_are_enforced(
-    widget: object, type_id: str, message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        InputSpec("bad", TypeExpr.concrete(type_id), widget=widget)  # type: ignore[arg-type]
 
 
 def test_asset_widget_binding_matrix_accepts_assets_and_concrete_scalars() -> None:

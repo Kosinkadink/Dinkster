@@ -66,8 +66,9 @@ and `comfy-aimdo==0.6.0` from PyPI. macOS installs the pure-Python
 kitchen wheel and does not enable native Aimdo residency because the mechanism
 does not support that OS.
 
-Both setup scripts pin root synchronization to this checkout's torch-free
-`.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. They manage
+Both setup scripts pin root synchronization to this checkout's locked workspace
+`.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. Its inference
+dependency installs torch; cold authoring imports do not initialize it. They manage
 `.venv-torch` and `.venv-gpu` separately with `uv pip`. Do not target those
 Torch environments with project `uv sync`: exact sync can remove their
 platform-specific torch and kitchen wheels.

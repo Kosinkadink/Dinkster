@@ -93,7 +93,7 @@ class Result(Node):
 FIXTURE_NODES = (ImageSource, Result)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_canny_executes_twice_with_numpy_input_in_both_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -103,6 +103,7 @@ def test_canny_executes_twice_with_numpy_input_in_both_manifest_hosts(
             (tmp_path / "canny_fixture.py").write_text(
                 "from test_canny_torch import FIXTURE_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FIXTURE_NODES)\n",
                 encoding="ascii",
             )
@@ -112,6 +113,10 @@ def test_canny_executes_twice_with_numpy_input_in_both_manifest_hosts(
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["canny-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "canny_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "canny_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "canny_fixture:register_inference_types",

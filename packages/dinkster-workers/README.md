@@ -40,6 +40,22 @@ the jail changes what a hostile import can do, not what the report means.
 
 ## Use
 
+Generation-layered dependency provisioning uses per-variant, hashed pack locks.
+See [Pack dependency locks](PACK-LOCK.md) for the format, opencv aliases and
+publisher/planner/provisioner interfaces.
+
+Nodes can call `dinkster_api.v1.publish_preview_artifact` with encoded bytes,
+a safe basename, and the matching media type. Successful invocations attach
+host-validated digest-backed artifacts to the ordinary job result. The host
+requires an asset vault, not a writable output mount. Bytes are served through
+the existing verified asset route. Failed or cancelled execution before the
+first publication commit leaves no stored content. Each committed digest keeps
+normal vault retention even if a later commit in that batch fails, because an
+independent ingest may already share it. Failed batches return no descriptors;
+uncommitted staging is always cleaned. Calls outside an active
+invocation fail rather than silently dropping required content. This does not
+change transient image/ring previews or persistent mount-based saves.
+
 Run doctor against the pack directory containing `dinkster-pack.toml` before
 publishing it. The human report gives every finding a concrete fix; use the
 JSON form in CI and other tooling.
@@ -190,6 +206,17 @@ them. The standalone residency probe uses `dinkster-residency-probe/4` and the s
 unassessed meaning; its timing-outlier flag is not a spill verdict either.
 
 ## Learn more
+
+The pack environment CLI accepts `--offline` for generation repair. Its
+provisioner then uses only size/hash-verified local wheel-store entries; missing
+or corrupt wheels refuse before creating a download directory or opening a URL.
+Normal pack installs retain their declared-source acquisition behavior.
+The read-only `references` operation returns `wheelHashes` in the existing JSON
+envelope: sorted unique SHA256 values from all recorded dependency locks,
+including alternate wheel tags. It uses the pack-lock parser without resolving,
+fetching, importing pack code or changing either interpreter. Shared-store
+collection consumes this list to retain pack wheels independently of engine
+constraints.
 
 Nodes declaring `input_values=True` receive a read-only `input_values`
 mapping of input envelopes alongside ordinary decoded arguments. This permits
