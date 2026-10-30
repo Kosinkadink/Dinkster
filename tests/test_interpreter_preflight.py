@@ -23,13 +23,17 @@ def test_preflight_accepts_current_supported_interpreter() -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows executable search order")
-def test_worker_bare_interpreter_uses_native_executable_selection(tmp_path: Path) -> None:
+def test_worker_bare_interpreter_uses_native_executable_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     alternative = tmp_path / "other"
     venv.EnvBuilder(with_pip=False).create(alternative)
     environment = {
         "PATH": str(alternative / "Scripts") + os.pathsep + os.environ["PATH"],
         "PYTHONPATH": str(tmp_path),
     }
+    monkeypatch.setenv("PATH", environment["PATH"])
+    assert Path(shutil.which("python") or "") == alternative / "Scripts/python.exe"
     (tmp_path / "selection_probe.py").write_text(
         "import json,sys\nfrom pathlib import Path\n"
         "Path(sys.argv[1]).write_text(json.dumps([sys.executable,sys.prefix]))\n"
