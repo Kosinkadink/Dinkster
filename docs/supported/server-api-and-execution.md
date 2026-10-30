@@ -1,5 +1,9 @@
 ## Server API and execution
 
+- Supervisor, station and fleet ingress listeners reject unlisted, malformed,
+  missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
+  WebSocket upgrades. Loopback IP literals and the configured listen hostname
+  are accepted; additional names require repeatable `--allow-host HOST`.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
