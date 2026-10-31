@@ -30,6 +30,11 @@ from .audio_codec import (
     render_audio_wav,
 )
 from .audio_lazy import channel_layout as audio_channel_layout
+from .box_codec import (
+    register_box_types,
+    validate_bounding_box_encoded,
+    validate_placement_array_encoded,
+)
 from .builtin_types import (
     ARRAY_TYPE,
     ASSET_TYPE,
@@ -639,6 +644,9 @@ __all__ = [
     "video_rendition_mime",
     "video_source",
     "validate_latent_encoded",
+    "register_box_types",
+    "validate_bounding_box_encoded",
+    "validate_placement_array_encoded",
     "CURVE_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
     "MAX_CURVE_POINTS",

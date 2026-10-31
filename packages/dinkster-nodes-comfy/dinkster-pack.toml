@@ -325,6 +325,7 @@ namespaces = [
     "ImageRotate",
     "ImageFlip",
     "ImageScaleToMaxDimension",
+    "PadImageNode",
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
@@ -618,6 +619,9 @@ namespaces = [
     "SaveGaussianSplat",
     "SavePointCloud",
     "SplatToFile3D",
+    "ImageUpscaleWithModel",
+    "ImageHistogram",
+    "TextOverlay",
 ]
 
 [pack.sandbox]
