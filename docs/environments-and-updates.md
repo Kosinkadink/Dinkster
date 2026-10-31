@@ -229,8 +229,11 @@ engine manifest, mirrors missing engine objects, verifies served payload hashes,
 then writes the channel last with no-cache metadata. It uses the base producer's
 `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET` and
 `R2_PUBLIC_BASE_URL` settings; missing settings explicitly skip publication.
-Superseded main pushes retain their immutable release payloads but do not
-replace the main channel.
+The serialized main-channel job compares the published engine commit with the
+candidate through GitHub's compare API, not with the live main head. An absent
+channel or an ancestor engine permits publication; the same commit verifies the
+existing channel bytes without an upload. A descendant or diverged published
+engine retains its channel, and the candidate keeps its immutable payloads.
 
 `signature` is reserved. Mirrors Dinkster operates serve documents with a
 null signature, checked only by the sha256 digests they carry and by the

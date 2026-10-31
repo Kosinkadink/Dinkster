@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import urlopen
 
@@ -14,9 +15,10 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from dinkster_supervisor.environment_artifacts import parse_metadata, validate_manifest
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
-from dinkster_supervisor.environment_state import content_digest
+from dinkster_supervisor.environment_state import Channel, content_digest
 
 
 def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_version: str) -> None:
@@ -118,14 +120,42 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                 row["sha256"],
                 row["size"],
             )
-        if channel == "main":
-            with urlopen(
-                "https://api.github.com/repos/Kosinkadink/Dinkster/git/ref/heads/main", timeout=120
-            ) as response:
-                if json.load(response)["object"]["sha"] != engine["commit"]:
-                    print("Main channel skipped: a newer repository push superseded this release")
-                    return
         path = work / "channels" / f"{channel}.json"
+        if channel == "main":
+            try:
+                published_bytes = read_metadata(public, "channels/main.json")
+            except HTTPError as error:
+                if error.code != 404:
+                    raise
+            else:
+                published = Channel.parse(parse_metadata(published_bytes))
+                manifest = validate_manifest(
+                    read_metadata(
+                        public, f"engine/{published.engine_release[7:]}/release-manifest.json"
+                    ),
+                    published.engine_release,
+                    None,
+                )
+                published_commit = manifest["commit"]
+                with urlopen(
+                    "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
+                    f"{published_commit}...{engine['commit']}",
+                    timeout=120,
+                ) as response:
+                    status = json.load(response)["status"]
+                if status == "identical":
+                    if published_bytes != path.read_bytes():
+                        raise ValueError("public channel differs for the same engine commit")
+                    print(f"Verified main channel for engine {identity}")
+                    return
+                if status in {"behind", "diverged"}:
+                    print(
+                        f"Main channel skipped: published {published_commit}, "
+                        f"candidate {engine['commit']} ({status})"
+                    )
+                    return
+                if status != "ahead":
+                    raise ValueError(f"unexpected GitHub comparison status: {status}")
         client.upload_file(
             str(path),
             os.environ["R2_BUCKET"],
