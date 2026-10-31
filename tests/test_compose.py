@@ -2242,35 +2242,63 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
             else:
                 await composer.reload_pack("dinkster-nodes-comfy")
             assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
-                        "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
-                        "false": GraphNode("PrimitiveBoolean", {"value": False}),
-                        "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
-                        "and": GraphNode(
-                            "ComfyAndNode",
-                            {
-                                "values.value0": Link("length", "length"),
-                                "values.value1": Link("false", "BOOLEAN"),
-                            },
-                        ),
-                        "or": GraphNode(
-                            "ComfyOrNode",
-                            {
-                                "values.value0": Link("false", "BOOLEAN"),
-                                "values.value1": Link("length", "length"),
-                            },
-                        ),
-                    }
-                ),
-                ["length", "not", "and", "or"],
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                    "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                    "false": GraphNode("PrimitiveBoolean", {"value": False}),
+                    "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
+                    "and": GraphNode(
+                        "ComfyAndNode",
+                        {
+                            "values.value0": Link("length", "length"),
+                            "values.value1": Link("false", "BOOLEAN"),
+                        },
+                    ),
+                    "or": GraphNode(
+                        "ComfyOrNode",
+                        {
+                            "values.value0": Link("false", "BOOLEAN"),
+                            "values.value1": Link("length", "length"),
+                        },
+                    ),
+                    "combo_default": GraphNode("CustomCombo", {"choice": ""}),
+                    "combo_index": GraphNode("PrimitiveInt", {"value": 205}),
+                    "combo": GraphNode(
+                        "CustomCombo",
+                        {
+                            "choice": "outside-menu",
+                            "index": Link("combo_index", "INT"),
+                            "2": TypedLiteral("STRING", "unused sparse option"),
+                            "205": Link("text", "STRING"),
+                            "label": TypedLiteral("STRING", "arbitrary extra name"),
+                            **{str(i): TypedLiteral("INT", i) for i in range(300, 405)},
+                        },
+                    ),
+                }
             )
+            targets = ["length", "not", "and", "or", "combo_default", "combo"]
+            result = await engine.run(graph, targets)
             assert result.outputs["length"]["length"].resolve() == 2
             assert result.outputs["not"]["BOOLEAN"].resolve() is False
             assert result.outputs["and"]["BOOLEAN"].resolve() is False
             assert result.outputs["or"]["BOOLEAN"].resolve() is True
+            assert result.outputs["combo_default"]["STRING"].resolve() == ""
+            assert result.outputs["combo_default"]["INDEX"].resolve() == 0
+            assert result.outputs["combo"]["STRING"].resolve() == "outside-menu"
+            assert result.outputs["combo"]["INDEX"].resolve() == 205
+            repeated = await engine.run(graph, targets)
+            assert repeated.executed == ()
+            assert "combo" in repeated.cached
+            assert repeated.outputs["combo"]["INDEX"].resolve() == 205
+            changed = Graph(
+                nodes={**graph.nodes, "combo_index": GraphNode("PrimitiveInt", {"value": -7})}
+            )
+            changed_result = await engine.run(changed, ["combo"])
+            assert changed_result.outputs["combo"]["STRING"].resolve() == "outside-menu"
+            assert changed_result.outputs["combo"]["INDEX"].resolve() == -7
+            assert "combo" in changed_result.executed
             with pytest.raises(CompositionError, match="overlaps"):
                 await composer.add_pack(PackSpec(manifest=other_manifest))
             assert set(composer.composition.schemas) == set(claims)
