@@ -114,28 +114,42 @@ jobs:
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
             run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard_name: ", shard 5"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard_name: ", shard 6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
             run_checks: false
             timeout-minutes: 30
     steps:
@@ -312,9 +326,10 @@ jobs:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14.10"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
       - name: Set up Windows runtime environment
         run: uv sync --locked --all-packages
       - name: Install and verify published Windows engine dependencies
@@ -338,7 +353,7 @@ jobs:
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=20 `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=0 `
             --case-shard-file tests/test_environment_generations.py `
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `

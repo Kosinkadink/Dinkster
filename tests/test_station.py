@@ -23,6 +23,7 @@ import aiohttp
 import pytest
 from dinkster_registry import Lockfile
 from dinkster_supervisor import (
+    IngressDef,
     InstallDef,
     InstallsError,
     engine_command,
@@ -139,9 +140,23 @@ def test_station_ports_bind_before_any_engine(tmp_path: Path) -> None:
         a = stub_install(tmp_path, "alpha")
         b = stub_install(tmp_path, "beta")
         management = free_port()
-        station = await start_station((a, b), port=management)
+        ingress = IngressDef(free_port(), ("alpha", "beta"), "alpha", tmp_path / "leases.sqlite3")
+        station = await start_station(
+            (a, b),
+            host="localhost",
+            port=management,
+            allow_hosts=("station.example",),
+            ingress=ingress,
+        )
         try:
             async with aiohttp.ClientSession() as session:
+                for port in (management, a.port, b.port, ingress.port):
+                    url = f"http://127.0.0.1:{port}/supervisor/status"
+                    rejected = await session.get(url, headers={"Host": "untrusted.example"})
+                    assert rejected.status == 421
+                    for authority in ("LOCALHOST.", "Station.Example:3649"):
+                        allowed = await session.get(url, headers={"Host": authority})
+                        assert allowed.status == 200
                 base = f"http://127.0.0.1:{management}"
                 async with session.get(base + "/supervisor/status") as resp:
                     status = await resp.json()

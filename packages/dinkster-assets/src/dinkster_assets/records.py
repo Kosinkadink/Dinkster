@@ -37,7 +37,8 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -205,6 +206,72 @@ class AssetObservation:
         }
 
 
+@dataclass(frozen=True)
+class AssetRetention:
+    """An explicit owner of asset identities, not read authority or a catalog entry."""
+
+    scope: str
+    owner_kind: str
+    owner_id: str
+    revision: int
+    digests: tuple[str, ...]
+    complete: bool = False
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "scope": self.scope,
+            "ownerKind": self.owner_kind,
+            "ownerId": self.owner_id,
+            "revision": self.revision,
+            "digests": list(self.digests),
+            "complete": self.complete,
+        }
+
+
+def _retention_key(scope: object, owner_kind: object, owner_id: object) -> tuple[str, str, str]:
+    scope = _clean_scope(scope)
+    if owner_kind not in ("document", "history", "shown-result", "preview"):
+        raise AssetError("invalid asset retention owner kind")
+    if (
+        not isinstance(owner_id, str)
+        or not owner_id
+        or owner_id != owner_id.strip()
+        or len(owner_id) > _NAME_LIMIT
+    ):
+        raise AssetError("asset retention owner id must be non-empty and at most 512 characters")
+    return scope, cast(str, owner_kind), owner_id
+
+
+def _retention_digests(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list) or len(cast(list[object], raw)) > 4096:
+        raise AssetError("retained digests must be a list of at most 4096 identities")
+    return _canonical_digests(cast(list[object], raw))
+
+
+def _canonical_digests(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        raise AssetError("asset references must be a list")
+    digests: set[str] = set()
+    for digest in cast(list[object], raw):
+        if not isinstance(digest, str):
+            raise AssetError("retained digest must be a canonical asset identity")
+        digests.add(require_digest(digest))
+    return tuple(sorted(digests))
+
+
+def _retention_from_row(row: sqlite3.Row) -> AssetRetention:
+    key = _retention_key(row["scope"], row["owner_kind"], row["owner_id"])
+    if type(row["revision"]) is not int or row["revision"] < 1:
+        raise AssetError("asset retention revision is invalid")
+    if type(row["complete"]) is not int or row["complete"] not in (0, 1):
+        raise AssetError("asset retention completeness is invalid")
+    try:
+        digests = _retention_digests(json.loads(row["digests"]))
+    except (TypeError, ValueError) as exc:
+        raise AssetError("asset retention state is unreadable") from exc
+    return AssetRetention(*key, row["revision"], digests, bool(row["complete"]))
+
+
 class LibraryStore:
     """SQLite-backed scoped record store. Thread-safe: handlers call it
     via asyncio.to_thread, so one connection crosses threads behind a
@@ -253,6 +320,170 @@ class LibraryStore:
         with self._lock:
             self._database.close()
             self._engine.dispose()
+
+    def cleanup_limit(self) -> int | None:
+        """Read the global size policy; null means unlimited, not unknown."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT singleton, limit_bytes FROM asset_cleanup_policy"
+            ).fetchall()
+        if len(rows) != 1 or rows[0][0] != 1:
+            raise AssetError("asset cleanup policy is unavailable")
+        limit = rows[0][1]
+        if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
+            raise AssetError("asset cleanup policy is invalid")
+        return limit
+
+    def set_cleanup_limit(self, limit: int | None) -> None:
+        """Changing the size policy never grants collection authority."""
+        if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
+            raise AssetError("limitBytes must be a positive safe integer or null")
+        with self._lock, self._conn:
+            changed = self._conn.execute(
+                "UPDATE asset_cleanup_policy SET limit_bytes = ? WHERE singleton = 1", (limit,)
+            ).rowcount
+            if changed != 1:
+                raise AssetError("asset cleanup policy is unavailable")
+
+    def retain_assets(
+        self,
+        scope: str,
+        owner_kind: str,
+        owner_id: str,
+        digests: list[str],
+        *,
+        revision: int,
+        complete: bool = False,
+    ) -> AssetRetention:
+        """Replace an owner's manifest atomically; revision zero creates a new owner.
+
+        Missing bytes are allowed: reopening a document must retain its missing
+        identities too, without granting permission to fetch or read them.
+        """
+        key = _retention_key(scope, owner_kind, owner_id)
+        cleaned = _retention_digests(digests)
+        if type(revision) is not int or revision < 0:
+            raise AssetError("asset retention revision must be a nonnegative integer")
+        if type(complete) is not bool:
+            raise AssetError("asset retention completeness must be a boolean")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_retentions "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                key,
+            ).fetchone()
+            current = _retention_from_row(row) if row is not None else None
+            if revision != (current.revision if current is not None else 0):
+                raise StaleRevision("retained asset values changed")
+            retained = AssetRetention(*key, revision + 1, cleaned, complete)
+            self._conn.execute(
+                "INSERT INTO asset_retentions "
+                "(scope, owner_kind, owner_id, revision, digests, complete) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(scope, owner_kind, owner_id) DO UPDATE SET "
+                "revision = excluded.revision, digests = excluded.digests, "
+                "complete = excluded.complete",
+                (*key, retained.revision, json.dumps(cleaned), int(complete)),
+            )
+        return retained
+
+    def retained_assets(self, scope: str, owner_kind: str, owner_id: str) -> AssetRetention | None:
+        key = _retention_key(scope, owner_kind, owner_id)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM asset_retentions "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                key,
+            ).fetchone()
+        return None if row is None else _retention_from_row(row)
+
+    def release_assets(
+        self, scope: str, owner_kind: str, owner_id: str, *, revision: int
+    ) -> AssetRetention | None:
+        key = _retention_key(scope, owner_kind, owner_id)
+        if type(revision) is not int or revision < 1:
+            raise AssetError("asset retention revision must be a positive integer")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_retentions "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                key,
+            ).fetchone()
+            if row is None:
+                return None
+            if _retention_from_row(row).revision != revision:
+                raise StaleRevision("retained asset values changed")
+            retained = AssetRetention(*key, revision + 1, (), True)
+            # Retain the revision even when empty so reusing an owner cannot
+            # let a stale tab release its newer values.
+            self._conn.execute(
+                "UPDATE asset_retentions SET revision = ?, digests = '[]', complete = 1 "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                (retained.revision, *key),
+            )
+        return retained
+
+    @contextmanager
+    def hold_asset_references(
+        self, additional_roots: Sequence[str] = ()
+    ) -> Generator[frozenset[str]]:
+        """Inspect catalog and explicit roots in every scope behind their write barrier.
+
+        This excludes other SQLite writers, not cache or history publishers.
+        Missing associations for opaque documents cannot establish emptiness.
+        """
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                rows = self._conn.execute("SELECT * FROM asset_retentions").fetchall()
+                retained = [_retention_from_row(row) for row in rows]
+                if any(not owner.complete for owner in retained):
+                    raise AssetError("retained owner manifest is incomplete")
+                roots = set(digest for owner in retained for digest in owner.digests)
+                roots.update(require_digest(digest) for digest in additional_roots)
+                for table in ("records", "media_grants", "asset_observations"):
+                    for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):
+                        if not isinstance(digest, str):
+                            raise AssetError("catalog reference identity is invalid")
+                        roots.add(require_digest(digest))
+                for (references,) in self._conn.execute(
+                    "SELECT asset_digests FROM asset_derivations"
+                ):
+                    try:
+                        roots.update(_canonical_digests(json.loads(references)))
+                    except (TypeError, ValueError) as exc:
+                        raise AssetError("derivation asset references are unavailable") from exc
+                manifests = {
+                    row["digest"]: row["manifest"]
+                    for row in self._conn.execute("SELECT digest, manifest FROM asset_dependencies")
+                }
+                pending = list(roots)
+                while pending:
+                    digest = pending.pop()
+                    if digest not in manifests:
+                        continue
+                    try:
+                        dependencies = json.loads(manifests[digest])
+                    except (TypeError, ValueError) as exc:
+                        raise AssetError("asset dependency state is unreadable") from exc
+                    if not isinstance(dependencies, list):
+                        raise AssetError("asset dependencies must be a list")
+                    for dependency in cast(list[object], dependencies):
+                        if not isinstance(dependency, dict) or not isinstance(
+                            child := cast(dict[str, object], dependency).get("digest"), str
+                        ):
+                            raise AssetError("asset dependency identity is unavailable")
+                        require_digest(child)
+                        if child not in roots:
+                            roots.add(child)
+                            pending.append(child)
+                yield frozenset(roots)
+            except sqlite3.Error as exc:
+                raise AssetError("retained asset state is unavailable") from exc
+            finally:
+                self._conn.rollback()
 
     def record_asset(
         self,
@@ -585,20 +816,38 @@ class LibraryStore:
             ).fetchone()
         return None if row is None else json.loads(row["manifest"])
 
-    def put_derivation(self, cache_key: str, manifest: Mapping[str, object]) -> bool:
-        """Persist an immutable content-derived result under its complete cache key."""
+    def put_derivation(
+        self, cache_key: str, manifest: Mapping[str, object], *, references: list[str]
+    ) -> bool:
+        """Persist immutable provenance and its producer-declared external identities atomically."""
         cache_key = require_digest(cache_key)
         encoded = json.dumps(dict(manifest), separators=(",", ":"), sort_keys=True)
+        cleaned = _canonical_digests(references)
         with self._lock, self._conn:
             inserted = self._conn.execute(
-                "INSERT OR IGNORE INTO asset_derivations VALUES (?, ?)", (cache_key, encoded)
+                "INSERT OR IGNORE INTO asset_derivations (cache_key, manifest, asset_digests) "
+                "VALUES (?, ?, ?)",
+                (cache_key, encoded, json.dumps(cleaned)),
             )
             row = self._conn.execute(
-                "SELECT manifest FROM asset_derivations WHERE cache_key = ?", (cache_key,)
+                "SELECT manifest, asset_digests FROM asset_derivations WHERE cache_key = ?",
+                (cache_key,),
             ).fetchone()
-        assert row is not None
-        if row["manifest"] != encoded:
-            raise AssetError("derivation conflicts with immutable stored manifest")
+            assert row is not None
+            if row["manifest"] != encoded:
+                raise AssetError("derivation conflicts with immutable stored manifest")
+            if row["asset_digests"] is None:
+                self._conn.execute(
+                    "UPDATE asset_derivations SET asset_digests = ? WHERE cache_key = ?",
+                    (json.dumps(cleaned), cache_key),
+                )
+            else:
+                try:
+                    stored = _canonical_digests(json.loads(row["asset_digests"]))
+                except (TypeError, ValueError) as exc:
+                    raise AssetError("derivation asset references are unavailable") from exc
+                if stored != cleaned:
+                    raise AssetError("derivation conflicts with immutable asset references")
         return inserted.rowcount == 1
 
     def get_derivation(self, cache_key: str) -> dict[str, object] | None:

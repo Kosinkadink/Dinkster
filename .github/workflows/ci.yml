@@ -87,6 +87,8 @@ jobs:
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
       - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py
+      - name: Verify produced source adoption before publication
+        run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py::test_in_process_control_sources_are_adopted_before_publication
 
   fast:
     needs: [changes, torch-cpu]
@@ -183,6 +185,7 @@ jobs:
       - name: Verify Windows interpreter and native extension loading
         run: >-
           uv run --locked pytest -q tests/test_interpreter_preflight.py
+          tests/test_asset_selections.py
           tests/test_isolated.py::test_group_connects_all_peers_before_synchronous_hello_preparation
           tests/test_reload.py::test_group_worker_start_is_all_or_nothing
           tests/test_reload.py::test_group_worker_authenticates_every_tcp_endpoint

@@ -68,6 +68,38 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+    if project == "dinkster-api":
+        environment = tmp_path / "standalone-api"
+        subprocess.run(
+            ["uv", "venv", "--python", sys.executable, str(environment)],
+            cwd=tmp_path,
+            check=True,
+        )
+        python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--no-sources",
+                str(next(rebuilt.glob("*.whl"))),
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
+        result = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from dinkster_api.v1 import Node; print(Node.__name__)",
+            ],
+            cwd=tmp_path,
+            text=True,
+        )
+        assert result.strip() == "Node"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
@@ -384,6 +416,23 @@ def test_release_failure_prints_service_and_publication_log_tails(
     assert "backend failed" in output and "publication result" in output
     assert "line 24\n" not in output and "line 25\n" in output and "line 124\n" in output
     assert "not a log" not in output
+
+
+def test_windows_runtime_admits_the_pinned_interpreter_before_installing_dependencies() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["windows-runtime"]["steps"]
+    setup_index = next(
+        index for index, step in enumerate(steps) if step.get("uses") == "astral-sh/setup-uv@v5"
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "./.github/actions/windows-python"
+    )
+    sync_index = next(index for index, step in enumerate(steps) if "uv sync" in step.get("run", ""))
+    assert steps[setup_index]["with"]["python-version"] == "3.14.10"
+    assert setup_index < admission_index < sync_index
+    assert "if" not in steps[admission_index]
 
 
 def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:

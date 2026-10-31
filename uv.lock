@@ -902,6 +902,7 @@ dependencies = [
     { name = "av" },
     { name = "blake3" },
     { name = "dinkster-opentimelineio" },
+    { name = "filelock" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "pillow" },
@@ -917,6 +918,7 @@ requires-dist = [
     { name = "av", specifier = "==18.1.0" },
     { name = "blake3", specifier = ">=0.4" },
     { name = "dinkster-opentimelineio", specifier = "==0.19.0" },
+    { name = "filelock", specifier = ">=4.2.4,<5" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "packaging", specifier = ">=24" },
     { name = "pillow", specifier = ">=10" },
@@ -933,6 +935,7 @@ dependencies = [
     { name = "alembic" },
     { name = "blake3" },
     { name = "dinkster-values" },
+    { name = "filelock" },
     { name = "sqlalchemy" },
 ]
 
@@ -941,6 +944,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "blake3", specifier = ">=0.4" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
+    { name = "filelock", specifier = ">=4.2.4,<5" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
 ]
 

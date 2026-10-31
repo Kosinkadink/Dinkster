@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, TypeVar, cast
 
 from dinkster_assets import AssetError, AssetResolver, AssetVault, DeclaredAsset, resolver_from_env
+from dinkster_assets.declared import use_produced_output_job
 from dinkster_memory import (
     BudgetExceeded,
     MeasuredMemory,
@@ -1428,14 +1429,17 @@ class BoundarySession:
                 if self._release_guard.pins.pin(rid)
             ]
         try:
-            adoption = asyncio.create_task(
-                asyncio.to_thread(
-                    self._produced_assets.capture,
-                    values,
-                    self._blob_store,
-                    invocation.inputs,
+            with use_produced_output_job(
+                invocation.job_ref or invocation.invocation_id, invocation.attempt_id
+            ):
+                adoption = asyncio.create_task(
+                    asyncio.to_thread(
+                        self._produced_assets.capture,
+                        values,
+                        self._blob_store,
+                        invocation.inputs,
+                    )
                 )
-            )
             self._asset_adoptions.add(adoption)
             adoption.add_done_callback(self._asset_adoptions.discard)
             await await_file_operation(adoption)
@@ -1603,7 +1607,10 @@ class BoundarySession:
                 )
 
             try:
-                adoption = asyncio.create_task(asyncio.to_thread(adopt))
+                with use_produced_output_job(
+                    invocation.job_ref or invocation.invocation_id, invocation.attempt_id
+                ):
+                    adoption = asyncio.create_task(asyncio.to_thread(adopt))
                 self._asset_adoptions.add(adoption)
                 adoption.add_done_callback(self._asset_adoptions.discard)
                 await await_file_operation(adoption)
