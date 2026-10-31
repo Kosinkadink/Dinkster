@@ -87,6 +87,8 @@ jobs:
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
       - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py
+      - name: Verify produced source adoption before publication
+        run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py::test_in_process_control_sources_are_adopted_before_publication
 
   fast:
     needs: [changes, torch-cpu]
@@ -181,4 +183,4 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked pyright
       - name: Verify Windows interpreter and native extension loading
-        run: uv run --locked pytest -q tests/test_interpreter_preflight.py
+        run: uv run --locked pytest -q tests/test_interpreter_preflight.py tests/test_asset_selections.py
