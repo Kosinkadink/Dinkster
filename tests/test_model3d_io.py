@@ -261,6 +261,13 @@ def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
         value_asset_references({"model": restored_value}, complete_registry=receiver)
         == expected_refs
     )
+    manifest = receiver.render(restored_value, "manifest")
+    assert manifest.mime == "application/json"
+    assert json.loads(manifest.data) == {
+        "format": "gltf",
+        "source": model.to_wire(),
+        "resources": {"mesh/data.bin": buffer.to_wire()},
+    }
     altered = {**obj, "resources": {"mesh/other.bin": buffer}}
     assert sender.wrap(FILE_3D_GLTF_TYPE, altered).fingerprint != value.fingerprint
     wrong_format = sender.spec(FILE_3D_GLB_TYPE)
@@ -326,6 +333,7 @@ def test_file3d_local_binding_uses_live_grant_and_only_reconciles_indexed_conten
     wire = json.loads(payload)
     assert wire["source"]["verification"] == "unverified"
     assert "digest" not in wire["source"]
+    assert json.loads(registry.render(local, "manifest").data) == wire
     assert local.meta.entries["asset_refs"] == []
     assert (
         cast(LocalAssetRef, cast(dict, spec.decode(payload))["source"]).read_bytes()
@@ -351,6 +359,8 @@ def test_file3d_local_binding_uses_live_grant_and_only_reconciles_indexed_conten
             source.write_bytes(b"changed geometry")
         with pytest.raises(AssetError, match="unavailable, revoked or changed"):
             spec.decode(payload)
+        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+            registry.render(local, "manifest")
 
 
 @pytest.mark.parametrize("source", ("/host/model.obj", {"path": "/host/model.obj"}))
@@ -390,6 +400,12 @@ def test_file3d_format_families_retain_original_format(type_id: str, format_id: 
     spec = registry.spec(type_id)
     decoded = cast("dict[str, object]", spec.decode(spec.encode(obj)))
     assert decoded == {**obj, "resources": {}}
+    rendition = registry.render(registry.wrap(type_id, obj), "manifest")
+    assert json.loads(rendition.data) == {
+        "format": format_id,
+        "source": ref.to_wire(),
+        "resources": {},
+    }
     assert spec.fingerprint is not None
     assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
     assert value_asset_references(

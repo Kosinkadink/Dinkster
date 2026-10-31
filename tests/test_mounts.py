@@ -64,6 +64,7 @@ from dinkster_workers import InProcessWorker, IsolatedWorker, load_manifest
 from dinkster_workers.host import load_pack
 
 from dinkster.mounts_api import MountService, add_mount_routes
+from tests.platform_support import symlink_or_skip
 
 STRING = TypeExpr.concrete("STRING")
 
@@ -2466,7 +2467,7 @@ def test_resolve_path_refusals_validation_and_scope(tmp_path: Path) -> None:
     seed(root, {"source.txt": b"source"})
     seed(tmp_path / "outside", {"secret.txt": b"secret"})
     seed(root, {"partial.tmp": b"not complete", ".private.txt": b"hidden"})
-    (root / "escape.txt").symlink_to(tmp_path / "outside" / "secret.txt")
+    symlink_or_skip(root / "escape.txt", tmp_path / "outside" / "secret.txt")
     table = MountTable(index_root=tmp_path / "indexes")
     table.add(MountDef("input", root))
     table.scan("input")

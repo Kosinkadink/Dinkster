@@ -602,6 +602,9 @@ namespaces = [
     "Trellis2TextureStage",
     "PaintMesh",
     "WeldVertices",
+    "MeshTextureToImage",
+    "MeshSmoothNormals",
+    "RenderUVAtlas",
 ]
 
 [pack.sandbox]

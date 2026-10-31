@@ -144,7 +144,7 @@ def register_file3d_types(
             if dict(metadata) != meta(obj):
                 raise AssetError("FILE_3D metadata does not match encoded source identities")
 
-        return registry.register(
+        spec = registry.register(
             type_id,
             encode=encode,
             decode=lambda data: typed(json.loads(data)),
@@ -154,6 +154,8 @@ def register_file3d_types(
             validate_encoded=validate,
             asset_references_complete=True,
         )
+        registry.register_rendition(type_id, "manifest", mime="application/json", render=encode)
+        return spec
 
     return tuple(
         registry.spec(type_id) if type_id in registry else register(type_id, formats)

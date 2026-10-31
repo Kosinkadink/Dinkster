@@ -114,28 +114,42 @@ jobs:
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
             run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard_name: ", shard 5"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard_name: ", shard 6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
             run_checks: false
             timeout-minutes: 30
     steps:

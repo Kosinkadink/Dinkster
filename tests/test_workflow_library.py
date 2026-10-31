@@ -34,6 +34,7 @@ from dinkster_assets import (
     AssetVault,
     AssetWriter,
     LibraryStore,
+    LocalAssetRef,
     MountDef,
     MountTable,
     StaleRevision,
@@ -374,6 +375,77 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
+
+
+def test_local_binding_http_reads_live_grants_without_content_identity(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    async def scenario() -> None:
+        root = tmp_path / "models"
+        root.mkdir()
+        source = root / "scene.obj"
+        payload = b"v 0 1 2\nv 3 4 5\n"
+        source.write_bytes(payload)
+        table = MountTable()
+        table.add(MountDef("models", root, "read"), kind="media/model3d")
+        ref = table.bind_name("scene.obj", "media/model3d")
+        assert isinstance(ref, LocalAssetRef)
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), make_store(tmp_path), local_resolver=table
+        )
+        auth = StaticBearerAuthenticator(
+            {
+                "reader": Principal("reader", {"local": frozenset({"assets:read"})}),
+                "foreign": Principal("foreign", {"other": frozenset({"assets:read"})}),
+                "writer": Principal("writer", {"local": frozenset({"assets:write"})}),
+            }
+        )
+        client = TestClient(
+            TestServer(create_app(make_engine, SCHEMAS, library=library, authenticator=auth))
+        )
+        await client.start_server()
+        url = f"/api/assets/local/{ref.binding}"
+        reader = {"Authorization": "Bearer reader", "If-None-Match": "*"}
+        try:
+            assert (await client.get(url)).status == 401
+            for token in ("foreign", "writer"):
+                assert (
+                    await client.get(url, headers={"Authorization": f"Bearer {token}"})
+                ).status == 403
+            assert (await client.get(url + "?scope=other", headers=reader)).status == 403
+            assert (await client.get(url + "?path=scene.obj", headers=reader)).status == 400
+            assert (
+                await client.get(url + "?scope=local&scope=local", headers=reader)
+            ).status == 400
+            response = await client.get(url, headers=reader)
+            assert response.status == 200
+            assert await response.read() == payload
+            assert response.headers["Cache-Control"] == "no-store"
+            assert "ETag" not in response.headers
+            assert table.resolve(digest_bytes(payload)) is None
+            for unavailable in ("unknown-binding", "scene.obj"):
+                response = await client.get(f"/api/assets/local/{unavailable}", headers=reader)
+                assert response.status == 404
+                assert str(root) not in await response.text()
+                assert response.headers["Cache-Control"] == "no-store"
+            replacement = root / "replacement.obj"
+            replacement.write_bytes(b"v 9 8 7\n")
+            replacement.replace(source)
+            response = await client.get(url, headers=reader)
+            assert response.status == 404
+            assert str(root) not in await response.text()
+            fresh = table.bind_name("scene.obj", "media/model3d")
+            assert isinstance(fresh, LocalAssetRef)
+            fresh_url = f"/api/assets/local/{fresh.binding}"
+            assert await (await client.get(fresh_url, headers=reader)).read() == b"v 9 8 7\n"
+            table.remove("models")
+            response = await client.get(fresh_url, headers=reader)
+            assert response.status == 404
+            assert response.headers["Cache-Control"] == "no-store"
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("kind", ["document", "history", "shown-result", "preview"])
