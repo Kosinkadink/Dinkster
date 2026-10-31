@@ -7,6 +7,9 @@
   preserving padded counts, vertex attributes, PBR texture maps and material
   factors. The produced asset is readable across ordinary worker hosts and
   cached executions; empty meshes are rejected.
+- Create 3D File (from Splat) exports the first valid-count-trimmed batch item
+  as PLY with full spherical harmonics, or KSPLAT/SPZ with base color only.
+  Empty splats are rejected and the input tensors remain unchanged.
 - Save 3D Model saves each nonempty mesh batch item as GLB with submission
   metadata, or copies a 3D file's primary bytes without changing its format.
   Filename prefixes target the output mount unless an adjacent mount is selected.
