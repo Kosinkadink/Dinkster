@@ -326,9 +326,9 @@ def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -
         )
 
 
-def prepare_generation_interpreter(
-    *,
+def prepare_engine_interpreter(
     destination: Path,
+    *,
     store: Path,
     base: str,
     constraints: Path,
@@ -465,8 +465,8 @@ def build_generation(
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
     try:
-        prepare_generation_interpreter(
-            destination=destination,
+        prepare_engine_interpreter(
+            destination,
             store=store,
             base=base,
             constraints=constraints,

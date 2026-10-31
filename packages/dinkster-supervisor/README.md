@@ -384,7 +384,7 @@ commands do not acquire these options.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 
-`environment_generations.prepare_generation_interpreter` prepares a new,
+`environment_generations.prepare_engine_interpreter` prepares a new,
 caller-owned directory from an acquired base and effective hashed constraints.
 It returns the target Python after the same offline sync used by generation
 construction. The caller holds the store writer lock and owns directory cleanup,

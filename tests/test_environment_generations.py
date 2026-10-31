@@ -18,7 +18,7 @@ import pytest
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
-    prepare_generation_interpreter,
+    prepare_engine_interpreter,
     stage_pack_sources,
 )
 from dinkster_supervisor.environment_state import (
@@ -830,8 +830,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         f"changed-fixture==2.0 --hash=sha256:{second_hash}\n"
     )
     scratch = store / "preflight"
-    target = prepare_generation_interpreter(
-        destination=scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+    target = prepare_engine_interpreter(
+        scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
     )
     assert (
         subprocess.check_output(
@@ -851,8 +851,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert not list(base.rglob("stable_fixture.py"))
     assert not list(base.rglob("changed_fixture.py"))
     with pytest.raises(EnvironmentError, match="destination already exists"):
-        prepare_generation_interpreter(
-            destination=scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+        prepare_engine_interpreter(
+            scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
         )
     assert target.is_file()
     shutil.rmtree(scratch)
