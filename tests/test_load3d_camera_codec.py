@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_values import LATENT_TYPE, encode_latent
+from dinkster_values import LATENT_TYPE, EncodedLatentTensor, RenditionUnavailable, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -60,6 +61,46 @@ MODEL_INFO = [
         "scale": {"x": 1, "y": 3, "z": 4},
     },
 ]
+
+
+@pytest.mark.parametrize(
+    ("type_id", "value", "expected"),
+    (
+        (
+            LOAD3D_CAMERA_TYPE,
+            PERSPECTIVE,
+            {**PERSPECTIVE, "extension": {"label": "source", "nested": [1, 2]}},
+        ),
+        (LOAD3D_CAMERA_TYPE, ORTHOGRAPHIC, ORTHOGRAPHIC),
+        (LOAD3D_MODEL_INFO_TYPE, MODEL_INFO, MODEL_INFO),
+        (LOAD3D_MODEL_INFO_TYPE, [], []),
+    ),
+)
+def test_camera_metadata_json_renditions(type_id: str, value: object, expected: object) -> None:
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    register_inference_types(registry)
+    wrapped = registry.wrap(type_id, value)
+    rendered = registry.render(wrapped, "json")
+    assert rendered.kind == "json"
+    assert rendered.mime == "application/json"
+    assert json.loads(rendered.data) == expected
+    assert registry.render(wrapped).data == rendered.data
+
+
+def test_camera_metadata_json_refuses_tensor_extensions_without_changing_portability() -> None:
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    extension = EncodedLatentTensor("float32", (1,), b"\x00\x00\x80?")
+    for type_id, value in (
+        (LOAD3D_CAMERA_TYPE, {**PERSPECTIVE, "extension": extension}),
+        (LOAD3D_MODEL_INFO_TYPE, [{**MODEL_INFO[0], "extension": extension}]),
+    ):
+        spec = registry.spec(type_id)
+        assert spec.decode(spec.encode(value)) == value
+        wrapped = registry.wrap(type_id, value)
+        with pytest.raises(RenditionUnavailable):
+            registry.render(wrapped, "json")
 
 
 @pytest.mark.parametrize("value", ([], MODEL_INFO))

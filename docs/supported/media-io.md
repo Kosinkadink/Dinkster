@@ -1,8 +1,18 @@
 ## Media I/O
 
+- Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
+  Image, mask, normal and recording captures carry existing granted asset
+  identities, rebound to the receiving host, rather than filesystem paths.
+  Omitted captures and an empty recording remain distinct authored states.
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
+  A JSON manifest rendition preserves the source and named resource identities
+  when reading completed job outputs; local bindings remain host-granted rather
+  than becoming content digests.
+- Local asset bindings support byte reads for callers with local assets:read
+  permission. Reads require a live grant and unchanged file revision; they do not
+  index files, grant path access or advertise immutable caching.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
@@ -48,6 +58,10 @@
   controls, and structural extensions across execution hosts and caches
 - Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
   scales, and structural extensions across execution hosts and caches
+- Camera and model-transform values offer JSON renditions for browser consumers,
+  preserving complete camera fields and model order. Non-JSON extension data
+  remains portable but makes the JSON rendition unavailable rather than dropping
+  fields or substituting values
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM

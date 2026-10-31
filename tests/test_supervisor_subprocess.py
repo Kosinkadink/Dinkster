@@ -52,14 +52,19 @@ def test_child_output_and_timeout_diagnostics(
     assert "blocked_child" in notes
     assert "active_child" in notes
     assert str(module) in notes
+    assert "Requested timeout snapshot" in notes
 
 
 @pytest.mark.parametrize(
-    ("module_name", "blocked"),
-    [("dinkster.generation_packs", True), ("dinkster.manager", False)],
+    ("module_name", "blocked", "late"),
+    [
+        ("dinkster.generation_packs", True, False),
+        ("dinkster.manager", False, False),
+        ("dinkster.manager", True, True),
+    ],
 )
 def test_nested_child_state_and_stack_at_timeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module_name: str, blocked: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module_name: str, blocked: bool, late: bool
 ) -> None:
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -93,7 +98,15 @@ def test_nested_child_state_and_stack_at_timeout(
     )
     arguments = ["--root", "", "prepare-catalogs"] if module_name == "dinkster.manager" else []
     (tmp_path / "diagnostic_parent.py").write_text(
-        "import subprocess, threading\n"
+        "import faulthandler, subprocess, threading\n"
+        f"if {late!r}:\n"
+        "    sampled = threading.Event()\n"
+        "    dump = faulthandler.dump_traceback\n"
+        "    def record_sample(*args, **kwargs):\n"
+        "        dump(*args, **kwargs)\n"
+        "        sampled.set()\n"
+        "    faulthandler.dump_traceback = record_sample\n"
+        "    assert sampled.wait(30), 'supervisor sample absent'\n"
         f"result = subprocess.run([{sys.executable!r}, '-B', '-m', {module_name!r}, "
         f"*{arguments!r}, {str(tmp_path)!r}], capture_output=True, text=True)\n"
         "assert (result.returncode, result.stdout, result.stderr) == "
@@ -122,6 +135,10 @@ def test_nested_child_state_and_stack_at_timeout(
         if blocked:
             assert "blocked_nested_child" in notes
             assert str(nested) in notes
+            assert (
+                "Requested timeout snapshot"
+                in notes.split("Nested child stack before cleanup:\n", 1)[1]
+            )
         else:
             assert "Timeout (0:00:05)" not in notes
     finally:

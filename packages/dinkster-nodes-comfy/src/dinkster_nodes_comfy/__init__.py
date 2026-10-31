@@ -11,6 +11,7 @@ from dinkster_api.v1 import (
     register_audio_value_type,
     register_curve_type,
     register_file3d_types,
+    register_load3d_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -132,9 +133,11 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mesh import MESH_NODES
+from .mesh_holes import FillHoles
+from .mesh_io import Get3DComponents
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
-from .mesh_texture import MeshTextureToImage
+from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -531,12 +534,16 @@ COMFY_NODES: tuple[type[Node], ...] = (
     MeshTextureToImage,
     MeshSmoothNormals,
     RenderUVAtlas,
+    ApplyTextureToMesh,
+    FillHoles,
+    Get3DComponents,
 )
 
 
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    register_load3d_type(registry)
     if AUDIO_RECORD_TYPE not in registry:
         register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if AUDIO_TYPE not in registry:

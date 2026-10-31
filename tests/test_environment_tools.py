@@ -12,9 +12,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from test_environment_generations import _standalone_tree
+from test_environment_generations import _standalone_tree, _wheel
 
-from scripts.build_environment_tools import acquire, build
+from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +29,43 @@ def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) 
     assert not target.exists()
 
 
+@pytest.mark.parametrize("corruption", [None, "size", "hash", "unadmitted"])
+def test_locked_tools_acquisition_uses_verified_fixture_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corruption: str | None
+) -> None:
+    index = tmp_path / "index"
+    index.mkdir()
+    wheel, digest = _wheel(index, "fixture_tools", "1.0", 41)
+    admitted = "a" * 64 if corruption == "unadmitted" else digest
+    exported = f"fixture-tools==1.0 --hash=sha256:{admitted}\n"
+    # Only the export is supplied by the fixture; selection and acquisition stay real.
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: exported)
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "fixture-tools"\nversion = "1.0"\n'
+        "[[package.wheels]]\n"
+        f"url = {json.dumps(wheel.as_posix())}\n"
+        f'hash = "sha256:{digest}"\nsize = {wheel.stat().st_size}\n',
+        encoding="ascii",
+    )
+    if corruption == "size":
+        wheel.write_bytes(wheel.read_bytes() + b"corrupt")
+    elif corruption == "hash":
+        data = wheel.read_bytes()
+        wheel.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+    output = tmp_path / "output"
+    output.mkdir()
+    if corruption:
+        match = "no locked native" if corruption == "unadmitted" else "size or SHA256"
+        with pytest.raises(ValueError, match=match):
+            locked_wheels(tmp_path, output, "uv")
+        assert not (output / wheel.name).exists()
+    else:
+        constraints = locked_wheels(tmp_path, output, "uv")
+        assert (output / wheel.name).read_bytes() == wheel.read_bytes()
+        assert constraints.read_text() == exported
+
+
+@pytest.mark.network("pypi.org", "files.pythonhosted.org")
 @pytest.mark.parametrize("invalid_input", [None, "abi", "dependency"])
 def test_tools_archive_runs_from_relocated_path_without_host_tools(
     tmp_path: Path,

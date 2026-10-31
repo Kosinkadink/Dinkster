@@ -91,6 +91,7 @@ from dinkster_assets import (
     AssetVault,
     AssetWriter,
     LibraryStore,
+    LocalAssetRef,
     MediaGrant,
     PackAssetCatalog,
     ProvenanceRecord,
@@ -110,6 +111,7 @@ from dinkster_assets import (
     probe_handle,
     valid_vae_hint,
 )
+from dinkster_assets.model import LocalAssetResolver
 from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
@@ -120,7 +122,7 @@ from dinkster_values import (
     MEDIA_VIDEO_UPLOAD_LIMIT_BYTES,
 )
 
-from .asset_stream import open_verified_sized, stream_verified
+from .asset_stream import open_sized, open_verified_sized, stream_verified
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
 
@@ -1260,6 +1262,35 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
     return web.json_response(body, headers={"Cache-Control": "no-store"})
 
 
+async def handle_local_asset_get(request: web.Request) -> web.StreamResponse:
+    """Read an existing host binding without promoting it to content identity."""
+    resolve_scope(principal_for(request), "assets:read", "local")
+    if set(request.query) - {"scope"} or len(request.query.getall("scope", [])) > 1:
+        return _json_error(400, "local asset reads accept only one optional scope")
+    if request.query.get("scope", "local") != "local":
+        return _json_error(403, "local asset bindings require local scope")
+    resolver = request.app[LIBRARY_KEY].local_resolver
+    binding = request.match_info["binding"]
+
+    def open_bound() -> BinaryIO:
+        if not isinstance(resolver, LocalAssetResolver):
+            raise AssetError("local asset binding is unavailable")
+        location = resolver.resolve_local(binding)
+        if location is None:
+            raise AssetError("local asset binding is unavailable")
+        return LocalAssetRef(binding, "", location[1][0], "", resolver=resolver).open()
+
+    try:
+        handle, size = await open_sized(open_bound)
+    except (AssetError, OSError):
+        return web.json_response(
+            {"error": "local asset binding is unavailable, revoked or changed"},
+            status=404,
+            headers={"Cache-Control": "no-store"},
+        )
+    return await stream_verified(request, handle, size, headers={"Cache-Control": "no-store"})
+
+
 async def handle_asset_get(request: web.Request) -> web.StreamResponse:
     """Bytes for a digest, with the immutable-cache contract every other
     digest-addressed endpoint honors. Vault or mount, the body streams
@@ -1788,6 +1819,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_post("/api/assets/image-document", handle_image_document)
     app.router.add_get("/api/assets/catalog", handle_asset_catalog)
     app.router.add_get("/api/assets/availability", handle_asset_availability)
+    app.router.add_get("/api/assets/local/{binding}", handle_local_asset_get)
     app.router.add_get("/api/assets/{digest}", handle_asset_get)
     app.router.add_get("/api/assets/{digest}/dependencies", handle_dependencies)
     app.router.add_post("/api/assets/{digest}/render", handle_render)

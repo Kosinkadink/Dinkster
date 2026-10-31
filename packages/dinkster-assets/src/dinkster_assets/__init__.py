@@ -85,6 +85,7 @@ from .library import (
     LocalAssetLibrary,
     load_write_records,
 )
+from .load3d import register_load3d_type
 from .media import (
     MediaClassification,
     RasterImageFacts,
@@ -321,6 +322,7 @@ __all__ = [
     "probe_handle",
     "rank_transport_candidates",
     "register_asset_type",
+    "register_load3d_type",
     "register_save_target_type",
     "register_audio_value_type",
     "bind_audio_value",
