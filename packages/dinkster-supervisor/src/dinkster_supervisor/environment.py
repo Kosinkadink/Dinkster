@@ -882,6 +882,11 @@ def main() -> None:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
         print(f"{result['operation']}: {result['status']}")
+        if "base" in result:
+            base = cast("dict[str, object]", result["base"])
+            print(f"Variant: {base['variant']} ({base['origin']})")
+            print(f"Torch: {base['torchVersion']}")
+            print(f"Torch index: {base['torchIndex']}")
         for step in cast("list[str]", result["plan"]):
             print(step)
         for change in cast("list[str]", result.get("changes", [])):

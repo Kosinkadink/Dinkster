@@ -163,6 +163,23 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
             "torchVersion": "2.14.1+cu130",
             "torchIndex": "https://download.pytorch.org/whl/cu130",
         }
+        human = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(tmp_path),
+                operation,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert "Variant: my-cuda (user-defined)" in human.stdout
+        assert "Torch: 2.14.1+cu130" in human.stdout
+        assert "Torch index: https://download.pytorch.org/whl/cu130" in human.stdout
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
