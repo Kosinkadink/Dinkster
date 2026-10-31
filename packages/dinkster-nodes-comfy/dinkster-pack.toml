@@ -604,6 +604,7 @@ namespaces = [
     "WeldVertices",
     "MeshTextureToImage",
     "MeshSmoothNormals",
+    "RenderUVAtlas",
 ]
 
 [pack.sandbox]
