@@ -218,6 +218,42 @@ def test_channel_selects_an_exact_base_and_never_falls_back_to_cpu(tmp_path: Pat
         channel.base_for("win-nvidia")
 
 
+def test_channel_resolves_labelled_locations_without_changing_content_identities():
+    document = _channel_document()
+    engine_path = "engine/2026-10-31-0.4.0.dev1+g1234-aaaaaaaa/release-manifest.json"
+    base_path = "base/win-cpu/2026-10-30-py3.14.10-torch2.14.1-bbbbbbbb/manifest.json"
+    document["engine"]["locations"][0]["path"] = engine_path
+    document["base"]["win-cpu"]["locations"][0]["path"] = base_path
+    channel = Channel.parse(document)
+    assert channel.engine_release == "sha256:" + "a" * 64
+    assert channel.base_for("win-cpu") == "sha256:" + "b" * 64
+    assert channel.engine_locations[0].path == engine_path
+    assert dict(channel.base_locations)["win-cpu"][0].path == base_path
+    document["base"]["win-cpu"]["locations"][0]["path"] = base_path.replace(
+        "torch2.14.1-", "torch2.14.1-cu132-"
+    )
+    assert Channel.parse(document).base_for("win-cpu") == "sha256:" + "b" * 64
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "engine/2026-10-31-0.4.0-bbbbbbbb/release-manifest.json",
+        "engine/2026-10-31-0.4.0-aaaaaaaa/manifest.json",
+        "engine/2026-10-31-0.4.0-aaaaaaaa/extra/release-manifest.json",
+        "engine/2026-10-31-0.4.0-aaaaaaaa./release-manifest.json",
+        "engine/2026-10-31-0.4.0-aaaaaaaa /release-manifest.json",
+        "engine/2026-10-31-0.4.0-aaaaaaaa?/release-manifest.json",
+        "base/linux-cpu/2026-10-31-py3.14.10-torch2.14.1-aaaaaaaa/manifest.json",
+    ],
+)
+def test_channel_refuses_labelled_location_with_wrong_identity_or_layout(path: str):
+    document = _channel_document()
+    document["engine"]["locations"] = [{"type": "mirror", "path": path}]
+    with pytest.raises(EnvironmentError):
+        Channel.parse(document)
+
+
 @pytest.mark.parametrize(
     "locations",
     [

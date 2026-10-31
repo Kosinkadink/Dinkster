@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import marshal
@@ -866,6 +867,48 @@ def test_public_fixture_commands_install_update_and_rollback(
     root = Path(fixture["root"])
     commands = fixture["commands"]
 
+    mirror = Path(fixture["mirror"])
+    channel_path = mirror / "channels/main.json"
+    channel = json.loads(channel_path.read_bytes())
+    variant = fixture["variant"]
+    base_id = channel["base"][variant]["id"][7:]
+    base_directory = mirror / "base" / variant / base_id
+    base = json.loads((base_directory / "manifest.json").read_bytes())
+    base_label = f"2026-10-31-py{base['python']}-torch1.0-{base_id[:8]}"
+    base.update(
+        label=base_label,
+        builtAt="2026-10-31T12:00:00Z",
+        torchVersion="1.0",
+        torchIndex="https://pypi.org/simple",
+        lockSource={"repository": "https://github.com/Kosinkadink/Dinkster", "commit": "d" * 40},
+    )
+    (base_directory / "manifest.json").write_text(json.dumps(base))
+    base_directory.rename(base_directory.with_name(base_label))
+    channel["base"][variant]["locations"][0]["path"] = f"base/{variant}/{base_label}/manifest.json"
+    updated_path = Path(fixture["updatedChannel"])
+    updated_channel = json.loads(updated_path.read_bytes())
+    updated_channel["base"] = channel["base"]
+    updated_path.write_text(json.dumps(updated_channel))
+    engine_directory = mirror / "engine" / channel["engine"]["release"][7:]
+    engine = json.loads((engine_directory / "release-manifest.json").read_bytes())
+    engine_label = "2026-10-31-1.0"
+    engine.pop("tag")
+    engine.update(label=engine_label, builtAt="2026-10-31T12:30:00Z")
+    engine_bytes = (json.dumps(engine) + "\n").encode()
+    engine_id = hashlib.sha256(engine_bytes).hexdigest()
+    (engine_directory / "release-manifest.json").write_bytes(engine_bytes)
+    engine_directory.rename(engine_directory.with_name(f"{engine_label}-{engine_id[:8]}"))
+    channel["engine"].update(
+        release="sha256:" + engine_id,
+        locations=[
+            {
+                "type": "mirror",
+                "path": f"engine/{engine_label}-{engine_id[:8]}/release-manifest.json",
+            }
+        ],
+    )
+    channel_path.write_text(json.dumps(channel))
+
     def run(name: str) -> dict:
         completed = subprocess.run(commands[name], capture_output=True, text=True, timeout=60)
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
@@ -909,6 +952,21 @@ def test_public_fixture_commands_install_update_and_rollback(
     try:
         assert run("setup")["current"] == 1
         check(1, fixture["expected"]["initial"], "setup")
+        store = Path((root / "store").read_text().strip())
+        assert (store / "bases" / base_id).is_dir()
+        assert (store / "downloads" / base_id).is_dir()
+        assert (store / "engines" / engine_id).is_dir()
+        wheel_paths = list((store / "wheels").iterdir())
+        assert wheel_paths and all(
+            len(path.name) == 64 and all(c in "0123456789abcdef" for c in path.name)
+            for path in wheel_paths
+        )
+        for directory in (store, root):
+            assert all(
+                base_label not in part and engine_label not in part
+                for path in directory.rglob("*")
+                for part in path.relative_to(directory).parts
+            )
         run("advance")
         assert run("update")["current"] == 2
         check(2, fixture["expected"]["updated"], "update")
