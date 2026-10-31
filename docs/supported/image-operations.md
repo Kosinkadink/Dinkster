@@ -9,6 +9,8 @@
   and pickle payloads are refused before reconstruction. Global `ARRAY`
   remains unrestricted by the placement contract. Layer placement retains
   first-frame selection, source-size zero fallback and canvas-based conversion.
+  `CropByBBoxes` broadcasts a single box or flat box list across image frames;
+  per-frame lists retain last-frame repetition and per-frame union cropping.
 - Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
   with optional line and feature-edge quadrics and retained vertex colors.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
