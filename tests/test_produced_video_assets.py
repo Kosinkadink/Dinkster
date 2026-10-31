@@ -521,7 +521,9 @@ def test_in_process_control_sources_are_adopted_before_publication(
                 assert ProducedScratchState(store.root).publications() == (
                     (digest, len(data), True),
                 )
-            shutil.rmtree(scratch)
+            # The invocation still owns lease files outside its producer data.
+            shutil.rmtree(store.root)
+            assert not store.root.exists()
             payload = cast(Mapping[str, object], values[media].resolve())
             assert cast(AssetRef, payload["source"]).read_bytes() == data
 
