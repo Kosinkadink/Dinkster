@@ -35,10 +35,7 @@ from scripts.download_frontend import verify_and_extract
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
-def test_source_distribution_rebuilds_the_complete_direct_wheel(
-    tmp_path: Path, project: str
-) -> None:
+def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
     direct = tmp_path / "direct"
     subprocess.run(
         ["uv", "build", "--package", project, "--wheel", "--out-dir", str(direct)],
@@ -61,45 +58,57 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         cwd=extracted,
         check=True,
     )
+    return next(direct.glob("*.whl")), next(rebuilt.glob("*.whl"))
+
+
+@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+def test_source_distribution_rebuilds_the_complete_direct_wheel(
+    tmp_path: Path, project: str
+) -> None:
+    direct, rebuilt = _distribution_wheels(tmp_path, project)
     with (
-        zipfile.ZipFile(next(direct.glob("*.whl"))) as expected,
-        zipfile.ZipFile(next(rebuilt.glob("*.whl"))) as actual,
+        zipfile.ZipFile(direct) as expected,
+        zipfile.ZipFile(rebuilt) as actual,
     ):
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
-    if project == "dinkster-api":
-        environment = tmp_path / "standalone-api"
-        subprocess.run(
-            ["uv", "venv", "--python", sys.executable, str(environment)],
-            cwd=tmp_path,
-            check=True,
-        )
-        python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-        subprocess.run(
-            [
-                "uv",
-                "pip",
-                "install",
-                "--python",
-                str(python),
-                "--no-sources",
-                str(next(rebuilt.glob("*.whl"))),
-            ],
-            cwd=tmp_path,
-            check=True,
-        )
-        result = subprocess.check_output(
-            [
-                str(python),
-                "-I",
-                "-c",
-                "from dinkster_api.v1 import Node; print(Node.__name__)",
-            ],
-            cwd=tmp_path,
-            text=True,
-        )
-        assert result.strip() == "Node"
+
+
+@pytest.mark.network("pypi.org", "files.pythonhosted.org")
+def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) -> None:
+    _, rebuilt = _distribution_wheels(tmp_path, "dinkster-api")
+    environment = tmp_path / "standalone-api"
+    subprocess.run(
+        ["uv", "venv", "--python", sys.executable, str(environment)],
+        cwd=tmp_path,
+        check=True,
+    )
+    python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--no-sources",
+            str(rebuilt),
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    result = subprocess.check_output(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "from dinkster_api.v1 import Node; print(Node.__name__)",
+        ],
+        cwd=tmp_path,
+        text=True,
+    )
+    assert result.strip() == "Node"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
