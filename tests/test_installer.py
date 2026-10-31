@@ -2416,12 +2416,13 @@ def _serve_artifacts(
     return server
 
 
-def _download_ticket(entry: LockedPack) -> bytes:
+def _download_ticket(entry: LockedPack, data: bytes) -> bytes:
     return json.dumps(
         {
             "packName": entry.pack,
             "version": entry.version,
             "artifactDigest": entry.artifact_digest,
+            "artifactSize": len(data),
             "url": f"/v1/artifacts/{entry.artifact_digest}",
             "requiredHeaders": {},
         }
@@ -2441,7 +2442,7 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
     ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
     artifact_path = f"/v1/artifacts/{release.artifact_digest}"
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release), artifact_path: data}, requests
+        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -2463,6 +2464,51 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
         http_registry_fetcher("file:///etc")
     with pytest.raises(InstallError, match="failed"):
         http_registry_fetcher("http://127.0.0.1:1")(release)  # connection refused
+
+
+@pytest.mark.parametrize(
+    ("size", "malformed"),
+    [
+        (None, True),
+        ("missing", True),
+        (True, True),
+        (False, True),
+        (-1, True),
+        ("2", True),
+        (2.5, True),
+        (0, False),
+        (1, False),
+        (3, False),
+    ],
+)
+def test_http_registry_fetcher_rejects_invalid_ticket_size(size: object, malformed: bool) -> None:
+    release = LockedPack("demo", "1.0.0", "blake3:" + "1" * 64, "acme", ())
+    data = b"ab"
+    ticket = json.loads(_download_ticket(release, data))
+    if size == "missing":
+        del ticket["artifactSize"]
+    else:
+        ticket["artifactSize"] = size
+    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(
+        {
+            ticket_path: json.dumps(ticket).encode(),
+            f"/v1/artifacts/{release.artifact_digest}": data,
+        },
+        requests,
+    )
+    try:
+        reason = (
+            "artifactSize must be a nonnegative integer" if malformed else "archive size differs"
+        )
+        with pytest.raises(InstallError, match=reason) as refusal:
+            http_registry_fetcher(f"http://127.0.0.1:{server.server_port}")(release)
+        assert "demo@1.0.0" in str(refusal.value)
+        if malformed:
+            assert requests == [(ticket_path, None)]
+    finally:
+        server.shutdown()
 
 
 def test_cli_restore_downloads_registry_sources(
@@ -2497,7 +2543,7 @@ def test_cli_restore_downloads_registry_sources(
     ticket_path = f"/v1/packs/{locked.pack}/versions/{locked.version}/download-tickets"
     artifact_path = f"/v1/artifacts/{locked.artifact_digest}"
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(locked), artifact_path: data}, requests
+        {ticket_path: _download_ticket(locked, data), artifact_path: data}, requests
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -2521,8 +2567,8 @@ def test_cli_restore_downloads_registry_sources(
         # a lying server: different bytes refuse, nothing activates
         lying = _serve_artifacts(
             {
-                ticket_path: _download_ticket(locked),
-                artifact_path: b"different bytes entirely",
+                ticket_path: _download_ticket(locked, data),
+                artifact_path: b"x" * len(data),
             },
             [],
         )
@@ -2941,7 +2987,9 @@ def test_registry_source_identity_comes_from_verified_archive(
         "/v1/packs/demo/versions/2.3.1": _release_record(
             release, state="active", manifest={"dinkster": ">=0.4,<0.7"}
         ),
-        "/v1/packs/demo/versions/2.3.1/download-tickets": _download_ticket(release),
+        "/v1/packs/demo/versions/2.3.1/download-tickets": _download_ticket(
+            release, archive.read_bytes()
+        ),
         f"/v1/artifacts/{digest}": (
             b"x" * archive.stat().st_size if problem == "digest" else archive.read_bytes()
         ),
@@ -3111,7 +3159,7 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
 
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release), artifact_path: data}, requests
+        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -3162,7 +3210,7 @@ def test_cli_install_resolves_pack_version_from_named_registry(
     server = _serve_artifacts(
         {
             "/v1/packs/demo/versions/1.0.0": _release_record(release),
-            ticket_path: _download_ticket(release),
+            ticket_path: _download_ticket(release, data),
             artifact_path: data,
         },
         requests,

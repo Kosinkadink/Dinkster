@@ -41,6 +41,8 @@
   and engine range. Source publisher and namespaces describe that verified
   content, not the publishing audit actor; they do not authenticate publisher
   authority. Generation admission still rejects source identity mismatches.
+  Registry downloads also require the ticket's nonnegative integer archive
+  size and reject truncated or excess bytes before acquisition.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
