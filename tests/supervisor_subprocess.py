@@ -140,7 +140,7 @@ def _filesystem_progress(path: Path) -> Iterator[None]:
             while not finished.wait(5):
                 with lock:
                     snapshot = latest.copy()
-                # Entry-point counts can overlap; neither their sum nor a start proves completed work.
+                # Entry-point counts overlap; neither their sum nor a start proves completion.
                 row = {
                     "elapsed": time.monotonic() - started,
                     "operations": {
