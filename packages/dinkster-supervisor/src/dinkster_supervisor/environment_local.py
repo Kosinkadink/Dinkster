@@ -63,7 +63,9 @@ def local_selection(
     host = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     arch = {"AMD64": "x86_64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
     matches = row["os"] == host and row.get("arch", "x86_64") == arch
-    if python is None and (not matches or host not in config.get("interpreters", {})):
+    if not matches:
+        raise EnvironmentError(f"variant {variant} does not match host {host}/{arch}")
+    if python is None and host not in config.get("interpreters", {}):
         raise EnvironmentError(
             f"missing variants.toml interpreter row for {host}/{arch} ({variant}); "
             "use --python PATH with --from-scratch to select a host interpreter explicitly"

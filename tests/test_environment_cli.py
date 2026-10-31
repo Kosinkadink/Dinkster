@@ -214,6 +214,25 @@ def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: P
     assert not root.exists()
 
 
+@pytest.mark.parametrize("kind", ["foreign-variant", "pack-lock", "catalog"])
+def test_from_scratch_refuses_incompatible_inputs_before_creation(tmp_path: Path, kind: str):
+    variant = "linux-cpu" if os.name == "nt" else "win-cpu"
+    extra = (
+        ["--python", sys.executable]
+        if kind == "foreign-variant"
+        else ["--pack-lock", str(tmp_path / "pack.json")]
+        if kind == "pack-lock"
+        else ["--catalog-lock", str(tmp_path / "catalog.lock"), "--artifacts", str(tmp_path)]
+    )
+    root = tmp_path / "absent-project"
+    code, result = _run(root, "setup", "--from-scratch", "--variant", variant, *extra, "--plan")
+    assert code == 1
+    assert ("does not match host" if kind == "foreign-variant" else "cannot be combined") in result[
+        "error"
+    ]
+    assert not root.exists()
+
+
 def test_from_scratch_rejects_a_checkout_lock_changed_after_planning(tmp_path: Path):
     from dinkster_supervisor.environment_local import (
         DEFAULT_VARIANTS,

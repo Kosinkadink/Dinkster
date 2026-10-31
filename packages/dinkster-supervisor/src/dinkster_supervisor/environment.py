@@ -268,6 +268,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     local = None
     catalog = None
     if args.operation == "setup" and args.from_scratch:
+        if args.pack_lock or args.catalog_lock is not None or args.artifacts is not None:
+            raise EnvironmentError(
+                "--from-scratch resolves checkout packs; "
+                "--pack-lock, --catalog-lock and --artifacts cannot be combined with it"
+            )
         from .environment_local import local_selection
 
         local = local_selection(args.source.resolve(), variant, args.variants, args.python)
