@@ -273,8 +273,14 @@ Do not replay the claim. Keep older owners until their own consumers settle;
 claiming a new source does not release them. Releasing an owner clears its
 source binding and preserves the revision tombstone. Offer and retention
 responses use `Cache-Control: no-store` so reconciliation reads durable state.
-These routes do not automatically publish execution or preview offers and do
-not certify global frontend coverage or enable collection.
+Library-backed jobs persist offers before fresh, cached or coalesced node
+output descriptors enter their events. Each event's `resultOffers` maps output
+IDs to their immutable offers. Job status and terminal job events carry the
+same mapping nested under runtime node IDs, including retained target outputs.
+Each job gets its own source tokens even when another job produced the cached
+bytes. Opaque codecs remain incomplete rather than certifying an empty set.
+Live previews, restored history and global frontend coverage are not certified
+by this publication; collection remains disabled.
 
 ### Backend synchronization
 

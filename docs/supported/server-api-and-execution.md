@@ -47,8 +47,11 @@
   server-selected roots into fresh shown-result or preview owners. Durable
   source bindings permit reconciliation after a lost acknowledgment; a claim
   cannot overwrite an existing owner or revive a source after its last
-  protecting owner releases it. This does not automatically publish offers
-  from execution or previews, or enable cleanup.
+  protecting owner releases it. Library-backed jobs persist source offers
+  before fresh, cached and coalesced output events and terminal targets;
+  events and status expose the exact runtime node/output binding. Unknown
+  codecs remain incomplete. This does not cover live previews or restored
+  history, certify frontend coverage, or enable cleanup.
 - Durable terminal history retains external asset identities from target
   values, saved artifacts and their optional published previews independently
   of execution-cache entries, without storing output payloads or changing

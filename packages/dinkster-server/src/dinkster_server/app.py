@@ -231,6 +231,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.acquisition_plan import AcquisitionSource
 from dinkster_assets.resolution import ResolutionStore
+from dinkster_assets.value import value_asset_references
 from dinkster_engine import (
     CompiledGraph,
     Engine,
@@ -342,6 +343,7 @@ from .library import (
     add_library_routes,
     recover_asset_observations,
     run_media_publication,
+    run_owned_thread,
 )
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
@@ -604,6 +606,8 @@ def job_to_wire(
         wire["sourceDocument"] = job.source_document
     if job.error is not None:
         wire["error"] = job.error
+    if job.result_offers:
+        wire["resultOffers"] = {node: dict(offers) for node, offers in job.result_offers.items()}
     if job.result is not None:
         wire["outputs"] = {
             node_id: {out: value_descriptor(v, registry) for out, v in outs.items()}
@@ -1283,6 +1287,7 @@ class ServerState:
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
         settle_job: Callable[[Job], Awaitable[None]] | None = None,
         job_context: Callable[[Job], contextlib.AbstractContextManager[object]] | None = None,
+        publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1411,6 +1416,7 @@ class ServerState:
             complete_result=complete_result,
             settle_job=settle_job,
             job_context=job_context,
+            publish_outputs=publish_outputs,
         )
         default_budgets = {
             device: budget
@@ -2294,6 +2300,10 @@ class ServerState:
             )
         else:
             wire["jobRef"] = job.run_id
+            if event.kind in {"node_finished", "node_cached"} and event.node_id is not None:
+                offers = job.result_offers.get(event.node_id)
+                if offers is not None:
+                    wire["resultOffers"] = dict(offers)
             self._publish_job_event(job, wire, droppable=event.kind in DROPPABLE_KINDS)
 
     def _on_job_event(self, job: Job) -> None:
@@ -2308,6 +2318,10 @@ class ServerState:
         }
         if job.error is not None:
             wire["error"] = job.error
+        if job.result_offers:
+            wire["resultOffers"] = {
+                node: dict(offers) for node, offers in job.result_offers.items()
+            }
         # Job transitions are the contract the frontend keys off; never shed.
         # (Terminal history rows are written by the queue itself, inline
         # through its QueuePersistence store, before this listener runs.)
@@ -4607,7 +4621,48 @@ def create_app(
     hook; embedders that do not host armed workers leave it unset.
     """
 
+    async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+        assert library is not None
+        job = state.queue.job_for_run(run_id)
+        if job is None:
+            raise AssetError("result publication has no admitted job")
+        previous = job.result_offers.get(node_id, {})
+        store = library.store
+
+        def persist() -> dict[str, dict[str, object]]:
+            offers: dict[str, dict[str, object]] = {}
+            for output_id, value in outputs.items():
+                complete = True
+                try:
+                    references = value_asset_references(
+                        {output_id: value}, complete_registry=state.engine.registry
+                    )
+                except AssetError:
+                    complete = False
+                    try:
+                        references = value_asset_references({output_id: value})
+                    except AssetError:
+                        references = {}
+                publication = cast(int, previous.get(output_id, {}).get("publication", 0)) + 1
+                offer = store.offer_result_assets(
+                    job.scope,
+                    job.run_id,
+                    job.attempt,
+                    node_id,
+                    output_id,
+                    publication,
+                    list(references),
+                    complete=complete,
+                )
+                offers[output_id] = offer.to_wire()
+            return offers
+
+        job.result_offers[node_id] = await run_owned_thread(persist)
+
     async def complete_result(job: Job, result: RunResult) -> RunResult:
+        for node_id, outputs in result.outputs.items():
+            if node_id not in job.result_offers:
+                await publish_outputs(job.run_id, node_id, outputs)
         if library is not None and result.artifacts:
             record_outputs = library.record_saved_outputs
             return await run_media_publication(library, lambda: record_outputs(job, result))
@@ -4665,6 +4720,7 @@ def create_app(
         complete_result=complete_result if library is not None else None,
         settle_job=settle_job if library is not None else None,
         job_context=job_context if library is not None else None,
+        publish_outputs=publish_outputs if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

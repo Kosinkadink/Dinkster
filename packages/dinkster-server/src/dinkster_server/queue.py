@@ -34,10 +34,10 @@ import secrets
 import time
 import traceback
 from collections import deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
 from dinkster_engine import (
@@ -58,6 +58,7 @@ from dinkster_protocol import (
     attention_policy_config_to_wire,
     single_job_multi_gpu_config_to_wire,
 )
+from dinkster_values import Value
 
 from .redaction import PathRedactor
 
@@ -136,6 +137,7 @@ class Job:
     result: RunResult | None = None
     error: dict[str, Any] | None = None  # heterogeneous JSON error payload
     node_receipts: dict[str, dict[str, str]] = field(default_factory=lambda: {})
+    result_offers: dict[str, dict[str, dict[str, object]]] = field(default_factory=lambda: {})
     task: asyncio.Task[None] | None = None
 
 
@@ -178,6 +180,7 @@ class JobQueue:
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
         settle_job: Callable[[Job], Awaitable[None]] | None = None,
         job_context: Callable[[Job], AbstractContextManager[object]] | None = None,
+        publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -196,6 +199,7 @@ class JobQueue:
         self._complete_result = complete_result
         self._settle_job = settle_job
         self._job_context = job_context
+        self._publish_outputs = publish_outputs
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -268,6 +272,8 @@ class JobQueue:
         if self._closed:
             raise RuntimeError("queue is closed")
         execution = execution or self._engine.pin_execution()
+        if self._publish_outputs is not None:
+            execution = replace(execution, publish_outputs=self._publish_outputs)
         assert execution.schemas is not None
         schemas = execution.schemas
         lowered = lower_selectors(graph, targets, schemas)

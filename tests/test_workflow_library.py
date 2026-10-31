@@ -740,6 +740,108 @@ def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path
     asyncio.run(scenario())
 
 
+def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Path) -> None:
+    from dinkster_assets.value import ASSET_TYPE, register_asset_type
+
+    class ProduceAssets(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.assets",
+                inputs=(),
+                outputs=tuple(
+                    OutputSpec(name, TypeExpr.concrete(ASSET_TYPE)) for name in ("left", "right")
+                ),
+            )
+
+        @classmethod
+        async def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(
+                left=AssetRef(DIGEST_A, "left", 14), right=AssetRef(DIGEST_B, "right", 26)
+            )
+
+    schemas = build_schemas((ProduceAssets,))
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types((ProduceAssets,)), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            tokens: list[str] = []
+            for job_id in ("fresh", "cached"):
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "client",
+                        "jobId": job_id,
+                        "graph": {"nodes": {"producer": {"nodeType": "test.assets", "inputs": {}}}},
+                        "targets": ["producer"],
+                    },
+                )
+                assert response.status == 202
+                async with asyncio.timeout(10):
+                    while True:
+                        status = await (await client.get(f"/api/jobs/client/{job_id}")).json()
+                        if status["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0)
+                assert status["state"] == "completed", status
+                offered = status["resultOffers"]["producer"]
+                assert set(offered) == {"left", "right"}
+                for output_id, digest in (("left", DIGEST_A), ("right", DIGEST_B)):
+                    offer = offered[output_id]
+                    assert offer == {
+                        "token": offer["token"],
+                        "scope": "local",
+                        "jobRef": status["jobRef"],
+                        "attemptId": 1,
+                        "nodeId": "producer",
+                        "outputId": output_id,
+                        "publication": 1,
+                        "digests": [digest],
+                        "complete": True,
+                    }
+                    persisted = library.store.result_asset_offer("local", offer["token"])
+                    assert persisted is not None and persisted.to_wire() == offer
+                    tokens.append(offer["token"])
+                replay = await (
+                    await client.get(f"/api/jobs/by-ref/{status['jobRef']}/events?after=0")
+                ).json()
+                result_events = [
+                    event
+                    for event in replay["events"]
+                    if event["type"] in {"node_finished", "node_cached"}
+                ]
+                assert len(result_events) == 1
+                assert result_events[0]["type"] == (
+                    "node_finished" if job_id == "fresh" else "node_cached"
+                )
+                assert result_events[0]["resultOffers"] == offered
+                terminal = [
+                    event
+                    for event in replay["events"]
+                    if event["type"] == "job_state" and event["state"] == "completed"
+                ]
+                assert terminal[0]["resultOffers"] == status["resultOffers"]
+            assert len(set(tokens)) == 4
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_result_offers_keep_exact_roots_across_claims_and_restart(tmp_path: Path) -> None:
     path = tmp_path / "library.sqlite"
     store = LibraryStore(path)
