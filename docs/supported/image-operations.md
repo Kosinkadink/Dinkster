@@ -11,6 +11,14 @@
   first-frame selection, source-size zero fallback and canvas-based conversion.
   `CropByBBoxes` broadcasts a single box or flat box list across image frames;
   per-frame lists retain last-frame repetition and per-frame union cropping.
+- Native `PadImageNode` pads image batches by explicit dimensions, a multiplier,
+  or a size multiple, using solid-color feathering or repeated mirrored edges.
+- Native `ImageUpscaleWithModel` runs tiled single-image model upscaling with
+  smaller-tile memory retries and separately resized alpha channels.
+- Native `ImageHistogram` reports first-frame RGB and luminance histograms,
+  retaining independent red, green, and blue bin counts.
+- Native `TextOverlay` draws wrapped, aligned text on image batches with optional
+  outlines and straight-alpha compositing for transparent images.
 - Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
   with optional line and feature-edge quadrics and retained vertex colors.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,

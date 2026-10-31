@@ -7,13 +7,17 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    COLOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     IMAGE_TYPE,
+    ColorWidget,
     ComboOption,
     ComboWidget,
+    DynamicComboOption,
+    DynamicComboSpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -465,6 +469,170 @@ class ImageScaleToMaxDimension(Node):
         )
 
 
+class PadImageNode(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="PadImageNode",
+            display_name="Pad Image",
+            description="Pad an image with a solid color or a mirrored copy of its edges.",
+            category="image/transform",
+            search_terms=(
+                "pad",
+                "pad image",
+                "padding",
+                "reflect",
+                "mirror",
+                "extend canvas",
+                "expand image",
+                "border",
+            ),
+            inputs=(InputSpec("image", _IMAGE),),
+            combos=(
+                DynamicComboSpec(
+                    "padding_type",
+                    (
+                        DynamicComboOption(
+                            "pad dimensions",
+                            tuple(
+                                _integer(side, 0, 0, _MAX_RESOLUTION, 1)
+                                for side in ("left", "top", "right", "bottom")
+                            ),
+                        ),
+                        DynamicComboOption(
+                            "pad by multiplier",
+                            (
+                                InputSpec(
+                                    "multiplier",
+                                    _FLOAT,
+                                    default=1.0,
+                                    widget=NumberWidget(min=1.0, max=8.0, step=0.01),
+                                ),
+                            ),
+                        ),
+                        DynamicComboOption(
+                            "pad to multiple", (_integer("multiple", 32, 1, _MAX_RESOLUTION, 1),)
+                        ),
+                    ),
+                ),
+                DynamicComboSpec(
+                    "padding_style",
+                    (
+                        DynamicComboOption(
+                            "color",
+                            (
+                                InputSpec(
+                                    "color",
+                                    TypeExpr.concrete(COLOR_TYPE),
+                                    default="#000000",
+                                    widget=ColorWidget(),
+                                ),
+                                _integer("feathering", 0, 0, _MAX_RESOLUTION, 1),
+                            ),
+                        ),
+                        DynamicComboOption("mirror image"),
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("image", _IMAGE),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        image: Any,
+        padding_type: str | Mapping[str, Any],
+        padding_style: str | Mapping[str, Any],
+        **values: Any,
+    ) -> Mapping[str, object]:
+        torch = importlib.import_module("torch")
+        image = materialize_image(image)
+        if isinstance(padding_type, str):
+            padding_type = {
+                "padding_type": padding_type,
+                **{
+                    key.removeprefix("padding_type."): value
+                    for key, value in values.items()
+                    if key.startswith("padding_type.")
+                },
+            }
+        if isinstance(padding_style, str):
+            padding_style = {
+                "padding_style": padding_style,
+                **{
+                    key.removeprefix("padding_style."): value
+                    for key, value in values.items()
+                    if key.startswith("padding_style.")
+                },
+            }
+        batch, height, width, channels = image.shape
+        selected = padding_type["padding_type"]
+        if selected == "pad dimensions":
+            left, top, right, bottom = (
+                padding_type[side] for side in ("left", "top", "right", "bottom")
+            )
+        elif selected == "pad by multiplier":
+            horizontal = round(width * padding_type["multiplier"]) - width
+            vertical = round(height * padding_type["multiplier"]) - height
+            left, right = horizontal // 2, horizontal - horizontal // 2
+            top, bottom = vertical // 2, vertical - vertical // 2
+        elif selected == "pad to multiple":
+            horizontal = -width % padding_type["multiple"]
+            vertical = -height % padding_type["multiple"]
+            left, right = horizontal // 2, horizontal - horizontal // 2
+            top, bottom = vertical // 2, vertical - vertical // 2
+        else:
+            raise ValueError(f"Unsupported padding type: {selected}")
+        if left == top == right == bottom == 0:
+            return cls.outputs(image=image)
+        style = padding_style["padding_style"]
+        if style == "mirror image":
+
+            def indices(size: int, before: int, after: int) -> Any:
+                period = max(2 * (size - 1), 1)
+                index = torch.arange(-before, size + after, device=image.device).abs() % period
+                return torch.where(index < size, index, period - index)
+
+            rows, cols = indices(height, top, bottom), indices(width, left, right)
+            return cls.outputs(image=image[:, rows[:, None], cols[None, :]])
+        if style != "color":
+            raise ValueError(f"Unsupported padding style: {style}")
+        color = padding_style["color"][:7].lstrip("#")
+        rgb = [1.0, 1.0, 1.0]
+        if len(color) == 6:
+            try:
+                rgb = [int(color[index : index + 2], 16) / 255.0 for index in (0, 2, 4)]
+            except ValueError:
+                pass
+        fill = torch.tensor(
+            (rgb + [1.0] * channels)[:channels], dtype=image.dtype, device=image.device
+        )
+        result = torch.empty(
+            (batch, height + top + bottom, width + left + right, channels),
+            dtype=image.dtype,
+            device=image.device,
+        )
+        result[:] = fill
+        inner = result[:, top : top + height, left : left + width]
+        inner.copy_(image)
+        feathering = padding_style["feathering"]
+        if feathering > 0:
+
+            def weight(size: int, before: int, after: int) -> Any:
+                index = torch.arange(size, device=image.device)
+                distance = torch.full_like(index, feathering)
+                if before > 0:
+                    distance = torch.minimum(distance, index)
+                if after > 0:
+                    distance = torch.minimum(distance, size - 1 - index)
+                return ((feathering - distance) / (feathering + 1)).square().to(image.dtype)
+
+            wy, wx = weight(height, top, bottom), weight(width, left, right)
+            inner.lerp_(fill, torch.maximum(wy[:, None], wx[None, :]).unsqueeze(-1))
+        return cls.outputs(image=result)
+
+
 IMAGE_TRANSFORM_NODES = (
     ImageCrop,
     RepeatImageBatch,
@@ -475,4 +643,5 @@ IMAGE_TRANSFORM_NODES = (
     ImageRotate,
     ImageFlip,
     ImageScaleToMaxDimension,
+    PadImageNode,
 )
