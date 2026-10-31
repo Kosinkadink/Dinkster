@@ -307,6 +307,8 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         assert pack.publisher == "dinkster"
         assert pack.source == f"git:Kosinkadink/Dinkster@{commit}"
         archive = first[0].parent / f"{pack.pack}-{version}.zip"
+        with zipfile.ZipFile(archive) as contents:
+            assert not any("tests" in Path(name).parts for name in contents.namelist())
         extracted = unpack_artifact(
             archive, tmp_path / "unpacked" / pack.pack, pack.artifact_digest
         )
@@ -331,6 +333,31 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         assert len(manifest.templates) == len(declared_templates)
         for template in manifest.templates:
             assert template.path.is_file()
+
+
+@pytest.mark.parametrize(
+    "pack", ["dinkster-nodes-comfy", "dinkster-nodes-remote", "dinkster-vision-upscale"]
+)
+def test_official_artifacts_reject_static_errors_in_built_zip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pack: str
+) -> None:
+    from dinkster_registry import build_artifact
+    from dinkster_registry.model import artifact_digest
+
+    def build_invalid_artifact(pack_dir: Path, output: Path) -> str:
+        digest = build_artifact(pack_dir, output)
+        if output.name.startswith(pack + "-"):
+            with zipfile.ZipFile(output, "a") as archive:
+                archive.writestr("runtime_import.py", "import dinkster_engine\n")
+            return artifact_digest(output.read_bytes())
+        return digest
+
+    monkeypatch.setattr("scripts.build_official_packs.build_artifact", build_invalid_artifact)
+    with pytest.raises(ValueError, match=rf"{pack}.*static doctor"):
+        build_official_packs(
+            Path(__file__).resolve().parents[1], tmp_path / "output", version="0.0.2.dev1"
+        )
+    assert not (tmp_path / "output" / "official-packs.lock").exists()
 
 
 @pytest.mark.parametrize("version", ["0.0.2.dev1+gabc", "../../escape"])

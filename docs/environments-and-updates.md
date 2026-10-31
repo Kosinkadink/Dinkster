@@ -803,9 +803,20 @@ Settled:
 - Base pins: Python 3.14, torch 2.14.1, numpy 2.5,
   `opencv-contrib-python-headless` 5.0; `win-nvidia` on cu132;
   `win-nvidia-cu126` keeps torch 2.14.1 when the other variants move.
-- Engine installs never resolve; they fetch artifacts named by hash on
-  either channel. The one index read is rebuilding a base whose archive is
-  no longer hosted, from its retained base manifest.
+- Default engine installs fetch artifacts named by hash on either channel.
+  Rebuilding an expired base archive uses its retained manifest without resolving.
+  Explicit `setup --from-scratch` instead resolves the checkout's `uv.lock`
+  locally using the selected producer variant's torch index. `--source` selects
+  the checkout, `--variants` selects producer definitions, and `--python` explicitly
+  selects a host interpreter when no producer interpreter row fits. The pinned
+  interpreter is verified from the producer definition and cached separately;
+  denying interpreter release access requires that verified cache or an override.
+  Local base
+  manifests and generations carry `source: local`. Doctor checks their recorded
+  inventory; channel updates refuse them and offer a fresh published install.
+  Desktop and automatic updates never select this development/fallback mode.
+  Packs over a local base resolve against that generation's constraints rather
+  than selecting a published variant pack lock.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
   `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
   for wheels compiled against one torch triple.

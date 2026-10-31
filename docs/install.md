@@ -98,6 +98,27 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
 
+### Explicit from-scratch development setup
+
+Published bundles remain the supported default. For development or a platform
+without a suitable bundle, `dinkster-env --root /absolute/new-project setup
+--from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
+resolves the checkout lock against the variant's torch index and builds engine
+wheels locally. The plan states that resolution occurs before downloading.
+It does not fetch a channel or an engine/base release. The pinned interpreter
+is downloaded and verified from the producer's interpreter definition, or reused
+from the store's download cache. Populate that cache before denying interpreter
+release access. `--python /absolute/python` explicitly selects a host interpreter
+instead, including when a host interpreter row is missing.
+`--variants /absolute/variants.toml` selects alternate producer definitions.
+
+Contributor setup exposes the same opt-in with `python scripts/setup_envs.py
+--from-scratch --variant linux-cpu` and the same `--python`/`--variants` overrides.
+Neither Desktop nor channel updates choose it automatically. Local generations
+are marked `source: local`; doctor reports their local origin and checks their
+recorded inventory. Channel update refuses them: install a fresh published
+generation in a new root without `--from-scratch` to return to channel updates.
+
 ### Windows interpreter
 
 Windows bases use CPython 3.14.10 / cp314 from python-build-standalone 20261026,

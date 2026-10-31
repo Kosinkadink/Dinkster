@@ -279,6 +279,7 @@ jobs:
         working-directory: .frontend-validation
         run: |
           pnpm install --frozen-lockfile
+          node --test ../tools/validate_default_catalog.test.mjs
           pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json

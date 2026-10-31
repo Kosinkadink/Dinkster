@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+from .environment_constraints import requirement_hashes
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -340,6 +341,7 @@ def build_generation(
     prepare_packs: Callable[[Path], None] | None = None,
     refresh_cache: bool = False,
     uv: str = "uv",
+    source_kind: str = "published",
 ) -> Generation:
     """Build a target without activating it or touching another generation.
 
@@ -384,13 +386,19 @@ def build_generation(
             ignore=ignore_bytecode,
         )
         shutil.copyfile(constraints, destination / "constraints.txt")
+        if source_kind == "local":
+            shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
         python = interpreter(destination)
         if not python.is_file():
             raise EnvironmentError(f"base has no generation interpreter: {python}")
         base_python = source / python.relative_to(destination / "python")
         link_mode = "hardlink" if python.samefile(base_python) else "clone"
         wheels = store / "wheels"
-        links = [wheels, *sorted({path.parent for path in wheels.glob("*/*.whl")})]
+        hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
+        links = [
+            wheels,
+            *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+        ]
         command = [
             uv,
             "pip",
@@ -429,7 +437,11 @@ def build_generation(
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
         provisioned: set[str] = set()
-        if source_generation is not None or pack_locks or in_process_packs:
+        if (
+            source_generation is not None
+            or pack_locks
+            or (in_process_packs and prepare_packs is None)
+        ):
             if own_environment_size is None:
                 raise EnvironmentError("pack planning requires the measured own-environment size")
             for operation in ("preflight", "rebuild", "doctor"):
@@ -485,6 +497,7 @@ def build_generation(
             worker_protocol,
             files,
             in_process_packs,
+            source_kind,
         )
         generation.write(destination / "generation.json")
         return generation
