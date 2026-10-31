@@ -34,7 +34,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--file-shard",
         metavar="INDEX/COUNT",
-        help="run one of 2, 3, 4, 6, or 8 test shards (whole-file unless opted into case splitting)",
+        help="run one of 2, 3, 4, 6, or 8 shards (whole-file unless opted into case splitting)",
     )
     parser.addoption(
         "--case-shard-file",
