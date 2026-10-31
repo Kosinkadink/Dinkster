@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 
@@ -15,13 +16,15 @@ from dinkster_assets import (
     LocalAssetRef,
     open_verified,
 )
+from dinkster_assets.declared import offer_produced_outputs
+from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.scratch import hold_produced_vault
+from dinkster_assets.value import value_asset_references
 from dinkster_values import (
-    ASSET_BASE_TYPE,
     MEBIBYTE,
     Value,
     default_decode,
     iter_value_tree,
-    parse_asset_type_id,
 )
 
 _COPY_BYTES = MEBIBYTE
@@ -89,26 +92,9 @@ def result_asset_digests(header: Mapping[str, object], blobs: Sequence[bytes]) -
     return digests
 
 
-def _source_references(
-    values: Mapping[str, Value], *, include_asset_inputs: bool = False
-) -> dict[str, AssetRef]:
-    references: dict[str, AssetRef] = {}
-    for value in values.values():
-        for child in iter_value_tree(value):
-            refs = list(_references(child.meta.get("asset_refs", [])))
-            if include_asset_inputs and (
-                child.type_id == ASSET_BASE_TYPE or parse_asset_type_id(child.type_id) is not None
-            ):
-                wire = child.meta.entries
-                if wire.get("verification") == "unverified":
-                    LocalAssetRef.from_wire(wire)
-                else:
-                    refs.append(AssetRef.from_wire(wire))
-            for ref in refs:
-                previous = references.setdefault(ref.digest, ref)
-                if previous.size != ref.size:
-                    raise AssetError("source references disagree about byte size")
-    return references
+def offer_source_assets(outputs: Mapping[str, Value]) -> None:
+    """Record publication handoff before transfer or direct engine adoption."""
+    offer_produced_outputs(value_asset_references(outputs, include_asset_values=False))
 
 
 def source_asset_files(
@@ -158,22 +144,32 @@ class ProducedAssetAuthority:
                 ref = AssetRef.from_wire(cast("Mapping[str, object]", claim["preview"]))
                 if self._vault is None:
                     continue
+                inventory = ProducedAssetInventory(self._vault.root)
+                held = self._vault.resolve(ref.digest)
+                if held is not None:
+                    with open_verified(held, ref.digest) as source:
+                        if os.fstat(source.fileno()).st_size != ref.size:
+                            continue
+                        inventory.confirm_existing(ref.digest, ref.size)
+                    accepted.append(claim)
+                    continue
                 path = transferred.resolve(ref.digest) if transferred is not None else None
                 if path is None and self._source is not None:
                     path = self._source.resolve(ref.digest)
                 if path is None:
-                    path = self._vault.resolve(ref.digest)
-                if path is None:
                     continue
                 with (
                     open_verified(path, ref.digest) as source,
-                    self._vault.writer(ref.digest) as writer,
+                    closing(hold_produced_vault(self._vault.root)),
                 ):
                     if os.fstat(source.fileno()).st_size != ref.size:
                         continue
-                    while chunk := source.read(_COPY_BYTES):
-                        writer.write(chunk)
-                    writer.commit()
+                    inventory.pending(ref.digest, ref.size)
+                    with self._vault.writer(ref.digest) as writer:
+                        while chunk := source.read(_COPY_BYTES):
+                            writer.write(chunk)
+                        writer.commit()
+                        inventory.adopted(ref.digest, ref.size)
                 accepted.append(claim)
             except Exception:
                 # Optional media cannot invalidate successfully produced sources.
@@ -186,8 +182,9 @@ class ProducedAssetAuthority:
         transferred: AssetResolver | None = None,
         inputs: Mapping[str, Value] | None = None,
     ) -> None:
-        incoming = _source_references(inputs or {}, include_asset_inputs=True)
-        for ref in _source_references(outputs).values():
+        incoming = value_asset_references(inputs or {})
+        offer_source_assets(outputs)
+        for ref in value_asset_references(outputs, include_asset_values=False).values():
             if ref.digest in incoming:
                 if incoming[ref.digest].size != ref.size:
                     raise AssetError("source references disagree about byte size")
@@ -198,6 +195,10 @@ class ProducedAssetAuthority:
                 with open_verified(held, ref.digest) as handle:
                     if os.fstat(handle.fileno()).st_size != ref.size:
                         raise AssetError("source byte size does not match engine vault")
+                    if self._vault is not None and self._vault.resolve(ref.digest) == held:
+                        ProducedAssetInventory(self._vault.root).confirm_existing(
+                            ref.digest, ref.size
+                        )
                 continue
             if self._vault is None:
                 raise AssetError("produced sources require an engine DINKSTER_ASSET_VAULT")
@@ -206,6 +207,8 @@ class ProducedAssetAuthority:
                 path = self._source.resolve(ref.digest)
             if path is None:
                 raise AssetError(f"source {ref.digest} did not reach the engine")
+            inventory = ProducedAssetInventory(self._vault.root)
+            inventory.pending(ref.digest, ref.size)
             with path.open("rb") as handle, self._vault.writer(ref.digest) as writer:
                 count = 0
                 while chunk := handle.read(_COPY_BYTES):
@@ -216,3 +219,4 @@ class ProducedAssetAuthority:
                 if count != ref.size:
                     raise AssetError("source transfer is truncated")
                 writer.commit()
+                inventory.adopted(ref.digest, ref.size)

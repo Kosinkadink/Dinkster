@@ -47,7 +47,21 @@ def build(
     commit = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
-    tracked = subprocess.check_output(["git", "-C", str(root), "archive", "--format=tar", commit])
+    # git archive applies checkout conversion even though its input is a commit.
+    tracked = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
+            "archive",
+            "--format=tar",
+            commit,
+        ]
+    )
     output.mkdir(parents=True, exist_ok=True)
     payloads: list[Path] = []
     locked: list[LockedPack] = []
@@ -90,6 +104,7 @@ def build(
                         manifest_path.read_text(encoding="utf-8"),
                     ),
                     encoding="utf-8",
+                    newline="\n",
                 )
             manifest = load_manifest(manifest_path)
             if manifest.publisher != "dinkster":
@@ -126,7 +141,7 @@ def build(
                 dependency_lock.write(dependency_payload)
                 payloads.append(dependency_payload)
     lock = output / "official-packs.lock"
-    lock.write_text(Lockfile.of(locked).record_json() + "\n", encoding="utf-8")
+    lock.write_text(Lockfile.of(locked).record_json() + "\n", encoding="utf-8", newline="\n")
     return (*payloads, lock)
 
 

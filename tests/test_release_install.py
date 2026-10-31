@@ -35,10 +35,7 @@ from scripts.download_frontend import verify_and_extract
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
-def test_source_distribution_rebuilds_the_complete_direct_wheel(
-    tmp_path: Path, project: str
-) -> None:
+def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
     direct = tmp_path / "direct"
     subprocess.run(
         ["uv", "build", "--package", project, "--wheel", "--out-dir", str(direct)],
@@ -61,13 +58,57 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         cwd=extracted,
         check=True,
     )
+    return next(direct.glob("*.whl")), next(rebuilt.glob("*.whl"))
+
+
+@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+def test_source_distribution_rebuilds_the_complete_direct_wheel(
+    tmp_path: Path, project: str
+) -> None:
+    direct, rebuilt = _distribution_wheels(tmp_path, project)
     with (
-        zipfile.ZipFile(next(direct.glob("*.whl"))) as expected,
-        zipfile.ZipFile(next(rebuilt.glob("*.whl"))) as actual,
+        zipfile.ZipFile(direct) as expected,
+        zipfile.ZipFile(rebuilt) as actual,
     ):
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+
+
+@pytest.mark.network("pypi.org", "files.pythonhosted.org")
+def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) -> None:
+    _, rebuilt = _distribution_wheels(tmp_path, "dinkster-api")
+    environment = tmp_path / "standalone-api"
+    subprocess.run(
+        ["uv", "venv", "--python", sys.executable, str(environment)],
+        cwd=tmp_path,
+        check=True,
+    )
+    python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--no-sources",
+            str(rebuilt),
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    result = subprocess.check_output(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "from dinkster_api.v1 import Node; print(Node.__name__)",
+        ],
+        cwd=tmp_path,
+        text=True,
+    )
+    assert result.strip() == "Node"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
@@ -114,10 +155,12 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert set(workflow["jobs"]) == {
         "validation",
         "build",
+        "pack-locks",
         "tools",
         "finalize",
         "install",
         "release",
+        "channel",
         "publish",
         "publish-api",
         "publish-supervisor",
@@ -127,12 +170,40 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["tools"]["needs"] == "build"
-    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools"]
+    assert workflow["jobs"]["pack-locks"]["needs"] == "build"
+    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools", "pack-locks"]
     assert workflow["jobs"]["install"]["needs"] == "finalize"
     assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
         {"os": "linux", "runner": "ubuntu-latest"},
         {"os": "windows", "runner": "windows-latest"},
     ]
+    locks = workflow["jobs"]["pack-locks"]
+    assert locks["runs-on"] == "${{ matrix.runner }}"
+    assert locks["strategy"]["matrix"] == "${{ fromJSON(needs.build.outputs.lock-matrix) }}"
+    assert locks["strategy"]["fail-fast"] is False
+    assert [
+        step["with"]["name"]
+        for step in locks["steps"]
+        if step.get("uses") == "actions/download-artifact@v4"
+    ] == ["wheel-release", "selected-base-manifests"]
+    resolve = [step for step in locks["steps"] if "run" in step]
+    assert {step["if"] for step in resolve} == {
+        "runner.os == 'Windows'",
+        "runner.os != 'Windows'",
+    }
+    for step in resolve:
+        assert "-m scripts.build_release_pack_locks --release dist --base-manifest" in step["run"]
+        assert step["env"] == {"VARIANT": "${{ matrix.variant }}"}
+    admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
+    assert "for manifest in .release/bases/*/manifest.json" in admission
+    assert 'arguments+=(--base-manifest "$manifest")' in admission
+    assert (
+        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
+        in admission
+    )
+    assert "for artifact in .release/pack-locks/*.pack-lock.json" in admission
+    assert 'arguments+=(--artifact "$artifact")' in admission
+    assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
     for job in ("install", "release", "publish", "publish-api", "publish-supervisor"):
         downloads = [
             step["with"]["name"]
@@ -143,6 +214,22 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
+    channel = workflow["jobs"]["channel"]
+    assert channel["needs"] == "release"
+    assert channel["if"] == "github.event_name == 'push'"
+    assert channel["concurrency"]["cancel-in-progress"] is False
+    publication = channel["steps"][-1]
+    assert "uv sync --locked --only-group release-publication" in publication["run"]
+    groups = tomllib.loads((ROOT / "pyproject.toml").read_text())["dependency-groups"]
+    assert "dinkster-supervisor" in groups["release-publication"]
+    assert any(requirement.startswith("boto3") for requirement in groups["release-publication"])
+    assert "-m scripts.publish_environment_channel" in publication["run"]
+    assert "--minimum-desktop-version 0.2.0" in publication["run"]
+    assert publication["env"]["R2_ACCESS_KEY_ID"] == "${{ secrets.R2_ACCESS_KEY_ID }}"
+    assert any(
+        "dinkster_supervisor.environment_channels" in step.get("run", "")
+        for step in workflow["jobs"]["finalize"]["steps"]
+    )
     assert workflow["jobs"]["release"]["outputs"] == {
         "engine-id": "${{ steps.identity.outputs.engine-id }}",
         "engine-tag": "${{ steps.identity.outputs.tag }}",
@@ -168,6 +255,45 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
             "fail_on_unmatched_files": True,
             "files": "dist/*",
         },
+    }
+
+
+def test_release_lock_matrix_uses_each_selected_base_native_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import acquire_engine_bases
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    selection = next(
+        step["run"] for step in workflow["jobs"]["build"]["steps"] if step.get("id") == "bases"
+    )
+    paths = []
+    for variant, system in (
+        ("linux-cpu", "linux"),
+        ("mac-arm64", "macos"),
+        ("win-cpu", "windows"),
+        ("win-nvidia", "windows"),
+        ("win-nvidia-cu126", "windows"),
+    ):
+        path = tmp_path / f"{variant}.json"
+        path.write_text(json.dumps({"variant": variant, "platform": {"os": system}}))
+        paths.append(path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/base_bundles.json").write_text("{}")
+    output = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(acquire_engine_bases, "acquire", lambda *args: paths)
+    script = selection.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exec(compile(script, "release base selection", "exec"), {})
+    assert json.loads(output.read_text().removeprefix("lock-matrix=")) == {
+        "include": [
+            {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+            {"variant": "mac-arm64", "runner": "macos-latest"},
+            {"variant": "win-cpu", "runner": "windows-latest"},
+            {"variant": "win-nvidia", "runner": "windows-latest"},
+            {"variant": "win-nvidia-cu126", "runner": "windows-latest"},
+        ]
     }
 
 
@@ -326,7 +452,13 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
 def test_release_install_launches_without_private_registry_inputs() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["install"]["steps"]
-    assert "secrets." not in (ROOT / ".github/workflows/release.yml").read_text()
+    assert "secrets." not in yaml.safe_dump(
+        {
+            "env": workflow.get("env"),
+            "defaults": workflow.get("defaults"),
+            "install": workflow["jobs"]["install"],
+        }
+    )
     assert all(
         step.get("with", {}).get("repository") != "Kosinkadink/dinkster-registry" for step in steps
     )
@@ -384,6 +516,23 @@ def test_release_failure_prints_service_and_publication_log_tails(
     assert "backend failed" in output and "publication result" in output
     assert "line 24\n" not in output and "line 25\n" in output and "line 124\n" in output
     assert "not a log" not in output
+
+
+def test_windows_runtime_admits_the_pinned_interpreter_before_installing_dependencies() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["windows-runtime"]["steps"]
+    setup_index = next(
+        index for index, step in enumerate(steps) if step.get("uses") == "astral-sh/setup-uv@v5"
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "./.github/actions/windows-python"
+    )
+    sync_index = next(index for index, step in enumerate(steps) if "uv sync" in step.get("run", ""))
+    assert steps[setup_index]["with"]["python-version"] == "3.14.10"
+    assert setup_index < admission_index < sync_index
+    assert "if" not in steps[admission_index]
 
 
 def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
@@ -653,13 +802,16 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     shared = wheel("shared", "py3-none-any")
     win = wheel("native", f"{tag}-{tag}-win_amd64")
     linux = wheel("native", f"{tag}-{tag}-manylinux_2_28_x86_64")
+    mac = wheel("native", f"{tag}-{tag}-macosx_14_0_arm64")
     wheel("native", "cp313-cp313-win_amd64")
-    wheel("native", "cp314-cp314-macosx_11_0_arm64")
+    wheel("native", f"{tag}-{tag}-macosx_15_0_arm64")
+    wheel("native", f"{tag}-{tag}-macosx_14_0_x86_64")
     wheel("native", "cp312-abi3-win_amd64")
     legacy = wheel("legacy", "py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64")
     oldest = wheel("oldest", "py3-none-manylinux1_x86_64.manylinux_2_5_x86_64")
     wheel("legacy", "py3-none-manylinux_2_29_x86_64")
     win_only = wheel("windows_only", "py3-none-any")
+    mac_only = wheel("mac_only", "py3-none-any")
     lock = ""
     requirements = []
     for package, wheels in records.items():
@@ -674,6 +826,11 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         marker = (
             f' ; sys_platform == "win32" and python_full_version >= "{python}"'
             if package == "windows_only"
+            else (
+                ' ; sys_platform == "darwin" and platform_machine == "arm64"'
+                ' and platform_system == "Darwin"'
+            )
+            if package == "mac_only"
             else ' ; sys_platform == "linux"'
             if package in {"legacy", "oldest"}
             else ""
@@ -726,16 +883,33 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     )
     linux_base_manifest = tmp_path / "linux-base-manifest.json"
     linux_base_manifest.write_text(json.dumps(linux_manifest))
-    base_manifests = [base_manifest, linux_base_manifest]
+    mac_manifest = {
+        **manifest,
+        "variant": "mac-arm64",
+        "platform": {"os": "macos", "arch": "arm64"},
+    }
+    identity = {key: value for key, value in mac_manifest.items() if key != "id"}
+    identity["archive"] = {"format": "tar+zstd"}
+    mac_manifest["id"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
+    mac_base_manifest = tmp_path / "mac-base-manifest.json"
+    mac_base_manifest.write_text(json.dumps(mac_manifest))
+    base_manifests = [base_manifest, linux_base_manifest, mac_base_manifest]
     output = tmp_path / "downloads"
     result = download_external_wheels(tmp_path, output, "uv", base_manifests)
     assert {path.name for path in result} == {
         shared.name,
         win.name,
         linux.name,
+        mac.name,
         legacy.name,
         oldest.name,
         win_only.name,
+        mac_only.name,
     }
     assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
     original = requirements[0]
@@ -1159,6 +1333,95 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
     assert json.loads(metadata.read_bytes()) == result
 
 
+@pytest.mark.parametrize(
+    "corruption", [None, "missing", "extra", "pack", "variant", "wheel-url", "index-url"]
+)
+def test_finalization_requires_complete_portable_official_dependency_locks(
+    tmp_path: Path, corruption: str | None
+) -> None:
+    from dinkster_registry.install import LockedPack, Lockfile
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts.build_release import write_manifest
+
+    output = tmp_path / "release"
+    output.mkdir()
+    catalog = output / "official-packs.lock"
+    catalog.write_text(
+        Lockfile.of(
+            [LockedPack("example", "1.2.3", "blake3:" + "a" * 64, "dinkster", (), "git:test")]
+        ).record_json()
+    )
+    write_manifest(output, {"format": "dinkster.engine/1", "version": "1.2.3"}, [catalog])
+    bases = []
+    candidates = []
+    for variant in ("linux-cpu", "win-cpu"):
+        base = {
+            "format": "dinkster.base/1",
+            "variant": variant,
+            "platform": {"os": "linux" if variant == "linux-cpu" else "windows", "arch": "x86_64"},
+            "python": "3.14.10",
+            "interpreter": {},
+            "wheels": [],
+            "replaces": [],
+            "workerProtocol": 11,
+            "nvidia": None,
+            "archive": {"format": "tar+zstd"},
+        }
+        canonical = json.dumps(base, sort_keys=True, separators=(",", ":")).encode("ascii")
+        base["id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+        base["archive"]["parts"] = []
+        path = tmp_path / f"{variant}.json"
+        path.write_text(json.dumps(base))
+        bases.append(path)
+        path = tmp_path / f"example-1.2.3-{variant}.pack-lock.json"
+        PackLock(
+            "wrong" if corruption == "pack" else "example",
+            "wrong" if corruption == "variant" else variant,
+            ">=3.12",
+            ("example-dependency==2.0",),
+            ("file:///resolver/index" if corruption == "index-url" else "https://pypi.org/simple",),
+            (
+                LockedDistribution(
+                    "example-dependency",
+                    "2.0",
+                    (
+                        LockedWheel(
+                            "example_dependency-2.0-py3-none-any.whl",
+                            17,
+                            "b" * 64,
+                            "file:///resolver/wheel.whl"
+                            if corruption == "wheel-url"
+                            else "https://example.test/wheel.whl",
+                        ),
+                    ),
+                ),
+            ),
+        ).write(path)
+        candidates.append(path)
+    if corruption == "missing":
+        candidates.pop()
+    elif corruption == "extra":
+        extra = tmp_path / "unlisted-1.2.3-linux-cpu.pack-lock.json"
+        extra.write_bytes(candidates[0].read_bytes())
+        candidates.append(extra)
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    if corruption:
+        with pytest.raises(ValueError, match="dependency lock"):
+            extend_release(output, candidates, base_manifests=bases)
+        assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+    else:
+        result = extend_release(output, candidates, base_manifests=bases)
+        rows = result["artifacts"]
+        assert isinstance(rows, list)
+        assert {row["name"] for row in rows} == {
+            "official-packs.lock",
+            *(path.name for path in candidates),
+        }
+        for path in candidates:
+            assert (output / path.name).read_bytes() == path.read_bytes()
+
+
 def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1203,9 +1466,10 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     assert releases[1]["prerelease"] is False
 
 
+@pytest.mark.parametrize("system", ["windows", "macos"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
 ) -> None:
     from copy import deepcopy
 
@@ -1220,11 +1484,16 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         "[dependency-groups]\nengine-base = " + json.dumps(["numpy==2.5.1"])
     )
     tag = f"cp{python.split('.')[0]}{python.split('.')[1]}"
+    windows = system == "windows"
+    variant = "win-cpu" if windows else "mac-arm64"
+    target = "win_amd64" if windows else "macosx_14_0_arm64"
+    triple = "x86_64-pc-windows-msvc" if windows else "aarch64-apple-darwin"
+    executable = "python/python.exe" if windows else "python/bin/python3"
     lock = []
     wheels = []
     for name, version in pins.items():
-        torch = name in {"torch", "torchvision"}
-        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-win_amd64.whl"
+        torch = windows and name in {"torch", "torchvision"}
+        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-{target}.whl"
         digest = hashlib.sha256(name.encode()).hexdigest()
         url = f"https://example.invalid/{filename}"
         wheels.append(
@@ -1249,17 +1518,17 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     (tmp_path / "uv.lock").write_text("\n".join(lock))
     original: dict = dict(
         format="dinkster.base/1",
-        variant="win-cpu",
-        platform=dict(os="windows", arch="x86_64"),
+        variant=variant,
+        platform=dict(os=system, arch="x86_64" if windows else "arm64"),
         python=python,
         interpreter=dict(
-            filename=f"cpython-{python}+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            filename=f"cpython-{python}+20261026-{triple}-install_only_stripped.tar.gz",
             release="20261026",
-            executable="python/python.exe",
+            executable=executable,
             size=23,
             sha256="a" * 64,
             url="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
-            f"cpython-{python}%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            f"cpython-{python}%2B20261026-{triple}-install_only_stripped.tar.gz",
         ),
         wheels=wheels,
         replaces=list(pins),
@@ -1279,7 +1548,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         manifest = deepcopy(original)
         if change == "version":
             manifest["wheels"][-1]["version"] = "2.5.0"
-            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-win_amd64.whl"
+            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
         elif change == "wheel-hash":
             manifest["wheels"][-1]["sha256"] = "0" * 64
         elif change == "torch-index":
@@ -1289,7 +1558,9 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         elif change == "python":
             manifest["python"] = "3.11.9"
         elif change == "interpreter":
-            manifest["interpreter"]["executable"] = "python/bin/python3"
+            manifest["interpreter"]["executable"] = (
+                "python/bin/python3" if windows else "python/python.exe"
+            )
         elif change == "wheel-platform":
             manifest["wheels"][0]["filename"] = (
                 f"torch-2.14.1+cpu-{tag}-{tag}-manylinux_2_28_x86_64.whl"
@@ -1306,11 +1577,11 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             else [dict(filename="base.tar.zst.001", size=12, sha256=part_digest)]
         )
         manifest["signature"] = None
-        requested = f"base-win-cpu-{identity}"
+        requested = f"base-{variant}-{identity}"
         if change == "identity":
             manifest["workerProtocol"] = 12
         payload = (json.dumps(manifest, indent=3) + "\n").encode()
-        extras = dict(format="dinkster.extras/1", base=manifest["id"], variant="win-cpu", wheels=[])
+        extras = dict(format="dinkster.extras/1", base=manifest["id"], variant=variant, wheels=[])
         if change == "extras-base":
             extras["base"] = "sha256:" + "0" * 64
         elif change == "extras-variant":
@@ -1383,7 +1654,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     monkeypatch.setattr(subprocess, "Popen", stream_part)
     output = tmp_path / "engine-base-manifests"
     paths = acquire(tmp_path, [prepare("valid")], output)
-    assert paths == [output / "win-cpu/manifest.json"]
+    assert paths == [output / variant / "manifest.json"]
     assert paths[0].read_bytes() == payload
     streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
     assert streamed[0].read_bytes() == payload

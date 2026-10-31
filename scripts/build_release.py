@@ -199,7 +199,7 @@ def download_external_wheels(
 ) -> list[Path]:
     """Fetch the locked wheel closure for the selected published bases without resolving."""
     from packaging.requirements import Requirement
-    from packaging.tags import compatible_tags, cpython_tags
+    from packaging.tags import compatible_tags, cpython_tags, mac_platforms
     from packaging.utils import canonicalize_name, parse_wheel_filename
     from packaging.version import Version
 
@@ -220,6 +220,9 @@ def download_external_wheels(
         elif platform == {"os": "linux", "arch": "x86_64"}:
             windows = False
             platforms = LINUX_PLATFORMS
+        elif platform == {"os": "macos", "arch": "arm64"}:
+            windows = False
+            platforms = list(mac_platforms((14, 0), "arm64"))
         else:
             raise ValueError(f"unsupported published base platform: {platform!r}")
         tags = list(cpython_tags((python.major, python.minor), platforms=platforms)) + list(
@@ -236,14 +239,18 @@ def download_external_wheels(
             "implementation_name": "cpython",
             "implementation_version": manifest["python"],
             "os_name": "nt" if windows else "posix",
-            "platform_machine": "AMD64" if windows else "x86_64",
+            "platform_machine": "AMD64" if windows else platform["arch"],
             "platform_release": "",
-            "platform_system": "Windows" if windows else "Linux",
+            "platform_system": {"windows": "Windows", "linux": "Linux", "macos": "Darwin"}[
+                platform["os"]
+            ],
             "platform_version": "",
             "python_full_version": manifest["python"],
             "platform_python_implementation": "CPython",
             "python_version": f"{python.major}.{python.minor}",
-            "sys_platform": "win32" if windows else "linux",
+            "sys_platform": {"windows": "win32", "linux": "linux", "macos": "darwin"}[
+                platform["os"]
+            ],
             "extra": "",
         }
         for line in requirements.replace("\\\n", "").splitlines():
@@ -513,7 +520,9 @@ def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Pa
     )
 
 
-def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
+def extend_release(
+    output: Path, candidates: list[Path], *, base_manifests: list[Path] | None = None
+) -> dict[str, object]:
     """Finalize an existing release only after checking every original asset."""
     manifest_path = output / "release-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -537,6 +546,43 @@ def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
         raise ValueError("release SHA256SUMS mismatch")
     if {path.name for path in output.iterdir()} != {*expected, "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
+    catalog = next((path for path in artifacts if path.name == "official-packs.lock"), None)
+    locks = {
+        path.name: path
+        for path in [*artifacts, *candidates]
+        if path.name.endswith(".pack-lock.json")
+    }
+    if catalog is not None:
+        from dinkster_registry.install import Lockfile
+        from dinkster_workers.pack_lock import PackLock
+
+        if not base_manifests:
+            raise ValueError("dependency lock admission requires selected base manifests")
+        variants = {read_base_manifest(path)["variant"] for path in base_manifests}
+        packs = Lockfile.from_record_json(catalog.read_text(encoding="utf-8")).packs
+        required = {
+            f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
+            for pack in packs
+            for variant in variants
+        }
+        if locks.keys() != required.keys():
+            raise ValueError(
+                "dependency lock coverage mismatch: "
+                f"missing={sorted(required.keys() - locks.keys())}, "
+                f"extra={sorted(locks.keys() - required.keys())}"
+            )
+        for name, path in locks.items():
+            lock = PackLock.read(path)
+            if (lock.pack, lock.variant) != required[name]:
+                raise ValueError(f"dependency lock identity mismatch: {name}")
+            urls = [*lock.indexes, *(w.url for p in lock.packages for w in p.wheels)]
+            if any(
+                urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc
+                for url in urls
+            ):
+                raise ValueError(f"dependency lock contains a nonportable URL: {name}")
+    elif locks:
+        raise ValueError("dependency locks require an official pack catalog")
     stage_payloads(output, artifacts, candidates)
     write_manifest(output, manifest, artifacts)
     return manifest
@@ -558,7 +604,7 @@ if __name__ == "__main__":
     parser.add_argument("--download-external-wheels", action="store_true")
     args = parser.parse_args()
     if args.extend:
-        extend_release(args.output.resolve(), args.artifact)
+        extend_release(args.output.resolve(), args.artifact, base_manifests=args.base_manifest)
     elif args.frontend_artifact is None:
         parser.error("--frontend-artifact is required when building a release")
     else:

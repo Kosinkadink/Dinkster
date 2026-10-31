@@ -2437,7 +2437,12 @@ def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
                 cache=MemoryLRUCache(),
             )
             for value in (5, "not a float"):
-                with pytest.raises(GraphValidationError, match="value must be a float literal"):
+                message = (
+                    "input 'value' literal does not match FLOAT"
+                    if isinstance(value, str)
+                    else "value must be a float literal"
+                )
+                with pytest.raises(GraphValidationError, match=message):
                     await asyncio.wait_for(
                         engine.run(
                             Graph(

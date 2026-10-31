@@ -12,6 +12,8 @@ on:
       - scripts/build_environment_tools.py
       - scripts/build_native_tools.py
       - scripts/build_official_packs.py
+      - scripts/build_release_pack_locks.py
+      - scripts/publish_environment_channel.py
       - scripts/acquire_engine_bases.py
       - scripts/base_bundles.json
       - scripts/prune_engine_prereleases.py
@@ -39,6 +41,8 @@ jobs:
 
   build:
     needs: validation
+    outputs:
+      lock-matrix: ${{ steps.bases.outputs.lock-matrix }}
     permissions:
       actions: read
       contents: read
@@ -60,18 +64,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
       - name: Acquire the selected published base manifests
+        id: bases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           uv run --no-project --python 3.12 --with packaging==26.2 python - <<'PY'
-          import json
+          import json, os
           from pathlib import Path
           from scripts.acquire_engine_bases import acquire
 
           root = Path.cwd()
           selections = json.loads((root / 'scripts/base_bundles.json').read_text())
-          acquire(root, [f'base-{variant}-{identity}' for variant, identity in selections.items()],
-                  root / '.release/base-manifests')
+          paths = acquire(root, [f'base-{variant}-{identity}' for variant, identity in selections.items()],
+                          root / '.release/base-manifests')
+          rows = []
+          for path in paths:
+              base = json.loads(path.read_text())
+              runner = {'linux': 'ubuntu-latest', 'windows': 'windows-latest',
+                        'macos': 'macos-latest'}[base['platform']['os']]
+              rows.append({'variant': base['variant'], 'runner': runner})
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('lock-matrix=' + json.dumps({'include': rows}) + '\n')
           PY
       - name: Build the complete release contract
         env:
@@ -110,6 +123,56 @@ jobs:
         with:
           name: tools-supervisor-wheel
           path: dist/dinkster_supervisor-*.whl
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/base-manifests/
+          if-no-files-found: error
+
+  pack-locks:
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.lock-matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/base-manifests
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Resolve official packs against the native selected base
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_release_pack_locks --release dist --base-manifest ".release/base-manifests/$env:VARIANT/manifest.json" --output ".release/pack-locks/$env:VARIANT"
+        if: runner.os == 'Windows'
+      - name: Resolve official packs against the native selected base
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_release_pack_locks --release dist --base-manifest ".release/base-manifests/$VARIANT/manifest.json" --output ".release/pack-locks/$VARIANT"
+        if: runner.os != 'Windows'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-pack-locks-${{ matrix.variant }}
+          path: .release/pack-locks/${{ matrix.variant }}/*.pack-lock.json
           if-no-files-found: error
 
   tools:
@@ -200,7 +263,7 @@ jobs:
           if-no-files-found: error
 
   finalize:
-    needs: [build, tools]
+    needs: [build, tools, pack-locks]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -219,16 +282,43 @@ jobs:
           pattern: native-tools-*
           merge-multiple: true
           path: .release/tools
-      - name: Admit native tools into the engine release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: official-pack-locks-*
+          merge-multiple: true
+          path: .release/pack-locks
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/bases
+      - name: Admit native tools and pack locks into the engine release
         run: |
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
           arguments=()
+          for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
           for artifact in .release/tools/*.zip; do arguments+=(--artifact "$artifact"); done
-          uv run --no-project --python 3.12 -m scripts.build_release --extend "${arguments[@]}"
+          for artifact in .release/pack-locks/*.pack-lock.json; do arguments+=(--artifact "$artifact"); done
+          uv run --locked --no-sync python -m scripts.build_release --extend "${arguments[@]}"
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: engine-release
           path: dist/
+          if-no-files-found: error
+      - name: Validate the channel against the finalized release
+        env:
+          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-supervisor
+          arguments=()
+          for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
+          uv run --locked --no-sync python -m dinkster_supervisor.environment_channels \
+            --release dist "${arguments[@]}" --channel "$CHANNEL" \
+            --output-root .release/channel --minimum-desktop-version 0.2.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: environment-channel
+          path: .release/channel/channels/*.json
           if-no-files-found: error
 
   install:
@@ -271,11 +361,14 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: runner.os == 'Windows'
       - name: Install and launch from wheels
         shell: bash
         env:
           RELEASE_PYTHON: ${{ matrix.python }}
         run: |
+          if [ "$RUNNER_OS" = Windows ]; then RELEASE_PYTHON="$UV_PYTHON"; fi
           uv venv --seed --python "$RELEASE_PYTHON" "$RUNNER_TEMP/dinkster-release-venv"
           python="$RUNNER_TEMP/dinkster-release-venv/bin/python"
           if [ "$RUNNER_OS" = Windows ]; then
@@ -343,6 +436,45 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/prune_engine_prereleases.py
+
+  channel:
+    needs: release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: environment-channel-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-release
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/bases
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Mirror payloads and publish the verified channel last
+        env:
+          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: |
+          uv sync --locked --only-group release-publication
+          arguments=()
+          for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
+          uv run --locked --no-sync python -m scripts.publish_environment_channel \
+            --release dist "${arguments[@]}" --channel "$CHANNEL" --minimum-desktop-version 0.2.0
 
   publish:
     needs: release

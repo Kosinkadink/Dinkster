@@ -84,6 +84,18 @@ Rehydrated compact-media leaves use `dinkster-values`' `encoded_storage_meta`
 to charge the receiver's actual codec bytes to RAM, not the producer's device.
 Fingerprints and non-residency metadata are preserved.
 
+`DiskCacheStore.hold_asset_references()` holds the existing manifest lock while
+yielding external asset digests from all stored value envelopes. Its memory
+counterpart is an async context manager holding the admission/spill lock.
+Both walk nested containers and typed asset values without loading payloads;
+saved-file associations retain the file and its optional published preview.
+Persisted artifact declarations use the same validation as cache replay.
+Cache payload digests and arbitrary fingerprints are not external asset roots.
+Unreadable manifests or invalid reference metadata refuse inspection rather
+than reporting an empty set. These are cache-local barriers, not permission to
+delete assets: pending publishers and other reference owners need separate
+coordination. They do not retain values returned to callers after inspection.
+
 `LayeredCache.hits_by_layer` counts hit sources, and the engine reports the
 source as `cacheLayer` on `node_cached` events.
 

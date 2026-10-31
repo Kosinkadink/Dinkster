@@ -8,6 +8,8 @@ import os
 import runpy
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -55,11 +57,21 @@ def _nested_diagnostics(directory: Path) -> str:
     rows = []
     for path in sorted(directory.glob("nested-*.json")):
         record = json.loads(path.read_text())
-        pid_path = path.with_suffix(".pid")
-        pid = int(pid_path.read_text()) if pid_path.exists() else record["pid"]
+        pid = None
+        for suffix in (".pid", ".launcher"):
+            pid_path = path.with_suffix(suffix)
+            if pid_path.exists():
+                pid = int(pid_path.read_text())
+                break
         exit_path = path.with_suffix(".exit")
         code = int(exit_path.read_text()) if exit_path.exists() else None
-        state, code = ("exited", code) if code is not None else _process_state(pid)
+        state, code = (
+            ("exited", code)
+            if code is not None
+            else ("starting", None)
+            if pid is None
+            else _process_state(pid)
+        )
         stack = path.with_suffix(".stack")
         saved = stack.read_text() if stack.exists() else ""
         rows.append(
@@ -96,6 +108,26 @@ def _open_trace(path: Path):
     return os.fdopen(msvcrt.open_osfhandle(handle, os.O_WRONLY), "w")
 
 
+def _request_snapshot(directory: Path) -> str:
+    # The CLI has already timed out; this grace only collects diagnostics before cleanup.
+    (directory / "snapshot.request").touch()
+    deadline = time.monotonic() + 1
+    while True:
+        targets = {directory / "child.snapshot"} | {
+            path.with_suffix(".snapshot") for path in directory.glob("nested-*.json")
+        }
+        pending = {path for path in targets if not path.exists()}
+        if not pending or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
+    return (
+        "Timeout snapshot not acknowledged (exited or unresponsive): "
+        + ", ".join(sorted(path.stem for path in pending))
+        if pending
+        else "Timeout snapshot acknowledged"
+    )
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
@@ -111,11 +143,13 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
             except subprocess.TimeoutExpired as exc:
                 # poll must precede kill: an exited child can leave inherited pipes open.
                 returncode = process.poll()
+                snapshot = _request_snapshot(Path(directory))
                 stack = trace.read_text() if trace.exists() else "child trace file absent"
                 exc.cmd = command
                 exc.add_note(
                     f"Supervisor CLI child pid={process.pid}, "
                     f"returncode before cleanup={returncode}\n"
+                    f"{snapshot}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
                     f"{_nested_diagnostics(Path(directory))}"
                 )
@@ -160,11 +194,16 @@ def _trace_nested_commands(directory: Path) -> None:
                     ]
                 else:
                     module = None
+            if self.trace_path is not None:
+                # Register before spawning so timeout collection includes children still starting.
+                temporary = self.trace_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"module": module}))
+                temporary.replace(self.trace_path)
             super().__init__(args, *positional, **keywords)
             if self.trace_path is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
-                temporary.write_text(json.dumps({"pid": self.pid, "module": module}))
-                temporary.replace(self.trace_path)
+                temporary.write_text(str(self.pid))
+                temporary.replace(self.trace_path.with_suffix(".launcher"))
 
         def _record_exit(self, code):
             if self.trace_path is not None and code is not None:
@@ -200,13 +239,37 @@ def _main() -> None:
     sys.argv = [module, *arguments]
     with _open_trace(trace_path) as trace:
         faulthandler.enable(file=trace)
-        faulthandler.dump_traceback_later(
-            25 if mode == "supervisor" else 5, repeat=True, file=trace
-        )
+        finished = threading.Event()
+        interval = 25 if mode == "supervisor" else 5
+        request = trace_path.parent / "snapshot.request"
+        acknowledgment = trace_path.with_suffix(".snapshot")
+
+        def observe() -> None:
+            next_sample = time.monotonic() + interval
+            while not finished.wait(0.05):
+                requested = request.exists() and not acknowledgment.exists()
+                if not requested and time.monotonic() < next_sample:
+                    continue
+                # The asynchronous walker can race freed frames on CPython 3.12.
+                # An attached Python thread holds the GIL while dumping stacks.
+                trace.write(
+                    "Requested timeout snapshot\n"
+                    if requested
+                    else f"Timeout (0:00:{interval:02})!\n"
+                )
+                trace.flush()
+                faulthandler.dump_traceback(file=trace, all_threads=True)
+                if requested:
+                    acknowledgment.touch()
+                next_sample = time.monotonic() + interval
+
+        observer = threading.Thread(target=observe, daemon=True)
+        observer.start()
         try:
             runpy.run_module(module, run_name="__main__", alter_sys=True)
         finally:
-            faulthandler.cancel_dump_traceback_later()
+            finished.set()
+            observer.join()
             faulthandler.enable()
 
 

@@ -594,10 +594,20 @@ namespaces = [
     "Trellis2Conditioning",
     "RotateMesh",
     "GetMeshInfo",
+    "MergeMeshes",
     "VoxelToMeshBasic",
     "VoxelToMesh",
     "VAEDecodeHunyuan3D",
     "Trellis2ShapeStage",
+    "Trellis2TextureStage",
+    "PaintMesh",
+    "WeldVertices",
+    "MeshTextureToImage",
+    "MeshSmoothNormals",
+    "RenderUVAtlas",
+    "ApplyTextureToMesh",
+    "FillHoles",
+    "Get3DComponents",
 ]
 
 [pack.sandbox]

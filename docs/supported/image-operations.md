@@ -1,8 +1,28 @@
 ## Image operations
 
+- Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
+  merging transformed scene geometry and retaining the first material's textures
+  and factors. External glTF data must be included in the FILE_3D resource map.
+- Native `FillHoles` fills small boundary components under perimeter and vertex
+  limits, with optional pre-welding and open-chain filling.
+- Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
+  fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
+- Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
+  colors and black boundary outlines.
+- Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
+  coincident positions or splitting hard creases while retaining mesh attributes.
+- Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
+  occlusion and normal maps as images, with neutral occlusion and normal fallbacks.
+- Native `WeldVertices` merges grid-coincident mesh vertices, averaging positions
+  and colors while retaining faces and remapping their vertex indices.
 - Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
   angles or a normalized quaternion while retaining material attributes.
   `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Native `MergeMeshes` concatenates the first batch item of each mesh, excluding
+  padding and offsetting face indices. Missing UVs become zero, missing color
+  channels become white, and only the first available texture is retained.
+- Native `PaintMesh` colors mesh vertices from their nearest sparse voxel,
+  converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
@@ -10,6 +30,10 @@
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
 - Native `Trellis2ShapeStage` converts dense structure occupancy to batch-grouped
   sparse coordinates and an empty shape latent, with stage-specific conditioning.
+- Native `Trellis2TextureStage` prepares texture conditioning and sparse noise
+  targets from the batch-grouped shape latents emitted by native Trellis stages.
+  Nonstandard custom latents with interleaved coordinate rows retain the source
+  limitation: padded features flatten in batch order without reordering coordinates.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints

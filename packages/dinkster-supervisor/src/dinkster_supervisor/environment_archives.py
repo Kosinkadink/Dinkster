@@ -206,14 +206,22 @@ def extract_base(
                 stacklevel=2,
             )
             interpreter.chmod(0o755)
+        probe = "import sys, sysconfig"
+        if platform == "windows":
+            probe = Path(__file__).with_name("sqlite_runtime.py").read_text(encoding="ascii")
         result = subprocess.run(
-            [str(interpreter.resolve()), "-I", "-B", "-c", "import sys, sysconfig"],
+            [str(interpreter.resolve()), "-I", "-B", "-c", probe],
             stdin=subprocess.DEVNULL,
             capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
         if result.returncode != 0:
-            raise ArchiveError(f"base interpreter probe failed with exit code {result.returncode}")
+            raise ArchiveError(
+                f"base interpreter probe failed with exit code {result.returncode}: {result.stderr}"
+            )
         for directory, mode in sorted(directories, key=lambda row: len(row[0].parts), reverse=True):
             directory.chmod(mode)
         if os.path.lexists(destination):

@@ -152,7 +152,9 @@ print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in m.distribu
                   "tags": [str(t) for t in sys_tags()], "markers": default_environment()}))
 """
         try:
-            result = subprocess.run([str(python), "-c", script], capture_output=True, text=True)
+            result = subprocess.run(
+                [str(python), "-I", "-c", script], capture_output=True, text=True
+            )
         except OSError as exc:
             raise ProvisionError(f"cannot inspect generation interpreter {python}: {exc}") from exc
         if result.returncode:
