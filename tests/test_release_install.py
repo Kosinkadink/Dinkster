@@ -160,6 +160,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "finalize",
         "install",
         "release",
+        "prune",
         "channel",
         "publish",
         "publish-api",
@@ -216,6 +217,16 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     channel = workflow["jobs"]["channel"]
     assert channel["needs"] == "release"
+    pruning = workflow["jobs"]["prune"]
+    assert pruning["needs"] == "release"
+    assert pruning["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    assert pruning["permissions"] == {"contents": "write"}
+    assert not pruning.get("continue-on-error", False)
+    assert any("prune_engine_prereleases.py" in step.get("run", "") for step in pruning["steps"])
+    assert not any(
+        "prune_engine_prereleases.py" in step.get("run", "")
+        for step in workflow["jobs"]["release"]["steps"]
+    )
     assert channel["if"] == "github.event_name == 'push'"
     assert channel["concurrency"]["cancel-in-progress"] is False
     publication = channel["steps"][-1]
@@ -1422,10 +1433,11 @@ def test_finalization_requires_complete_portable_official_dependency_locks(
             assert (output / path.name).read_bytes() == path.read_bytes()
 
 
+@pytest.mark.parametrize("failure", [None, "recover", "exhaust", "forbidden"])
 def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys, failure: str | None
 ) -> None:
-    from scripts.prune_engine_prereleases import prune
+    from scripts import prune_engine_prereleases as pruner
 
     releases = {
         number: {
@@ -1444,8 +1456,23 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     ):
         releases[number] = {**releases[1], "id": number, **fields}
 
-    def read_api(command: list[str], *, text: bool) -> str:
+    attempts = 0
+    sleeps = []
+
+    def read_api(command: list[str], *, text: bool, stderr=None) -> str:
+        nonlocal attempts
         if "--paginate" in command:
+            attempts += 1
+            if failure in {"exhaust", "forbidden"} or (failure == "recover" and attempts < 3):
+                raise subprocess.CalledProcessError(
+                    1,
+                    command,
+                    stderr=(
+                        "HTTP 403: Resource not accessible"
+                        if failure == "forbidden"
+                        else "stream error: stream ID 1; CANCEL; received from peer"
+                    ),
+                )
             rows = list(releases.values())
             return json.dumps([rows[:20], rows[20:]])
         number = int(command[-1].rsplit("/", 1)[1])
@@ -1461,7 +1488,18 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
 
     monkeypatch.setattr(subprocess, "check_output", read_api)
     monkeypatch.setattr(subprocess, "run", delete_api)
-    assert set(prune("Kosinkadink/Dinkster")) == {2, 3}
+    monkeypatch.setattr(pruner.time, "sleep", sleeps.append)
+    if failure in {"exhaust", "forbidden"}:
+        with pytest.raises(subprocess.CalledProcessError):
+            pruner.prune("Kosinkadink/Dinkster")
+        assert set(releases) == {*range(1, 54), 101, 102, 103}
+        assert attempts == (4 if failure == "exhaust" else 1)
+        assert sleeps == ([1, 2, 4] if failure == "exhaust" else [])
+        assert ("stream error" if failure == "exhaust" else "HTTP 403") in capsys.readouterr().err
+        return
+    assert set(pruner.prune("Kosinkadink/Dinkster")) == {2, 3}
+    assert attempts == (3 if failure == "recover" else 1)
+    assert sleeps == ([1, 2] if failure == "recover" else [])
     assert set(releases) == {1, *range(4, 54), 101, 102, 103}
     assert releases[1]["prerelease"] is False
 
