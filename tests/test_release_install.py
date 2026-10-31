@@ -1267,7 +1267,9 @@ def test_finalization_requires_complete_portable_official_dependency_locks(
         assert {path.name: path.read_bytes() for path in output.iterdir()} == before
     else:
         result = extend_release(output, candidates, base_manifests=bases)
-        assert {row["name"] for row in result["artifacts"]} == {
+        rows = result["artifacts"]
+        assert isinstance(rows, list)
+        assert {row["name"] for row in rows} == {
             "official-packs.lock",
             *(path.name for path in candidates),
         }
