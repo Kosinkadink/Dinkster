@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 import struct
 from typing import Any
 
-import numpy as np
+np = importlib.import_module("numpy")
 
 
 def _srgb_to_linear(colors: Any) -> Any:
