@@ -16,6 +16,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import digest_bytes
 
+from tests.platform_support import symlink_or_skip
+
 
 def grants(tmp_path: Path, *rows: tuple[str, Path]) -> dict[str, str]:
     snapshot = tmp_path / "mounts.json"
@@ -369,13 +371,13 @@ def test_directory_selection_rejects_links_outside_subtree_and_cycles(tmp_path: 
     seed(root, "model/model_index.json")
     seed(root, "sibling/weights.bin")
     seed(outside, "model_index.json")
-    (root / "escape").symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(root / "escape", outside, target_is_directory=True)
     env = grants(tmp_path, ("model/diffusers", root))
     assert "escape" not in asset_selection_names("model/diffusers", env=env)
-    (root / "model" / "weights.bin").symlink_to(root / "sibling/weights.bin")
+    symlink_or_skip(root / "model" / "weights.bin", root / "sibling/weights.bin")
     with pytest.raises(AssetError):
         resolve_asset_selection("model/diffusers", "model", env=env)
     (root / "model" / "weights.bin").unlink()
-    (root / "model" / "cycle").symlink_to(root / "model", target_is_directory=True)
+    symlink_or_skip(root / "model" / "cycle", root / "model", target_is_directory=True)
     with pytest.raises(AssetError):
         resolve_asset_selection("model/diffusers", "model", env=env)
