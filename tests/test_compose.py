@@ -4156,6 +4156,86 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "drift", ("valid", "type", "required", "default", "missing", "undeclared", "closed", "declared")
+)
+def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None:
+    from collections.abc import Mapping
+
+    from dinkster_protocol import Invocation
+    from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, elaborate
+    from dinkster_values import register_core_types
+    from dinkster_workers import InProcessWorker
+
+    calls: list[dict[str, object]] = []
+    declaration = NodeSchema(
+        node_type="authored.inputs",
+        inputs=(InputSpec("choice", TypeExpr.concrete("STRING")),),
+        outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+
+    class AuthoredInputs(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return (
+                replace(declaration, additional_inputs=None) if drift == "closed" else declaration
+            )
+
+        @classmethod
+        def execute(cls, **kwargs: object) -> Mapping[str, object]:
+            calls.append(kwargs)
+            return cls.outputs(result=f"{kwargs['choice']}|{kwargs['index']}")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        effective = elaborate(declaration, ("choice", "index"))
+        choice, index = effective.inputs
+        if drift == "type":
+            index = replace(index, type=TypeExpr.concrete("INT"))
+        elif drift == "required":
+            index = replace(index, required=True)
+        elif drift == "default":
+            index = replace(index, default=91)
+        elif drift == "declared":
+            choice = replace(choice, required=False)
+        effective = replace(effective, inputs=(choice, index))
+        if drift == "missing":
+            effective = replace(effective, inputs=(choice,))
+        inputs = {
+            "choice": registry.wrap("STRING", "outside-menu"),
+            "index": registry.wrap("INT", 7),
+        }
+        if drift == "undeclared":
+            inputs["unlisted"] = registry.wrap("INT", 13)
+        worker = InProcessWorker({declaration.node_type: AuthoredInputs}, registry)
+        try:
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="authored-inputs",
+                    node_id="node",
+                    node_type=declaration.node_type,
+                    inputs=inputs,
+                    effective_schema=effective,
+                )
+            )
+            if drift == "valid":
+                assert result.error is None
+                assert result.outputs is not None
+                assert result.outputs["result"].resolve() == "outside-menu|7"
+                assert calls == [{"choice": "outside-menu", "index": 7}]
+            else:
+                assert result.error is not None
+                assert "schema skew" in result.error.message
+                assert result.outputs is None
+                assert calls == []
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
 def test_compose_serving_wires_worker_reservations(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})

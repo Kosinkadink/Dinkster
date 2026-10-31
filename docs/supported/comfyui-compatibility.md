@@ -8,6 +8,8 @@
 - Native schemas can opt into typed additional input names and editable COMBO
   vocabularies. Ordinary nodes remain closed; this declaration alone does not
   provide a CustomCombo authoring editor or workflow projection.
+  Workers reject input interfaces that disagree with their own declaration,
+  including altered types, defaults, required flags and undeclared inputs.
 - The `--comfy-root` and `--execution-python` composition supports an installed
   inference package alongside source-only ComfyUI modules from the checkout,
   while sharing one inference module state and leaving source files unchanged.
