@@ -2900,6 +2900,99 @@ def test_registry_compatible_selection_refuses_malformed_pages(page: dict[str, o
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    "problem",
+    [None, "digest", "path", "name", "version", "publisher", "declaration", "below", "above"],
+)
+def test_registry_source_identity_comes_from_verified_archive(
+    tmp_path: Path, problem: str | None
+) -> None:
+    import zipfile
+
+    from dinkster_registry import artifact_digest
+
+    from dinkster.compose import CompositionError
+    from dinkster.generation_packs import stage_generation_packs
+    from dinkster.registries import NamedRegistry, registry_source_lock, resolve_compatible_release
+
+    pack = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
+    name = "other" if problem == "name" else "demo"
+    version = "2.3.2" if problem == "version" else "2.3.1"
+    publisher = "" if problem == "publisher" else "acme"
+    declaration = (
+        "" if problem == "declaration" else f'version = "{version}"\nengine = ">=0.4,<0.7"\n'
+    )
+    (pack / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
+        + declaration
+        + 'namespaces = ["demo.tools"]\n[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    archive = tmp_path / "published.zip"
+    digest = build_artifact(pack, archive)
+    if problem == "path":
+        with zipfile.ZipFile(archive, "a") as unsafe:
+            unsafe.writestr("../escape.txt", "must not be extracted")
+        digest = artifact_digest(archive.read_bytes())
+    release = LockedPack("demo", "2.3.1", digest, "audit-actor", ())
+    files = {
+        "/v1/packs/demo/versions?limit=100": json.dumps(
+            {"items": [{"version": "2.3.1", "dinkster": ">=0.4,<0.7", "state": "active"}]}
+        ).encode(),
+        "/v1/packs/demo/versions/2.3.1": _release_record(
+            release, state="active", manifest={"dinkster": ">=0.4,<0.7"}
+        ),
+        "/v1/packs/demo/versions/2.3.1/download-tickets": _download_ticket(release),
+        f"/v1/artifacts/{digest}": (
+            b"x" * archive.stat().st_size if problem == "digest" else archive.read_bytes()
+        ),
+    }
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="official", endpoint=f"http://127.0.0.1:{server.server_port}")
+        selected = resolve_compatible_release(registry, "demo", "2.0", "0.5")
+        cached = tmp_path / f"{digest[7:]}.zip"
+        cached.write_bytes(http_registry_fetcher(registry.endpoint)(selected))
+        engine = {"below": "0.3.9", "above": "0.7"}.get(problem or "", "0.5")
+        if problem:
+            reason = {
+                "digest": "digest mismatch",
+                "path": "escapes the destination",
+                "name": "archive manifest names 'other'",
+                "version": "archive manifest version is 2.3.2",
+                "publisher": "archive manifest has no publisher",
+                "declaration": "archive manifest has no pack version and engine range",
+                "below": "declares engine >=0.4,<0.7; engine 0.3.9 is incompatible",
+                "above": "declares engine >=0.4,<0.7; engine 0.7 is incompatible",
+            }[problem]
+            with pytest.raises(InstallError, match="demo@2.3.1") as refusal:
+                registry_source_lock(selected, cached, engine_version=engine)
+            assert reason in str(refusal.value)
+        else:
+            entry = registry_source_lock(selected, cached, engine_version=engine)
+            assert entry == LockedPack(
+                "demo", "2.3.1", digest, "acme", ("demo-tools",), "registry:official"
+            )
+            assert entry.publisher != selected.publisher
+            assert cached.read_bytes() == archive.read_bytes()
+            generation = tmp_path / "generation"
+            generation.mkdir()
+            stage_generation_packs(generation, Lockfile.of([entry]), {"demo": cached})
+            assert Lockfile.from_record_json(
+                (generation / "dinkster.lock").read_text()
+            ) == Lockfile.of([entry])
+            for tampered, field in (
+                (replace(entry, claims=("other",)), "claims"),
+                (replace(entry, publisher="another-publisher"), "publisher"),
+            ):
+                rejected = tmp_path / field
+                rejected.mkdir()
+                with pytest.raises(CompositionError, match="claims differ|publisher differs"):
+                    stage_generation_packs(rejected, Lockfile.of([tampered]), {"demo": cached})
+                assert not (rejected / "dinkster.lock").exists()
+    finally:
+        server.shutdown()
+
+
 def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> None:
     """Browse asks ONE registry's pack index, parses rows strictly, and
     surfaces the query-bound keyset cursor; a malformed answer refuses

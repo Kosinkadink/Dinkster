@@ -36,6 +36,11 @@
   minimum version and target engine range across paginated results. Active
   prereleases inside those bounds remain eligible. The selected release is
   checked again before returning its immutable artifact identity.
+- Registry archive inspection verifies the selected digest, safely extracts
+  the manifest without importing pack code, and checks its pack id, version
+  and engine range. Source publisher and namespaces describe that verified
+  content, not the publishing audit actor; they do not authenticate publisher
+  authority. Generation admission still rejects source identity mismatches.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

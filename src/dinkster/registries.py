@@ -54,22 +54,27 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 import warnings
-from dataclasses import dataclass
+import zipfile
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
 from dinkster_registry import (
+    ArtifactError,
     InstallError,
     LockedPack,
+    unpack_artifact,
     validate_artifact_digest,
     validate_version,
 )
-from dinkster_schema import PackCompatibility, canonical_name, validate_name
+from dinkster_schema import PackCompatibility, canonical_claim, canonical_name, validate_name
+from dinkster_workers import ManifestError, load_manifest
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -585,6 +590,38 @@ def resolve_compatible_release(
     )
 
 
+def registry_source_lock(selected: LockedPack, archive: Path, *, engine_version: str) -> LockedPack:
+    """Bind the selected release to its safely unpacked, digest-verified manifest.
+
+    Publisher and namespace claims describe the selected content, not the
+    publishing audit actor. They are not proof of authenticated authority:
+    reserved-name/grant admission belongs to the trusted registry's promotion.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="dinkster-registry-source-") as directory:
+            root = unpack_artifact(archive, Path(directory), selected.artifact_digest)
+            manifest = load_manifest(root / "dinkster-pack.toml")
+            if canonical_name(manifest.name) != selected.pack:
+                raise ValueError(f"archive manifest names {manifest.name!r}")
+            compatibility = manifest.compatibility
+            if compatibility is None:
+                raise ValueError("archive manifest has no pack version and engine range")
+            if compatibility.version != selected.version:
+                raise ValueError(f"archive manifest version is {compatibility.version}")
+            compatibility.require_engine(selected.pack, engine_version)
+            if not manifest.publisher:
+                raise ValueError("archive manifest has no publisher")
+            return replace(
+                selected,
+                publisher=canonical_name(manifest.publisher),
+                claims=tuple(canonical_claim(claim) for claim in manifest.namespaces),
+            )
+    except (ArtifactError, ManifestError, OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise InstallError(
+            f"registry source {selected.pack}@{selected.version} refused: {exc}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class PackSummary:
     """One row of the pack index: enough to pick a pack to install."""
@@ -798,6 +835,8 @@ __all__ = [
     "load_registries",
     "parse_registry_spec",
     "publish_release",
+    "registry_source_lock",
+    "resolve_compatible_release",
     "resolve_release",
     "routing_registry_fetcher",
     "select_registry",
