@@ -398,6 +398,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         with writer_lock(store), writer_lock(root):
             _recover_pending(root, locked_store=store)
             revalidate()
+            published_constraints = None
+            if local is None:
+                assert catalog is not None
+                published_constraints = acquire(
+                    catalog, variant, store, package_index=cast("str | None", package_index)
+                )
             target = next_generation(root)
             journal = (
                 begin_setup(
@@ -452,11 +458,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
                 else:
                     assert catalog is not None
+                    assert published_constraints is not None
                     base_id = catalog.channel.base_for(variant)
                     base = catalog.bases[variant]
-                    constraints = acquire(
-                        catalog, variant, store, package_index=cast("str | None", package_index)
-                    )
+                    constraints = published_constraints
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
                     worker_protocol = cast("int", base["workerProtocol"])

@@ -420,7 +420,11 @@ cancel the job.
 
 ### Journal and failure handling
 
-Every update writes `journal/<timestamp>.json` before it changes anything:
+Confirmed published setup/update acquires and verifies engine/base inputs before
+candidate journal publication or project registration/settings changes. A
+dependency incompatibility leaves project/current/serving-generation state and
+existing journals unchanged; verified cache population and lock files may remain.
+Every admitted update writes `journal/<timestamp>.json` before project mutation:
 the operation, the previous and target generation, and the stage reached.
 If sync fails, the previous generation keeps serving and the target is
 deleted. If the target starts but never reports health, the client stops it,
