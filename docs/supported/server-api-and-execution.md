@@ -1,5 +1,9 @@
 ## Server API and execution
 
+- Supervisor, station and fleet ingress listeners reject unlisted, malformed,
+  missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
+  WebSocket upgrades. Loopback IP literals and the configured listen hostname
+  are accepted; additional names require repeatable `--allow-host HOST`.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
@@ -22,6 +26,11 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
+- Graph admission rejects primitive literals that do not match their declared
+  input types, including boolean values on INT/FLOAT inputs and strings on
+  FLOAT inputs. Integer values remain valid on FLOAT inputs. The same checks
+  apply inside lists and to explicitly stamped literals, before nodes execute;
+  no node-level coercion is used to repair invalid literals.
 - String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
   Long paths and documents can be read in full without the status descriptor's
   256-character inline preview limit. Retrieval retains job/scope authority.

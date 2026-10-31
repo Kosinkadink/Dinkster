@@ -386,6 +386,23 @@ def test_release_failure_prints_service_and_publication_log_tails(
     assert "not a log" not in output
 
 
+def test_windows_runtime_admits_the_pinned_interpreter_before_installing_dependencies() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["windows-runtime"]["steps"]
+    setup_index = next(
+        index for index, step in enumerate(steps) if step.get("uses") == "astral-sh/setup-uv@v5"
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "./.github/actions/windows-python"
+    )
+    sync_index = next(index for index, step in enumerate(steps) if "uv sync" in step.get("run", ""))
+    assert steps[setup_index]["with"]["python-version"] == "3.14.10"
+    assert setup_index < admission_index < sync_index
+    assert "if" not in steps[admission_index]
+
+
 def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
     steps = workflow["jobs"]["registry-install"]["steps"]

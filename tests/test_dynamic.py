@@ -170,9 +170,12 @@ def test_positional_family_validation_requires_first_slots_not_tail() -> None:
         ]
 
     assert (
-        diagnostics({"pieces.piece0": "first", "pieces.piece1": "second", "pieces.piece2": None})
+        diagnostics({"pieces.piece0": "first", "pieces.piece1": "second", "pieces.piece2": "third"})
         == []
     )
+    assert diagnostics(
+        {"pieces.piece0": "first", "pieces.piece1": "second", "pieces.piece2": None}
+    ) == ["input 'pieces.piece2' literal does not match STRING"]
     missing = diagnostics({"pieces.piece2": "third", "pieces.piece3": "fourth"})
     assert len(missing) == 2
     assert any("pieces.piece0" in message for message in missing)

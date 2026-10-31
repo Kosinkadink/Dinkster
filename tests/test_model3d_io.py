@@ -36,6 +36,7 @@ from dinkster_assets import (
     register_file3d_types,
     resolver_from_env,
 )
+from dinkster_assets.declared import produced_output_scratch
 from dinkster_assets.value import value_asset_references
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
@@ -418,7 +419,8 @@ class File3DProducer(Node):
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        vault = AssetVault(Path(os.environ["DINKSTER_PACK_SCRATCH"]) / "produced-assets")
+        vault = produced_output_scratch()
+        assert vault is not None
         refs = []
         for data, name in ((FILE3D_SOURCE, "scene.gltf"), (FILE3D_SIDECAR, "data.bin")):
             digest = digest_bytes(data)

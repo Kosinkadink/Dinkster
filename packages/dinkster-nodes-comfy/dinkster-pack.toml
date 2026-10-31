@@ -600,6 +600,8 @@ namespaces = [
     "VAEDecodeHunyuan3D",
     "Trellis2ShapeStage",
     "Trellis2TextureStage",
+    "PaintMesh",
+    "WeldVertices",
 ]
 
 [pack.sandbox]
