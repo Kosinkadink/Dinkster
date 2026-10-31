@@ -23,6 +23,8 @@
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
+  An empty format stays unspecified for consumers that detect the original
+  container from its contents; conflicting explicit formats remain rejected.
   A JSON manifest rendition preserves the source and named resource identities
   when reading completed job outputs; local bindings remain host-granted rather
   than becoming content digests.

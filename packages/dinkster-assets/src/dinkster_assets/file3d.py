@@ -87,8 +87,8 @@ def register_file3d_types(
         if set(obj) - {"format", "source", "resources"}:
             raise AssetError("FILE_3D contains unknown fields")
         format_id = obj.get("format")
-        if not isinstance(format_id, str) or re.fullmatch(r"[a-z0-9]+", format_id) is None:
-            raise AssetError("FILE_3D format must be a lowercase file extension")
+        if not isinstance(format_id, str) or re.fullmatch(r"[a-z0-9]*", format_id) is None:
+            raise AssetError("FILE_3D format must be a lowercase file extension or empty")
         resources = obj.get("resources", {})
         if not isinstance(resources, Mapping):
             raise AssetError("FILE_3D resources must map contained relative names to assets")
@@ -130,7 +130,7 @@ def register_file3d_types(
     def register(type_id: str, formats: frozenset[str] | None) -> TypeSpec:
         def typed(value: object) -> dict[str, object]:
             obj = coerce(value)
-            if formats is not None and obj["format"] not in formats:
+            if formats is not None and obj["format"] and obj["format"] not in formats:
                 raise AssetError(f"{type_id} does not accept format {obj['format']!r}")
             return obj
 
