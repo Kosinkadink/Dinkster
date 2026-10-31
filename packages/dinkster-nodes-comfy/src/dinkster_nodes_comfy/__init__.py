@@ -190,6 +190,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -205,6 +206,7 @@ from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
+from .splat_files import SplatToFile3D
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -544,6 +546,10 @@ COMFY_NODES: tuple[type[Node], ...] = (
     DecimateMesh,
     MeshToFile3D,
     SaveGLB,
+    Save3DAdvanced,
+    SaveGaussianSplat,
+    SavePointCloud,
+    SplatToFile3D,
     ImageUpscaleWithModel,
     ImageHistogram,
     TextOverlay,
