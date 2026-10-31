@@ -68,6 +68,8 @@
   controls, and structural extensions across execution hosts and caches
 - Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
   scales, and structural extensions across execution hosts and caches
+- Camera and model-transform values preserve explicit `None` metadata across
+  execution hosts and caches, distinct from empty transforms or an absent output
 - Camera and model-transform values offer JSON renditions for browser consumers,
   preserving complete camera fields and model order. Non-JSON extension data
   remains portable but makes the JSON rendition unavailable rather than dropping
