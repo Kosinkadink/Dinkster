@@ -101,7 +101,9 @@ runtime when the native or compatibility worker is provisioned.
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform
-without a suitable bundle, `dinkster-env --root /absolute/new-project setup
+without a suitable bundle, setup refuses and names the supported published
+variants. It does not resolve or choose a local replacement automatically.
+`dinkster-env --root /absolute/new-project setup
 --from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.

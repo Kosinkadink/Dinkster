@@ -31,8 +31,17 @@ command line. Developers who change Dinkster itself work from a checkout
 
 The base bundle and the engine release change at very different rates. A bug
 fix produces a new engine release of a few tens of megabytes; the base bundle
-changes when torch or another heavy pin moves. That split is the whole reason
-updates are cheap.
+changes when Python, torch's variant index/family or another base-owned pin
+moves, not for each engine release. `comfy-kitchen` and `comfy-aimdo` are
+engine-side dependencies and never trigger a base publication. The producer's
+per-variant manifest `replaces` list defines distribution-name ownership;
+engine builders and installers do not maintain another list. That split is
+the whole reason updates are cheap.
+
+A platform without a published base is not an engine release target. Published
+setup refuses an absent variant and names the variants the selected channel
+actually provides. It never resolves a replacement environment automatically;
+the development `--from-scratch` path remains explicitly opt-in.
 
 ## Environment tools bootstrap
 
