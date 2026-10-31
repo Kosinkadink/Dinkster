@@ -231,6 +231,8 @@
   prompts can be interpreted as comma-separated phrases or one literal phrase,
   producing scored boxes with source-sized binary masks. The model weights use
   the SAM License
+- SAM 3.1 prompt tokenization works offline with a digest-verified plain-text
+  vocabulary that is readable during pack admission.
 - Detect Objects offers Automatic, SAM 3.1, DETR ResNet-50, and RT-DETR v4
   x-HGNet model choices.
 - Text-prompted segmentation (`Segment Objects by Text`) through the same SAM
