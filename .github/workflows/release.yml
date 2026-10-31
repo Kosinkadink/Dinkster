@@ -431,8 +431,18 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: dist/*
+
+  prune:
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Keep the newest main prereleases
-        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/prune_engine_prereleases.py
