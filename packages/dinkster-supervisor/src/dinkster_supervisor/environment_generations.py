@@ -136,6 +136,11 @@ def pack_operation(
         text=True,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
+    if operation == "acquire" and result.returncode and not result.stdout.strip():
+        raise EnvironmentError(
+            "selected engine cannot acquire missing pack wheels; "
+            f"select a release supporting pack acquisition: {result.stderr.strip()}"
+        )
     try:
         raw: object = json.loads(result.stdout)
         if not isinstance(raw, dict):
@@ -451,7 +456,10 @@ def build_generation(
                 if acquire_pack_wheels
                 else ("preflight", "rebuild", "doctor")
             )
+            missing_pack_wheels = False
             for operation in operations:
+                if operation == "acquire" and not missing_pack_wheels:
+                    continue
                 provision = pack_operation(
                     operation,
                     generation=destination,
@@ -465,6 +473,11 @@ def build_generation(
                     offline=operation != "acquire",
                     uv=uv,
                 )
+                if operation == "preflight":
+                    missing_pack_wheels = any(
+                        cast("int", row["downloadBytes"]) > 0
+                        for row in cast("list[dict[str, object]]", provision["packs"])
+                    )
                 provisioned = {
                     cast("str", row["pack"])
                     for row in cast("list[dict[str, object]]", provision["packs"])
