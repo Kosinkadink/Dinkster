@@ -640,7 +640,7 @@ def test_worker_projects_tuple_selectors_in_output_families(
     index: int, expected: object, type_id: str
 ) -> None:
     from dinkster_protocol import Invocation
-    from dinkster_schema import OutputFamilySpec, elaborate
+    from dinkster_schema import OutputFamilySpec, OutputInterface, elaborate
 
     class Pick(Node):
         @classmethod
@@ -660,8 +660,12 @@ def test_worker_projects_tuple_selectors_in_output_families(
             )
 
         @classmethod
-        def execute(cls, *, values: tuple[int, str], index: int) -> Mapping[str, object]:
-            return {"picked.right": values[index]}
+        def execute(
+            cls, *, values: tuple[int, str], index: int, output_spec: OutputInterface
+        ) -> Mapping[str, object]:
+            return cls.outputs(
+                picked={name: values[index] for name in output_spec.family("picked")}
+            )
 
     async def scenario() -> None:
         registry = make_registry()
