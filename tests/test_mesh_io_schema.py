@@ -16,6 +16,7 @@ sys.modules['dinkster_inference'] = None
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_nodes_comfy.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
+from dinkster_nodes_comfy.splat_files import SplatToFile3D
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(Get3DComponents) == 1
 schema = Get3DComponents.schema()
@@ -48,6 +49,13 @@ for node in (Save3DAdvanced, SaveGaussianSplat, SavePointCloud):
         'model_3d', 'model_3d_info', 'camera_info', 'width', 'height'
     ]
     assert schema.output_node and not schema.idempotent
+assert COMFY_NODES.count(SplatToFile3D) == manifest.namespaces.count('SplatToFile3D') == 1
+schema = SplatToFile3D.schema()
+assert [slot.id for slot in schema.inputs] == ['splat', 'format']
+assert schema.inputs[1].widget.options == ('ply', 'ksplat', 'spz')
+assert [(slot.id, slot.type.types) for slot in schema.outputs] == [
+    ('model_3d', ('FILE_3D_SPLAT_ANY',))
+]
 assert 'dinkster_nodes_comfy.mesh_gltf_read' not in sys.modules
 assert 'dinkster_nodes_comfy.mesh_file_read' not in sys.modules
 assert 'dinkster_native.model3d.mesh' not in sys.modules
