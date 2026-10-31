@@ -188,6 +188,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -541,6 +542,9 @@ COMFY_NODES: tuple[type[Node], ...] = (
     DecimateMesh,
     MeshToFile3D,
     SaveGLB,
+    Save3DAdvanced,
+    SaveGaussianSplat,
+    SavePointCloud,
 )
 
 
