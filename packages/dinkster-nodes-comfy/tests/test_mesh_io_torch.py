@@ -7,9 +7,11 @@ import base64
 import json
 import os
 import struct
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
@@ -18,15 +20,74 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     OutputSpec,
+    TriangleMeshBatch,
     TypeExpr,
     materialize_mesh,
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_native.nodes_model3d import GenerationMeshToModel3D
 from dinkster_nodes_comfy.mesh_io import Get3DComponents
 from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_mesh_serialization_embeds_distinct_fixed_reference_texture_bytes() -> None:
+    pixels = np.arange(7 * 11 * 3).reshape(7, 11, 3)
+    maps = [
+        (pixels * multiplier + shift) % 256
+        for multiplier, shift in ((3, 7), (5, 19), (7, 31), (11, 43))
+    ]
+    source = TriangleMeshBatch(
+        vertices=torch.tensor([[[0.0, 0.0, 0.0], [2.0, -1.0, 0.0], [0.0, 3.0, 1.0]]]),
+        faces=torch.tensor([[[0, 1, 2]]]),
+        uvs=torch.tensor([[[0.0, 0.0], [0.8, 0.2], [0.3, 0.9]]]),
+        texture=torch.from_numpy(maps[0].astype(np.float32) / 255)[None],
+        metallic_roughness=torch.from_numpy(maps[1].astype(np.float32) / 255)[None],
+        normal_map=torch.from_numpy(maps[2].astype(np.float32) / 255)[None],
+        emissive=torch.from_numpy(maps[3].astype(np.float32) / 255)[None],
+        occlusion_in_mr=True,
+        material={"normal_scale": 0.4, "occlusion_strength": 0.7},
+    )
+    model = GenerationMeshToModel3D.execute(mesh=source)["model"]
+    assert isinstance(model, dict) and model["format"] == "glb"
+    data = model["bytes"]
+    magic, version, length = struct.unpack_from("<4sII", data)
+    assert (magic, version, length) == (b"glTF", 2, len(data))
+    json_length, json_kind = struct.unpack_from("<II", data, 12)
+    assert json_kind == 0x4E4F534A
+    document = json.loads(data[20 : 20 + json_length])
+    bin_length, bin_kind = struct.unpack_from("<II", data, 20 + json_length)
+    binary = data[28 + json_length :]
+    assert bin_kind == 0x004E4942 and len(binary) == bin_length
+    material = document["materials"][0]
+    pbr = material["pbrMetallicRoughness"]
+    bindings = (
+        pbr["baseColorTexture"],
+        pbr["metallicRoughnessTexture"],
+        material["normalTexture"],
+        material["emissiveTexture"],
+    )
+    assert material["occlusionTexture"] == {
+        "index": bindings[1]["index"],
+        "texCoord": 0,
+        "strength": 0.7,
+    }
+    assert material["normalTexture"]["scale"] == 0.4
+    assert len(document["images"]) == 4
+    for binding, expected_pixels in zip(bindings, maps, strict=True):
+        image = document["images"][document["textures"][binding["index"]]["source"]]
+        assert image["mimeType"] == "image/png"
+        view = document["bufferViews"][image["bufferView"]]
+        actual = binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+        expected, default = BytesIO(), BytesIO()
+        expected_image = Image.fromarray(expected_pixels.astype(np.uint8))
+        expected_image.save(expected, format="PNG", compress_level=4)
+        expected_image.save(default, format="PNG")
+        assert expected.getvalue() != default.getvalue()
+        assert actual == expected.getvalue()
+        np.testing.assert_array_equal(np.asarray(Image.open(BytesIO(actual))), expected_pixels)
 
 
 def scene() -> tuple[dict[str, Any], bytes]:
