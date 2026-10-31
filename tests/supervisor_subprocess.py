@@ -61,7 +61,13 @@ def _nested_diagnostics(directory: Path) -> str:
         pid = int(pid_path.read_text()) if pid_path.exists() else record["pid"]
         exit_path = path.with_suffix(".exit")
         code = int(exit_path.read_text()) if exit_path.exists() else None
-        state, code = ("exited", code) if code is not None else _process_state(pid)
+        state, code = (
+            ("exited", code)
+            if code is not None
+            else ("starting", None)
+            if pid is None
+            else _process_state(pid)
+        )
         stack = path.with_suffix(".stack")
         saved = stack.read_text() if stack.exists() else ""
         rows.append(
@@ -101,14 +107,15 @@ def _open_trace(path: Path):
 def _request_snapshot(directory: Path) -> str:
     # The CLI has already timed out; this grace only collects diagnostics before cleanup.
     (directory / "snapshot.request").touch()
-    pending = {directory / "child.snapshot"} | {
-        path.with_suffix(".snapshot") for path in directory.glob("nested-*.json")
-    }
     deadline = time.monotonic() + 1
-    while pending and time.monotonic() < deadline:
-        pending = {path for path in pending if not path.exists()}
-        if pending:
-            time.sleep(0.01)
+    while True:
+        targets = {directory / "child.snapshot"} | {
+            path.with_suffix(".snapshot") for path in directory.glob("nested-*.json")
+        }
+        pending = {path for path in targets if not path.exists()}
+        if not pending or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
     return (
         "Timeout snapshot not acknowledged (exited or unresponsive): "
         + ", ".join(sorted(path.stem for path in pending))
@@ -183,6 +190,11 @@ def _trace_nested_commands(directory: Path) -> None:
                     ]
                 else:
                     module = None
+            if self.trace_path is not None:
+                # Register before spawning so timeout collection includes children still starting.
+                temporary = self.trace_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"pid": None, "module": module}))
+                temporary.replace(self.trace_path)
             super().__init__(args, *positional, **keywords)
             if self.trace_path is not None:
                 temporary = self.trace_path.with_suffix(".tmp")

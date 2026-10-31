@@ -56,11 +56,15 @@ def test_child_output_and_timeout_diagnostics(
 
 
 @pytest.mark.parametrize(
-    ("module_name", "blocked"),
-    [("dinkster.generation_packs", True), ("dinkster.manager", False)],
+    ("module_name", "blocked", "late"),
+    [
+        ("dinkster.generation_packs", True, False),
+        ("dinkster.manager", False, False),
+        ("dinkster.manager", True, True),
+    ],
 )
 def test_nested_child_state_and_stack_at_timeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module_name: str, blocked: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module_name: str, blocked: bool, late: bool
 ) -> None:
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -95,7 +99,7 @@ def test_nested_child_state_and_stack_at_timeout(
     arguments = ["--root", "", "prepare-catalogs"] if module_name == "dinkster.manager" else []
     (tmp_path / "diagnostic_parent.py").write_text(
         "import faulthandler, subprocess, threading\n"
-        f"if {blocked!r}:\n"
+        f"if {late!r}:\n"
         "    sampled = threading.Event()\n"
         "    dump = faulthandler.dump_traceback\n"
         "    def record_sample(*args, **kwargs):\n"
