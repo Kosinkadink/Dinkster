@@ -135,7 +135,7 @@ from .math import ComfyMathExpression
 from .mesh import MESH_NODES
 from .mesh_decimate import DecimateMesh
 from .mesh_holes import FillHoles
-from .mesh_io import Get3DComponents, MeshToFile3D
+from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
@@ -540,6 +540,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Get3DComponents,
     DecimateMesh,
     MeshToFile3D,
+    SaveGLB,
 )
 
 

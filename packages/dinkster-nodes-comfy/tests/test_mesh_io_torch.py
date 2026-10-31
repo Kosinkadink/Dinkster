@@ -19,6 +19,7 @@ from dinkster_api.v1 import (
     FILE_3D_GLTF_TYPE,
     MESH_TYPE,
     AssetRef,
+    ExportSnapshot,
     Node,
     NodeSchema,
     OutputSpec,
@@ -33,7 +34,9 @@ from dinkster_api.v1 import (
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_native.nodes_model3d import GenerationMeshToModel3D
-from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D
+from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
+from dinkster_protocol import use_export_snapshot
+from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import register_core_types
 from PIL import Image
 
@@ -198,6 +201,151 @@ def test_ordinary_mesh_export_hosts_twice(
                 await composer.close()
             shutil.rmtree(tmp_path / "scratch")
             assert assert_export(output) == data
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("disable_metadata", [False, True])
+def test_save_glb_skips_empty_item_and_preserves_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    disable_metadata: bool,
+) -> None:
+    from dinkster_inference.cli_args import args
+
+    output = tmp_path / "output"
+    output.mkdir()
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    table.add(MountDef("chosen", output, mode="readwrite"))
+    table.scan("chosen")
+    table.select_output_mount("chosen")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
+    monkeypatch.setattr(args, "disable_metadata", disable_metadata)
+    mesh = export_mesh()
+    mesh.face_counts[0] = 0
+    submitted = ExportSnapshot(prompt={}, extra_pnginfo={"workflow": {"id": 73}})
+    with use_export_snapshot(submitted), capture_saved_artifacts() as claims:
+        assert SaveGLB.execute(mesh=mesh, filename_prefix="batch/model") == {}
+    assert len(claims) == 1
+    path = output / "batch/model_00001_.glb"
+    assert path.is_file() and "skipping empty mesh at batch index 0" in caplog.text
+    data = path.read_bytes()
+    length = struct.unpack_from("<I", data, 12)[0]
+    document = json.loads(data[20 : 20 + length])
+    assert document["accessors"][0]["count"] == 4
+    assert document["accessors"][1]["count"] == 6
+    assert struct.unpack_from("<3f", data, 28 + length) == (8.0, 0.0, 0.0)
+    if disable_metadata:
+        assert "extras" not in document["asset"]
+    else:
+        assert document["asset"]["extras"] == {"prompt": "{}", "workflow": '{"id": 73}'}
+    assert claims[0]["digest"] == digest_bytes(data)
+
+
+def test_save_glb_copies_primary_file_bytes_and_requires_mount_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_assets import AssetError
+
+    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
+    with pytest.raises(AssetError, match="DINKSTER_MOUNTS_SNAPSHOT"):
+        SaveGLB.execute(mesh={})
+    vault = AssetVault(tmp_path / "vault")
+    payload = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"data.bin"}]}'
+    digest = digest_bytes(payload)
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        writer.commit()
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
+    source = AssetRef(digest, "source.gltf", len(payload), "model/gltf+json", resolver=vault)
+    with capture_saved_artifacts() as claims:
+        SaveGLB.execute(mesh={"format": "gltf", "source": source}, mount="alternate")
+    assert (alternate / "3d/ComfyUI_00001_.gltf").read_bytes() == payload
+    assert len(claims) == 1 and claims[0]["digest"] == digest
+    assert not list(output.rglob("*.gltf"))
+
+
+@pytest.mark.parametrize("in_process", [True, False])
+def test_ordinary_save_glb_hosts_twice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("output", output, mode="readwrite"))
+    table.scan("output")
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
+
+    async def scenario() -> None:
+        (tmp_path / "save_glb_fixture.py").write_text(
+            "from test_mesh_io_torch import MeshExportSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES=(MeshExportSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "fixture.toml"
+        fixture.write_text(
+            '[pack]\nname="mesh-save-fixture"\npublisher="dinkster"\nnamespaces=["mesh-export-fixture"]\n'
+            '[pack.entry]\nnodes="save_glb_fixture:NODES"\ntypes="save_glb_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+                "DINKSTER_ACCELERATOR": "cpu",
+                "CUDA_VISIBLE_DEVICES": "",
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+            }
+        )
+        try:
+            for manifest in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", fixture):
+                await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            graph = Graph(
+                {
+                    "source": GraphNode("mesh-export-fixture.source"),
+                    "save": GraphNode("SaveGLB", {"mesh": Link("source", "mesh")}),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(
+                    graph,
+                    ["save"],
+                    export_snapshot=ExportSnapshot(
+                        prompt={"source": {"seed": 87}},
+                        extra_pnginfo={"workflow": {"id": 29}},
+                    ),
+                )
+                assert len(result.artifacts) == 2
+                assert "save" in result.executed
+                for item, artifact in enumerate(result.artifacts):
+                    expected = f"ComfyUI_{attempt * 2 + item + 1:05d}_.glb"
+                    assert artifact.node_id == "save" and artifact.name == expected
+                    data = (output / "3d" / expected).read_bytes()
+                    assert artifact.digest == digest_bytes(data)
+                    length = struct.unpack_from("<I", data, 12)[0]
+                    document = json.loads(data[20 : 20 + length])
+                    assert document["accessors"][0]["count"] == (3, 4)[item]
+                    assert json.loads(document["asset"]["extras"]["prompt"]) == {
+                        "source": {"seed": 87}
+                    }
+                    assert json.loads(document["asset"]["extras"]["workflow"]) == {"id": 29}
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 

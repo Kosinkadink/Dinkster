@@ -3,25 +3,45 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
-from collections.abc import Mapping
-from typing import Any
+import os
+from collections.abc import Iterator, Mapping
+from io import BytesIO
+from typing import Any, BinaryIO, cast
 
 from dinkster_api.v1 import (
+    CORE_STRING,
+    ENCODED_MEDIA_LIMIT_BYTES,
+    FILE_3D_FBX_TYPE,
     FILE_3D_GLB_TYPE,
     FILE_3D_GLTF_TYPE,
+    FILE_3D_KSPLAT_TYPE,
     FILE_3D_OBJ_TYPE,
+    FILE_3D_PLY_TYPE,
+    FILE_3D_POINT_CLOUD_ANY_TYPE,
+    FILE_3D_SPLAT_ANY_TYPE,
+    FILE_3D_SPLAT_TYPE,
+    FILE_3D_SPZ_TYPE,
     FILE_3D_STL_TYPE,
     FILE_3D_TYPE,
+    FILE_3D_USDZ_TYPE,
     MESH_TYPE,
+    AssetError,
     AssetRef,
+    AssetWriter,
     InputSpec,
     LocalAssetRef,
+    MountSnapshotWriter,
+    MountWidget,
     Node,
     NodeSchema,
     OutputSpec,
+    StringWidget,
     TriangleMeshBatch,
     TypeExpr,
+    attach_saved_artifact,
+    current_export_snapshot,
     digest_bytes,
     materialize_mesh,
     produced_output_scratch,
@@ -66,6 +86,110 @@ class MeshToFile3D(Node):
             writer.commit()
         source = AssetRef(digest, "mesh.glb", len(glb), "model/gltf-binary", resolver=vault)
         return cls.outputs(model_3d={"format": "glb", "source": source})
+
+
+class SaveGLB(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="SaveGLB",
+            display_name="Save 3D Model",
+            category="3d",
+            search_terms=("export 3d model", "save mesh"),
+            inputs=(
+                InputSpec(
+                    "mesh",
+                    TypeExpr.union(
+                        MESH_TYPE,
+                        FILE_3D_GLB_TYPE,
+                        FILE_3D_GLTF_TYPE,
+                        FILE_3D_OBJ_TYPE,
+                        FILE_3D_FBX_TYPE,
+                        FILE_3D_STL_TYPE,
+                        FILE_3D_USDZ_TYPE,
+                        FILE_3D_PLY_TYPE,
+                        FILE_3D_SPLAT_TYPE,
+                        FILE_3D_SPZ_TYPE,
+                        FILE_3D_KSPLAT_TYPE,
+                        FILE_3D_SPLAT_ANY_TYPE,
+                        FILE_3D_POINT_CLOUD_ANY_TYPE,
+                        FILE_3D_TYPE,
+                    ),
+                    doc="Mesh or 3D file to save",
+                ),
+                InputSpec(
+                    "filename_prefix",
+                    TypeExpr.concrete(CORE_STRING),
+                    default="3d/ComfyUI",
+                    widget=StringWidget(multiline=False),
+                ),
+                InputSpec(
+                    "mount",
+                    TypeExpr.concrete(CORE_STRING),
+                    required=False,
+                    default=None,
+                    widget=MountWidget(),
+                    adjacent_to="filename_prefix",
+                ),
+            ),
+            output_node=True,
+            idempotent=False,
+        )
+
+    @classmethod
+    def execute(
+        cls, *, mesh: object, filename_prefix: str = "3d/ComfyUI", mount: str | None = None
+    ) -> Mapping[str, object]:
+        snapshot = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
+        if not snapshot:
+            raise AssetError("saving requires DINKSTER_MOUNTS_SNAPSHOT")
+        writer = AssetWriter(MountSnapshotWriter(snapshot))
+        target = writer.output_target(filename_prefix, mount=mount)
+        if isinstance(mesh, Mapping):
+            file = cast("Mapping[str, object]", mesh)
+            source = file["source"]
+            if not isinstance(source, (AssetRef, LocalAssetRef)):
+                raise TypeError("FILE_3D source must be a public asset identity")
+            with source.open() as stream:
+                refs = writer.save_stream_batch(
+                    target,
+                    (stream,),
+                    suffix=f"_.{file['format'] or 'glb'}",
+                    media_type=source.media_type or "application/octet-stream",
+                    limit=ENCODED_MEDIA_LIMIT_BYTES,
+                )
+        else:
+            value = materialize_mesh(mesh)
+            serializer = importlib.import_module("dinkster_native.model3d.mesh")
+            metadata: dict[str, str] = {}
+            if not importlib.import_module("dinkster_inference.cli_args").args.disable_metadata:
+                submitted = current_export_snapshot()
+                if submitted is not None and submitted.prompt is not None:
+                    metadata["prompt"] = json.dumps(dict(submitted.prompt))
+                if submitted is not None and submitted.extra_pnginfo is not None:
+                    metadata.update(
+                        {key: json.dumps(item) for key, item in submitted.extra_pnginfo.items()}
+                    )
+
+            def sources() -> Iterator[BinaryIO]:
+                for index in range(value.vertices.shape[0]):
+                    glb = serializer.mesh_item_to_glb_bytes(value, index, metadata)
+                    if glb is None:
+                        logging.warning("SaveGLB: skipping empty mesh at batch index %d", index)
+                        continue
+                    with BytesIO(glb) as stream:
+                        yield stream
+
+            refs = writer.save_stream_batch(
+                target,
+                sources(),
+                suffix="_.glb",
+                media_type="model/gltf-binary",
+                limit=ENCODED_MEDIA_LIMIT_BYTES,
+            )
+        for ref in refs:
+            attach_saved_artifact(ref.to_wire())
+        return cls.outputs()
 
 
 def _sniff_format(data: bytes) -> str:
