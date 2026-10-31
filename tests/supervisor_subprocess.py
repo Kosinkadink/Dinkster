@@ -9,6 +9,7 @@ import runpy
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -97,6 +98,25 @@ def _open_trace(path: Path):
     return os.fdopen(msvcrt.open_osfhandle(handle, os.O_WRONLY), "w")
 
 
+def _request_snapshot(directory: Path) -> str:
+    # The CLI has already timed out; this grace only collects diagnostics before cleanup.
+    (directory / "snapshot.request").touch()
+    pending = {directory / "child.snapshot"} | {
+        path.with_suffix(".snapshot") for path in directory.glob("nested-*.json")
+    }
+    deadline = time.monotonic() + 1
+    while pending and time.monotonic() < deadline:
+        pending = {path for path in pending if not path.exists()}
+        if pending:
+            time.sleep(0.01)
+    return (
+        "Timeout snapshot not acknowledged (exited or unresponsive): "
+        + ", ".join(sorted(path.stem for path in pending))
+        if pending
+        else "Timeout snapshot acknowledged"
+    )
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
@@ -112,11 +132,13 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
             except subprocess.TimeoutExpired as exc:
                 # poll must precede kill: an exited child can leave inherited pipes open.
                 returncode = process.poll()
+                snapshot = _request_snapshot(Path(directory))
                 stack = trace.read_text() if trace.exists() else "child trace file absent"
                 exc.cmd = command
                 exc.add_note(
                     f"Supervisor CLI child pid={process.pid}, "
                     f"returncode before cleanup={returncode}\n"
+                    f"{snapshot}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
                     f"{_nested_diagnostics(Path(directory))}"
                 )
@@ -203,14 +225,27 @@ def _main() -> None:
         faulthandler.enable(file=trace)
         finished = threading.Event()
         interval = 25 if mode == "supervisor" else 5
+        request = trace_path.parent / "snapshot.request"
+        acknowledgment = trace_path.with_suffix(".snapshot")
 
         def observe() -> None:
-            while not finished.wait(interval):
+            next_sample = time.monotonic() + interval
+            while not finished.wait(0.05):
+                requested = request.exists() and not acknowledgment.exists()
+                if not requested and time.monotonic() < next_sample:
+                    continue
                 # The asynchronous walker can race freed frames on CPython 3.12.
                 # An attached Python thread holds the GIL while dumping stacks.
-                trace.write(f"Timeout (0:00:{interval:02})!\n")
+                trace.write(
+                    "Requested timeout snapshot\n"
+                    if requested
+                    else f"Timeout (0:00:{interval:02})!\n"
+                )
                 trace.flush()
                 faulthandler.dump_traceback(file=trace, all_threads=True)
+                if requested:
+                    acknowledgment.touch()
+                next_sample = time.monotonic() + interval
 
         observer = threading.Thread(target=observe, daemon=True)
         observer.start()
