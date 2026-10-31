@@ -445,8 +445,16 @@ def test_channel_publication_exposes_only_verified_payloads(
     previous = b"previous channel must survive failed publication"
     for name in ("main", "stable"):
         (public / f"channels/{name}.json").write_bytes(previous)
+
+    class MirrorHandler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            if self.headers.get("User-Agent", "").startswith("Python-urllib/"):
+                self.send_error(403)
+                return
+            super().do_GET()
+
     server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(public))
+        ("127.0.0.1", 0), partial(MirrorHandler, directory=str(public))
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
