@@ -312,9 +312,10 @@ jobs:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14.10"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
       - name: Set up Windows runtime environment
         run: uv sync --locked --all-packages
       - name: Install and verify published Windows engine dependencies
@@ -338,7 +339,7 @@ jobs:
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=20 `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=0 `
             --case-shard-file tests/test_environment_generations.py `
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
