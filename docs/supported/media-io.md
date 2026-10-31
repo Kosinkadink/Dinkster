@@ -14,6 +14,8 @@
   Custom targets and non-media files, including empty text files, are supported
   through both ordinary hosts. Failed invocations do not return kept artifacts;
   returning an ASSET without attaching it does not advertise a saved file.
+  Structured save destinations validate received mount/prefix values before
+  exposure and retain declared auxiliary references without granting write access.
   One invocation supports up to 4096 explicit saved-file attachments, including
   complete admitted image batches, subject to existing file and transport bounds.
   Mounted-file descriptors do not impose the encoded-preview byte limit on saved
