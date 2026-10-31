@@ -36,6 +36,7 @@ from dinkster_api.v1 import (
     image_input,
     prepare_image_array_encoding,
     region_meta,
+    validate_image_encoded,
 )
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -169,6 +170,9 @@ def register_types(registry: TypeRegistry) -> None:
             fingerprint=image_array_fingerprint(IMAGE_TYPE),
             meta=image_array_meta,
             input_convert=image_input,
+            validate_encoded=validate_image_encoded,
+            validate_encoded_buffer=validate_image_encoded,
+            asset_references_complete=True,
         )
     if REGION_TYPE not in registry:
         registry.register(

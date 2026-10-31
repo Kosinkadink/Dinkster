@@ -416,13 +416,42 @@ def test_forged_layout_is_rejected_without_decoding() -> None:
         validate_image_encoded(data, {"channels": {"layout": "rgba", "alpha": "straight"}})
 
 
-@pytest.mark.parametrize("type_id", ["IMAGE", "MASK"])
-@pytest.mark.parametrize("registration", ["image", "media_io", "inference", "native"])
+@pytest.mark.parametrize(
+    ("registration", "type_id"),
+    [
+        (registration, type_id)
+        for registration in (
+            "image",
+            "media_io",
+            "inference",
+            "native",
+            "birefnet",
+            "efficient_sam",
+            "sam31",
+        )
+        for type_id in ("IMAGE", "MASK")
+    ]
+    + [
+        (registration, "IMAGE")
+        for registration in (
+            "depth_anything_v2",
+            "depth_anything_v3",
+            "detr",
+            "hed",
+            "rtdetr",
+            "upscale",
+        )
+    ]
+    + [("dev", "dev.image")],
+)
 def test_inline_media_has_no_external_asset_dependencies(type_id, registration) -> None:
+    import importlib
+
     from dinkster_assets import AssetRef, digest_bytes
     from dinkster_assets.value import value_asset_references
     from dinkster_inference_wire.media_wire import register_media_types as register_wire
     from dinkster_native.image import register_image_type
+    from dinkster_nodes_dev.image import register_dev_types
     from dinkster_nodes_image import register_image_types
     from dinkster_nodes_media_io import register_media_types
     from dinkster_values import default_encode
@@ -431,12 +460,17 @@ def test_inline_media_has_no_external_asset_dependencies(type_id, registration) 
     registry = TypeRegistry()
     if registration == "native":
         register_image_type(registry, type_id)
-    else:
+    elif registration in ("image", "media_io", "inference", "dev"):
         {
             "image": register_image_types,
             "media_io": register_media_types,
             "inference": register_wire,
+            "dev": register_dev_types,
         }[registration](registry)
+    else:
+        importlib.import_module(f"dinkster_nodes_vision.{registration}.nodes").register_types(
+            registry
+        )
     array = np.arange(6, dtype=np.float32).reshape((1, 2, 3) if type_id == "MASK" else (1, 1, 2, 3))
     wrapped = registry.wrap(type_id, array)
     assert value_asset_references({"media": wrapped}, complete_registry=registry) == {}
