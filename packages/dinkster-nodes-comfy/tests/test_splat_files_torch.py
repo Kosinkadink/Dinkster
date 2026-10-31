@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
+    FILE_3D_SPLAT_ANY_TYPE,
     FILE_3D_TYPE,
     SPLAT_TYPE,
     AssetRef,
@@ -497,8 +498,15 @@ def empty_ply_bytes(full_attributes: bool) -> bytes:
 
 @pytest.mark.parametrize("in_process", [False, True])
 @pytest.mark.parametrize("full_attributes", [False, True])
+@pytest.mark.parametrize("format", ["ply", ""])
+@pytest.mark.parametrize("type_id", [FILE_3D_TYPE, FILE_3D_SPLAT_ANY_TYPE])
 def test_empty_ply_import_hosts_and_restart_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, full_attributes: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    full_attributes: bool,
+    format: str,
+    type_id: str,
 ) -> None:
     data = empty_ply_bytes(full_attributes)
     vault = AssetVault(tmp_path / "vault")
@@ -540,7 +548,7 @@ def test_empty_ply_import_hosts_and_restart_cache(
                             "File3DToSplat",
                             {
                                 "model_3d": TypedLiteral(
-                                    FILE_3D_TYPE, {"format": "ply", "source": source.to_wire()}
+                                    type_id, {"format": format, "source": source.to_wire()}
                                 )
                             },
                         )
