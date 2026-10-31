@@ -220,6 +220,7 @@ from .triposplat import (
 )
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
+from .uv_atlas import RenderUVAtlas
 from .vae import VAE_NODES
 from .video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -529,6 +530,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     WeldVertices,
     MeshTextureToImage,
     MeshSmoothNormals,
+    RenderUVAtlas,
 )
 
 

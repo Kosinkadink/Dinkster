@@ -43,6 +43,8 @@ from dinkster_server import asset_stream as asset_stream_module
 from dinkster_server.asset_stream import open_verified_sized, stream_verified
 from test_server import SCHEMAS, make_engine
 
+from tests.platform_support import symlink_or_skip
+
 
 @pytest.fixture(autouse=True)
 def _fresh_verification_cache() -> None:
@@ -64,7 +66,7 @@ def test_vault_claim_refuses_unknown_or_escaping_state(tmp_path: Path, fault: st
     outside = tmp_path / "outside"
     outside.mkdir()
     if fault == "symlink":
-        (vault.root / ".leases").symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(vault.root / ".leases", outside, target_is_directory=True)
     before = set(vault.root.rglob("*"))
     with pytest.raises(AssetError):
         with claim_inactive_produced_vault(vault.root):
@@ -453,15 +455,15 @@ def test_produced_readers_refuse_symlinked_managed_state(tmp_path: Path, link: s
         marker = vault.root / ".produced-assets.sqlite"
         destination = outside / marker.name
         marker.replace(destination)
-        marker.symlink_to(destination)
+        symlink_or_skip(marker, destination)
     elif link == "shard":
         destination = outside / path.parent.name
         path.parent.replace(destination)
-        path.parent.symlink_to(destination, target_is_directory=True)
+        symlink_or_skip(path.parent, destination, target_is_directory=True)
     else:
         readers = vault.root / ".produced-readers"
         readers.replace(outside / readers.name)
-        readers.symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(readers, outside, target_is_directory=True)
     before = set(outside.rglob("*"))
     with pytest.raises(AssetError, match="symlink"):
         open_verified(path, digest)
