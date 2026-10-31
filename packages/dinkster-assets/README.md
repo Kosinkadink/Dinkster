@@ -13,6 +13,60 @@ resolving without a worker restart. Unindexed selections retain invocation-local
 Admission never copies selected input files into the vault or worker scratch.
 `produced_output_scratch` is only the writable publication store for produced
 outputs; uploads, downloads and remote transfers retain their separate vault paths.
+With pack scratch configured, worker invocations isolate produced bytes by job
+and attempt. The installed resolver follows that context during execution,
+output wrapping, transfer, and engine adoption; job identifiers are not paths.
+Direct in-process results adopt produced sources before returning. Published
+AUDIO and VIDEO references use the store chain, so adopted bytes remain readable
+after scratch is removed.
+Job-owned publication stores and existing writers refuse further publication
+after the owning invocation scope closes, including in copied task contexts.
+Nested scopes for the same job attempt share that lifetime.
+Invocation scopes and open produced writers hold OS-backed leases. An exclusive
+scratch claim refuses live leases and blocks new users until released; a crashed
+process releases its OS locks without relying on a PID or age threshold. Lease
+metadata lives beside the data directory so the gate survives directory removal.
+These leases alone do not authorize deleting unpublished or referenced bytes.
+The serving host holds an additional job lease from execution admission
+through run settlement, including gaps between invocations and native-policy
+release. It releases on success, failure and cancellation. Reconciliation must
+claim both the host job and each pack's scratch; missing host lease metadata
+refuses a claim, and process exit releases ownership without an age threshold.
+Managed job scratch journals its owner, committed digests and byte sizes.
+Result and control-value handoff marks offered digests before sending or direct
+adoption; merely inspecting source paths does not offer a publication. Journals
+survive scope closure and process exit, and missing ownership state refuses
+reuse of nonempty scratch rather than reclassifying existing bytes.
+Engine adoption records a pending digest and byte size before copying produced
+sources into the vault, then marks the inventory entry adopted after verified
+publication. Retrying an interrupted copy preserves the first adoption order;
+already verified destination bytes can complete a pending entry after restart.
+Existing untracked inputs and mounted sources are not added to this inventory.
+Inventory entries describe adoption, not reachability or permission to delete.
+Managed engine-vault readers and writers retain vault-wide OS ownership before
+per-digest ownership. `hold_produced_vault()` lets the server extend that
+ownership through result/reference handoff. `claim_inactive_produced_vault()`
+refuses active users or missing inventory/lease state without creating metadata.
+An exclusive claim blocks new managed readers and publishers until released;
+the caller must also hold every reference owner and verify eligibility before
+removal. Partial lease acquisition failures release all acquired ownership.
+
+The library stores explicit scoped reference manifests for document, history,
+shown-result and preview owners. Replacement and release require the current
+revision. Release preserves an empty owner with a newer revision, preventing a
+stale client from releasing values after the owner identifier is reused.
+`LibraryStore.hold_asset_references()` holds a SQLite write transaction while
+reading explicit associations, records, media grants and observations in every
+scope, then follows their adopted dependency manifests transitively. Corrupt
+reachable state refuses inspection. Callers can supply roots held by other
+owners so their dependencies join the same traversal; those owners must stay
+held throughout inspection. Cached derivations atomically persist their
+producer-declared identities alongside opaque provenance, without treating
+cache keys or arbitrary provenance fields as asset identities. Legacy unknown
+derivation references refuse inspection until the producer certifies them
+against the unchanged provenance. This is not a complete collector barrier:
+caches, history, publishers and callers have independent lifetimes, and opaque
+documents without declared associations cannot be assumed reference-free.
 
 ## Setup
 

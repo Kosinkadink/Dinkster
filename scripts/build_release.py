@@ -199,7 +199,7 @@ def download_external_wheels(
 ) -> list[Path]:
     """Fetch the locked wheel closure for the selected published bases without resolving."""
     from packaging.requirements import Requirement
-    from packaging.tags import compatible_tags, cpython_tags
+    from packaging.tags import compatible_tags, cpython_tags, mac_platforms
     from packaging.utils import canonicalize_name, parse_wheel_filename
     from packaging.version import Version
 
@@ -220,6 +220,9 @@ def download_external_wheels(
         elif platform == {"os": "linux", "arch": "x86_64"}:
             windows = False
             platforms = LINUX_PLATFORMS
+        elif platform == {"os": "macos", "arch": "arm64"}:
+            windows = False
+            platforms = list(mac_platforms((14, 0), "arm64"))
         else:
             raise ValueError(f"unsupported published base platform: {platform!r}")
         tags = list(cpython_tags((python.major, python.minor), platforms=platforms)) + list(
@@ -236,14 +239,18 @@ def download_external_wheels(
             "implementation_name": "cpython",
             "implementation_version": manifest["python"],
             "os_name": "nt" if windows else "posix",
-            "platform_machine": "AMD64" if windows else "x86_64",
+            "platform_machine": "AMD64" if windows else platform["arch"],
             "platform_release": "",
-            "platform_system": "Windows" if windows else "Linux",
+            "platform_system": {"windows": "Windows", "linux": "Linux", "macos": "Darwin"}[
+                platform["os"]
+            ],
             "platform_version": "",
             "python_full_version": manifest["python"],
             "platform_python_implementation": "CPython",
             "python_version": f"{python.major}.{python.minor}",
-            "sys_platform": "win32" if windows else "linux",
+            "sys_platform": {"windows": "win32", "linux": "linux", "macos": "darwin"}[
+                platform["os"]
+            ],
             "extra": "",
         }
         for line in requirements.replace("\\\n", "").splitlines():

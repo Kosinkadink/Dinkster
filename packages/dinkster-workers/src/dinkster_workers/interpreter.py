@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -11,10 +13,53 @@ _MINIMUM_VERSION = (3, 12)
 _PREFLIGHT_TIMEOUT = 5.0
 _INTERPRETER_DISPLAY_LIMIT = 200
 _VERSION_SCRIPT = "import sys;print('[%d,%d]' % sys.version_info[:2])"
+_WINDOWS_MODULE_BOOTSTRAP = r"""
+import importlib.machinery
+import os
+import sys
+
+create_extension = importlib.machinery.ExtensionFileLoader.create_module
+
+def create_module(loader, spec):
+    origin = spec.origin
+    absolute = os.path.abspath(origin)
+    if not absolute.startswith("\\\\?\\"):
+        if absolute.startswith("\\\\"):
+            absolute = "\\\\?\\UNC\\" + absolute[2:]
+        else:
+            absolute = "\\\\?\\" + absolute
+    # Only the Windows DLL loader needs the extended spelling, not module identity.
+    spec.origin = absolute
+    try:
+        module = create_extension(loader, spec)
+    finally:
+        spec.origin = origin
+    module.__file__ = origin
+    return module
+
+importlib.machinery.ExtensionFileLoader.create_module = create_module
+
+import runpy
+
+sys.argv = sys.argv[1:]
+runpy.run_module(sys.argv[0], run_name="__main__", alter_sys=True)
+"""
 
 
 class InterpreterPreflightError(Exception):
     """The selected child interpreter cannot satisfy Dinkster's Python contract."""
+
+
+def module_command(command: Sequence[str]) -> list[str]:
+    """Extend Windows native loads without changing interpreter or module identity."""
+    if (
+        os.name == "nt"
+        and tuple(command[1:2]) == ("-m",)
+        and Path(command[0]).suffix.lower() not in {".bat", ".cmd"}
+    ):
+        # Leave executable lookup and sys.prefix to Python and CreateProcess.
+        return [command[0], "-c", _WINDOWS_MODULE_BOOTSTRAP, *command[2:]]
+    return list(command)
 
 
 def preflight_interpreter(interpreter: Path | str) -> tuple[int, int]:

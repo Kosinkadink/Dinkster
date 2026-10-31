@@ -38,6 +38,7 @@ from .integrity import (
     verification_record_for_publication,
 )
 from .model import AssetResolution
+from .scratch import hold_produced_asset_read
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -129,7 +130,13 @@ class VaultWriter:
         # never catalogs a partial download - the same rule that protects
         # the asset index's own temp files.
         self._tmp = root / f".ingest-{uuid.uuid4().hex}"
-        self._handle = self._tmp.open("wb")
+        self._publication_lease = hold_produced_asset_read(target)
+        try:
+            self._handle = self._tmp.open("wb")
+        except BaseException:
+            if self._publication_lease is not None:
+                self._publication_lease.close()
+            raise
         self._hasher = new_hasher()
         self._committed = False
 
@@ -250,8 +257,12 @@ class VaultWriter:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if not self._committed:
-            self._discard()
+        try:
+            if not self._committed:
+                self._discard()
+        finally:
+            if self._publication_lease is not None:
+                self._publication_lease.close()
 
 
 def _persist_verification_record(

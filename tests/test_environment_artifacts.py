@@ -14,10 +14,13 @@ import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from platform import machine
+from types import SimpleNamespace
 
 import pytest
 import zstandard
 from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_supervisor import environment_artifacts
 from dinkster_supervisor.environment_artifacts import (
     acquire,
     acquire_pack_locks,
@@ -41,10 +44,19 @@ def _artifact(name: str, data: bytes, *, key: str = "name") -> dict:
 
 
 def _mirror(
-    root: Path, *, protocol: int = 11, damaged_archive: bool = False, variant: str = "fixture-cpu"
+    root: Path,
+    *,
+    protocol: int = 11,
+    damaged_archive: bool = False,
+    variant: str = "fixture-cpu",
+    target: tuple[str, str] | None = None,
 ) -> tuple[dict, dict, dict]:
     root.mkdir(parents=True)
-    python = "python/python.exe" if os.name == "nt" else "python/bin/python3"
+    system, arch = target or (
+        "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux",
+        {"amd64": "x86_64", "aarch64": "arm64"}.get(machine().lower(), machine().lower()),
+    )
+    python = "python/python.exe" if system == "windows" else "python/bin/python3"
     base_wheel = b"base wheel bytes; execution is covered by generation tests"
     wheel = {
         **_artifact("fixture_base-1.0-py3-none-any.whl", base_wheel, key="filename"),
@@ -64,7 +76,7 @@ def _mirror(
     base = {
         "format": "dinkster.base/1",
         "variant": variant,
-        "platform": {"os": "windows" if os.name == "nt" else "linux", "arch": "x86_64"},
+        "platform": {"os": system, "arch": arch},
         "python": "3.14.10",
         "interpreter": interpreter,
         "wheels": [wheel],
@@ -296,6 +308,66 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     )
     for path in acquired:
         assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("target", "host", "architecture", "accepted"),
+    [
+        (("macos", "arm64"), "darwin", "arm64", True),
+        (("macos", "arm64"), "darwin", "aarch64", True),
+        (("macos", "arm64"), "darwin", "x86_64", False),
+        (("macos", "arm64"), "win32", "AMD64", False),
+        (("macos", "arm64"), "win32", "ARM64", False),
+        (("macos", "arm64"), "linux", "x86_64", False),
+        (("macos", "arm64"), "linux", "aarch64", False),
+        (("macos", "x86_64"), "darwin", "arm64", False),
+        (("windows", "x86_64"), "darwin", "arm64", False),
+        (("linux", "x86_64"), "darwin", "arm64", False),
+    ],
+)
+def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: tuple[str, str],
+    host: str,
+    architecture: str,
+    accepted: bool,
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    base, _, _ = _mirror(
+        mirror, variant="mac-arm64" if target[0] == "macos" else "fixture-cpu", target=target
+    )
+    catalog = discover((str(mirror),), "main")
+    monkeypatch.setattr(environment_artifacts, "sys", SimpleNamespace(platform=host))
+    monkeypatch.setattr(environment_artifacts, "machine", lambda: architecture)
+    variant = next(iter(catalog.bases))
+    if not accepted:
+        with pytest.raises(EnvironmentError, match="operating system|architecture"):
+            acquire(catalog, variant, store)
+        assert not store.exists()
+        return
+    # Exercise host admission without trying to execute a foreign interpreter on the test host.
+    cached_wheels = store / "bases" / base["id"][7:] / "wheels"
+    cached_wheels.mkdir(parents=True)
+    (cached_wheels / base["wheels"][0]["filename"]).write_bytes(
+        b"base wheel bytes; execution is covered by generation tests"
+    )
+    constraints = acquire(catalog, variant, store)
+    assert "fixture-base==1.0 --hash=sha256:" in constraints.read_text()
+    assert "nvidia-cublas" not in constraints.read_text()
+    assert next(store.glob("wheels/*/fixture_base*.whl")).read_bytes() == (
+        b"base wheel bytes; execution is covered by generation tests"
+    )
+
+
+@pytest.mark.parametrize("target", [("windows", "arm64"), ("linux", "arm64"), ("macos", "riscv64")])
+def test_discovery_rejects_unsupported_manifest_architectures(
+    tmp_path: Path, target: tuple[str, str]
+):
+    mirror = tmp_path / "mirror"
+    _mirror(mirror, target=target)
+    with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
+        discover((str(mirror),), "main")
 
 
 def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path: Path):
