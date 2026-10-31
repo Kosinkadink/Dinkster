@@ -6146,6 +6146,84 @@ def test_values_endpoint_element_traversal() -> None:
     asyncio.run(scenario())
 
 
+def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_file3d_types
+
+    vault = AssetVault(tmp_path / "vault")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    refs = []
+    for data, name in ((b'{"asset":{"version":"2.0"}}', "scene.gltf"), (b"\x01\xfe", "a.bin")):
+        digest = digest_bytes(data)
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        refs.append(AssetRef(digest, name, len(data), resolver=vault))
+    expected = {
+        "format": "gltf",
+        "source": refs[0].to_wire(),
+        "resources": {"nested/a.bin": refs[1].to_wire()},
+    }
+
+    class Model(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.model",
+                outputs=(OutputSpec("file", TypeExpr.concrete("FILE_3D_GLTF")),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(file=expected)
+
+    schemas = build_schemas([Model])
+
+    def factory(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_file3d_types(registry, vault)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types([Model]), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        client = TestClient(TestServer(create_app(factory, schemas)))
+        await client.start_server()
+        try:
+            await finish_job(client, Graph(nodes={"model": GraphNode("test.model", {})}), ["model"])
+            url = values_url("model", output_id="file")
+            response = await client.get(url)
+            discovery = await response.json()
+            assert response.status == 200
+            assert "value" not in discovery["descriptor"]
+            assert discovery["renditions"] == [
+                {
+                    "kind": "manifest",
+                    "mime": "application/json",
+                    "default": True,
+                    "cacheKey": "manifest",
+                }
+            ]
+            response = await client.get(url + "&rendition=manifest")
+            assert response.status == 200
+            assert response.content_type == "application/json"
+            assert await response.json() == expected
+            response = await client.get(
+                url.replace("jobId=j1", "jobId=absent") + "&rendition=manifest"
+            )
+            assert response.status == 404
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -> None:
     async def scenario() -> None:
         client = await make_values_client()
