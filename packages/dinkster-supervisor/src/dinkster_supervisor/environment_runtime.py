@@ -101,6 +101,10 @@ def start_engine(
         "dinkster.serve",
         "--generation",
         str(target),
+        "--library-root",
+        environment.get("DINKSTER_LIBRARY_ROOT", str(root / "dinkster-library")),
+        "--prepare-stale-catalogs",
+        "--allow-mount-changes",
     ]
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
