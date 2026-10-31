@@ -76,9 +76,7 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 """,
         ]
     result = (
-        subprocess.run(command, capture_output=True, text=True, timeout=180)
-        if os.environ.get("DINKSTER_TEST_FORBID_RESOLUTION")
-        else run_with_diagnostics(command)
+        run_with_diagnostics(command)
         if "setup" in arguments
         or "move" in arguments
         or ("doctor" in arguments and "--repair" in arguments)

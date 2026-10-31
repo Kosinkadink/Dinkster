@@ -87,8 +87,8 @@ jobs:
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
       - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py
-      - name: Verify published setup preserves cached bases after release rejection
-        run: uv run --no-sync python -m pytest -q tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal
+      - name: Verify published setup and bounded subprocess diagnostics
+        run: uv run --no-sync python -m pytest -q tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal tests/test_supervisor_subprocess.py
       - name: Verify produced source adoption before publication
         run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py::test_in_process_control_sources_are_adopted_before_publication
 
