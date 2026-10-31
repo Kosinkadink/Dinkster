@@ -612,6 +612,9 @@ namespaces = [
     "DecimateMesh",
     "MeshToFile3D",
     "SaveGLB",
+    "Save3DAdvanced",
+    "SaveGaussianSplat",
+    "SavePointCloud",
 ]
 
 [pack.sandbox]
