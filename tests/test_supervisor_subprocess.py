@@ -18,6 +18,7 @@ def test_child_output_and_timeout_diagnostics(
     module = tmp_path / "diagnostic_child.py"
     module.write_text(
         "import sys, threading\n"
+        "assert sys.argv[2] == 'space \\\"quoted\\\" value'\n"
         "ready = threading.Event()\n"
         "def changing_frames(depth):\n"
         "    values = [str(depth), {'depth': depth}]\n"
@@ -42,14 +43,14 @@ def test_child_output_and_timeout_diagnostics(
         if entry == "module"
         else [sys.executable, "-c", module.read_text()]
     )
-    result = run([*command, "complete"])
+    result = run([*command, "complete", 'space "quoted" value'])
     assert (result.returncode, result.stdout, result.stderr) == (
         7,
         "child stdout\n",
         "child stderr\n",
     )
     with pytest.raises(subprocess.TimeoutExpired) as raised:
-        run([*command, "blocked"])
+        run([*command, "blocked", 'space "quoted" value'])
     assert raised.value.timeout == 30
     notes = "\n".join(raised.value.__notes__)
     assert "returncode before cleanup=None" in notes
