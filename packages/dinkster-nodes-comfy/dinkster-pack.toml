@@ -606,6 +606,7 @@ namespaces = [
     "MeshSmoothNormals",
     "RenderUVAtlas",
     "ApplyTextureToMesh",
+    "FillHoles",
 ]
 
 [pack.sandbox]
