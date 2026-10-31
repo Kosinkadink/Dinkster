@@ -47,6 +47,14 @@ answer = types.wrap(CORE_INT, 42)
 Node authors normally work with plain Python values. Worker shims construct
 the envelopes at the execution boundary.
 
+`TypeRegistry.register(..., asset_references_complete=True)` declares that the
+atom's metadata exhaustively describes its external asset references. This is
+an opt-in contract, independent of declaring an encode/decode codec. The
+default is unknown, not an empty reference set. The asset layer interprets the
+reference metadata; lists and tuples require traversal of every typed child.
+Opaque dictionaries, arrays and streams do not inherit completeness from a
+codec or from missing metadata.
+
 Core `STRING` values expose a default `text` rendition containing the full UTF-8
 text, including strings too long for inline status descriptors. Use
 `GET /api/values?...&rendition=text` for full execution-scoped text retrieval;

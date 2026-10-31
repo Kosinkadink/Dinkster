@@ -37,6 +37,7 @@ from dinkster_values import (
     parse_asset_type_id,
     render_video_original,
     validate_video_encoded,
+    value_children,
     video_fingerprint,
     video_meta,
     video_rendition_mime,
@@ -80,12 +81,28 @@ def metadata_asset_references(
 
 
 def value_asset_references(
-    values: Mapping[str, Value], *, include_asset_values: bool = True
+    values: Mapping[str, Value],
+    *,
+    include_asset_values: bool = True,
+    complete_registry: TypeRegistry | None = None,
 ) -> dict[str, AssetRef]:
-    """Collect identities through recursive value containers without decoding payloads."""
+    """Collect identities through recursive value containers without decoding payloads.
+
+    Supplying complete_registry requires an exhaustive declaration for every
+    atom. A declared codec or absent asset_refs alone never establishes it.
+    """
+    if complete_registry is not None and not include_asset_values:
+        raise AssetError("complete asset references cannot exclude asset values")
     references: dict[str, AssetRef] = {}
     for value in values.values():
         for child in iter_value_tree(value):
+            if complete_registry is not None and value_children(child) is None:
+                try:
+                    complete = complete_registry.spec(child.type_id).asset_references_complete
+                except KeyError:
+                    complete = False
+                if not complete:
+                    raise AssetError(f"asset references are incomplete for {child.type_id}")
             for ref in metadata_asset_references(
                 child.type_id, child.meta.entries, include_asset_value=include_asset_values
             ):
@@ -170,6 +187,7 @@ def register_asset_type(
         fingerprint=fingerprint,
         meta=meta,
         coerce=coerce,
+        asset_references_complete=type_id == ASSET_TYPE,
     )
 
 

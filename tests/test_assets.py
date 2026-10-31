@@ -35,6 +35,7 @@ from dinkster_assets import (
     is_digest,
     register_asset_type,
 )
+from dinkster_assets.value import value_asset_references
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
@@ -53,6 +54,8 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     TypeRegistry,
+    make_list_value,
+    make_tuple_value,
     register_core_types,
 )
 from dinkster_workers import InProcessWorker, ValueCodec
@@ -405,6 +408,70 @@ def asset_registry(resolver: AssetResolver | None = None) -> TypeRegistry:
     register_asset_type(registry, resolver)
     register_asset_type(registry, resolver, type_id=AUDIO_RECORD_TYPE)
     return registry
+
+
+def test_complete_asset_references_traverse_beyond_display_limits() -> None:
+    registry = asset_registry()
+    refs = [AssetRef(digest_bytes(str(i).encode()), f"asset-{i}", i) for i in range(70)]
+    value = make_tuple_value(
+        [
+            registry.wrap(f"asset<{CORE_STRING}>", refs[0]),
+            registry.wrap(f"list<{ASSET_TYPE}>", refs[1:]),
+        ]
+    )
+    for _ in range(36):
+        value = make_list_value("*", [value])
+    assert value_asset_references({"output": value}, complete_registry=registry) == {
+        ref.digest: ref for ref in refs
+    }
+    with pytest.raises(AssetError, match="cannot exclude"):
+        value_asset_references(
+            {"output": value}, complete_registry=registry, include_asset_values=False
+        )
+
+
+def test_complete_asset_references_require_explicit_atom_declarations() -> None:
+    registry = asset_registry()
+    registry.register("example.opaque", encode=lambda _: b"opaque", decode=lambda _: None)
+    opaque = registry.wrap("example.opaque", None)
+    assert registry.spec("example.opaque").declared_codec
+    assert value_asset_references({"output": opaque}) == {}
+    with pytest.raises(AssetError, match="incomplete"):
+        value_asset_references(
+            {"output": make_list_value("*", [opaque])}, complete_registry=registry
+        )
+    ref = AssetRef(digest_bytes(b"alias"), "alias", 5)
+    with pytest.raises(AssetError, match="incomplete"):
+        value_asset_references(
+            {"output": registry.wrap(AUDIO_RECORD_TYPE, ref)}, complete_registry=registry
+        )
+    registry.register("example.empty", asset_references_complete=True)
+    assert (
+        value_asset_references(
+            {"output": registry.wrap("example.empty", None)}, complete_registry=registry
+        )
+        == {}
+    )
+
+
+def test_complete_asset_references_validate_declared_metadata() -> None:
+    registry = asset_registry()
+    registry.register(
+        "example.invalid", meta=lambda _: {"asset_refs": None}, asset_references_complete=True
+    )
+    with pytest.raises(AssetError, match="asset_refs must be a list"):
+        value_asset_references(
+            {"output": registry.wrap("example.invalid", None)}, complete_registry=registry
+        )
+    ref = AssetRef(digest_bytes(b"external"), "external", 8)
+    registry.register(
+        "example.external",
+        meta=lambda _: {"asset_refs": [ref.to_wire()]},
+        asset_references_complete=True,
+    )
+    assert value_asset_references(
+        {"output": registry.wrap("example.external", None)}, complete_registry=registry
+    ) == {ref.digest: ref}
 
 
 @pytest.mark.parametrize("verified", (False, True))

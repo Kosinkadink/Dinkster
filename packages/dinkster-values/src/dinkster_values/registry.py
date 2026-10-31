@@ -176,6 +176,13 @@ class TypeSpec:
     mutating the stored object. None preserves it; accepts_storage bypasses
     this hook. Unlike coerce, this never changes output storage or identity."""
 
+    asset_references_complete: bool = False
+    """Whether metadata exhaustively declares this atom's external asset roots.
+
+    This is independent of declaring a codec. False means unknown, not empty.
+    Structural containers require separate traversal of every typed child.
+    """
+
 
 @dataclass(frozen=True)
 class RenditionSpec:
@@ -456,7 +463,10 @@ class TypeRegistry:
         inline: InlineFn | None = None,
         validate_encoded: ValidateEncodedFn | None = None,
         validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
+        asset_references_complete: bool = False,
     ) -> TypeSpec:
+        if type(asset_references_complete) is not bool:
+            raise ValueError("asset reference completeness must be a boolean")
         if (encode is None) != (decode is None):
             raise ValueError(f"{type_id}: encode and decode must be declared together")
         if prepare_buffer_encoding is not None and encode is None:
@@ -501,6 +511,7 @@ class TypeRegistry:
             inline=inline,
             validate_encoded=validate_encoded,
             validate_encoded_buffer=validate_encoded_buffer,
+            asset_references_complete=asset_references_complete,
         )
         self._types[type_id] = spec
         if owner is not None:

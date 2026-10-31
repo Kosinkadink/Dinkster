@@ -6,6 +6,13 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+`value_asset_references(values, complete_registry=registry)` requires every
+atom to declare exhaustive external-reference metadata. Unknown atoms or
+malformed identities refuse instead of certifying an empty set. Lists and
+tuples retain every typed descendant, independent of display descriptor caps.
+The base asset type opts in; custom aliases remain unknown until their
+reference metadata contract is declared explicitly.
+
 Selected indexed files use ordinary `AssetRef` values from the engine-written
 index. The live mounts snapshot remains their resolver, so revoked grants stop
 resolving without a worker restart. Unindexed selections retain invocation-local
