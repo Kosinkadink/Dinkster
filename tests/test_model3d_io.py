@@ -14,6 +14,7 @@ from typing import cast
 import dinkster_nodes_media_io.model3d as model3d_module
 import pytest
 from dinkster_api.v1 import (
+    CORE_STRING,
     FILE_3D_GLB_TYPE,
     FILE_3D_GLTF_TYPE,
     FILE_3D_PLY_TYPE,
@@ -272,6 +273,7 @@ class Advanced3DFileSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "advanced-3d-source.make",
+            inputs=(InputSpec("case", TypeExpr.concrete(CORE_STRING), default="viewport"),),
             outputs=(
                 OutputSpec("file", TypeExpr.concrete(FILE_3D_PLY_TYPE)),
                 OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),
@@ -279,7 +281,7 @@ class Advanced3DFileSource(Node):
         )
 
     @classmethod
-    def execute(cls) -> Mapping[str, object]:
+    def execute(cls, *, case: str = "viewport") -> Mapping[str, object]:
         vault = produced_output_scratch()
         assert vault is not None
         payload = b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
@@ -288,6 +290,11 @@ class Advanced3DFileSource(Node):
             writer.write(payload)
             writer.commit()
         ref = AssetRef(digest, "source.ply", len(payload), "application/ply", resolver=vault)
+        if case != "viewport":
+            return cls.outputs(
+                file={"format": "ply", "source": ref},
+                viewport={"model_3d_info": None} if case == "null_placement" else {},
+            )
         return cls.outputs(
             file={"format": "ply", "source": ref},
             viewport={
@@ -303,8 +310,9 @@ class Advanced3DFileSource(Node):
 
 
 @pytest.mark.parametrize("in_process", [True, False])
+@pytest.mark.parametrize("case", ["viewport", "empty", "null_placement"])
 def test_advanced_3d_save_ordinary_hosts_twice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, case: str
 ) -> None:
     output = tmp_path / "out"
     output.mkdir()
@@ -322,7 +330,8 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     }
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
-    (tmp_path / "advanced_source.py").write_text(
+    module = f"advanced_source_{case}"
+    (tmp_path / f"{module}.py").write_text(
         "from test_model3d_io import Advanced3DFileSource\n"
         "from dinkster_nodes_comfy import register_inference_types\n"
         "NODES=(Advanced3DFileSource,)\n",
@@ -332,7 +341,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     manifest.write_text(
         '[pack]\nname="advanced-3d-source"\npublisher="dinkster"\n'
         'namespaces=["advanced-3d-source"]\n[pack.entry]\n'
-        'nodes="advanced_source:NODES"\ntypes="advanced_source:register_inference_types"\n',
+        f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
 
@@ -347,7 +356,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
                 await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
             graph = Graph(
                 {
-                    "source": GraphNode("advanced-3d-source.make"),
+                    "source": GraphNode("advanced-3d-source.make", {"case": case}),
                     "save": GraphNode(
                         "Save3DAdvanced",
                         {
@@ -365,9 +374,14 @@ def test_advanced_3d_save_ordinary_hosts_twice(
                 assert file.read_bytes() == (
                     b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
                 )
-                camera = cast(dict[str, object], result.outputs["save"]["camera_info"].resolve())
-                assert camera["zoom"] == 2.5
-                assert result.outputs["save"]["model_3d_info"].resolve() == []
+                camera = result.outputs["save"]["camera_info"].resolve()
+                if case == "viewport":
+                    assert cast(dict[str, object], camera)["zoom"] == 2.5
+                else:
+                    assert camera is None
+                assert result.outputs["save"]["model_3d_info"].resolve() == (
+                    None if case == "null_placement" else []
+                )
         finally:
             await composer.close()
 
