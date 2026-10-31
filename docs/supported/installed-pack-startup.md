@@ -194,6 +194,11 @@
   and atomically writes the existing stable/main channel format. It preserves
   publisher inputs and requires no network. Hosted channel publication and
   published-base selection are not provided by this local command.
+- Hosted publication retries transient mirror upload failures with bounded
+  backoff and verifies all mirrored payload bytes before exposing the channel.
+  Prerelease housekeeping reports exhausted transport retries independently;
+  its failure does not prevent a successfully published release from advancing
+  the verified channel. Stable and draft releases are not pruned.
 - Confirmed gc collects obsolete generation trees while retaining current and
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and

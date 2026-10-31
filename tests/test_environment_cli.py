@@ -43,7 +43,7 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         command[1:3] = [
             "-c",
             """
-import runpy, shlex, sys
+import runpy, sys
 from pathlib import Path
 from dinkster_supervisor import environment_local
 def forbidden(*args, **kwargs):
@@ -54,8 +54,17 @@ def audit(event, args):
         return
     command = args[1]
     if isinstance(command, str):
-        command = [part.strip('"') for part in shlex.split(command, posix=False)]
-    if Path(args[0] or command[0]).stem != "uv":
+        import ctypes
+        count = ctypes.c_int()
+        parse = ctypes.windll.shell32.CommandLineToArgvW
+        parse.restype = ctypes.POINTER(ctypes.c_wchar_p)
+        arguments = parse(ctypes.c_wchar_p(command), ctypes.byref(count))
+        try:
+            command = arguments[:count.value]
+        finally:
+            ctypes.windll.kernel32.LocalFree(ctypes.cast(arguments, ctypes.c_void_p))
+    executable = args[0] or command[0]
+    if Path(executable).stem.lower() != "uv":
         return
     if "compile" in command:
         forbidden()
@@ -67,9 +76,7 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 """,
         ]
     result = (
-        subprocess.run(command, capture_output=True, text=True, timeout=180)
-        if os.environ.get("DINKSTER_TEST_FORBID_RESOLUTION")
-        else run_with_diagnostics(command)
+        run_with_diagnostics(command)
         if "setup" in arguments
         or "move" in arguments
         or ("doctor" in arguments and "--repair" in arguments)
@@ -561,6 +568,8 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     failed_arguments[failed_arguments.index(str(store))] = str(failed_store)
     code, failed = _run(root, *failed_arguments, "--yes")
     assert code == 1 and failed["status"] == "error"
+    assert engine_wheel.name in failed["error"], failed
+    assert "corrupt or short data" in failed["error"], failed
     assert not (root / "project.json").exists() and not (root / "store").exists()
     assert not (failed_store / "projects.json").exists()
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()

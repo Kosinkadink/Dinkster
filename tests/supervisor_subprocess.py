@@ -132,7 +132,14 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
         with subprocess.Popen(
-            [command[0], "-c", _WRAPPER, "supervisor", directory, *command[2:]],
+            [
+                command[0],
+                "-c",
+                _WRAPPER,
+                "supervisor",
+                directory,
+                *(command[1:] if command[1] == "-c" else command[2:]),
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -236,7 +243,7 @@ def _main() -> None:
         temporary = Path(location).with_suffix(".pid.tmp")
         temporary.write_text(str(os.getpid()))
         temporary.replace(Path(location).with_suffix(".pid"))
-    sys.argv = [module, *arguments]
+    sys.argv = [module, *(arguments[1:] if module == "-c" else arguments)]
     with _open_trace(trace_path) as trace:
         faulthandler.enable(file=trace)
         finished = threading.Event()
@@ -266,7 +273,10 @@ def _main() -> None:
         observer = threading.Thread(target=observe, daemon=True)
         observer.start()
         try:
-            runpy.run_module(module, run_name="__main__", alter_sys=True)
+            if module == "-c":
+                exec(arguments[0], {"__name__": "__main__"})
+            else:
+                runpy.run_module(module, run_name="__main__", alter_sys=True)
         finally:
             finished.set()
             observer.join()

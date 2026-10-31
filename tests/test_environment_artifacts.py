@@ -443,11 +443,17 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         "unknown",
         "channel",
         "identical-bytes",
+        "upload-recover",
+        "upload-exhaust",
+        "upload-forbidden",
+        "upload-corrupt",
+        "channel-recover",
     ],
 )
 def test_channel_publication_exposes_only_verified_payloads(
     tmp_path: Path, monkeypatch, request, capsys, failure
 ):
+    from boto3.exceptions import S3UploadFailedError
     from botocore.exceptions import ClientError
 
     from scripts import publish_environment_channel as publisher
@@ -551,6 +557,16 @@ def test_channel_publication_exposes_only_verified_payloads(
             )
         return original_urlopen(url, **kwargs)
 
+    attempts = {}
+    active = set()
+    sleeps = []
+
+    def backoff(delay):
+        assert not active, "application retry overlapped an unfinished object transfer"
+        sleeps.append(delay)
+
+    monkeypatch.setattr(publisher.time, "sleep", backoff)
+
     class ObjectStore:
         def head_object(self, *, Bucket, Key):
             if failure == "head":
@@ -561,10 +577,43 @@ def test_channel_publication_exposes_only_verified_payloads(
         def upload_file(self, filename, bucket, key, **kwargs):
             if failure in {"identical", "identical-bytes"} and key == "channels/main.json":
                 pytest.fail("identical engine must not upload the channel")
+            assert key not in active
+            active.add(key)
+            try:
+                attempts[key] = attempts.get(key, 0) + 1
+                config = kwargs["Config"]
+                assert config.max_concurrency == 1 and config.use_threads is False
+                affected = (
+                    failure
+                    in {"upload-recover", "upload-exhaust", "upload-forbidden", "upload-corrupt"}
+                    and key.endswith("/constraints.txt")
+                ) or (failure == "channel-recover" and key == "channels/main.json")
+                if affected and (
+                    attempts[key] < 3 or failure in {"upload-exhaust", "upload-forbidden"}
+                ):
+                    error = ClientError(
+                        {
+                            "ResponseMetadata": {
+                                "HTTPStatusCode": 403 if failure == "upload-forbidden" else 503
+                            },
+                            "Error": {
+                                "Code": "AccessDenied"
+                                if failure == "upload-forbidden"
+                                else "ServiceUnavailable",
+                                "Message": (
+                                    "Reduce your concurrent request rate for the same object."
+                                ),
+                            },
+                        },
+                        "PutObject",
+                    )
+                    raise S3UploadFailedError("fixture upload failed") from error
+            finally:
+                active.remove(key)
             target = public / key
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(filename, target)
-            if failure == "engine" and target.name == "constraints.txt":
+            if failure in {"engine", "upload-corrupt"} and target.name == "constraints.txt":
                 target.write_bytes(b"corrupted uploaded engine bytes")
 
     monkeypatch.setattr(publisher, "urlopen", published_input)
@@ -579,15 +628,39 @@ def test_channel_publication_exposes_only_verified_payloads(
         "unknown",
         "channel",
         "identical-bytes",
+        "upload-exhaust",
+        "upload-forbidden",
+        "upload-corrupt",
     }:
         from urllib.error import HTTPError
 
-        with pytest.raises((ValueError, ClientError, HTTPError)):
+        with pytest.raises((ValueError, ClientError, HTTPError, S3UploadFailedError)):
             publisher.publish(release, [base_path], "main", "0.2.0")
     else:
         publisher.publish(release, [base_path], "main", "0.2.0")
     assert (public / "channels/stable.json").read_bytes() == stable
-    if failure not in {None, "identical", "absent"}:
+    if failure in {
+        "upload-recover",
+        "upload-exhaust",
+        "upload-forbidden",
+        "upload-corrupt",
+        "channel-recover",
+    }:
+        key = (
+            "channels/main.json"
+            if failure == "channel-recover"
+            else next(key for key in attempts if key.endswith("/constraints.txt"))
+        )
+        assert attempts[key] == {"upload-exhaust": 4, "upload-forbidden": 1}.get(failure, 3)
+        if failure == "upload-forbidden":
+            assert sleeps == []
+        else:
+            assert sleeps[:2] == [1, 2]
+        if failure == "upload-exhaust":
+            assert sleeps == [1, 2, 4]
+        if failure in {"upload-exhaust", "upload-forbidden", "upload-corrupt"}:
+            assert "channels/main.json" not in attempts
+    if failure not in {None, "identical", "absent", "upload-recover", "channel-recover"}:
         assert (public / "channels/main.json").read_bytes() == previous
         if failure in {"superseded", "diverged"}:
             output = capsys.readouterr().out

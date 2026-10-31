@@ -6,15 +6,22 @@ import argparse
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import urlopen
 
 import boto3
+from boto3.exceptions import S3UploadFailedError
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from dinkster_supervisor.environment_artifacts import parse_metadata, validate_manifest
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
@@ -81,9 +88,49 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
         transfer = TransferConfig(
             multipart_threshold=64 * 1024 * 1024,
             multipart_chunksize=64 * 1024 * 1024,
-            max_concurrency=4,
+            max_concurrency=1,
+            use_threads=False,
             preferred_transfer_client="classic",
         )
+
+        def upload(path: Path, key: str, *, extra: dict[str, str] | None = None) -> None:
+            for attempt in range(4):
+                try:
+                    client.upload_file(
+                        str(path), os.environ["R2_BUCKET"], key, ExtraArgs=extra, Config=transfer
+                    )
+                    return
+                except (
+                    S3UploadFailedError,
+                    ClientError,
+                    ConnectionClosedError,
+                    EndpointConnectionError,
+                    ReadTimeoutError,
+                ) as error:
+                    cause = (
+                        error.__cause__ or error.__context__
+                        if isinstance(error, S3UploadFailedError)
+                        else error
+                    )
+                    transient = isinstance(
+                        cause, (ConnectionClosedError, EndpointConnectionError, ReadTimeoutError)
+                    ) or (
+                        isinstance(cause, ClientError)
+                        and (
+                            cause.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                            in {429, 500, 502, 503, 504}
+                            or cause.response.get("Error", {}).get("Code")
+                            in {"ServiceUnavailable", "SlowDown", "RequestTimeout", "InternalError"}
+                        )
+                    )
+                    if not transient or attempt == 3:
+                        raise
+                    delay = 2**attempt
+                    print(
+                        f"Transient R2 upload failure for {key}; retrying in {delay}s", flush=True
+                    )
+                    time.sleep(delay)
+
         identity = content_digest(release / "release-manifest.json")[7:]
         prefix = f"engine/{identity}"
         rows = [
@@ -106,12 +153,7 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                     raise
             else:
                 continue
-            client.upload_file(
-                str(release / row["name"]),
-                os.environ["R2_BUCKET"],
-                key,
-                Config=transfer,
-            )
+            upload(release / row["name"], key)
         for row in rows:
             fetch_artifact(
                 (f"{public}/{prefix}",),
@@ -156,12 +198,10 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                     return
                 if status != "ahead":
                     raise ValueError(f"unexpected GitHub comparison status: {status}")
-        client.upload_file(
-            str(path),
-            os.environ["R2_BUCKET"],
+        upload(
+            path,
             f"channels/{channel}.json",
-            ExtraArgs={"ContentType": "application/json", "CacheControl": "no-cache"},
-            Config=transfer,
+            extra={"ContentType": "application/json", "CacheControl": "no-cache"},
         )
         if read_metadata(public, f"channels/{channel}.json") != path.read_bytes():
             raise ValueError("public channel differs after publication")
