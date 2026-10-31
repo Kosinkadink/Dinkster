@@ -255,12 +255,20 @@ such a mirror refuses an unsigned or wrongly signed document.
 
 `Dinkster-Environments` holds one definition per variant: the python
 version, the python-build-standalone release, the torch index and CUDA tag,
-and the list of lock entries that belong to the base rather than the engine.
+and the base root pins. The published manifest's `replaces` list is the sole
+ownership-by-distribution-name contract: selected wheels plus the source lock's
+base-root closure, including remove-only names for other platforms.
 Its build workflow:
 
-1. Reads the lock from the Dinkster commit it is building for.
-2. Downloads the base wheels for the variant from their indexes into a
-   staging directory and verifies them against the lock hashes.
+1. Reads the lock from the named Dinkster source commit and computes interface
+   names: base-owned distributions that non-base engine packages depend on for
+   the target, including applicable normal and optional dependency edges.
+2. Resolves binary base wheels at the producer's root pins and variant index,
+   constraining only interface names to the engine lock's versions. Base-only
+   CUDA closure names follow the variant index, not the development lock's
+   incompatible CUDA versions. Every artifact records its exact URL, size and
+   SHA-256; downloads verify those bytes. An exact engine-lock artifact match
+   is lock-verified, otherwise provenance is explicitly index-verified.
 3. Writes the base manifest: `format: dinkster.base/1`, variant, python
    version, every wheel with its filename, size, sha256 and source index,
    the `workerProtocol` the engine wheels in this lock declare, the minimum
@@ -280,10 +288,14 @@ and safe permission bits are preserved; traversal, absolute paths, hardlinks,
 devices and duplicate paths are refused. The manifest interpreter must run in
 isolation before promotion. A missing execute bit is repaired with a warning.
 
-The base is rebuilt only when its part of the lock changes. The workflow
-compares the base-relevant lock entries with the newest published base
-manifest and skips the build when they match, so a tag that only touches
-Dinkster code produces no new base.
+The workflow compares Python, interpreter, root pins, torch index, interface
+versions and compatibility metadata with the newest published base manifest,
+and skips rebuilding and publication when they match. A generic development-lock
+change to a base-only CUDA dependency does not override the published base.
+Engine releases never trigger base publication; changes to engine-side
+comfy-kitchen, comfy-aimdo or other non-base dependencies do not produce a base.
+Protocol, archive, hardware or replacement-membership changes still require
+compatible content identity.
 
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
@@ -295,8 +307,9 @@ the matching torchvision, numpy 2.5, `opencv-contrib-python-headless` 5.0.
 Python 3.14 receives bug fixes until late 2027 and security fixes until
 2030; every dependency of the engine and of the popular ComfyUI packs
 ships a cp314 or abi3 Windows wheel; `comfy-kitchen` and `triton-windows`
-are abi3 against 3.12 and run unchanged. The pins move together, by one
-change to the lock, and a change that moves them produces a new base. The
+are abi3 against 3.12 and run unchanged. Root pin changes belong to the producer
+definition and produce a new base; engine consumers use that base's exact
+variant selection, not the generic workspace CUDA closure. The
 one exception is `win-nvidia-cu126`: torch 2.14.1 is the last release with
 cu126 wheels, so that variant keeps torch 2.14.1 and the matching
 torchvision when the others move, and receives only the pins that still
