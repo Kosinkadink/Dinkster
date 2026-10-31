@@ -685,9 +685,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             catalog_lock=tmp_path / "catalog.lock" if source_inputs else None,
             artifacts=tmp_path / "artifacts" if source_inputs else None,
             prepare_packs=prepare_packs,
+            in_process_packs=("fixture",),
         )
 
     first = build(1, "1.0", first_hash)
+    assert first.in_process_packs == ("fixture",)
     first_dir = root / "generations" / "1"
     set_current(root, 1)
     second = build(2, "2.0", second_hash)

@@ -24,7 +24,13 @@ from packaging.utils import parse_wheel_filename
 
 from .environment_constraints import effective_constraints, requirement_hashes
 from .environment_downloads import fetch_artifact
-from .environment_state import EnvironmentError, content_digest, interpreter, write_document
+from .environment_state import (
+    EnvironmentError,
+    content_digest,
+    interpreter,
+    read_document,
+    write_document,
+)
 
 DEFAULT_VARIANTS = Path(__file__).with_name("local_variants.toml")
 
@@ -169,7 +175,8 @@ def _wheels(
             local = Path(unquote(urlsplit(url).path))
             if urlsplit(url).scheme != "file":
                 raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
-            sha, size = content_digest(local)[7:], local.stat().st_size
+            sha = sha or content_digest(local)[7:]
+            size = size if size is not None else local.stat().st_size
         destination = store / "wheels" / sha / filename
         mirror = (
             str(Path(unquote(urlsplit(url).path)).parent)
@@ -192,6 +199,8 @@ def _wheels(
 
 def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[str, Any]:
     """Resolve once, retain exact wheels, and return ordinary generation build inputs."""
+    if content_digest(source / "uv.lock") != selection["lockDigest"]:
+        raise EnvironmentError("checkout lock changed after planning; request a new plan")
     with tempfile.TemporaryDirectory(prefix="dinkster-local-") as directory:
         work = Path(directory)
         if selection["override"]:
@@ -312,12 +321,37 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
             _run([str(python), "-I", "-c", "import sys; print(sys.base_prefix)"], cwd=source)
         )
         staging = work / "base"
-        shutil.copytree(
-            prefix,
-            staging / "python",
-            symlinks=False,
-            ignore=shutil.ignore_patterns("site-packages", "__pycache__"),
-        )
+        ignored = shutil.ignore_patterns("site-packages", "__pycache__")
+        if selection["override"] and os.name != "nt":
+            layout = json.loads(
+                _run(
+                    [
+                        str(python),
+                        "-I",
+                        "-c",
+                        "import json,sysconfig; print(json.dumps({"
+                        "'stdlib':sysconfig.get_path('stdlib'),"
+                        "'library':sysconfig.get_config_var('LDLIBRARY'),"
+                        "'libdir':sysconfig.get_config_var('LIBDIR'),"
+                        "'version':sysconfig.get_python_version()}))",
+                    ],
+                    cwd=source,
+                )
+            )
+            (staging / "python/bin").mkdir(parents=True)
+            shutil.copy2(python, staging / "python/bin/python3")
+            shutil.copytree(
+                layout["stdlib"],
+                staging / "python/lib" / f"python{layout['version']}",
+                ignore=ignored,
+            )
+            if layout["library"] and layout["libdir"]:
+                library = Path(layout["libdir"]) / layout["library"]
+                if library.is_file():
+                    for name in {library.name, library.resolve().name}:
+                        shutil.copy2(library, staging / "python/lib" / name)
+        else:
+            shutil.copytree(prefix, staging / "python", symlinks=False, ignore=ignored)
         base["interpreter"]["files"] = {
             path.relative_to(staging).as_posix(): content_digest(path)
             for path in sorted((staging / "python").rglob("*"))
@@ -330,7 +364,19 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         identity = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
         base["id"] = identity
         base_root = store / "bases" / identity[7:]
-        if not base_root.exists():
+        if base_root.exists():
+            cached_files = {
+                path.relative_to(base_root).as_posix(): content_digest(path)
+                for path in sorted((base_root / "python").rglob("*"))
+                if path.is_file() and "__pycache__" not in path.relative_to(base_root).parts
+            }
+            if (
+                read_document(base_root / "manifest.json") != base
+                or cached_files != base["interpreter"]["files"]
+                or any(path.is_symlink() for path in (base_root / "python").rglob("*"))
+            ):
+                raise EnvironmentError("cached local base differs from its recorded manifest")
+        else:
             write_document(staging / "manifest.json", base)
             base_root.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(staging), base_root)

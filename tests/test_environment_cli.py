@@ -6,6 +6,7 @@ import importlib.util
 import json
 import marshal
 import os
+import shlex
 import shutil
 import struct
 import subprocess
@@ -213,6 +214,31 @@ def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: P
     assert not root.exists()
 
 
+def test_from_scratch_rejects_a_checkout_lock_changed_after_planning(tmp_path: Path):
+    from dinkster_supervisor.environment_local import (
+        DEFAULT_VARIANTS,
+        local_selection,
+        prepare_local,
+    )
+
+    source = Path(__file__).resolve().parents[1]
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = tmp_path / "checkout" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    checkout = tmp_path / "checkout"
+    selection = local_selection(checkout, "linux-cpu", DEFAULT_VARIANTS, Path(sys.executable))
+    lock = checkout / "uv.lock"
+    lock.write_bytes(lock.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="checkout lock changed after planning"):
+        prepare_local(checkout, selection, tmp_path / "absent-store")
+    assert not (tmp_path / "absent-store").exists()
+
+
 def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path):
     variants = tmp_path / "variants.toml"
     variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
@@ -414,6 +440,27 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    uv = shutil.which("uv")
+    assert uv is not None
+    tools = tmp_path / "guarded-tools"
+    tools.mkdir()
+    guard = tools / "guard.py"
+    guard.write_text(
+        "import subprocess, sys\n"
+        "args = sys.argv[1:]\n"
+        "if 'compile' in args or (('sync' in args or 'install' in args) and\n"
+        "    ('--offline' not in args or '--no-index' not in args)):\n"
+        "    sys.exit('published paths must not resolve dependencies')\n"
+        f"sys.exit(subprocess.call([{uv!r}, *args]))\n"
+    )
+    shim = tools / ("uv.cmd" if os.name == "nt" else "uv")
+    shim.write_text(
+        f'@"{sys.executable}" "{guard}" %*\n'
+        if os.name == "nt"
+        else f'#!/bin/sh\n{shlex.quote(sys.executable)} {shlex.quote(str(guard))} "$@"\n'
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):

@@ -437,7 +437,11 @@ def build_generation(
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
         provisioned: set[str] = set()
-        if source_generation is not None or pack_locks or in_process_packs:
+        if (
+            source_generation is not None
+            or pack_locks
+            or (in_process_packs and prepare_packs is None)
+        ):
             if own_environment_size is None:
                 raise EnvironmentError("pack planning requires the measured own-environment size")
             for operation in ("preflight", "rebuild", "doctor"):
