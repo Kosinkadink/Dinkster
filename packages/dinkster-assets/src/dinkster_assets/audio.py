@@ -95,6 +95,7 @@ def register_audio_value_type(
         meta=audio_meta,
         input_convert=audio_input,
         validate_encoded_buffer=validate_audio_encoded,
+        asset_references_complete=True,
     )
     registry.register_rendition(type_id, "wav", mime="audio/wav", render=render_audio_wav)
     registry.register_rendition(

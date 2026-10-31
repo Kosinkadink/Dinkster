@@ -200,6 +200,9 @@
   explicit batch selection, normalized selectors in cache identity, and
   structured invalid or unavailable responses. Waveforms use fixed colors
   without antialiasing or labels
+- AUDIO asset references include nested concatenated sources. Encoded admission
+  rejects missing external references and conflicting byte sizes for one identity;
+  inline-only audio has no external asset dependency. This does not enable cleanup.
 - Native audio saving through PyAV: FLAC, MP3 with V0/128k/320k quality, and
   Opus with 64k-320k bit rates and 48 kHz coercion of unsupported rates; one
   ordered published asset per batch element under a mounted save target
