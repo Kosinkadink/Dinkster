@@ -11,6 +11,7 @@ identity, equality, and fingerprint never change.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import BinaryIO, Protocol, runtime_checkable
 
 from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord, open_verified, verified_local_path
+from .revision import open_local_file, windows_file_revision
 
 
 class AssetResolver(Protocol):
@@ -39,11 +41,15 @@ class RecordedAssetResolver(Protocol):
     def resolve_asset(self, digest: str) -> AssetResolution | None: ...
 
 
-LocalFileSignature = tuple[int, int, int, int, int]
+LocalFileSignature = tuple[int, ...]
 
 
-def local_file_signature(stat: os.stat_result) -> LocalFileSignature:
-    return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino
+def local_file_signature(stat: os.stat_result, source: Path | int) -> LocalFileSignature:
+    if isinstance(source, Path) and sys.platform == "win32":
+        with open_local_file(source) as handle:
+            return local_file_signature(source.stat(), handle.fileno())
+    signature = stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino
+    return (*signature, windows_file_revision(source)) if sys.platform == "win32" else signature
 
 
 @runtime_checkable
@@ -91,9 +97,12 @@ class LocalAssetRef:
 
     def open(self) -> BinaryIO:
         path, signature = self._location()
-        handle = path.open("rb")
         try:
-            opened = local_file_signature(os.fstat(handle.fileno()))
+            handle = open_local_file(path)
+        except OSError as error:
+            raise AssetError("local asset is unavailable or has an active writer") from error
+        try:
+            opened = local_file_signature(os.fstat(handle.fileno()), handle.fileno())
             # Windows creation time can differ between path and descriptor stats.
             if (
                 opened[:2] != signature[:2]
@@ -101,6 +110,9 @@ class LocalAssetRef:
                 or (os.name != "nt" and opened[2] != signature[2])
             ):
                 raise AssetError("local asset changed while opening")
+        except OSError as error:
+            handle.close()
+            raise AssetError("local asset revision is unavailable while opening") from error
         except BaseException:
             handle.close()
             raise
