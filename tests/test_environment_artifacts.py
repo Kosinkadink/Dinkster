@@ -441,7 +441,9 @@ def test_custom_acquisition_uses_published_target_and_actual_base_ownership(
     )
     release = mirror / "engine" / channel["engine"]["release"][7:]
     (release / filename).write_bytes(payload)
-    catalog.engine["artifacts"][1] = _artifact(filename, payload)
+    environment_artifacts.artifact_rows(catalog.engine["artifacts"], "name")[1].update(
+        _artifact(filename, payload)
+    )
     fields = ("name", "version", "filename", "size", "sha256", "index", "url")
     published_row = {key: published["wheels"][0][key] for key in fields}
     if failure == "published-hash":
@@ -502,9 +504,10 @@ def test_custom_acquisition_uses_published_target_and_actual_base_ownership(
             ),
         }
         assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
-        for kwargs in ({"base": custom}, {"base_sources": ()}):
-            with pytest.raises(EnvironmentError, match="paired"):
-                acquire(catalog, "fixture-cpu", store, **kwargs)
+        with pytest.raises(EnvironmentError, match="paired"):
+            acquire(catalog, "fixture-cpu", store, base=custom)
+        with pytest.raises(EnvironmentError, match="paired"):
+            acquire(catalog, "fixture-cpu", store, base_sources=())
     assert (_json(catalog.engine), _json(published), _json(custom)) == before
 
 
