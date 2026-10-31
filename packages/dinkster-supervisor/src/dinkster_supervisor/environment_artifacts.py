@@ -390,6 +390,23 @@ def dependency_wheels(selection: object) -> tuple[dict[str, object], ...]:
     return rows
 
 
+def validate_dependency_base(selection: object, base: dict[str, object]) -> None:
+    """Bind selected dependency metadata to the exact producer manifest, not generic pins."""
+    selected = dependency_wheels(selection)
+    if cast("dict[str, object]", selection)["base"] != base["id"]:
+        raise EnvironmentError("engine dependency lock selects a different base")
+    locked = {row["name"]: row for row in selected}
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    wheels = artifact_rows(base["wheels"], "filename")
+    for row in wheels:
+        if locked.get(row["name"]) != {key: row[key] for key in fields}:
+            raise EnvironmentError("base wheel differs from the engine dependency lock")
+    if {row["name"] for row in selected if row["name"] in cast("list[str]", base["replaces"])} != {
+        row["name"] for row in wheels
+    }:
+        raise EnvironmentError("engine lock contains a removed base-owned distribution")
+
+
 def engine_constraints(engine: dict[str, object], variant: str) -> str:
     """Use the same exact variant requirements for native pack builds and user installs."""
     selections = cast("dict[str, object]", engine["dependencies"])
@@ -467,20 +484,8 @@ def acquire(
     selected = None
     if selections is not None:
         selection = cast("dict[str, object]", selections).get(variant)
+        validate_dependency_base(selection, published_base)
         selected = dependency_wheels(selection)
-        if cast("dict[str, object]", selection)["base"] != published_base["id"]:
-            raise EnvironmentError("engine dependency lock selects a different base")
-        locked = {row["name"]: row for row in selected}
-        fields = ("name", "version", "filename", "size", "sha256", "index", "url")
-        for row in artifact_rows(published_base["wheels"], "filename"):
-            if locked.get(row["name"]) != {key: row[key] for key in fields}:
-                raise EnvironmentError("base wheel differs from the engine dependency lock")
-        if {
-            row["name"]
-            for row in selected
-            if row["name"] in cast("list[str]", published_base["replaces"])
-        } != {row["name"] for row in artifact_rows(published_base["wheels"], "filename")}:
-            raise EnvironmentError("engine lock contains a removed base-owned distribution")
     assert base_sources is not None
     acquire_base(base, base_sources, store)
     release_root = store / "engines" / catalog.channel.engine_release[7:]

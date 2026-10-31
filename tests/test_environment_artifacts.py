@@ -511,6 +511,70 @@ def test_custom_acquisition_uses_published_target_and_actual_base_ownership(
     assert (_json(catalog.engine), _json(published), _json(custom)) == before
 
 
+@pytest.mark.parametrize("damage", [None, "base", "hash", "removed"])
+def test_modern_channel_uses_exact_variant_metadata_not_generic_provenance(
+    tmp_path: Path, damage: str | None
+):
+    mirror = tmp_path / "mirror"
+    base, engine, channel = _mirror(mirror)
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    base["wheels"][0]["lockedVersion"] = "9.0"
+    identity = {key: base[key] for key in environment_artifacts._BASE_IDENTITY}
+    identity["archive"] = {"format": "tar+zstd"}
+    base["id"] = "sha256:" + hashlib.sha256(_json(identity)).hexdigest()
+    base_path = tmp_path / "base.json"
+    base_path.write_bytes(_json(base))
+    constraints = (
+        (release / "constraints.txt")
+        .read_bytes()
+        .replace(b"fixture-base==1.0", b"fixture-base==9.0")
+    )
+    (release / "constraints.txt").write_bytes(constraints)
+    engine["artifacts"][0] = _artifact("constraints.txt", constraints)
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    row = {key: base["wheels"][0][key] for key in fields}
+    selected = {"base": base["id"], "wheels": [row]}
+    if damage == "base":
+        selected["base"] = "sha256:" + "0" * 64
+    elif damage == "hash":
+        row["sha256"] = "0" * 64
+    elif damage == "removed":
+        selected["wheels"].append(
+            {
+                **row,
+                "name": "nvidia-cublas",
+                "version": "13.0",
+                "filename": "nvidia_cublas-13.0-py3-none-any.whl",
+                "url": "https://example.org/nvidia_cublas-13.0-py3-none-any.whl",
+            }
+        )
+    engine["dependencies"] = {"fixture-cpu": selected}
+    (release / "release-manifest.json").write_bytes(_json(engine))
+    before = (mirror / "channels/main.json").read_bytes()
+    if damage:
+        with pytest.raises(EnvironmentError, match="different base|differs|removed"):
+            write_channel(
+                release,
+                [base_path],
+                channel="main",
+                output_root=mirror,
+                minimum_desktop_version="0.2.0",
+            )
+        assert (mirror / "channels/main.json").read_bytes() == before
+    else:
+        write_channel(
+            release,
+            [base_path],
+            channel="main",
+            output_root=mirror,
+            minimum_desktop_version="0.2.0",
+        )
+        assert (
+            json.loads((mirror / "channels/main.json").read_bytes())["base"]["fixture-cpu"]["id"]
+            == base["id"]
+        )
+
+
 @pytest.mark.parametrize(
     ("target", "host", "architecture", "accepted"),
     [

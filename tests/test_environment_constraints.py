@@ -54,6 +54,36 @@ def test_selected_base_requirement_absent_from_engine_is_not_resolved():
     )
 
 
+def test_generic_base_only_versions_and_provenance_do_not_override_selected_artifacts():
+    base = {
+        "python": "3.14.10",
+        "replaces": ["cuda-toolkit"],
+        "wheels": [
+            {
+                "name": "cuda-toolkit",
+                "version": "13.2.2",
+                "lockedVersion": "13.0.3.0",
+                "filename": "cuda_toolkit-13.2.2-py3-none-any.whl",
+                "sha256": "b" * 64,
+            }
+        ],
+    }
+    exact = "cuda-toolkit==13.2.2 --hash=sha256:" + "b" * 64 + "\n"
+    generic = "cuda-toolkit==13.0.3.0 --hash=sha256:" + "a" * 64 + "\n"
+    assert effective_constraints("", base) == exact
+    assert effective_constraints(generic, base, interfaces=set()) == exact
+    assert effective_constraints(exact, base, strict=True) == exact
+    with pytest.raises(EnvironmentError, match="disagrees with engine lock"):
+        effective_constraints(generic, base, interfaces={"cuda-toolkit"})
+    with pytest.raises(EnvironmentError, match="require strict=False"):
+        effective_constraints(generic, base, interfaces=set(), strict=True)
+    marked = (
+        'cuda-toolkit==13.2.2 ; python_version >= "3.14" --hash=sha256:' + "b" * 64 + "\n"
+        'cuda-toolkit==99.0 ; python_version < "3.14" --hash=sha256:' + "c" * 64 + "\n"
+    )
+    assert effective_constraints(marked, base, interfaces={"cuda-toolkit"}) == exact
+
+
 def test_variant_install_lock_requires_exact_backend_version_and_hash():
     exact = "torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n"
     assert effective_constraints(exact, _base(), strict=True) == exact

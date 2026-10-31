@@ -1572,7 +1572,7 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     assert releases[1]["prerelease"] is False
 
 
-@pytest.mark.parametrize("system", ["windows", "macos"])
+@pytest.mark.parametrize("system", ["windows", "macos", "linux"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
@@ -1584,48 +1584,80 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     boundary = tmp_path / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
     boundary.parent.mkdir(parents=True)
     boundary.write_text("PROTOCOL_VERSION = 11\n")
-    pins = {"torch": "2.14.1", "torchvision": "0.29.1", "numpy": "2.5.1"}
+    pins = {
+        "torch": "2.14.1",
+        "torchvision": "0.29.1",
+        "numpy": "2.5.1",
+        "cuda-toolkit": "13.0.3.0",
+        "sympy": "1.14",
+    }
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "dinkster"\nrequires-python = ">=3.12"\n'
         "[dependency-groups]\nengine-base = " + json.dumps(["numpy==2.5.1"])
     )
     tag = f"cp{python.split('.')[0]}{python.split('.')[1]}"
     windows = system == "windows"
-    variant = "win-cpu" if windows else "mac-arm64"
-    target = "win_amd64" if windows else "macosx_14_0_arm64"
-    triple = "x86_64-pc-windows-msvc" if windows else "aarch64-apple-darwin"
+    variant = {"windows": "win-cpu", "macos": "mac-arm64", "linux": "linux-nvidia"}[system]
+    target = {
+        "windows": "win_amd64",
+        "macos": "macosx_14_0_arm64",
+        "linux": "manylinux1_x86_64.manylinux_2_5_x86_64",
+    }[system]
+    triple = {
+        "windows": "x86_64-pc-windows-msvc",
+        "macos": "aarch64-apple-darwin",
+        "linux": "x86_64-unknown-linux-gnu",
+    }[system]
     executable = "python/python.exe" if windows else "python/bin/python3"
     lock = []
     wheels = []
     for name, version in pins.items():
-        torch = windows and name in {"torch", "torchvision"}
-        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-{target}.whl"
+        torch = system != "macos" and name in {"torch", "torchvision"}
+        backend = "+cpu" if windows else "+cu132"
+        actual = "13.2.2" if name == "cuda-toolkit" else version + (backend if torch else "")
+        filename = f"{name.replace('-', '_')}-{actual}-{tag}-{tag}-{target}.whl"
         digest = hashlib.sha256(name.encode()).hexdigest()
         url = f"https://example.invalid/{filename}"
         wheels.append(
             dict(
                 name=name,
-                version=version + ("+cpu" if torch else ""),
+                version=actual,
                 filename=filename,
                 size=17,
                 sha256=digest,
                 url=url,
-                index="https://download.pytorch.org/whl/cpu"
+                index=f"https://download.pytorch.org/whl/{backend[1:]}"
                 if torch
                 else "https://pypi.org/simple",
-                verification="index" if torch else "lock",
+                verification="index" if torch or name == "cuda-toolkit" else "lock",
                 lockedVersion=version,
             )
         )
+        locked_url = (
+            f"https://example.invalid/cuda_toolkit-{version}-{tag}-{tag}-{target}.whl"
+            if name == "cuda-toolkit"
+            else url
+        )
         lock.append(
             f"[[package]]\nname = '{name}'\nversion = '{version}'\n"
-            f"wheels = [{{url = '{url}', size = 17, hash = 'sha256:{digest}'}}]\n"
+            f"wheels = [{{url = '{locked_url}', size = 17, hash = 'sha256:{digest}'}}]\n"
         )
+    lock.append(
+        "[[package]]\nname = 'consumer'\nversion = '1.0'\n"
+        "dependencies = [{name = 'torch'}, {name = 'torchvision'}, {name = 'numpy'}]\n"
+        "[package.optional-dependencies]\n"
+        "images = [{name = 'sympy', marker = \"extra == 'images' and python_version >= '3.13'\"},"
+        "{name = 'cuda-toolkit', marker = \"sys_platform == 'win32' "
+        "and python_version < '3.13'\"}]\n"
+        "[[package]]\nname = 'inactive-consumer'\nversion = '1.0'\n"
+        "resolution-markers = [\"python_version < '3.13'\"]\n"
+        "dependencies = [{name = 'cuda-toolkit'}]\n"
+    )
     (tmp_path / "uv.lock").write_text("\n".join(lock))
     original: dict = dict(
         format="dinkster.base/1",
         variant=variant,
-        platform=dict(os=system, arch="x86_64" if windows else "arm64"),
+        platform=dict(os=system, arch="arm64" if system == "macos" else "x86_64"),
         python=python,
         interpreter=dict(
             filename=f"cpython-{python}+20261026-{triple}-install_only_stripped.tar.gz",
@@ -1652,13 +1684,21 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         nonlocal payload, extras_payload, mutation, requested
         mutation = change
         manifest = deepcopy(original)
+        numpy = next(row for row in manifest["wheels"] if row["name"] == "numpy")
         if change == "version":
-            manifest["wheels"][-1]["version"] = "2.5.0"
-            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
+            numpy["version"] = "2.5.0"
+            numpy["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
         elif change == "wheel-hash":
-            manifest["wheels"][-1]["sha256"] = "0" * 64
+            numpy["sha256"] = "0" * 64
+        elif change == "optional-interface-version":
+            sympy = next(row for row in manifest["wheels"] if row["name"] == "sympy")
+            sympy.update(
+                version="1.15",
+                filename=f"sympy-1.15-{tag}-{tag}-{target}.whl",
+                verification="index",
+            )
         elif change == "torch-index":
-            manifest["wheels"][0]["index"] = "https://download.pytorch.org/whl/cu132"
+            manifest["wheels"][0]["index"] = "https://download.pytorch.org/whl/cu126"
         elif change == "protocol":
             manifest["workerProtocol"] = 10
         elif change == "python":
@@ -1672,7 +1712,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
                 f"torch-2.14.1+cpu-{tag}-{tag}-manylinux_2_28_x86_64.whl"
             )
         elif change == "missing-pin":
-            manifest["wheels"] = manifest["wheels"][:-1]
+            manifest["wheels"] = [row for row in manifest["wheels"] if row["name"] != "numpy"]
         identity = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
         ).hexdigest()
@@ -1767,6 +1807,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     for change in (
         "version",
         "wheel-hash",
+        "optional-interface-version",
         "torch-index",
         "protocol",
         "python",

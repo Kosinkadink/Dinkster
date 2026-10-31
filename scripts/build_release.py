@@ -193,6 +193,57 @@ def write_constraints(
     return constraints
 
 
+def base_environment(manifest: dict) -> dict[str, str]:
+    platform = manifest["platform"]
+    windows = platform["os"] == "windows"
+    return {
+        "implementation_name": "cpython",
+        "implementation_version": manifest["python"],
+        "os_name": "nt" if windows else "posix",
+        "platform_machine": "AMD64" if windows else platform["arch"],
+        "platform_release": "",
+        "platform_system": {"windows": "Windows", "linux": "Linux", "macos": "Darwin"}[
+            platform["os"]
+        ],
+        "platform_version": "",
+        "python_full_version": manifest["python"],
+        "platform_python_implementation": "CPython",
+        "python_version": ".".join(manifest["python"].split(".")[:2]),
+        "sys_platform": {"windows": "win32", "linux": "linux", "macos": "darwin"}[platform["os"]],
+        "extra": "",
+    }
+
+
+def engine_base_interfaces(lock: dict, base: dict) -> dict[str, set[str]]:
+    """Find target-applicable non-base -> base edges using producer-owned membership."""
+    from packaging.markers import Marker
+    from packaging.utils import canonicalize_name
+
+    environment = base_environment(base)
+    owned = set(base["replaces"])
+    packages: dict[str, list[dict]] = {}
+    for package in lock["package"]:
+        markers = package.get("resolution-markers", [])
+        if not markers or any(Marker(marker).evaluate(environment) for marker in markers):
+            packages.setdefault(canonicalize_name(package["name"]), []).append(package)
+    interfaces = set()
+    for name, entries in packages.items():
+        if name in owned:
+            continue
+        for package in entries:
+            groups = {"": package.get("dependencies", [])}
+            groups.update(package.get("optional-dependencies", {}))
+            for extra, dependencies in groups.items():
+                for dependency in dependencies:
+                    dependency_name = canonicalize_name(dependency["name"])
+                    if dependency_name in owned and (
+                        "marker" not in dependency
+                        or Marker(dependency["marker"]).evaluate(dict(environment, extra=extra))
+                    ):
+                        interfaces.add(dependency_name)
+    return {name: {entry["version"] for entry in packages.get(name, [])} for name in interfaces}
+
+
 def select_dependency_wheels(root: Path, uv: str, base_manifests: list[Path]) -> dict:
     """Record exact variant wheels without downloading or republishing third-party bytes."""
     from packaging.requirements import Requirement
@@ -224,13 +275,10 @@ def select_dependency_wheels(root: Path, uv: str, base_manifests: list[Path]) ->
         python = Version(manifest["python"])
         platform = manifest["platform"]
         if platform == {"os": "windows", "arch": "x86_64"}:
-            windows = True
             platforms = ["win_amd64"]
         elif platform == {"os": "linux", "arch": "x86_64"}:
-            windows = False
             platforms = LINUX_PLATFORMS
         elif platform == {"os": "macos", "arch": "arm64"}:
-            windows = False
             platforms = list(mac_platforms((14, 0), "arm64"))
         else:
             raise ValueError(f"unsupported published base platform: {platform!r}")
@@ -244,24 +292,7 @@ def select_dependency_wheels(root: Path, uv: str, base_manifests: list[Path]) ->
         priority = {}
         for index, tag in enumerate(tags):
             priority.setdefault(tag, index)
-        environment = {
-            "implementation_name": "cpython",
-            "implementation_version": manifest["python"],
-            "os_name": "nt" if windows else "posix",
-            "platform_machine": "AMD64" if windows else platform["arch"],
-            "platform_release": "",
-            "platform_system": {"windows": "Windows", "linux": "Linux", "macos": "Darwin"}[
-                platform["os"]
-            ],
-            "platform_version": "",
-            "python_full_version": manifest["python"],
-            "platform_python_implementation": "CPython",
-            "python_version": f"{python.major}.{python.minor}",
-            "sys_platform": {"windows": "win32", "linux": "linux", "macos": "darwin"}[
-                platform["os"]
-            ],
-            "extra": "",
-        }
+        environment = base_environment(manifest)
         for line in requirements.replace("\\\n", "").splitlines():
             if not line.strip():
                 continue

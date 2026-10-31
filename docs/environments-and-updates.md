@@ -702,9 +702,15 @@ writes the original documents to `engine-base-manifests/<variant>/manifest.json`
 The output directory must be new; a failed selection leaves no partial set.
 Acquisition requires a published release, complete archive parts with verified
 sizes/hashes, canonical manifest identity and compatibility with the engine's
-Python, platform, worker protocol and locked pins. Torch variant wheels match
-the lock's public version and the variant index; other same-name wheels must
-match locked artifact hashes. GitHub asset digests verify parts when available;
+Python, platform, worker protocol and root pins. Only target-applicable non-base
+dependency edges constrain base-owned versions to the generic lock, including
+optional groups and markers. Interface versions match by public version, and
+same-filename interface artifacts retain lock hash checks; base-only closure
+versions come from their verified producer index records. `lockedVersion` records
+provenance, not an additional requirement. Contributor setup applies the same
+interface rule to its generic export. Modern channel construction and client
+acquisition instead enforce the exact variant metadata/base id and wheel identities.
+GitHub asset digests verify parts when available;
 otherwise acquisition streams and hashes the part bytes. The adjacent extras
 index must match the selected base and variant; its downloaded size and any
 GitHub asset digest are checked, without inventing an extras hash field in the
@@ -716,10 +722,10 @@ channel locations. The channel writer consumes these qualified documents, not
 a second base-id list. A compatible published base set is still required before
 channel publication.
 
-The non-default `engine-base` dependency group carries torch 2.14.1,
-torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
-`uv.lock`. The release export explicitly includes the group; mandatory
-inference dependencies can also bring torch into ordinary workspace sync.
+The non-default `engine-base` dependency group carries numpy 2.5.1 and
+contrib-headless OpenCV 5.0.0.93 in `uv.lock`. The release export explicitly
+includes the group; mandatory inference dependencies bring torch and torchvision
+into ordinary workspace sync.
 These requirements do not embed an index URL. A torch/torchvision bump must have cp314 wheels
 for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.
