@@ -124,6 +124,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --all-packages
+      - name: Provision the wheel build backend before offline validation
+        run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
       - name: Verify pinned inference APIs
         run: uv run --no-sync python tools/verify_pinned_inference.py
       - run: bash scripts/ci-fast.sh

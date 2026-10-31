@@ -22,6 +22,12 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "secrets." not in text and "vars." not in text
     assert all("if" not in step for step in fast["steps"])
     assert any(step.get("run") == "bash scripts/ci-fast.sh" for step in fast["steps"])
+    gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
+    assert "export UV_OFFLINE=1" in gate
+    assert "-m 'not network'" in gate
+    commands = [step.get("run", "") for step in fast["steps"]]
+    backend = next(command for command in commands if "uv build --package" in command)
+    assert commands.index(backend) < commands.index("bash scripts/ci-fast.sh")
     export = next(
         step for step in fast["steps"] if "DINKSTER_CATALOG_WIRE_OUTPUT" in step.get("env", {})
     )
