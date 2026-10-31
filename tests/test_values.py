@@ -53,6 +53,64 @@ def test_core_registration_registers_curve_and_preserves_first_authority() -> No
     assert first.spec(CURVE_TYPE).decode(b"ignored") == "first"
 
 
+def test_curve_boundary_preserves_declared_dependencies_and_source_forms() -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_workers.boundary import ValueCodec
+
+    registry = make_registry()
+    codec = ValueCodec(registry)
+    curve = Curve(((2, -3), (-1, 4), (2, 7)), "linear")
+    wrapped = registry.wrap(CURVE_TYPE, curve)
+    assert value_asset_references({"curve": wrapped}, complete_registry=registry) == {}
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    ref = AssetRef(digest_bytes(b"curve-source"), "source.json", 12)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [ref.to_wire()]}
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == curve
+    assert received.fingerprint == wrapped.fingerprint
+    assert value_asset_references({"curve": received}, complete_registry=registry) == {
+        ref.digest: ref
+    }
+    payload = cast("dict[str, object]", wire["payload"])
+    oversized = Curve(tuple((index, -index) for index in range(4097)))
+    for encoded, expected in (
+        (b'{"points":[{"position":0,"value":1}]}', Curve(((0, 1),))),
+        (b"[]", Curve(())),
+        (registry.spec(CURVE_TYPE).encode(oversized), oversized),
+    ):
+        blobs[cast(int, payload["blob"])] = encoded
+        received, _ = codec.decode(wire, blobs, [])
+        assert received.resolve() == expected
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        b'{"points":[],"asset":{"digest":"hidden"}}',
+        b'{"points":[{"position":0,"value":1,"asset":"hidden"}]}',
+        b'{"points":[[0,{"asset":"hidden"}]]}',
+        b'{"points":[[false,1]]}',
+        b'{"points":[[0,NaN]]}',
+        b"not json",
+    ],
+)
+def test_curve_boundary_refuses_invalid_payload_before_exposure(encoded) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = make_registry()
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap(CURVE_TYPE, Curve(())), blobs, segments)
+    payload = cast("dict[str, object]", wire["payload"])
+    blobs[cast(int, payload["blob"])] = encoded
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
+
+
 def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -> None:
     registry = make_registry()
     with registry.registering_pack("mypack", ("mypack",)):
