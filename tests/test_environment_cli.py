@@ -43,7 +43,7 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         command[1:3] = [
             "-c",
             """
-import runpy, shlex, sys
+import runpy, sys
 from pathlib import Path
 from dinkster_supervisor import environment_local
 def forbidden(*args, **kwargs):
@@ -54,8 +54,16 @@ def audit(event, args):
         return
     command = args[1]
     if isinstance(command, str):
-        command = shlex.split(command, posix=False)
-    executable = args[0] or command[0].strip('"')
+        import ctypes
+        count = ctypes.c_int()
+        parse = ctypes.windll.shell32.CommandLineToArgvW
+        parse.restype = ctypes.POINTER(ctypes.c_wchar_p)
+        arguments = parse(ctypes.c_wchar_p(command), ctypes.byref(count))
+        try:
+            command = arguments[:count.value]
+        finally:
+            ctypes.windll.kernel32.LocalFree(ctypes.cast(arguments, ctypes.c_void_p))
+    executable = args[0] or command[0]
     if Path(executable).stem.lower() != "uv":
         return
     if "compile" in command:
