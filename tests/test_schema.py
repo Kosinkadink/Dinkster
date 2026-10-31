@@ -23,6 +23,7 @@ from dinkster_schema import (
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
+    OutputFamilySpec,
     OutputRepresents,
     OutputSpec,
     SaveTargetWidget,
@@ -848,15 +849,32 @@ def test_tuple_element_projects_only_a_stored_integer_selector() -> None:
         resolved_type_id(effective.outputs[0].type, {"Tuple": "list<INT>"})
 
 
-def test_tuple_schema_rejects_missing_or_shared_declaration_sources() -> None:
-    with pytest.raises(ValueError, match="independent"):
-        NodeSchema(
-            "test.bad_family", outputs=(OutputSpec("tuple", TypeExpr.tuple_from_family("missing")),)
-        )
-    with pytest.raises(ValueError, match="unknown tuple input"):
+@pytest.mark.parametrize("family_output", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "expression, message",
+    [
+        (TypeExpr.tuple_from_family("missing"), "independent"),
+        (TypeExpr.tuple_element("missing", "index"), "unknown tuple input"),
+        (TypeExpr.tuple_element("values", "missing"), "selector must reference an INT input"),
+        (TypeExpr.tuple_element("values", "label"), "selector must reference an INT input"),
+    ],
+)
+def test_tuple_schema_rejects_missing_or_shared_declaration_sources(
+    family_output: bool, nested: bool, expression: TypeExpr, message: str
+) -> None:
+    if nested:
+        expression = TypeExpr.list_of(TypeExpr.tuple_of(expression))
+    with pytest.raises(ValueError, match=message):
         NodeSchema(
             "test.bad_projection",
-            outputs=(OutputSpec("item", TypeExpr.tuple_element("missing", "index")),),
+            inputs=(
+                InputSpec("values", TypeExpr.tuple_of(TypeExpr.concrete("INT"))),
+                InputSpec("index", TypeExpr.concrete("INT")),
+                InputSpec("label", TypeExpr.concrete("STRING")),
+            ),
+            outputs=() if family_output else (OutputSpec("item", expression),),
+            output_families=(OutputFamilySpec("items", expression),) if family_output else (),
         )
     with pytest.raises(ValueError, match="tuple_of"):
         TypeExpr.concrete("tuple<IMAGE,INT>")

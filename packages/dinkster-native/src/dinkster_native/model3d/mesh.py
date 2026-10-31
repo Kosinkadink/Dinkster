@@ -68,7 +68,9 @@ def mesh_info(mesh: TriangleMeshBatch[torch.Tensor]) -> str:
     return info
 
 
-def mesh_item_to_glb_bytes(mesh: TriangleMeshBatch[torch.Tensor], index: int) -> bytes | None:
+def mesh_item_to_glb_bytes(
+    mesh: TriangleMeshBatch[torch.Tensor], index: int, metadata: dict[str, str] | None = None
+) -> bytes | None:
     """Serialize a batch item, including PBR attributes; empty items return None."""
     vertex_count = mesh.vertices.shape[1]
     face_count = mesh.faces.shape[1]
@@ -320,6 +322,8 @@ def mesh_item_to_glb_bytes(mesh: TriangleMeshBatch[torch.Tensor], index: int) ->
     gltf["materials"] = [material]
     if extensions_used:
         gltf["extensionsUsed"] = extensions_used
+    if metadata:
+        gltf["asset"]["extras"] = metadata
     gltf_json = json.dumps(gltf).encode("utf8")
     gltf_json += b" " * (-len(gltf_json) % 4)
     return b"".join(
