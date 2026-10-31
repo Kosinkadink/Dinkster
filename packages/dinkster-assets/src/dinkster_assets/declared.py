@@ -57,6 +57,7 @@ __all__ = [
     "install_declared_assets",
     "mount_roots_for_kind",
     "offer_produced_outputs",
+    "produced_output_scratch",
     "resolver_from_env",
     "use_declared_asset_pack",
     "use_produced_output_job",
