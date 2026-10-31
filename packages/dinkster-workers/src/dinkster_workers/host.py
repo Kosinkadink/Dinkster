@@ -182,25 +182,13 @@ _AIMDO_HEADROOM_TARGET_ENV = "COMFY_AIMDO_HEADROOM_TARGET"
 
 
 def _legacy_checkpoint_conversion_capable() -> bool:
-    """Advertise conversion only from a worker with the complete runtime."""
+    """Discover installed components; the converter validates runtime health on use."""
     try:
-        if not all(
+        return all(
             importlib.util.find_spec(module) is not None
             for module in ("dinkster_compat_comfy", "torch", "safetensors.torch")
-        ):
-            return False
-        legacy_sources = importlib.import_module("dinkster_compat_comfy.legacy_sources")
-        torch = importlib.import_module("torch")
-        safetensors_torch = importlib.import_module("safetensors.torch")
-        return (
-            callable(getattr(legacy_sources, "resolve_weight_source", None))
-            and callable(getattr(legacy_sources, "classify_conversion_error", None))
-            and isinstance(getattr(legacy_sources, "LegacyCheckpointError", None), type)
-            and callable(getattr(torch, "load", None))
-            and isinstance(getattr(torch, "Tensor", None), type)
-            and callable(getattr(safetensors_torch, "save_file", None))
         )
-    except Exception:  # noqa: BLE001 - broken optional runtime omits capability
+    except Exception:  # noqa: BLE001 - unavailable optional components omit capability
         return False
 
 
@@ -883,6 +871,8 @@ async def serve_many(
                 )
             )
 
+    connected = asyncio.Barrier(len(loaded))
+
     async def one(endpoint: str, item: tuple[Any, ...]) -> None:
         (
             manifest,
@@ -899,6 +889,14 @@ async def serve_many(
             schemas,
         ) = item
         reader, writer = await connect_endpoint(endpoint)
+        try:
+            # Capability imports must not delay another peer's authentication.
+            await connected.wait()
+        except BaseException:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            raise
         with use_declared_asset_pack(manifest.name):
             await serve_connection(
                 reader,

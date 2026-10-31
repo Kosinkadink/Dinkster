@@ -35,6 +35,11 @@
   `--pack` or `--legacy-pack` path resolves once from the server launch directory;
   only its absolute path reaches workers. Doctor reports the absolute path of the
   imported nodes entry and the interpreter that imported it.
+- Generic worker startup discovers optional legacy-checkpoint conversion
+  components without loading Torch. An advertised conversion command means the
+  components are installed, not that their native runtime has been loaded.
+  Conversion validates runtime health on first use; an unavailable converter
+  returns an explicit error and serving can select another capable worker.
 - Linux supports opt-in OS sandboxing for local isolated packs through
   `dinkster-serve --sandbox-packs`. Requested sandboxing fails closed unless full
   user, PID, mount, and network namespace isolation is available. Pack
