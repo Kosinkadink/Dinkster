@@ -183,4 +183,4 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked pyright
       - name: Verify Windows interpreter and native extension loading
-        run: uv run --locked pytest -q tests/test_interpreter_preflight.py
+        run: uv run --locked pytest -q tests/test_interpreter_preflight.py tests/test_asset_selections.py

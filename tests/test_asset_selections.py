@@ -199,6 +199,144 @@ def test_no_filesystem_or_library_fallback_and_changed_bytes_fail_closed(tmp_pat
         ref.read_bytes()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file sharing")
+def test_local_selection_refuses_active_writers_and_excludes_writes_until_close(
+    tmp_path: Path,
+) -> None:
+    path = seed(tmp_path / "vae", "real.safetensors", b"first")
+    env = grants(tmp_path, ("model/vae", path.parent))
+    selected = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(selected, LocalAssetRef)
+    with path.open("r+b") as writer:
+        stat = path.stat()
+        for data in (b"other", b"third"):
+            writer.seek(0)
+            writer.write(data)
+            writer.flush()
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            with pytest.raises(AssetError, match="file is open for writing") as binding_error:
+                resolve_asset_selection("model/vae", path.name, env=env)
+            assert path.name in str(binding_error.value)
+            assert "close" in str(binding_error.value)
+            with pytest.raises(AssetError, match="file is open for writing") as read_error:
+                selected.read_bytes()
+            assert path.name in str(read_error.value)
+    current = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(current, LocalAssetRef)
+    with current.open() as reader:
+        with pytest.raises(OSError):
+            with path.open("r+b"):
+                pass
+        with pytest.raises(OSError):
+            path.rename(path.with_suffix(".moved"))
+        with pytest.raises(OSError):
+            path.unlink()
+        assert reader.read() == b"third"
+    path.write_bytes(b"after")
+    with pytest.raises(AssetError):
+        current.read_bytes()
+    moved = path.rename(path.with_suffix(".moved"))
+    moved.unlink()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native revision discovery")
+def test_root_sharing_conflict_preserves_snapshot_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountDef, MountSnapshotResolver, MountTable, revision
+
+    path = seed(tmp_path / "vae", "real.safetensors", b"weights")
+    env = grants(tmp_path, ("model/vae", path.parent))
+
+    def sharing_conflict(_root: Path | int) -> int:
+        raise AssetError("root is held for deletion; close that handle")
+
+    monkeypatch.setattr(revision, "windows_file_revision", sharing_conflict)
+    table = MountTable()
+    table.add(MountDef(id="vae", path=path.parent), kind="model/vae")
+    capability = table.descriptors()[0]["localBindingCapability"]
+    assert isinstance(capability, dict)
+    assert capability["supported"] is False
+    assert "held for deletion" in capability["reason"]
+    resolver = MountSnapshotResolver(env["DINKSTER_MOUNTS_SNAPSHOT"])
+    for _ in range(2):
+        assert resolver.roots_for_kind("model/vae") == (path.parent,)
+        with pytest.raises(AssetError, match="background index"):
+            resolver.bind_relative_file("model/vae", path.parent, path.name)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file revisions")
+def test_same_stat_rewrite_invalidates_local_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import model, mounts
+
+    path = seed(tmp_path / "vae", "real.safetensors", b"first")
+    stat = path.stat()
+    signature = model.local_file_signature
+    monkeypatch.setattr(
+        model, "local_file_signature", lambda _stat, source: signature(stat, source)
+    )
+    monkeypatch.setattr(mounts, "local_file_signature", model.local_file_signature)
+    env = grants(tmp_path, ("model/vae", path.parent))
+    ref = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(ref, LocalAssetRef)
+    assert ref.read_bytes() == b"first"
+    path.write_bytes(b"other")
+    with pytest.raises(AssetError):
+        ref.read_bytes()
+
+
+def test_unsupported_revision_mount_waits_for_background_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountDef, MountTable, mounts
+
+    monkeypatch.setattr(
+        mounts,
+        "mount_revision_capability",
+        lambda _root: {"supported": False, "filesystem": "exFAT", "reason": "no file USN"},
+    )
+    root = tmp_path / "vae"
+    path = seed(root, "real.safetensors", b"weights")
+    env = grants(tmp_path, ("model/vae", root))
+    with pytest.raises(AssetError) as refused:
+        resolve_asset_selection("model/vae", path.name, env=env)
+    message = str(refused.value)
+    for detail in (
+        "grant-0",
+        "exFAT",
+        "file revision tracking unavailable",
+        "background index",
+        "verified AssetRef",
+        "missingEntryCount",
+    ):
+        assert detail in message
+    snapshot = Path(env["DINKSTER_MOUNTS_SNAPSHOT"])
+    table = MountTable(snapshot)
+    table.add(MountDef(id="vae", path=root), kind="model/vae")
+    with pytest.raises(AssetError, match="background index"):
+        table.bind_name(path.name, "model/vae")
+    table.scan("vae")
+    selected = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(selected, AssetRef)
+    assert selected.digest == digest_bytes(b"weights")
+    assert selected.read_bytes() == b"weights"
+    named = table.bind_name(path.name, "model/vae")
+    assert isinstance(named, AssetRef)
+    assert named.read_bytes() == b"weights"
+    if os.name == "nt":
+        assert table.descriptors()[0]["localBindingCapability"] == {
+            "supported": False,
+            "filesystem": "exFAT",
+            "reason": "no file USN",
+        }
+    table.remove("vae")
+    for ref in (selected, named):
+        with pytest.raises(AssetError):
+            ref.read_bytes()
+
+
 @pytest.mark.parametrize("verified", [False, True])
 def test_existing_file_refs_keep_verification_and_require_live_exact_grants(
     tmp_path: Path, verified: bool
