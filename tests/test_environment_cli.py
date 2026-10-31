@@ -43,16 +43,21 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         command[1:3] = [
             "-c",
             """
-import runpy, sys
+import runpy, shlex, sys
 from pathlib import Path
 from dinkster_supervisor import environment_local
 def forbidden(*args, **kwargs):
     raise AssertionError("published paths must not resolve locally")
 environment_local.prepare_local = forbidden
 def audit(event, args):
-    if event != "subprocess.Popen" or Path(args[0]).stem != "uv":
+    if event != "subprocess.Popen":
         return
     command = args[1]
+    if isinstance(command, str):
+        command = shlex.split(command, posix=False)
+    executable = args[0] or command[0].strip('"')
+    if Path(executable).stem.lower() != "uv":
+        return
     if "compile" in command:
         forbidden()
     if "sync" in command or "install" in command:
@@ -557,6 +562,8 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     failed_arguments[failed_arguments.index(str(store))] = str(failed_store)
     code, failed = _run(root, *failed_arguments, "--yes")
     assert code == 1 and failed["status"] == "error"
+    assert engine_wheel.name in failed["error"], failed
+    assert "corrupt or short data" in failed["error"], failed
     assert not (root / "project.json").exists() and not (root / "store").exists()
     assert not (failed_store / "projects.json").exists()
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()
