@@ -41,8 +41,8 @@ FILE3D_FORMATS = {
     FILE_3D_SPLAT_TYPE: frozenset({"splat"}),
     FILE_3D_SPZ_TYPE: frozenset({"spz"}),
     FILE_3D_KSPLAT_TYPE: frozenset({"ksplat"}),
-    FILE_3D_SPLAT_ANY_TYPE: frozenset({"ply", "splat", "spz", "ksplat"}),
-    FILE_3D_POINT_CLOUD_ANY_TYPE: frozenset({"ply"}),
+    FILE_3D_SPLAT_ANY_TYPE: frozenset({"", "ply", "splat", "spz", "ksplat"}),
+    FILE_3D_POINT_CLOUD_ANY_TYPE: frozenset({"", "ply"}),
 }
 
 
@@ -130,7 +130,7 @@ def register_file3d_types(
     def register(type_id: str, formats: frozenset[str] | None) -> TypeSpec:
         def typed(value: object) -> dict[str, object]:
             obj = coerce(value)
-            if formats is not None and obj["format"] and obj["format"] not in formats:
+            if formats is not None and obj["format"] not in formats:
                 raise AssetError(f"{type_id} does not accept format {obj['format']!r}")
             return obj
 
