@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -169,3 +170,92 @@ def test_selected_wheel_cannot_claim_an_unowned_distribution_or_false_filename()
     ]
     with pytest.raises(EnvironmentError, match="identity disagrees with filename"):
         effective_constraints("", base)
+
+
+@pytest.mark.parametrize("version", ["2.14.1+cu130", "2.15.0.dev1+vendor"])
+def test_explicit_custom_constraints_replace_both_closures_without_mutating_manifests(version: str):
+    custom = _base(version)
+    custom.update(source="user-defined", python="3.14.10")
+    custom["replaces"] = ["sympy", "torch"]
+    custom["wheels"] = [
+        {
+            "name": "torch",
+            "version": version,
+            "filename": f"torch-{version}-cp314-cp314-manylinux_2_28_x86_64.whl",
+            "sha256": "b" * 64,
+        },
+        {
+            "name": "sympy",
+            "version": "1.15",
+            "filename": "sympy-1.15-py3-none-any.whl",
+            "sha256": "c" * 64,
+        },
+    ]
+    published = _base()
+    before = deepcopy((custom, published))
+    engine = (
+        "torch==2.14.1+cpu --hash=sha256:" + "a" * 64 + "\n"
+        "sympy==1.14 --hash=sha256:" + "d" * 64 + "\n"
+        "nvidia-cublas==13.0 --hash=sha256:" + "e" * 64 + "\n"
+        'other==3.0 ; python_version >= "3.12" --hash=sha256:' + "f" * 64 + "\n"
+    )
+    assert effective_constraints(engine, custom, custom=True, published_base=published) == (
+        'other==3.0 ; python_version >= "3.12" --hash=sha256:' + "f" * 64 + "\n"
+        "sympy==1.15 --hash=sha256:" + "c" * 64 + "\n"
+        f"torch=={version} --hash=sha256:" + "b" * 64 + "\n"
+    )
+    assert (custom, published) == before
+    with pytest.raises(EnvironmentError, match="disagrees with engine lock"):
+        effective_constraints(engine, custom)
+
+
+@pytest.mark.parametrize(
+    ("present", "required"), [("2.14.0+cu130", "2.14.1"), ("2.15.0rc1+vendor", "2.15.0")]
+)
+def test_custom_torch_minimum_reports_versions_and_rebuild_instruction(present: str, required: str):
+    custom = _base(present)
+    custom.update(source="user-defined", python="3.14.10")
+    with pytest.raises(EnvironmentError) as error:
+        effective_constraints(
+            f"torch=={required} --hash=sha256:" + "a" * 64,
+            custom,
+            custom=True,
+            published_base=_base(),
+        )
+    assert f"requires torch {required}" in str(error.value)
+    assert f"provides torch {present}" in str(error.value)
+    assert "rebuild with dinkster-env update --variant NAME --variants PATH --yes" in str(
+        error.value
+    )
+
+
+def test_custom_torch_minimum_uses_target_python_markers():
+    custom = _base()
+    custom.update(source="user-defined", python="3.14.10")
+    engine = (
+        'torch==2.14.1 ; python_version >= "3.14" --hash=sha256:' + "a" * 64 + "\n"
+        'torch==99.0 ; python_version < "3.14" --hash=sha256:' + "c" * 64 + "\n"
+    )
+    assert effective_constraints(engine, custom, custom=True) == (
+        "torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n"
+    )
+    custom["python"] = "3.13.10"
+    with pytest.raises(EnvironmentError, match="requires torch 99.0"):
+        effective_constraints(engine, custom, custom=True)
+
+
+def test_custom_context_cannot_weaken_strict_published_alignment():
+    custom = _base()
+    custom.update(source="user-defined", python="3.14.10")
+    with pytest.raises(EnvironmentError, match="strict=False"):
+        effective_constraints("", custom, custom=True, strict=True)
+    with pytest.raises(EnvironmentError, match="user-defined"):
+        effective_constraints("", _base(), custom=True)
+    with pytest.raises(EnvironmentError, match="requires custom=True"):
+        effective_constraints("", _base(), published_base=_base())
+    engine = "torch==2.14.1+cpu --hash=sha256:" + "b" * 64
+    assert effective_constraints(engine, _base(), strict=True) == engine + "\n"
+    with pytest.raises(EnvironmentError, match="exact engine lock"):
+        effective_constraints(engine.replace("b" * 64, "c" * 64), _base(), strict=True)
+    with pytest.raises(EnvironmentError, match="disagrees with engine lock"):
+        effective_constraints(engine.replace("2.14.1+cpu", "2.14.1"), _base(), strict=True)

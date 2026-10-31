@@ -426,6 +426,88 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         thread.join()
 
 
+@pytest.mark.parametrize("failure", [None, "missing-base-dependency", "published-hash"])
+def test_custom_acquisition_uses_published_target_and_actual_base_ownership(
+    tmp_path: Path, failure: str | None
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    published, _, channel = _mirror(mirror)
+    catalog = discover((str(mirror),), "main")
+    filename = "fixture_engine-2.0-py3-none-any.whl"
+    payload = _wheel_payload(
+        "fixture_engine",
+        "2.0",
+        "nvidia-cublas>=13" if failure == "missing-base-dependency" else "fixture-base>=2",
+    )
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    (release / filename).write_bytes(payload)
+    catalog.engine["artifacts"][1] = _artifact(filename, payload)
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    published_row = {key: published["wheels"][0][key] for key in fields}
+    if failure == "published-hash":
+        published_row["sha256"] = "a" * 64
+    catalog.engine["dependencies"] = {
+        "fixture-cpu": {
+            "base": published["id"],
+            "wheels": [
+                published_row,
+                {
+                    **_artifact("torch-2.14.1+cpu-py3-none-any.whl", b"unused", key="filename"),
+                    "name": "torch",
+                    "version": "2.14.1+cpu",
+                    "index": "https://unreachable.invalid/simple",
+                    "url": "https://unreachable.invalid/torch-2.14.1+cpu-py3-none-any.whl",
+                },
+            ],
+        }
+    }
+    custom = json.loads(_json(published))
+    custom.update(variant="my-custom-base", replaces=["fixture-base", "torch"])
+    custom["wheels"] = [
+        {
+            **published["wheels"][0],
+            **_artifact(name, data, key="filename"),
+            "name": distribution,
+            "version": version,
+            "lockedVersion": None,
+        }
+        for distribution, version, name, data in (
+            ("fixture-base", "2.0", "fixture_base-2.0-py3-none-any.whl", b"custom dependency"),
+            ("torch", "2.15.0+vendor", "torch-2.15.0+vendor-py3-none-any.whl", b"custom torch"),
+        )
+    ]
+    identity = {key: custom[key] for key in environment_artifacts._BASE_IDENTITY}
+    identity["archive"] = {"format": "tar+zstd"}
+    custom.update(id="sha256:" + hashlib.sha256(_json(identity)).hexdigest(), source="user-defined")
+    cached = store / "bases" / custom["id"][7:] / "wheels"
+    cached.mkdir(parents=True)
+    for row, data in zip(custom["wheels"], (b"custom dependency", b"custom torch"), strict=True):
+        (cached / row["filename"]).write_bytes(data)
+    before = _json(catalog.engine), _json(published), _json(custom)
+    if failure:
+        with pytest.raises(
+            EnvironmentError,
+            match="nvidia-cublas absent" if failure == "missing-base-dependency" else "differs",
+        ):
+            acquire(catalog, "fixture-cpu", store, base=custom, base_sources=())
+        assert not list(store.glob("engines/*/constraints-fixture-cpu-*.txt"))
+    else:
+        constraints = acquire(catalog, "fixture-cpu", store, base=custom, base_sources=())
+        assert constraints.name == f"constraints-fixture-cpu-{custom['id'][7:]}.txt"
+        assert set(constraints.read_text().splitlines()) == {
+            "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
+            *(
+                f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
+                for row in custom["wheels"]
+            ),
+        }
+        assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
+        for kwargs in ({"base": custom}, {"base_sources": ()}):
+            with pytest.raises(EnvironmentError, match="paired"):
+                acquire(catalog, "fixture-cpu", store, **kwargs)
+    assert (_json(catalog.engine), _json(published), _json(custom)) == before
+
+
 @pytest.mark.parametrize(
     ("target", "host", "architecture", "accepted"),
     [

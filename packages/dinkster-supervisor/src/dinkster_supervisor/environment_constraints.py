@@ -23,13 +23,20 @@ def requirement_hashes(requirements: str) -> frozenset[str]:
     return frozenset(_HASH.findall(requirements.replace("\\\n", "").replace("\\\r\n", "")))
 
 
-def validate_base_requirements(wheels: tuple[Path, ...], base: dict[str, object]) -> None:
+def validate_base_requirements(
+    wheels: tuple[Path, ...],
+    base: dict[str, object],
+    *,
+    published_base: dict[str, object] | None = None,
+) -> None:
     """Check installed non-base wheel requirements against a native base, without resolving."""
     versions = {
         cast("str", row["name"]): Version(cast("str", row["version"]))
         for row in cast("list[dict[str, object]]", base["wheels"])
     }
     owned = set(cast("list[str]", base["replaces"]))
+    if published_base is not None:
+        owned.update(cast("list[str]", published_base["replaces"]))
     requirements: dict[str, list[Requirement]] = {}
     for path in wheels:
         try:
@@ -90,13 +97,25 @@ def validate_base_requirements(wheels: tuple[Path, ...], base: dict[str, object]
                     )
 
 
-def effective_constraints(engine: str, base: dict[str, object], *, strict: bool = False) -> str:
+def effective_constraints(
+    engine: str,
+    base: dict[str, object],
+    *,
+    strict: bool = False,
+    custom: bool = False,
+    published_base: dict[str, object] | None = None,
+) -> str:
     """Replace precisely the base producer's owned closure, including remove-only rows.
 
-    The caller verifies manifest identity first. Variant install locks require
-    exact versions and hashes; legacy exports match torch's public version.
+    The caller verifies manifest identity and non-base wheel requirements first.
+    Published locks retain exact alignment. Explicit custom bases replace both
+    closures and require at least the engine's applicable public torch version.
     All unrelated requirement markers and hashes are retained verbatim.
     """
+    if custom and (strict or base.get("source") != "user-defined"):
+        raise EnvironmentError("custom constraints require a user-defined base and strict=False")
+    if published_base is not None and not custom:
+        raise EnvironmentError("published_base replacement context requires custom=True")
     replaces = base.get("replaces")
     if not isinstance(replaces, list) or not replaces:
         raise EnvironmentError("base manifest must provide replacement membership")
@@ -110,6 +129,29 @@ def effective_constraints(engine: str, base: dict[str, object], *, strict: bool 
     if replacement_names != sorted(set(replacement_names)):
         raise EnvironmentError("base replacement names must be sorted and unique")
     owned = set(replacement_names)
+    if published_base is not None:
+        published_names = published_base.get("replaces")
+        if (
+            not isinstance(published_names, list)
+            or not published_names
+            or any(
+                not isinstance(name, str) or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None
+                for name in cast("list[object]", published_names)
+            )
+        ):
+            raise EnvironmentError("published base must provide normalized replacement membership")
+        original_names = cast("list[str]", published_names)
+        if original_names != sorted(set(original_names)):
+            raise EnvironmentError("published base replacement names must be sorted and unique")
+        owned.update(original_names)
+    marker_environment = cast("dict[str, str]", default_environment())
+    if custom:
+        python = Version(cast("str", base["python"]))
+        marker_environment.update(
+            python_full_version=str(python),
+            python_version=f"{python.major}.{python.minor}",
+            implementation_version=str(python),
+        )
     retained: list[str] = []
     locked: dict[str, set[Version]] = {}
     hashes: dict[str, set[str]] = {}
@@ -134,7 +176,14 @@ def effective_constraints(engine: str, base: dict[str, object], *, strict: bool 
         name = canonicalize_name(requirement.name)
         hashes.setdefault(name, set()).update(_HASH.findall(line))
         try:
-            locked.setdefault(name, set()).add(Version(pins[0].version))
+            version = Version(pins[0].version)
+            if (
+                not custom
+                or name != "torch"
+                or requirement.marker is None
+                or requirement.marker.evaluate(marker_environment)
+            ):
+                locked.setdefault(name, set()).add(version)
         except InvalidVersion as exc:
             raise EnvironmentError(f"invalid engine version for {name}") from exc
         if name not in owned:
@@ -152,7 +201,7 @@ def effective_constraints(engine: str, base: dict[str, object], *, strict: bool 
         name, version = wheel.get("name"), wheel.get("version")
         if not isinstance(name, str) or not isinstance(version, str):
             raise EnvironmentError("base wheel must name its distribution and version")
-        if name != canonicalize_name(name) or name not in owned or name in selected:
+        if name != canonicalize_name(name) or name not in replacement_names or name in selected:
             raise EnvironmentError(
                 f"base wheel {name} has invalid or duplicate replacement ownership"
             )
@@ -165,11 +214,22 @@ def effective_constraints(engine: str, base: dict[str, object], *, strict: bool 
                 raise EnvironmentError(f"base wheel identity disagrees with filename: {name}")
             versions = locked.get(name, set())
             declared = wheel.get("lockedVersion")
-            if declared is not None and not strict:
+            if declared is not None and not strict and not custom:
                 if not isinstance(declared, str):
                     raise EnvironmentError(f"invalid lockedVersion for {name}")
                 versions = versions | {Version(declared)}
-            if any(
+            if custom and name == "torch":
+                required = max(versions, default=None)
+                if required is not None and Version(required.public) > Version(
+                    parsed_version.public
+                ):
+                    raise EnvironmentError(
+                        f"engine requires torch {required.public}; custom base provides torch "
+                        f"{version}. Set torch in variants.toml to at least {required.public}, "
+                        "use a new variant name, and rebuild with dinkster-env update "
+                        "--variant NAME --variants PATH --yes"
+                    )
+            if not custom and any(
                 candidate != parsed_version
                 and not (
                     not strict
@@ -189,4 +249,6 @@ def effective_constraints(engine: str, base: dict[str, object], *, strict: bool 
         if strict and (not versions or hashes.get(name) != {sha}):
             raise EnvironmentError(f"base wheel {name} differs from the exact engine lock")
         additions.append(f"{name}=={version} --hash=sha256:{sha}")
+    if custom and "torch" not in selected:
+        raise EnvironmentError("custom base must provide a torch wheel")
     return "\n".join([*retained, *sorted(additions)]).strip() + "\n"

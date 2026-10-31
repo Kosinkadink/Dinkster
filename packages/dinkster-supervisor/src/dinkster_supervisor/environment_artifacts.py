@@ -436,29 +436,57 @@ def _dependency_source(row: dict[str, object], package_index: str | None) -> str
 
 
 def acquire(
-    catalog: EnvironmentCatalog, variant: str, store: Path, *, package_index: str | None = None
+    catalog: EnvironmentCatalog,
+    variant: str,
+    store: Path,
+    *,
+    package_index: str | None = None,
+    base: dict[str, object] | None = None,
+    base_sources: tuple[str, ...] | None = None,
 ) -> Path:
     """Populate verified artifacts and merged requirements under a held store writer lock."""
-    base = catalog.bases[variant]
+    published_base = catalog.bases[variant]
+    custom = base is not None
+    if custom != (base_sources is not None):
+        raise EnvironmentError("custom acquisition requires paired base and base_sources")
+    if base is None:
+        base = published_base
+        base_sources = catalog.base_sources[variant]
+    else:
+        if base.get("source") != "user-defined":
+            raise EnvironmentError("explicit base acquisition requires a user-defined base")
+        validate_manifest(
+            json.dumps(base).encode("utf-8"), cast("str", base["id"]), cast("str", base["variant"])
+        )
+        if any(
+            base[field] != published_base[field]
+            for field in ("platform", "python", "workerProtocol")
+        ):
+            raise EnvironmentError("custom base differs from the engine dependency target ABI")
     selections = catalog.engine.get("dependencies")
     selected = None
     if selections is not None:
         selection = cast("dict[str, object]", selections).get(variant)
         selected = dependency_wheels(selection)
-        if cast("dict[str, object]", selection)["base"] != base["id"]:
+        if cast("dict[str, object]", selection)["base"] != published_base["id"]:
             raise EnvironmentError("engine dependency lock selects a different base")
         locked = {row["name"]: row for row in selected}
         fields = ("name", "version", "filename", "size", "sha256", "index", "url")
-        for row in artifact_rows(base["wheels"], "filename"):
+        for row in artifact_rows(published_base["wheels"], "filename"):
             if locked.get(row["name"]) != {key: row[key] for key in fields}:
                 raise EnvironmentError("base wheel differs from the engine dependency lock")
         if {
-            row["name"] for row in selected if row["name"] in cast("list[str]", base["replaces"])
-        } != {row["name"] for row in artifact_rows(base["wheels"], "filename")}:
+            row["name"]
+            for row in selected
+            if row["name"] in cast("list[str]", published_base["replaces"])
+        } != {row["name"] for row in artifact_rows(published_base["wheels"], "filename")}:
             raise EnvironmentError("engine lock contains a removed base-owned distribution")
-    acquire_base(base, catalog.base_sources[variant], store)
+    assert base_sources is not None
+    acquire_base(base, base_sources, store)
     release_root = store / "engines" / catalog.channel.engine_release[7:]
-    owned = cast("list[str]", base["replaces"])
+    owned = set(cast("list[str]", base["replaces"]))
+    if custom:
+        owned.update(cast("list[str]", published_base["replaces"]))
     nonbase_wheels: list[Path] = []
     for row in artifact_rows(catalog.engine["artifacts"], "name"):
         name, sha = cast("str", row["name"]), cast("str", row["sha256"])
@@ -492,9 +520,18 @@ def acquire(
                     source = _dependency_source(row, package_index)
                     fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
         requirements = engine_constraints(catalog.engine, variant)
-        validate_base_requirements(tuple(nonbase_wheels), base)
-    merged = effective_constraints(requirements, base, strict=selected is not None)
-    constraints = release_root / f"constraints-{variant}.txt"
+    context = published_base if custom else None
+    if selected is not None or custom:
+        validate_base_requirements(tuple(nonbase_wheels), base, published_base=context)
+    merged = effective_constraints(
+        requirements,
+        base,
+        strict=selected is not None and not custom,
+        custom=custom,
+        published_base=context,
+    )
+    identity = f"{variant}-{cast('str', base['id'])[7:]}" if custom else variant
+    constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
     return constraints
 
