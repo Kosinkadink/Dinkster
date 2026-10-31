@@ -20,12 +20,12 @@ from test_frontend_artifact import artifact
 from scripts.build_release import (
     build,
     build_source_archive,
+    check_release,
     development_version,
-    download_external_wheels,
     extend_release,
     read_base_manifest,
     release_version,
-    stage_external_wheels,
+    select_dependency_wheels,
     versioned_sources,
     workspace_projects,
     write_constraints,
@@ -370,7 +370,10 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     assert build["permissions"] == {"actions": "read", "contents": "read"}
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "-m scripts.build_release" in commands
-    assert "--download-external-wheels" in commands
+    assert "--download-external-wheels" not in commands
+    assert 'arguments+=(--base-manifest "$manifest")' in commands
+    final_checks = "\n".join(step.get("run", "") for step in workflow["jobs"]["finalize"]["steps"])
+    assert "--check --max-bytes 100000000" in final_checks
     assert '--tag "$RELEASE_TAG"' in commands
     assert "sha256sum -c SHA256SUMS" in commands
     assert "--identity-root" not in commands
@@ -790,7 +793,7 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
 
 
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
-def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
+def test_dependency_metadata_selects_target_wheels_and_enforces_exported_hashes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str
 ) -> None:
     source = tmp_path / "source"
@@ -826,7 +829,10 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     lock = ""
     requirements = []
     for package, wheels in records.items():
-        lock += f'[[package]]\nname = "{package}"\nversion = "1.0"\nwheels = [\n'
+        lock += (
+            f'[[package]]\nname = "{package}"\nversion = "1.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\nwheels = [\n'
+        )
         for row in wheels:
             lock += (
                 "{"
@@ -910,9 +916,8 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     mac_base_manifest = tmp_path / "mac-base-manifest.json"
     mac_base_manifest.write_text(json.dumps(mac_manifest))
     base_manifests = [base_manifest, linux_base_manifest, mac_base_manifest]
-    output = tmp_path / "downloads"
-    result = download_external_wheels(tmp_path, output, "uv", base_manifests)
-    assert {path.name for path in result} == {
+    result = select_dependency_wheels(tmp_path, "uv", base_manifests)
+    assert {row["filename"] for selection in result.values() for row in selection["wheels"]} == {
         shared.name,
         win.name,
         linux.name,
@@ -922,21 +927,24 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         win_only.name,
         mac_only.name,
     }
-    assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
+    for selection in result.values():
+        for row in selection["wheels"]:
+            assert row["size"] == (source / row["filename"]).stat().st_size
+            assert (
+                row["sha256"] == hashlib.sha256((source / row["filename"]).read_bytes()).hexdigest()
+            )
+            assert row["index"] == "https://pypi.org/simple"
+    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
+    linux.unlink()
+    assert select_dependency_wheels(tmp_path, "uv", base_manifests) == result
+    assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before - {
+        linux.relative_to(tmp_path)
+    }
     original = requirements[0]
     requirements[0] = "shared==1.0 --hash=sha256:" + "0" * 64
     with pytest.raises(ValueError, match=f"no locked {tag} wheel for shared"):
-        download_external_wheels(tmp_path, tmp_path / "unauthorized", "uv", base_manifests)
+        select_dependency_wheels(tmp_path, "uv", base_manifests)
     requirements[0] = original
-    linux.unlink()
-    with pytest.raises(OSError):
-        download_external_wheels(tmp_path, tmp_path / "unavailable", "uv", base_manifests)
-    assert not (tmp_path / "unavailable" / linux.name).exists()
-    linux.write_bytes(linux.name.encode())
-    shared.write_bytes(b"x" * shared.stat().st_size)
-    with pytest.raises(ValueError, match="does not match lock"):
-        download_external_wheels(tmp_path, tmp_path / "corrupt", "uv", base_manifests)
-    assert not (tmp_path / "corrupt" / shared.name).exists()
     (tmp_path / "uv.lock").write_text(
         lock.replace(
             linux.as_uri(),
@@ -944,10 +952,10 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         )
     )
     with pytest.raises(ValueError, match=f"no locked {tag} wheel for native on manylinux"):
-        download_external_wheels(tmp_path, tmp_path / "missing-target", "uv", base_manifests)
+        select_dependency_wheels(tmp_path, "uv", base_manifests)
     requirements[:] = ["shared @ https://example.invalid/shared.whl"]
     with pytest.raises(ValueError, match="unsupported direct wheel requirement"):
-        download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv", base_manifests)
+        select_dependency_wheels(tmp_path, "uv", base_manifests)
 
 
 @pytest.mark.parametrize(
@@ -1043,8 +1051,9 @@ def test_base_archive_contract_and_canonical_identity(tmp_path: Path, change: st
             read_base_manifest(path)
 
 
-def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
+def test_dependency_metadata_uses_producer_ownership_names_per_variant(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = tmp_path / "candidates"
     source.mkdir()
@@ -1090,7 +1099,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
             "python": "3.14.0",
             "interpreter": {},
             "wheels": members,
-            "replaces": [row["name"] for row in members],
+            "replaces": [row["name"].replace("_", "-") for row in records],
             "workerProtocol": 1,
             "nvidia": None,
             "archive": {"format": "tar+zstd"},
@@ -1109,48 +1118,63 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
         path.write_text(json.dumps(manifest))
         manifests.append(path)
 
-    for label, bases, targets, expected in (
-        ("shared", manifests, {"cpu", "cuda"}, {wheel.name for wheel in wheels[2:]}),
-        ("none", [], {"cpu", "cuda"}, {wheel.name for wheel in wheels}),
-        ("partial", manifests[:1], {"cpu", "cuda"}, {wheel.name for wheel in wheels}),
-    ):
-        output = tmp_path / label
-        output.mkdir()
-        staged = stage_external_wheels(tmp_path, output, wheels, bases, targets)
-        assert {wheel.name for wheel in staged} == expected
-        assert {wheel.name for wheel in output.iterdir()} == expected
-        assert all(wheel.read_bytes() == (source / wheel.name).read_bytes() for wheel in staged)
+    def export(root: Path, output: Path, wheels: list[Path], uv: str) -> Path:
+        path = output / "constraints.txt"
+        path.write_text(
+            "\n".join(f"{row['name']}==1.0 --hash=sha256:{row['sha256']}" for row in records)
+        )
+        return path
 
-    plans = []
+    monkeypatch.setattr("scripts.build_release.write_constraints", export)
+    # The two bases deliberately disagree on bytes and membership; ownership is by name.
     for path in manifests:
         manifest = json.loads(path.read_text())
-        manifest["archive"]["parts"] = []
-        plan = tmp_path / f"plan-{path.name}"
-        plan.write_text(json.dumps(manifest))
-        plans.append(plan)
-    output = tmp_path / "plans"
-    output.mkdir()
-    assert {
-        path.name
-        for path in stage_external_wheels(tmp_path, output, wheels, plans, {"cpu", "cuda"})
-    } == {wheel.name for wheel in wheels}
-
-    with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests, {"cpu"})
-    with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1] * 2, {"cpu"})
+        for row in manifest["wheels"]:
+            row["name"] = row["name"].replace("_", "-")
+        identity = {key: value for key, value in manifest.items() if key not in {"id", "signature"}}
+        identity["archive"] = {"format": "tar+zstd"}
+        manifest["id"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
+        )
+        path.write_text(json.dumps(manifest))
+    result = select_dependency_wheels(tmp_path, "uv", manifests)
+    assert {row["name"] for row in result["cpu"]["wheels"]} == {
+        "common",
+        "transitive",
+        "cpu-only",
+        "changed-hash",
+        "changed-size",
+    }
+    assert {row["name"] for row in result["cuda"]["wheels"]} == {
+        "common",
+        "transitive",
+        "changed-hash",
+        "changed-size",
+    }
+    assert (
+        next(row for row in result["cuda"]["wheels"] if row["name"] == "changed-hash")["sha256"]
+        == "0" * 64
+    )
+    assert (
+        next(row for row in result["cuda"]["wheels"] if row["name"] == "changed-size")["size"]
+        == records[-1]["size"] + 1
+    )
+    with pytest.raises(ValueError, match="select at least one"):
+        select_dependency_wheels(tmp_path, "uv", [])
+    with pytest.raises(ValueError, match="duplicate base variant"):
+        select_dependency_wheels(tmp_path, "uv", manifests[:1] * 2)
     damaged = json.loads(manifests[0].read_text())
     damaged["python"] = "3.14.1"
     manifests[0].write_text(json.dumps(damaged))
     with pytest.raises(ValueError, match="id does not match"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1], {"cpu"})
+        select_dependency_wheels(tmp_path, "uv", manifests[:1])
     damaged["format"] = "another.base/1"
     manifests[0].write_text(json.dumps(damaged))
     with pytest.raises(ValueError, match="unsupported base manifest format"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1], {"cpu"})
-    wheels[0].write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="does not match a locked artifact"):
-        stage_external_wheels(tmp_path, tmp_path, wheels[:1], [], set())
+        select_dependency_wheels(tmp_path, "uv", manifests[:1])
 
 
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
@@ -1264,6 +1288,41 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
                 frontend,
                 payload_artifacts=[payload, candidate],
             )
+
+
+def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budget(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_release import write_manifest
+
+    names = [
+        "dinkster-1.0-py3-none-any.whl",
+        "dinkster_api-1.0-py3-none-any.whl",
+        "dinkster_supervisor-1.0-py3-none-any.whl",
+        "constraints.txt",
+        "dinkster-tools-windows-x86_64.zip",
+    ]
+    for size, name in enumerate(names, 1):
+        (tmp_path / name).write_bytes(b"x" * size)
+    manifest = {"workspaceWheels": names[:3]}
+    write_manifest(tmp_path, manifest, [tmp_path / name for name in names])
+    expected = 1 + 2 + 3 + 4
+    expected += len((tmp_path / "release-manifest.json").read_bytes())
+    expected += len((tmp_path / "SHA256SUMS").read_bytes())
+    assert check_release(tmp_path, expected) == expected
+    with pytest.raises(ValueError, match="exceeds budget"):
+        check_release(tmp_path, expected - 1)
+    (tmp_path / names[-1]).write_bytes(b"large interpreter" * 1000)
+    assert check_release(tmp_path, expected) == expected
+    external = "numpy-1.0-py3-none-any.whl"
+    (tmp_path / external).write_bytes(b"external")
+    write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
+    with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
+        check_release(tmp_path, 100_000_000)
+    manifest["workspaceWheels"].append(external)
+    write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
+    with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
+        check_release(tmp_path, 100_000_000)
 
 
 @pytest.mark.parametrize("corruption", [None, "payload", "sums", "extra", "duplicate"])

@@ -130,6 +130,9 @@
   installed standard-suite distribution.
 - Development scaffolding is workspace-only and is excluded from engine and
   official-pack releases.
+- Engine release assembly records variant-specific dependency wheel identities
+  without uploading third-party wheels. Finalization rejects unexpected payloads
+  and enforces a 100 MB budget excluding native tools ZIPs.
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.
