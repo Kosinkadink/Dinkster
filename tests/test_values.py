@@ -4,6 +4,7 @@ import pickle
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, fields, replace
+from typing import cast
 
 import pytest
 from dinkster_values import (
@@ -305,6 +306,80 @@ def test_core_types_use_comfy_socket_identities_without_legacy_aliases() -> None
     )
     legacy_type_ids = {f"core.{name}" for name in ("int", "float", "string", "combo", "boolean")}
     assert not legacy_type_ids & set(registry.type_ids())
+
+
+@pytest.mark.parametrize(
+    ("type_id", "item", "encoded"),
+    [
+        (CORE_INT, -(2**63), b"json:-9223372036854775808"),
+        (CORE_INT, 2**64 - 1, b"json:18446744073709551615"),
+        (CORE_FLOAT, 3, b"json:3"),
+        (CORE_FLOAT, -2.75, b"json:-2.75"),
+        (CORE_BOOLEAN, False, b"json:false"),
+        (CORE_COMBO, True, b"json:true"),
+        (CORE_COMBO, 2**53 - 1, b"json:9007199254740991"),
+        (CORE_STRING, "outside-menu", b'json:"outside-menu"'),
+        ("HISTOGRAM", [2, 0, 7], b"json:[2,0,7]"),
+        ("core.absent", None, b"json:null"),
+    ],
+)
+def test_core_primitive_dependencies_follow_declared_metadata(type_id, item, encoded) -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_workers.boundary import ValueCodec
+
+    registry = make_registry()
+    spec = registry.spec(type_id)
+    wrapped = registry.wrap(type_id, item)
+    assert spec.encode(wrapped.resolve()) == encoded
+    assert value_asset_references({"value": wrapped}, complete_registry=registry) == {}
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == item
+    assert type(received.resolve()) is type(item)
+    assert received.fingerprint == wrapped.fingerprint
+    assert value_asset_references({"value": received}, complete_registry=registry) == {}
+    validator = spec.validate_encoded
+    assert validator is not None
+    validator(encoded, {"asset_refs": []})
+    ref = AssetRef(digest_bytes(b"external"), "external.bin", 8)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [ref.to_wire()]}
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == item
+    assert value_asset_references({"value": received}, complete_registry=registry) == {
+        ref.digest: ref
+    }
+
+
+@pytest.mark.parametrize(
+    ("type_id", "invalid"),
+    [
+        (CORE_INT, True),
+        (CORE_INT, 3.0),
+        (CORE_INT, {"asset": "hidden"}),
+        (CORE_FLOAT, True),
+        (CORE_FLOAT, float("inf")),
+        (CORE_FLOAT, float("nan")),
+        (CORE_FLOAT, [1.5]),
+        (CORE_BOOLEAN, 1),
+        (CORE_BOOLEAN, "true"),
+        ("core.absent", 0),
+        ("core.absent", {"asset": "hidden"}),
+    ],
+)
+def test_core_primitives_refuse_non_scalar_runtime_and_encoded_values(type_id, invalid) -> None:
+    registry = make_registry()
+    with pytest.raises((TypeError, ValueError)):
+        registry.wrap(type_id, invalid)
+    validator = registry.spec(type_id).validate_encoded
+    assert validator is not None
+    for encoded in (default_encode(invalid), b"pickle:unused", b"json: 3"):
+        with pytest.raises((TypeError, ValueError)):
+            validator(encoded, {})
 
 
 def test_core_string_rejects_embedded_payloads_and_noncanonical_wire() -> None:
