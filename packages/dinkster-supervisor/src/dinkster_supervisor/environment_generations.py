@@ -95,7 +95,7 @@ def pack_operation(
     uv: str = "uv",
 ) -> dict[str, object]:
     """Invoke the generation-owned provisioner without importing engine packages."""
-    if operation not in {"preflight", "rebuild", "doctor", "references"}:
+    if operation not in {"preflight", "acquire", "rebuild", "doctor", "references"}:
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
     command = [
         str(interpreter(generation)),
@@ -136,6 +136,11 @@ def pack_operation(
         text=True,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
+    if operation == "acquire" and result.returncode and not result.stdout.strip():
+        raise EnvironmentError(
+            "selected engine cannot acquire missing pack wheels; "
+            f"select a release supporting pack acquisition: {result.stderr.strip()}"
+        )
     try:
         raw: object = json.loads(result.stdout)
         if not isinstance(raw, dict):
@@ -339,6 +344,7 @@ def build_generation(
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
     prepare_packs: Callable[[Path], None] | None = None,
+    acquire_pack_wheels: bool = False,
     refresh_cache: bool = False,
     uv: str = "uv",
     source_kind: str = "published",
@@ -348,7 +354,8 @@ def build_generation(
     The caller has already verified/extracted the base and fetched the engine
     artifacts, and holds the project/store writer locks. ``constraints`` is
     the effective hashed requirements assembled for the selected base variant.
-    Pack preflight, rebuild and doctor run before source admission and inventory.
+    Pack preflight, optional acquisition, offline rebuild and doctor run before
+    source admission and inventory. Repair and move use only retained local wheels.
     Additional staging may run through ``prepare_packs``; any failure removes the
     incomplete target.
     """
@@ -444,7 +451,15 @@ def build_generation(
         ):
             if own_environment_size is None:
                 raise EnvironmentError("pack planning requires the measured own-environment size")
-            for operation in ("preflight", "rebuild", "doctor"):
+            operations = (
+                ("preflight", "acquire", "rebuild", "doctor")
+                if acquire_pack_wheels
+                else ("preflight", "rebuild", "doctor")
+            )
+            missing_pack_wheels = False
+            for operation in operations:
+                if operation == "acquire" and not missing_pack_wheels:
+                    continue
                 provision = pack_operation(
                     operation,
                     generation=destination,
@@ -455,9 +470,14 @@ def build_generation(
                     source_generation=source_generation if operation != "doctor" else None,
                     locks=pack_locks if operation != "doctor" else (),
                     in_process_packs=in_process_packs,
-                    offline=True,
+                    offline=operation != "acquire",
                     uv=uv,
                 )
+                if operation == "preflight":
+                    missing_pack_wheels = any(
+                        cast("int", row["downloadBytes"]) > 0
+                        for row in cast("list[dict[str, object]]", provision["packs"])
+                    )
                 provisioned = {
                     cast("str", row["pack"])
                     for row in cast("list[dict[str, object]]", provision["packs"])

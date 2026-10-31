@@ -97,6 +97,20 @@ def fetch_wheel(wheel: LockedWheel, store: Path, *, offline: bool = False) -> Pa
     return target
 
 
+def fetch_pack_wheels(plan: PackPlan, store: Path, *, offline: bool = False) -> tuple[Path, ...]:
+    """Acquire only selected locked wheels, with actionable pack and source diagnostics."""
+    plan.require_layering()
+    paths: list[Path] = []
+    for wheel in plan.wheels:
+        try:
+            paths.append(fetch_wheel(wheel, store, offline=offline))
+        except (ProvisionError, OSError, ValueError) as exc:
+            raise ProvisionError(
+                f"pack {plan.lock.pack}: {wheel.url}: download/verification failed: {exc}"
+            ) from exc
+    return tuple(paths)
+
+
 def provision_pack(
     plan: PackPlan,
     *,
@@ -128,7 +142,7 @@ def provision_pack(
         generation = packs.parent
         if not generation_python.resolve().is_relative_to((generation / "python").resolve()):
             raise ProvisionError("in-process interpreter must belong to target generation/python")
-    wheels = [fetch_wheel(wheel, wheel_store, offline=offline) for wheel in plan.wheels]
+    wheels = fetch_pack_wheels(plan, wheel_store, offline=offline)
     try:
         if in_process:
             destination.mkdir(parents=True)
@@ -349,7 +363,7 @@ def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "operation", choices=("preflight", "rebuild", "doctor", "terminal", "references")
+        "operation", choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")
     )
     parser.add_argument("--generation", type=Path, required=True)
     parser.add_argument("--generation-python", type=Path, required=True)
@@ -433,6 +447,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 locks=args.lock,
             )
             code = int(any(plan.conflicts for plan in plans))
+            if not code and args.operation == "acquire":
+                _require_fresh_generation(context.generation)
+                for plan in plans:
+                    fetch_pack_wheels(plan, context.wheel_store, offline=context.offline)
             if not code and args.operation == "rebuild":
                 changes = rebuild_generation(context, plans)
     except (ProvisionError, OSError, ValueError) as exc:
