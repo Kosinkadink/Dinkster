@@ -174,14 +174,53 @@ def test_default_component_writer_remains_separate_from_source_component_encodin
     save_video_stream(value, source_style, codec="h264", source_components=True)
     assert cast(dict[str, object], value["probe"])["fps"] == fps
     assert _packets(implicit.getvalue()) == _packets(explicit.getvalue())
-    assert b"crf=23.0" in _x264_options(implicit.getvalue())
-    assert b"bframes=0" in _x264_options(implicit.getvalue())
+    options = _x264_options(implicit.getvalue())
+    assert b"crf=18.0" in options
+    assert b"bframes=0" in options
+    assert b"rc_lookahead=40" in options and b"mbtree=1" in options
     with av.open(io.BytesIO(implicit.getvalue())) as container:
         # Four frames span 133467 ticks under the default microsecond timestamp policy.
         assert container.streams.video[0].average_rate == Fraction(4_000_000, 133_467)
     assert _x264_options(source_style.getvalue()) == _x264_options(
         _source_style_video(images, fps=fps, depth=8, color="sRGB")
     )
+
+
+def test_saved_source_file_retains_timestamps_without_streaming_encoder_options() -> None:
+    source = _source(b_frames=2)
+    selected = edit_video(
+        video_from_source(source), {"trim": {"start_time": 0.25, "duration": 0.5}}
+    )
+    output = io.BytesIO()
+    save_video_stream(selected, output, codec="h264", crf=18)
+    options = _x264_options(output.getvalue())
+    assert b"bframes=0" in options
+    assert b"rc_lookahead=40" in options and b"mbtree=1" in options
+    with av.open(io.BytesIO(output.getvalue()), mode="r") as container:
+        frames = list(container.decode(video=0))
+        assert len(frames) == 5
+        for i, frame in enumerate(frames):
+            assert frame.pts is not None and frame.time_base is not None
+            assert frame.pts * frame.time_base == Fraction(i, 10) + Fraction(1, 20)
+
+
+def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
+    value = assemble_video(
+        np.random.default_rng(97).integers(0, 256, (4, 64, 64, 3), dtype=np.uint8), fps=30
+    )
+    defaults, explicit_default, explicit = io.BytesIO(), io.BytesIO(), io.BytesIO()
+    save_video_stream(value, defaults, container="mkv", codec="av1")
+    save_video_stream(value, explicit_default, container="mkv", codec="av1", crf=24)
+    save_video_stream(value, explicit, container="mkv", codec="av1", crf=18)
+    assert _packets(defaults.getvalue()) == _packets(explicit_default.getvalue())
+    assert _packets(defaults.getvalue()) != _packets(explicit.getvalue())
+    for encoded in (defaults, explicit_default, explicit):
+        with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
+            frames = list(container.decode(video=0))
+            assert len(frames) == 4
+            for i, frame in enumerate(frames):
+                assert frame.pts is not None and frame.time_base is not None
+                assert frame.pts * frame.time_base == Fraction(round(i * 1000 / 30), 1000)
 
 
 @pytest.mark.parametrize("shape", [(2, 16, 25, 3), (2, 16, 24, 4)])
