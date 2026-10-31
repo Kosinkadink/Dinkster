@@ -55,7 +55,8 @@ angle = [
 ]
 release-publication = ["boto3>=1.40,<2", "dinkster-supervisor"]
 dev = [
-    { include-group = "release-publication" },
+    "boto3>=1.40,<2",
+    "dinkster-supervisor",
     "hypothesis>=6",
     "onnxruntime==1.29.0",
     "pytest>=8",
