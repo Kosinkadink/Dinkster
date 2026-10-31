@@ -2719,7 +2719,7 @@ class NodeSchema:
                 raise ValueError(
                     "input types cannot reference family or literal output declarations"
                 )
-        for output in self.outputs:
+        for output in (*self.outputs, *self.output_families):
             validate_output_type(output.type)
         if self.output_descriptors is not None:
             descriptor_input = inputs_by_id.get(self.output_descriptors.input)
