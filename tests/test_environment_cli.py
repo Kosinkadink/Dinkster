@@ -193,12 +193,13 @@ def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path
 def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: Path):
     root = tmp_path / "prospective"
     source = Path(__file__).resolve().parents[1]
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
     code, result = _run(
         root,
         "setup",
         "--from-scratch",
         "--variant",
-        "linux-cpu",
+        variant,
         "--source",
         str(source),
         "--python",
@@ -250,7 +251,8 @@ def test_from_scratch_rejects_a_checkout_lock_changed_after_planning(tmp_path: P
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / relative, target)
     checkout = tmp_path / "checkout"
-    selection = local_selection(checkout, "linux-cpu", DEFAULT_VARIANTS, Path(sys.executable))
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    selection = local_selection(checkout, variant, DEFAULT_VARIANTS, Path(sys.executable))
     lock = checkout / "uv.lock"
     lock.write_bytes(lock.read_bytes() + b"\n")
     with pytest.raises(ValueError, match="checkout lock changed after planning"):
@@ -261,12 +263,13 @@ def test_from_scratch_rejects_a_checkout_lock_changed_after_planning(tmp_path: P
 def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path):
     variants = tmp_path / "variants.toml"
     variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
     root = tmp_path / "prospective"
     arguments = (
         "setup",
         "--from-scratch",
         "--variant",
-        "linux-cpu",
+        variant,
         "--variants",
         str(variants),
         "--source",
@@ -275,7 +278,7 @@ def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path)
     )
     code, result = _run(root, *arguments)
     assert code == 1
-    assert "missing variants.toml row: variants.linux-cpu" in result["error"]
+    assert f"missing variants.toml row: variants.{variant}" in result["error"]
     assert "--python" in result["error"]
     code, result = _run(root, *arguments, "--python", sys.executable)
     assert code == 0
