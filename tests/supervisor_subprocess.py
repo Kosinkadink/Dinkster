@@ -8,6 +8,7 @@ import os
 import runpy
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -200,13 +201,21 @@ def _main() -> None:
     sys.argv = [module, *arguments]
     with _open_trace(trace_path) as trace:
         faulthandler.enable(file=trace)
-        faulthandler.dump_traceback_later(
-            25 if mode == "supervisor" else 5, repeat=True, file=trace
-        )
+        finished = threading.Event()
+
+        def observe() -> None:
+            while not finished.wait(25 if mode == "supervisor" else 5):
+                # The asynchronous walker can race freed frames on CPython 3.12.
+                # An attached Python thread holds the GIL while dumping stacks.
+                faulthandler.dump_traceback(file=trace, all_threads=True)
+
+        observer = threading.Thread(target=observe, daemon=True)
+        observer.start()
         try:
             runpy.run_module(module, run_name="__main__", alter_sys=True)
         finally:
-            faulthandler.cancel_dump_traceback_later()
+            finished.set()
+            observer.join()
             faulthandler.enable()
 
 
