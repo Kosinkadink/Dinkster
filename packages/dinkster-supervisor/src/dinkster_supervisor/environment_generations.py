@@ -340,6 +340,7 @@ def build_generation(
     prepare_packs: Callable[[Path], None] | None = None,
     refresh_cache: bool = False,
     uv: str = "uv",
+    source_kind: str = "published",
 ) -> Generation:
     """Build a target without activating it or touching another generation.
 
@@ -485,6 +486,7 @@ def build_generation(
             worker_protocol,
             files,
             in_process_packs,
+            source_kind,
         )
         generation.write(destination / "generation.json")
         return generation

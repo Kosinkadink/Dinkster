@@ -1,0 +1,46 @@
+# Dinkster-Environments aca248250946c10388898b0b987b7e48c6b7a451 variants.toml.
+# Runtime selection fields only; Windows uses the existing verified SQLite preparer.
+[base]
+python = "3.14.10"
+release = "20261026"
+packages = ["torch", "torchvision", "numpy", "opencv-contrib-python-headless"]
+
+[interpreters.windows]
+executable = "python/python.exe"
+
+[interpreters.linux]
+executable = "python/bin/python3"
+
+[interpreters.macos]
+executable = "python/bin/python3"
+
+[variants.win-nvidia]
+os = "windows"
+torch-index = "https://download.pytorch.org/whl/cu132"
+cuda = "cu132"
+minimumDriver = "580"
+minimumComputeCapability = "7.5"
+
+[variants.win-nvidia-cu126]
+os = "windows"
+torch-index = "https://download.pytorch.org/whl/cu126"
+cuda = "cu126"
+minimumDriver = "525"
+minimumComputeCapability = "5.0"
+maximumExclusiveComputeCapability = "10.0"
+
+[variants.win-cpu]
+os = "windows"
+torch-index = "https://download.pytorch.org/whl/cpu"
+cuda = ""
+
+[variants.linux-cpu]
+os = "linux"
+torch-index = "https://download.pytorch.org/whl/cpu"
+cuda = ""
+
+[variants.mac-arm64]
+os = "macos"
+arch = "arm64"
+torch-index = "https://pypi.org/simple"
+cuda = ""

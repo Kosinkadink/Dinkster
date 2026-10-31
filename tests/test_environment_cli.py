@@ -102,12 +102,22 @@ def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Pat
     assert "project channel" in result["error"]
 
 
-def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(tmp_path: Path):
+@pytest.mark.parametrize("source", ["published", "local"])
+def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
+    tmp_path: Path, source: str
+):
     generation = _generation(tmp_path, 1).parent
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_text())
+    document["source"] = source
+    metadata.write_text(json.dumps(document))
     (tmp_path / "current").write_bytes(b"1\n")
     code, result = _run(tmp_path, "doctor")
     assert code == 0
     assert result["status"] == "clean"
+    if source == "local":
+        assert result["source"] == "local"
+        assert "locally resolved, no base manifest" in result["plan"][0]
     module = generation / "python/module.py"
     module.write_bytes(b"ANSWER = 13\n")
     code, result = _run(tmp_path, "doctor")
@@ -134,6 +144,69 @@ def _runtime_project(root: Path) -> int:
         )
     )
     return port
+
+
+def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path: Path):
+    _runtime_project(tmp_path)
+    metadata = tmp_path / "generations/1/generation.json"
+    document = json.loads(metadata.read_text())
+    document["source"] = "local"
+    metadata.write_text(json.dumps(document))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    code, result = _run(tmp_path, "update", "--plan")
+    assert code == 1
+    assert "cannot channel-update a locally resolved generation" in result["error"]
+    assert "fresh published generation" in result["error"]
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: Path):
+    root = tmp_path / "prospective"
+    source = Path(__file__).resolve().parents[1]
+    code, result = _run(
+        root,
+        "setup",
+        "--from-scratch",
+        "--variant",
+        "linux-cpu",
+        "--source",
+        str(source),
+        "--python",
+        sys.executable,
+        "--mirror",
+        str(tmp_path / "nonexistent-release-host"),
+        "--plan",
+    )
+    assert code == 0
+    assert "resolve" in result["plan"][0]
+    assert "uv.lock" in result["plan"][0]
+    assert any("torch index" in line for line in result["plan"])
+    assert not root.exists()
+
+
+def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path):
+    variants = tmp_path / "variants.toml"
+    variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
+    root = tmp_path / "prospective"
+    arguments = (
+        "setup",
+        "--from-scratch",
+        "--variant",
+        "linux-cpu",
+        "--variants",
+        str(variants),
+        "--source",
+        str(Path(__file__).resolve().parents[1]),
+        "--plan",
+    )
+    code, result = _run(root, *arguments)
+    assert code == 1
+    assert "missing variants.toml row: variants.linux-cpu" in result["error"]
+    assert "--python" in result["error"]
+    code, result = _run(root, *arguments, "--python", sys.executable)
+    assert code == 0
+    assert any(sys.executable in line for line in result["plan"])
+    assert not root.exists()
 
 
 def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
