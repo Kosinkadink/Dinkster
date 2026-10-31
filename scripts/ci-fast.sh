@@ -19,6 +19,9 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
   tests/test_pack_environment.py \
+  tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
+  tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
+  tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
   tests/test_run_scripts.py \
   tests/test_launch.py \
   tests/test_environment_tools.py \
