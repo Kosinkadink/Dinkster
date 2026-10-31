@@ -83,7 +83,7 @@ jobs:
             python-version: "3.12"
             shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6"
             run_checks: true
             timeout-minutes: 30
           - os: linux
@@ -91,7 +91,7 @@ jobs:
             python-version: "3.12"
             shard: 2
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -99,7 +99,7 @@ jobs:
             python-version: "3.12"
             shard: 3
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -107,7 +107,23 @@ jobs:
             python-version: "3.12"
             shard: 4
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 5
+            shard_name: ", shard 5"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 6
+            shard_name: ", shard 6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
@@ -399,7 +415,7 @@ jobs:
           merge-multiple: true
       - name: Combine coverage and enforce the unchanged branch floor
         run: |
-          for shard in 1 2 3 4; do
+          for shard in 1 2 3 4 5 6; do
             test -f "coverage-data/.coverage.$shard"
           done
           for shard in 1 2 3; do
