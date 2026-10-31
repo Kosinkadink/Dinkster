@@ -252,6 +252,7 @@ class Generation:
     worker_protocol: int
     files: tuple[tuple[str, str], ...]
     in_process_packs: tuple[str, ...] = ()
+    source: str = "published"
 
     @classmethod
     def read(cls, path: Path) -> Generation:
@@ -292,6 +293,9 @@ class Generation:
         packs = cast("list[str]", entries)
         if len(set(packs)) != len(packs):
             raise EnvironmentError("inProcessPacks must not repeat a pack")
+        source = value.get("source", "published")
+        if source not in ("published", "local"):
+            raise EnvironmentError("generation source must be published or local")
         return cls(
             generation_number(value.get("generation")),
             digest(value.get("base")),
@@ -302,6 +306,7 @@ class Generation:
             protocol,
             tuple(sorted((relative_file(name), digest(sha)) for name, sha in hashes.items())),
             tuple(packs),
+            cast("str", source),
         )
 
     def write(self, path: Path) -> None:
@@ -317,6 +322,7 @@ class Generation:
                 "workerProtocol": self.worker_protocol,
                 "files": dict(self.files),
                 "inProcessPacks": list(self.in_process_packs),
+                **({"source": "local"} if self.source == "local" else {}),
             },
         )
 

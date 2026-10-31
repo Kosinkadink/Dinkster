@@ -625,6 +625,16 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     _, stable_hash = _wheel(wheels, "stable_fixture", "1.0", 40)
     _, first_hash = _wheel(wheels, "changed_fixture", "1.0", 2)
     _, second_hash = _wheel(wheels, "changed_fixture", "2.0", 7)
+    for path in wheels.glob("*.whl"):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        destination = wheels / digest / path.name
+        destination.parent.mkdir()
+        path.rename(destination)
+    other_build = tmp_path / "other-build"
+    other_build.mkdir()
+    stale, stale_hash = _wheel(other_build, "changed_fixture", "2.0", 999)
+    (wheels / stale_hash).mkdir()
+    stale.rename(wheels / stale_hash / stale.name)
     constraints = tmp_path / "constraints.txt"
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
@@ -675,9 +685,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             catalog_lock=tmp_path / "catalog.lock" if source_inputs else None,
             artifacts=tmp_path / "artifacts" if source_inputs else None,
             prepare_packs=prepare_packs,
+            in_process_packs=("fixture",),
         )
 
     first = build(1, "1.0", first_hash)
+    assert first.in_process_packs == ("fixture",)
     first_dir = root / "generations" / "1"
     set_current(root, 1)
     second = build(2, "2.0", second_hash)

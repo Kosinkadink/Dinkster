@@ -7,6 +7,7 @@ import json
 import sys
 from contextlib import ExitStack
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -74,8 +75,8 @@ def _settings(root: Path) -> dict[str, object] | None:
     variant, mirrors, port = document.get("variant"), document.get("mirrors"), document.get("port")
     if not isinstance(variant, str) or not variant:
         raise EnvironmentError("project variant must be a nonempty string")
-    if not isinstance(mirrors, list) or not mirrors:
-        raise EnvironmentError("project mirrors must be a nonempty array")
+    if not isinstance(mirrors, list):
+        raise EnvironmentError("project mirrors must be an array")
     if any(not isinstance(mirror, str) or not mirror for mirror in cast("list[object]", mirrors)):
         raise EnvironmentError("project mirrors must contain nonempty strings")
     if type(port) is not int or not 1 <= port <= 65535:
@@ -108,6 +109,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         generation = Generation.read(generation_root / "generation.json")
         if generation.number != current:
             raise EnvironmentError("generation directory and recorded number disagree")
+        if generation.source == "local":
+            result["source"] = "local"
+            result["plan"] = [
+                "locally resolved, no base manifest; checking recorded local inventory"
+            ]
         changes = list(generation.drift(generation_root))
         if (generation_root / "packs").exists() and not changes:
             store_file = root / "store"
@@ -201,6 +207,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError("project already has an active generation")
     if args.operation == "update" and (settings is None or current is None):
         raise EnvironmentError("project has no active generation; run setup first")
+    if args.operation == "update" and current is not None:
+        active = Generation.read(root / "generations" / str(current) / "generation.json")
+        if active.source == "local":
+            raise EnvironmentError(
+                "cannot channel-update a locally resolved generation; "
+                "install a fresh published generation with setup in a new --root "
+                "without --from-scratch"
+            )
     if args.operation == "update" and (args.port is not None or args.gpu or args.engine != "main"):
         raise EnvironmentError("update preserves engine assignments; stop/start to change them")
     has_requirements = bool(settings and (settings.get("workflows") or settings.get("additions")))
@@ -251,17 +265,36 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             raise EnvironmentError("project store differs from requested --data")
         requested = configured
     store = select_store(root, requested)
-    catalog = discover(mirrors, channel)
-    base_id = catalog.channel.base_for(variant)
-    base = catalog.bases[variant]
-    parts = cast("list[dict[str, object]]", cast("dict[str, object]", base["archive"])["parts"])
-    artifacts = cast("list[dict[str, object]]", catalog.engine["artifacts"])
-    size = sum(cast("int", row["size"]) for row in (*parts, *artifacts))
-    plan = [
-        f"{args.operation} engine {catalog.engine['version']} with {variant} base {base_id}",
-        f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
-        "build an offline generation, check health, then activate; retain the previous tree",
-    ]
+    local = None
+    catalog = None
+    if args.operation == "setup" and args.from_scratch:
+        if args.pack_lock or args.catalog_lock is not None or args.artifacts is not None:
+            raise EnvironmentError(
+                "--from-scratch resolves checkout packs; "
+                "--pack-lock, --catalog-lock and --artifacts cannot be combined with it"
+            )
+        from .environment_local import local_selection
+
+        local = local_selection(args.source.resolve(), variant, args.variants, args.python)
+        size = 0
+        plan = [
+            f"resolve {args.source.resolve() / 'uv.lock'} locally for {variant}",
+            f"interpreter {local['python']}; torch index {local['index']}",
+            "from-scratch is opt-in: download size is unknown until dependency resolution",
+            "build a local generation, check health, then activate; no published bundle is used",
+        ]
+    else:
+        catalog = discover(mirrors, channel)
+        base_id = catalog.channel.base_for(variant)
+        base = catalog.bases[variant]
+        parts = cast("list[dict[str, object]]", cast("dict[str, object]", base["archive"])["parts"])
+        artifacts = cast("list[dict[str, object]]", catalog.engine["artifacts"])
+        size = sum(cast("int", row["size"]) for row in (*parts, *artifacts))
+        plan = [
+            f"{args.operation} engine {catalog.engine['version']} with {variant} base {base_id}",
+            f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
+            "build an offline generation, check health, then activate; retain the previous tree",
+        ]
     if project_settings is not None and settings is not None:
         plan.append(
             f"change project selection from {settings['channel']}/{settings['variant']} "
@@ -282,6 +315,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     workflow_artifacts = None
     workflow_applied = False
     if has_requirements:
+        if catalog is None:
+            raise EnvironmentError("local setup requires a fresh project without workflow settings")
         if previous_root is None:
             raise EnvironmentError("workflow planning requires an existing generation interpreter")
         catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
@@ -378,13 +413,42 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 atomic_write(pointer, str(store) + "\n")
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
-                constraints = acquire(catalog, variant, store)
                 catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
-                if catalog_lock is None:
-                    acquired_sources = acquire_sources(catalog, store)
-                    if acquired_sources is not None:
-                        catalog_lock, source_artifacts = acquired_sources
-                pack_locks = tuple(args.pack_lock) or acquire_pack_locks(catalog, variant, store)
+                prepare_packs = None
+                if local is not None:
+                    from .environment_local import prepare_local, prepare_local_packs
+
+                    print("\n".join(plan), file=sys.stderr, flush=True)
+                    inputs = prepare_local(args.source.resolve(), local, store)
+                    base_id = inputs["base"]
+                    constraints = inputs["constraints"]
+                    engine_version = inputs["engine_version"]
+                    engine_release = inputs["engine_release"]
+                    worker_protocol = inputs["worker_protocol"]
+                    pack_locks = tuple(args.pack_lock)
+                    prepare_packs = partial(
+                        prepare_local_packs,
+                        source=args.source.resolve(),
+                        store=store,
+                        release=engine_release,
+                        selection=local,
+                        in_process=in_process,
+                    )
+                else:
+                    assert catalog is not None
+                    base_id = catalog.channel.base_for(variant)
+                    base = catalog.bases[variant]
+                    constraints = acquire(catalog, variant, store)
+                    engine_version = cast("str", catalog.engine["version"])
+                    engine_release = catalog.channel.engine_release
+                    worker_protocol = cast("int", base["workerProtocol"])
+                    if catalog_lock is None:
+                        acquired_sources = acquire_sources(catalog, store)
+                        if acquired_sources is not None:
+                            catalog_lock, source_artifacts = acquired_sources
+                    pack_locks = tuple(args.pack_lock) or acquire_pack_locks(
+                        catalog, variant, store
+                    )
                 measured = sum(
                     path.stat().st_size
                     for path in (store / "bases" / base_id[7:] / "python").rglob("*")
@@ -395,11 +459,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     number=target,
                     store=store,
                     base=base_id,
-                    engine_version=cast("str", catalog.engine["version"]),
-                    engine_release=catalog.channel.engine_release,
+                    engine_version=engine_version,
+                    engine_release=engine_release,
                     constraints=constraints,
                     variant=variant,
-                    worker_protocol=cast("int", base["workerProtocol"]),
+                    worker_protocol=worker_protocol,
                     source_generation=(
                         previous_root
                         if previous_root is not None
@@ -411,6 +475,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     own_environment_size=measured,
                     catalog_lock=catalog_lock,
                     artifacts=source_artifacts,
+                    source_kind="local" if local is not None else "published",
+                    prepare_packs=prepare_packs,
                 )
                 if workflow is not None and previous_root is not None:
                     revalidate()
@@ -526,6 +592,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 catalog_lock=catalog,
                 artifacts=release / "artifacts" if catalog is not None else None,
                 refresh_cache=True,
+                source_kind=generation.source,
             )
             added_locks = {
                 name
@@ -729,6 +796,16 @@ def main() -> None:
         "--repair", action="store_true", help="rebuild offline from the local store"
     )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
+    from .environment_local import DEFAULT_VARIANTS
+
+    setup.add_argument(
+        "--from-scratch", action="store_true", help="resolve locally; development only"
+    )
+    setup.add_argument(
+        "--source", type=Path, default=Path.cwd(), help="Dinkster checkout with uv.lock"
+    )
+    setup.add_argument("--variants", type=Path, default=DEFAULT_VARIANTS)
+    setup.add_argument("--python", type=Path, help="explicit host interpreter override")
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
         command.add_argument("--mirror", action="append", default=[])
