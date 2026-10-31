@@ -610,6 +610,7 @@ namespaces = [
     "Get3DComponents",
     "DecimateMesh",
     "MeshToFile3D",
+    "SaveGLB",
 ]
 
 [pack.sandbox]

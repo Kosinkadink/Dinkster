@@ -14,7 +14,7 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D
+from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(Get3DComponents) == 1
 schema = Get3DComponents.schema()
@@ -30,6 +30,11 @@ assert manifest.namespaces.count('MeshToFile3D') == 1
 schema = MeshToFile3D.schema()
 assert [(slot.id, slot.type.types) for slot in schema.inputs] == [('mesh', ('MESH',))]
 assert [(slot.id, slot.type.types) for slot in schema.outputs] == [('model_3d', ('FILE_3D_GLB',))]
+assert COMFY_NODES.count(SaveGLB) == manifest.namespaces.count('SaveGLB') == 1
+schema = SaveGLB.schema()
+assert [slot.id for slot in schema.inputs] == ['mesh', 'filename_prefix', 'mount']
+assert schema.inputs[-1].adjacent_to == 'filename_prefix'
+assert schema.outputs == () and schema.output_node and not schema.idempotent
 assert 'dinkster_nodes_comfy.mesh_gltf_read' not in sys.modules
 assert 'dinkster_nodes_comfy.mesh_file_read' not in sys.modules
 assert 'dinkster_native.model3d.mesh' not in sys.modules
