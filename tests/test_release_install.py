@@ -119,6 +119,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "finalize",
         "install",
         "release",
+        "channel",
         "publish",
         "publish-api",
         "publish-supervisor",
@@ -172,6 +173,18 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
+    channel = workflow["jobs"]["channel"]
+    assert channel["needs"] == "release"
+    assert channel["if"] == "github.event_name == 'push'"
+    assert channel["concurrency"]["cancel-in-progress"] is False
+    publication = channel["steps"][-1]
+    assert "-m scripts.publish_environment_channel" in publication["run"]
+    assert "--minimum-desktop-version 0.2.0" in publication["run"]
+    assert publication["env"]["R2_ACCESS_KEY_ID"] == "${{ secrets.R2_ACCESS_KEY_ID }}"
+    assert any(
+        "dinkster_supervisor.environment_channels" in step.get("run", "")
+        for step in workflow["jobs"]["finalize"]["steps"]
+    )
     assert workflow["jobs"]["release"]["outputs"] == {
         "engine-id": "${{ steps.identity.outputs.engine-id }}",
         "engine-tag": "${{ steps.identity.outputs.tag }}",

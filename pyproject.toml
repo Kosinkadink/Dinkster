@@ -64,6 +64,7 @@ dev = [
     "scipy-stubs>=1.18.1.0",
     "dinkster-opentimelineio==0.19.0",
     "threadpoolctl>=3.7",
+    "boto3>=1.40,<2",
 ]
 
 [tool.uv]

@@ -243,8 +243,15 @@ verifies every listed local engine artifact, validates each unchanged base
 manifest and checks worker protocol and effective constraint compatibility.
 Only after all inputs pass does it atomically replace `channels/<name>.json`.
 It never downloads, changes publisher inputs or publishes to a remote service.
-The release workflow must invoke it only after successful asset publication;
-this local builder does not select published bases or wire that workflow.
+The release workflow validates a document after finalization, including on PRs.
+Its push-only channel job runs after GitHub asset publication and calls
+`scripts.publish_environment_channel` with the same selected base manifests.
+With all R2 settings present, it checks published engine/base manifest bytes,
+uploads only missing immutable engine objects, verifies their served hashes,
+and replaces the selected channel last. Failed payload checks leave the old
+channel untouched. An older main run cannot replace a newer main selection.
+Absent R2 settings skip publication explicitly. The workflow compatibility
+floor is `minimumDesktopVersion: "0.2.0"`; the local builder remains nonpublishing.
 
 `environment_downloads.fetch_artifact(mirrors, relative_path, destination,
 sha256, size)` downloads a known artifact from ordered local directories or
