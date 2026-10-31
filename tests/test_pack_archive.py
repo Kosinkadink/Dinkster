@@ -219,16 +219,37 @@ def test_cli_writes_archive_and_prints_written_digest(
     assert printed == f"blake3:{blake3(output.read_bytes()).hexdigest()}"
 
 
-def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_path: Path) -> None:
+def test_official_artifacts_preserve_sources_and_existing_pack_identities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_workers import load_manifest
 
     root = Path(__file__).resolve().parents[1]
     version = "0.0.2.dev20261028"
     first = build_official_packs(root, tmp_path / "first", version=version)
-    second = build_official_packs(root, tmp_path / "second", version=version)
+    write_text = Path.write_text
+
+    def windows_write_text(path, data, encoding=None, errors=None, newline=None):
+        return write_text(
+            path,
+            data,
+            encoding=encoding,
+            errors=errors,
+            newline="\r\n" if newline is None else newline,
+        )
+
+    with monkeypatch.context() as platform:
+        platform.setattr(Path, "write_text", windows_write_text)
+        platform.setenv("GIT_CONFIG_COUNT", "2")
+        platform.setenv("GIT_CONFIG_KEY_0", "core.autocrlf")
+        platform.setenv("GIT_CONFIG_VALUE_0", "true")
+        platform.setenv("GIT_CONFIG_KEY_1", "core.eol")
+        platform.setenv("GIT_CONFIG_VALUE_1", "crlf")
+        second = build_official_packs(root, tmp_path / "second", version=version)
     assert [path.name for path in first] == [path.name for path in second]
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
+    assert b"\r\n" not in second[-1].read_bytes()
     lock = Lockfile.from_record_json(first[-1].read_text())
     expected = {
         "dinkster-nodes-comfy",
@@ -289,6 +310,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_pa
         extracted = unpack_artifact(
             archive, tmp_path / "unpacked" / pack.pack, pack.artifact_digest
         )
+        assert b"\r\n" not in (extracted / "dinkster-pack.toml").read_bytes()
         manifest = load_manifest(extracted / "dinkster-pack.toml")
         assert manifest.name == pack.pack
         if pack.pack in core_requirements:
