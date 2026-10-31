@@ -59,6 +59,57 @@ def test_schema_reexports_custom_widget_descriptor() -> None:
         CustomWidgetDescriptor("MOUNT")
 
 
+def test_editable_combo_and_additional_inputs_preserve_declared_types() -> None:
+    schema = NodeSchema(
+        "test.authored",
+        inputs=(
+            InputSpec(
+                "choice", TypeExpr.concrete("COMBO"), widget=ComboWidget(editable_options=True)
+            ),
+        ),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+    assert schema_from_wire(json.loads(json.dumps(schema_to_wire(schema)))) == schema
+    effective = elaborate(
+        schema, {"choice": "not in menu", "option117": "duplicate", "sparse-name": 7}
+    )
+    assert [(spec.id, spec.type, spec.required) for spec in effective.inputs] == [
+        ("choice", TypeExpr.concrete("COMBO"), True),
+        ("option117", TypeExpr.wildcard(), False),
+        ("sparse-name", TypeExpr.wildcard(), False),
+    ]
+    assert effective.is_static
+    assert schema_signature(schema) != schema_signature(
+        dataclasses.replace(schema, additional_inputs=None)
+    )
+    assert len(elaborate(schema, ["choice", *(f"option{i * 2}" for i in range(150))]).inputs) == 151
+    with pytest.raises(ValueError, match="budget"):
+        elaborate(schema, ["choice", *(f"option{i}" for i in range(1024))])
+    with pytest.raises(ValueError, match="needs static options"):
+        ComboWidget()
+
+
+def test_additional_inputs_cannot_reclaim_inactive_dynamic_names() -> None:
+    schema = NodeSchema(
+        "test.reserved",
+        combos=(
+            DynamicComboSpec(
+                "mode",
+                (
+                    DynamicComboOption("a", (InputSpec("value", TypeExpr.concrete("INT")),)),
+                    DynamicComboOption("b", (InputSpec("other", TypeExpr.concrete("STRING")),)),
+                ),
+            ),
+        ),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+    assert [
+        spec.id for spec in elaborate(schema, ["mode.value"], slot_variants={"mode": "a"}).inputs
+    ] == ["mode.value"]
+    with pytest.raises(ValueError, match="declared dynamic construct"):
+        elaborate(schema, ["mode.value", "mode.other"], slot_variants={"mode": "a"})
+
+
 def test_scalar_combo_choices_preserve_wire_types_and_metadata() -> None:
     options = ("auto", 8, 10, True, 1, 1.5, "8", ComboOption(False, label="Disabled"))
     schema = dataclasses.replace(
