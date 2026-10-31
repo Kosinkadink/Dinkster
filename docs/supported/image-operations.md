@@ -1,5 +1,14 @@
 ## Image operations
 
+- `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
+  transports flat or per-frame pixel boxes and normalized prompt elements.
+  Both accept JSON only, retaining frame order, integer/float coordinates,
+  negative origins, zero dimensions, labels, scores and declared metadata.
+  Normalized elements retain thousandths in ymin/xmin/ymax/xmax order, text
+  and palettes. Unknown fields, embedded references, nonfinite coordinates
+  and pickle payloads are refused before reconstruction. Global `ARRAY`
+  remains unrestricted by the placement contract. Layer placement retains
+  first-frame selection, source-size zero fallback and canvas-based conversion.
 - Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
   with optional line and feature-edge quadrics and retained vertex colors.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
