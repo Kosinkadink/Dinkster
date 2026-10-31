@@ -35,6 +35,21 @@ through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
 generation-based activation.
 
+Build selected official source archives from committed manifests:
+
+```sh
+python -m scripts.build_official_packs --pack dinkster-nodes-foundation --output /scratch/packs
+```
+
+Repeat `--pack` for multiple ids or omit it to build the official set. Each
+archive and source-lock entry uses that manifest's own `pack.version`, retaining
+its engine compatibility declaration. Unknown ids and missing declarations
+refuse. Existing engine-release callers can supply the explicit `--version`
+override; it is not needed for independently versioned publication. Native
+`--variant`, interpreter and constraints inputs produce dependency locks for
+the same selected sources. Building does not publish an archive or alter a
+generation.
+
 `dinkster.registries.resolve_compatible_release(registry, pack, minimum,
 engine_version)` follows the service's version-list pages, chooses the newest
 active PEP 440 version at or above the minimum whose declared engine range

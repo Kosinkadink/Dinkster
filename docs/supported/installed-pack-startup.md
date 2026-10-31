@@ -36,6 +36,9 @@
   minimum version and target engine range across paginated results. Active
   prereleases inside those bounds remain eligible. The selected release is
   checked again before returning its immutable artifact identity.
+- Official source archive builds can select exact pack ids and use each pack's
+  own manifest version, retaining its declared engine range in the archive.
+  Unknown pack ids and missing publication declarations refuse the build.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
+import tarfile
 import tomllib
 import unicodedata
 import zipfile
@@ -365,6 +367,78 @@ def test_official_artifacts_require_public_pack_versions(tmp_path: Path, version
     with pytest.raises(ValueError, match="pack version"):
         build_official_packs(Path(__file__).resolve().parents[1], tmp_path, version=version)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("selection", ["all", "single", "unknown", "undeclared"])
+def test_official_publication_uses_selected_manifest_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str
+) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_workers import load_manifest
+
+    versions = {
+        "dinkster-nodes-comfy": "1.3.0",
+        "dinkster-nodes-foundation": "2.7.1",
+        "dinkster-nodes-image": "0.8.0",
+        "dinkster-nodes-media-io": "3.0.0rc1",
+        "dinkster-nodes-remote": "1.2.4",
+    }
+    tracked = io.BytesIO()
+    with tarfile.open(fileobj=tracked, mode="w") as archive:
+        for pack, version in versions.items():
+            declaration = (
+                ""
+                if selection == "undeclared" and pack == "dinkster-nodes-foundation"
+                else f'version = "{version}"\nengine = ">=0.0.2,<0.1"\n'
+            )
+            files = {
+                "dinkster-pack.toml": (
+                    f'[pack]\nname = "{pack}"\npublisher = "dinkster"\n'
+                    + declaration
+                    + '[pack.entry]\nnodes = "fixture_nodes:NODES"\n'
+                ),
+                "pyproject.toml": '[project]\nrequires-python = ">=3.12"\n',
+                "src/fixture_nodes.py": "NODES = []\n",
+            }
+            for name, text in files.items():
+                data = text.encode()
+                entry = tarfile.TarInfo(f"packages/{pack}/{name}")
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+
+    def read_git(command, **kwargs):
+        return "a" * 40 if "rev-parse" in command else tracked.getvalue()
+
+    monkeypatch.setattr("scripts.build_official_packs.subprocess.check_output", read_git)
+    requested = () if selection == "all" else ("dinkster-nodes-foundation",)
+    if selection == "unknown":
+        requested = ("dinkster-nodes-not-published",)
+    output = tmp_path / "published"
+    if selection in {"unknown", "undeclared"}:
+        message = "unknown official packs" if selection == "unknown" else "version and engine"
+        with pytest.raises(ValueError, match=message):
+            build_official_packs(tmp_path, output, packs=requested)
+        assert not list(output.glob("*.zip"))
+        assert not (output / "official-packs.lock").exists()
+        return
+    paths = build_official_packs(tmp_path, output, packs=requested)
+    expected = versions if selection == "all" else {"dinkster-nodes-foundation": "2.7.1"}
+    assert {path.name for path in paths} == {
+        "official-packs.lock",
+        *(f"{pack}-{version}.zip" for pack, version in expected.items()),
+    }
+    lock = Lockfile.from_record_json(paths[-1].read_text())
+    assert {pack.pack: pack.version for pack in lock.packs} == expected
+    for pack in lock.packs:
+        extracted = unpack_artifact(
+            output / f"{pack.pack}-{pack.version}.zip",
+            tmp_path / "unpacked" / pack.pack,
+            pack.artifact_digest,
+        )
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        assert manifest.compatibility is not None
+        assert manifest.compatibility.version == expected[pack.pack]
+        assert manifest.compatibility.engine == ">=0.0.2,<0.1"
 
 
 def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
