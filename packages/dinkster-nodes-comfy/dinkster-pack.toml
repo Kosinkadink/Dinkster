@@ -605,6 +605,7 @@ namespaces = [
     "MeshTextureToImage",
     "MeshSmoothNormals",
     "RenderUVAtlas",
+    "ApplyTextureToMesh",
 ]
 
 [pack.sandbox]

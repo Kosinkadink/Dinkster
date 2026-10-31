@@ -57,7 +57,8 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
         + (" --durations=20" if index == 1 else "")
         for index in range(1, 7)
     ]
-    assert [row["run_checks"] for row in windows] == [True, False, False, False, False, False]
+    assert [row["run_checks"] for row in windows] == [False, False, True, False, False, False]
+    assert [row["run_checks"] for row in linux] == [True, False, False, False]
     run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
     assert run["if"] == "runner.os == 'Linux'"
     assert "${{ matrix.pytest_args }}" in run["run"]

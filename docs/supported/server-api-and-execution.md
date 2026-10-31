@@ -12,6 +12,10 @@
   explicit device assignments. Repeating an identical ready assignment does
   not restart it; changing an assignment requires stop first. Plan-only calls
   do not launch or stop processes, and empty device lists hide GPUs.
+- Managed local environment launches allow operators to edit project folders.
+  Grants persist across controlled restarts. New grants default to read-only;
+  writable access remains explicit. Remote connections and separately configured
+  server launches do not gain mount-edit authority.
 - Schema wire version 1 with stored output descriptors, compact-storage and
   stream input declarations, alpha and mask policies, range-aware inputs, and
   chunk-safe declarations scoped to supported dynamic-combo options. Stream

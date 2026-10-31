@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
+  fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
 - Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
