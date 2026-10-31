@@ -3782,6 +3782,7 @@ async def handle_value(request: web.Request) -> web.Response:
             404, "unknown-output", f"node {node_id!r} has no output {output_id!r}"
         )
     value = outputs[output_id]
+    offer = job.result_offers.get(node_id, {}).get(output_id)
 
     for index_text in [e for e in query.get("element", "").split(",") if e]:
         try:
@@ -3815,6 +3816,7 @@ async def handle_value(request: web.Request) -> web.Response:
             {
                 "available": True,
                 "descriptor": value_descriptor(value, registry),
+                **({"resultOffer": offer} if offer is not None else {}),
                 "renditions": [
                     {
                         "kind": s.kind,
@@ -3834,7 +3836,8 @@ async def handle_value(request: web.Request) -> web.Response:
                     }
                     for s, mime in renditions
                 ],
-            }
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     spec = next(

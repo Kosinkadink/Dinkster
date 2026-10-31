@@ -279,6 +279,12 @@ IDs to their immutable offers. Job status and terminal job events carry the
 same mapping nested under runtime node IDs, including retained target outputs.
 Each job gets its own source tokens even when another job produced the cached
 bytes. Opaque codecs remain incomplete rather than certifying an empty set.
+Completed `/api/values` JSON discovery includes the same `resultOffer` for the
+requested parent output, including when `element` selects a nested value.
+Discovery is uncached; absence of `resultOffer` means no published source
+authority, not an empty asset set. Read the source binding and claim it before
+exposing a value or fetching its renditions. Byte responses and rendition
+cache keys do not establish retention authority.
 Live previews, restored history and global frontend coverage are not certified
 by this publication; collection remains disabled.
 

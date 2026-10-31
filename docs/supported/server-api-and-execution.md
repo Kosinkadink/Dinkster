@@ -49,7 +49,9 @@
   cannot overwrite an existing owner or revive a source after its last
   protecting owner releases it. Library-backed jobs persist source offers
   before fresh, cached and coalesced output events and terminal targets;
-  events and status expose the exact runtime node/output binding. Unknown
+  events, status and completed-value discovery expose the exact runtime
+  node/output binding. Selecting a nested element retains the complete
+  parent-output source rather than narrowing its roots. Unknown
   codecs remain incomplete. This does not cover live previews or restored
   history, certify frontend coverage, or enable cleanup.
 - Durable terminal history retains external asset identities from target

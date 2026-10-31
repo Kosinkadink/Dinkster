@@ -751,13 +751,16 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Pa
                 inputs=(),
                 outputs=tuple(
                     OutputSpec(name, TypeExpr.concrete(ASSET_TYPE)) for name in ("left", "right")
-                ),
+                )
+                + (OutputSpec("bundle", TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE))),),
             )
 
         @classmethod
         async def execute(cls) -> Mapping[str, object]:
             return cls.outputs(
-                left=AssetRef(DIGEST_A, "left", 14), right=AssetRef(DIGEST_B, "right", 26)
+                left=AssetRef(DIGEST_A, "left", 14),
+                right=AssetRef(DIGEST_B, "right", 26),
+                bundle=[AssetRef(DIGEST_A, "left", 14), AssetRef(DIGEST_B, "right", 26)],
             )
 
     schemas = build_schemas((ProduceAssets,))
@@ -799,8 +802,12 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Pa
                         await asyncio.sleep(0)
                 assert status["state"] == "completed", status
                 offered = status["resultOffers"]["producer"]
-                assert set(offered) == {"left", "right"}
-                for output_id, digest in (("left", DIGEST_A), ("right", DIGEST_B)):
+                assert set(offered) == {"left", "right", "bundle"}
+                for output_id, roots in (
+                    ("left", [DIGEST_A]),
+                    ("right", [DIGEST_B]),
+                    ("bundle", sorted([DIGEST_A, DIGEST_B])),
+                ):
                     offer = offered[output_id]
                     assert offer == {
                         "token": offer["token"],
@@ -810,12 +817,25 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Pa
                         "nodeId": "producer",
                         "outputId": output_id,
                         "publication": 1,
-                        "digests": [digest],
+                        "digests": roots,
                         "complete": True,
                     }
                     persisted = library.store.result_asset_offer("local", offer["token"])
                     assert persisted is not None and persisted.to_wire() == offer
                     tokens.append(offer["token"])
+                    url = (
+                        f"/api/values?clientId=client&jobId={job_id}"
+                        f"&nodeId=producer&outputId={output_id}"
+                    )
+                    discovery = await client.get(url)
+                    assert discovery.status == 200
+                    assert discovery.headers["Cache-Control"] == "no-store"
+                    assert (await discovery.json())["resultOffer"] == offer
+                    if output_id == "bundle":
+                        for element in ("0", "1"):
+                            child = await (await client.get(url + f"&element={element}")).json()
+                            assert child["resultOffer"] == offer
+                            assert child["resultOffer"]["digests"] == sorted([DIGEST_A, DIGEST_B])
                 replay = await (
                     await client.get(f"/api/jobs/by-ref/{status['jobRef']}/events?after=0")
                 ).json()
@@ -835,7 +855,7 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Pa
                     if event["type"] == "job_state" and event["state"] == "completed"
                 ]
                 assert terminal[0]["resultOffers"] == status["resultOffers"]
-            assert len(set(tokens)) == 4
+            assert len(set(tokens)) == 6
         finally:
             await client.close()
 
