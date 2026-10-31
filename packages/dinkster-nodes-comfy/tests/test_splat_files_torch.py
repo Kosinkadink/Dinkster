@@ -15,17 +15,20 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     SPLAT_TYPE,
+    AssetRef,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
     TypeRegistry,
+    digest_bytes,
+    materialize_splat,
     register_file3d_types,
     register_inference_types,
 )
 from dinkster_assets import AssetVault
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.splat_files import SplatToFile3D
+from dinkster_nodes_comfy.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_values import register_core_types
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -215,20 +218,180 @@ def test_ordinary_splat_export_hosts_with_restart_cache(
                         "export": GraphNode(
                             "SplatToFile3D", {"splat": Link("source", "splat"), "format": format}
                         ),
+                        "import": GraphNode(
+                            "File3DToSplat", {"model_3d": Link("export", "model_3d")}
+                        ),
                     }
                 )
                 result = await composer.composition.make_engine(lambda _event: None).run(
-                    graph, ["export"]
+                    graph, ["export", "import"]
                 )
-                assert set(result.cached if replay else result.executed) == {"source", "export"}
+                assert set(result.cached if replay else result.executed) == {
+                    "source",
+                    "export",
+                    "import",
+                }
                 output = result.outputs["export"]["model_3d"].resolve()
                 assert output["format"] == format
                 current = output["source"].read_bytes()
                 assert current and (not data or data == current)
                 data = current
+                imported = result.outputs["import"]["splat"].resolve()
+                tensor = materialize_splat(imported)
+                torch.testing.assert_close(tensor.positions, torch.tensor([[[-1.25, 2.5, 0.125]]]))
+                if format == "ply":
+                    torch.testing.assert_close(tensor.sh, export_splat().sh[:1, :1])
+                else:
+                    assert tensor.sh.shape == (1, 1, 1, 3)
             finally:
                 await composer.close()
             shutil.rmtree(tmp_path / "scratch")
             assert output["source"].read_bytes() == data
 
     asyncio.run(scenario())
+
+
+def import_file(tmp_path: Path, data: bytes, format: str) -> SimpleNamespace:
+    vault = AssetVault(tmp_path / "input-vault")
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    source = AssetRef(digest, f"input.{format}", len(data), resolver=vault)
+    return File3DToSplat.execute(model_3d={"source": source, "format": format})["splat"]
+
+
+def test_splat_import_binary_records_and_detection(tmp_path: Path) -> None:
+    data = struct.pack("<6f8B", -1.25, 2.5, 0.125, 1, 0.5, 0.25, 64, 128, 255, 17, 0, 128, 128, 128)
+    for format in ("splat", "obj"):
+        value = import_file(tmp_path, data, format)
+        torch.testing.assert_close(value.positions, torch.tensor([[[-1.25, 2.5, 0.125]]]))
+        torch.testing.assert_close(value.scales, torch.tensor([[[1.0, 0.5, 0.25]]]))
+        torch.testing.assert_close(value.rotations, torch.tensor([[[-1.0, 0.0, 0.0, 0.0]]]))
+        torch.testing.assert_close(value.opacities, torch.tensor([[[17 / 255]]]))
+        torch.testing.assert_close(
+            value.sh,
+            torch.tensor(
+                [
+                    [
+                        [
+                            [
+                                (64 / 255 - 0.5) / 0.28209479177387814,
+                                (128 / 255 - 0.5) / 0.28209479177387814,
+                                0.5 / 0.28209479177387814,
+                            ]
+                        ]
+                    ]
+                ]
+            ),
+        )
+        assert value.counts is None and value.positions.dtype == torch.float32
+    empty = import_file(tmp_path, b"", "splat")
+    assert empty.positions.shape == (1, 0, 3) and empty.opacities.shape == (1, 0, 1)
+    with pytest.raises(ValueError, match="multiple of 32"):
+        import_file(tmp_path, data[:-1], "splat")
+
+
+@pytest.mark.parametrize("level", [0, 1, 2])
+def test_ksplat_import_sections_capacity_buckets_and_harmonic_stride(
+    tmp_path: Path, level: int
+) -> None:
+    header = bytearray(4096)
+    header[1] = 1
+    struct.pack_into("<I", header, 4, 2)
+    struct.pack_into("<H", header, 20, level)
+    sections, bodies = [], []
+    for index, count in enumerate((3, 1)):
+        capacity = count + 1
+        center_type, float_type = ("<f4", "<f4") if level == 0 else ("<u2", "<f2")
+        dtype = np.dtype(
+            [
+                ("center", center_type, 3),
+                ("scale", float_type, 3),
+                ("rotation", float_type, 4),
+                ("color", "u1", 4),
+                ("sh", ("<f4", "<f2", "u1")[level], 9),
+            ]
+        )
+        records = np.zeros(capacity, dtype=dtype)
+        records["center"][:count] = [11, 9, 10] if level else [-1.25, 2.5, 0.125]
+        records["scale"][:count] = [0.5, 2.0, 0.25]
+        records["rotation"][:count] = [0.0, -2.0, 0.0, 0.0]
+        records["color"][:count] = [32, 64, 128, 200]
+        records["sh"] = 77
+        section = bytearray(1024)
+        if level:
+            full = 1 if count == 3 else 0
+            centers = np.array([[2 + index, 3, -4], [-7, 5, 9]][: full + 1], dtype="<f4")
+            bucket_data = struct.pack("<I", 1) + centers.tobytes()
+            struct.pack_into("<IIIIfH", section, 0, count, capacity, 2, full + 1, 4.0, 12)
+            struct.pack_into("<III", section, 24, 10, len(records.tobytes()), full)
+            struct.pack_into("<I", section, 36, 1)
+        else:
+            bucket_data = b""
+            struct.pack_into("<II", section, 0, count, capacity)
+        struct.pack_into("<H", section, 40, 1)
+        sections.append(section)
+        bodies.append(bucket_data + records.tobytes())
+    data = bytes(header) + b"".join(sections) + b"".join(bodies)
+    value = import_file(tmp_path, data, "ksplat")
+    expected = (
+        [[2.2, 2.8, -4], [2.2, 2.8, -4], [-6.8, 4.8, 9], [3.2, 2.8, -4]]
+        if level
+        else [[-1.25, 2.5, 0.125]] * 4
+    )
+    torch.testing.assert_close(value.positions, torch.tensor([expected]))
+    torch.testing.assert_close(value.scales, torch.tensor([[[0.5, 2, 0.25]] * 4]))
+    torch.testing.assert_close(value.rotations, torch.tensor([[[0.0, -1, 0, 0]] * 4]))
+    torch.testing.assert_close(value.opacities, torch.full((1, 4, 1), 200 / 255))
+    assert value.sh.shape == (1, 4, 1, 3)
+    with pytest.raises(ValueError, match="truncated"):
+        import_file(tmp_path, data[:-1], "ksplat")
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_spz_import_signed_coordinates_and_quaternion_layout(tmp_path: Path, version: int) -> None:
+    positions = (
+        struct.pack("<6e", -1.25, 2.5, 0.125, 3, -4, 0.5)
+        if version == 1
+        else b"".join(
+            value.to_bytes(3, "little", signed=True)
+            for value in (-5120, 10240, 512, 12288, -16384, 2048)
+        )
+    )
+    rotation = (
+        struct.pack("<II", (3 << 30) | 511, (1 << 30) | (1 << 9) | 255)
+        if version == 3
+        else bytes([128, 128, 255, 0, 128, 128])
+    )
+    raw = (
+        struct.pack("<IIIBBBB", 0x5053474E, version, 2, 0, 12, 0, 0)
+        + positions
+        + bytes([17, 230])
+        + bytes([32, 128, 240, 90, 12, 180])
+        + bytes([160, 144, 128, 80, 120, 200])
+        + rotation
+    )
+    value = import_file(tmp_path, gzip.compress(raw), "spz")
+    torch.testing.assert_close(value.positions, torch.tensor([[[-1.25, 2.5, 0.125], [3, -4, 0.5]]]))
+    torch.testing.assert_close(
+        value.scales, torch.exp(torch.tensor([[[0, -1, -2], [-5, -2.5, 2.5]]]))
+    )
+    torch.testing.assert_close(value.opacities, torch.tensor([[[17 / 255], [230 / 255]]]))
+    torch.testing.assert_close(
+        value.sh, (torch.tensor([[[[32, 128, 240]], [[90, 12, 180]]]]) / 255 - 0.5) / 0.15
+    )
+    if version == 3:
+        magnitude = 255 / (511 * np.sqrt(2))
+        expected = torch.tensor(
+            [[[np.sqrt(0.5), 0, 0, np.sqrt(0.5)], [-magnitude, 0, np.sqrt(1 - magnitude**2), 0]]],
+            dtype=torch.float32,
+        )
+        torch.testing.assert_close(value.rotations, expected)
+    else:
+        vector = torch.tensor(
+            [[128 / 127.5 - 1, 128 / 127.5 - 1, 1], [-1, 128 / 127.5 - 1, 128 / 127.5 - 1]]
+        )
+        expected = torch.cat([torch.zeros(2, 1), vector], dim=1)
+        expected /= expected.norm(dim=1, keepdim=True)
+        torch.testing.assert_close(value.rotations[0], expected)

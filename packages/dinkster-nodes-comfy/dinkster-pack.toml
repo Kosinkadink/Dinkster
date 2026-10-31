@@ -616,6 +616,7 @@ namespaces = [
     "SaveGaussianSplat",
     "SavePointCloud",
     "SplatToFile3D",
+    "File3DToSplat",
 ]
 
 [pack.sandbox]
