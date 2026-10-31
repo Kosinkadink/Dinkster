@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import os
+import shutil
 import struct
 from io import BytesIO
 from pathlib import Path
@@ -16,21 +17,189 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     FILE_3D_GLTF_TYPE,
+    MESH_TYPE,
     AssetRef,
     Node,
     NodeSchema,
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
+    TypeRegistry,
+    digest_bytes,
     materialize_mesh,
+    register_file3d_types,
+    register_inference_types,
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_native.nodes_model3d import GenerationMeshToModel3D
-from dinkster_nodes_comfy.mesh_io import Get3DComponents
+from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D
+from dinkster_values import register_core_types
 from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def export_mesh() -> TriangleMeshBatch[Any]:
+    return TriangleMeshBatch(
+        vertices=torch.tensor(
+            [
+                [[1.0, 2.0, 3.0], [-2.0, 1.0, 0.0], [0.0, 4.0, -1.0], [90.0, 90.0, 90.0]],
+                [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0], [8.0, 8.0, 8.0]],
+            ]
+        ),
+        faces=torch.tensor([[[2, 0, 1], [3, 3, 3]], [[0, 1, 2], [1, 2, 3]]]),
+        vertex_counts=torch.tensor([3, 4]),
+        face_counts=torch.tensor([1, 2]),
+        uvs=torch.tensor([[[0.0, 0.0], [0.9, 0.1], [0.2, 0.8], [2.0, 2.0]]] * 2),
+        normals=torch.tensor([[[0.0, 1.0, 0.0]]] * 4).transpose(0, 1).repeat(2, 1, 1),
+        tangents=torch.tensor([[[1.0, 0.0, 0.0, -1.0]]] * 4).transpose(0, 1).repeat(2, 1, 1),
+        vertex_colors=torch.tensor([[[0.2, 0.4, 0.6, 0.8]]] * 4).transpose(0, 1).repeat(2, 1, 1),
+        texture=torch.full((2, 2, 3, 3), 0.3),
+        metallic_roughness=torch.full((2, 2, 3, 3), 0.5),
+        normal_map=torch.full((2, 2, 3, 3), 0.7),
+        emissive=torch.full((2, 2, 3, 3), 0.9),
+        occlusion_in_mr=True,
+        material={"normal_scale": 0.6, "emissive_strength": 2.0, "double_sided": False},
+    )
+
+
+def assert_export(value: Any) -> bytes:
+    assert value["format"] == "glb"
+    source = value["source"]
+    assert isinstance(source, AssetRef) and source.name.endswith(".glb")
+    data = source.read_bytes()
+    assert source.digest == digest_bytes(data) and source.size == len(data)
+    assert struct.unpack_from("<4sII", data) == (b"glTF", 2, len(data))
+    json_length = struct.unpack_from("<I", data, 12)[0]
+    document = json.loads(data[20 : 20 + json_length])
+    binary = data[28 + json_length :]
+    assert document["accessors"][0]["count"] == 3
+    assert document["accessors"][1]["count"] == 3
+    assert struct.unpack_from("<9f", binary) == (1.0, 2.0, 3.0, -2.0, 1.0, 0.0, 0.0, 4.0, -1.0)
+    assert struct.unpack_from("<3I", binary, 36) == (2, 0, 1)
+    attributes = document["meshes"][0]["primitives"][0]["attributes"]
+    assert set(attributes) == {"POSITION", "TEXCOORD_0", "COLOR_0", "NORMAL", "TANGENT"}
+    assert len(document["images"]) == 4
+    material = document["materials"][0]
+    assert material["normalTexture"]["scale"] == 0.6
+    assert material["doubleSided"] is False
+    assert material["extensions"]["KHR_materials_emissive_strength"]["emissiveStrength"] == 2.0
+    assert (
+        material["occlusionTexture"]["index"]
+        == material["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"]
+    )
+    return data
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_mesh_export_first_padded_item_and_public_value(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    portable: bool,
+) -> None:
+    monkeypatch.delenv("DINKSTER_PACK_SCRATCH", raising=False)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    original = export_mesh()
+    vertices, faces = original.vertices.clone(), original.faces.clone()
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(MESH_TYPE)
+    value = spec.decode(spec.encode(original)) if portable else original
+    assert_export(MeshToFile3D.execute(mesh=value)["model_3d"])
+    assert "Got 2; using first" in caplog.text
+    torch.testing.assert_close(original.vertices, vertices, rtol=0, atol=0)
+    torch.testing.assert_close(original.faces, faces, rtol=0, atol=0)
+
+
+def test_mesh_export_empty_and_missing_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DINKSTER_PACK_SCRATCH", raising=False)
+    monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
+    source = export_mesh()
+    with pytest.raises(RuntimeError, match="produced-output store"):
+        MeshToFile3D.execute(mesh=source)
+    source.face_counts[0] = 0
+    with pytest.raises(ValueError, match="MeshToFile3D: mesh is empty"):
+        MeshToFile3D.execute(mesh=source)
+
+
+class MeshExportSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "mesh-export-fixture.source",
+            outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(mesh=export_mesh())
+
+
+@pytest.mark.parametrize("in_process", [True, False])
+def test_ordinary_mesh_export_hosts_twice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, in_process: bool
+) -> None:
+    vault = AssetVault(tmp_path / "vault")
+    environment = {
+        "CUDA_VISIBLE_DEVICES": "",
+        "DINKSTER_ACCELERATOR": "cpu",
+        "DINKSTER_ASSET_VAULT": str(vault.root),
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+
+    async def scenario() -> None:
+        (tmp_path / "mesh_export_fixture.py").write_text(
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from test_mesh_io_torch import MeshExportSource\nNODES=(MeshExportSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "fixture.toml"
+        fixture.write_text(
+            '[pack]\nname="mesh-export-fixture"\npublisher="dinkster"\nnamespaces=["mesh-export-fixture"]\n'
+            '[pack.entry]\nnodes="mesh_export_fixture:NODES"\ntypes="mesh_export_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        data = b""
+        for replay in (False, True):
+            registry = TypeRegistry()
+            register_core_types(registry)
+            register_file3d_types(registry, vault)
+            composer = ServingComposer(
+                registry=registry,
+                worker_env=environment,
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+                pack_scratch_root=tmp_path / "scratch",
+            )
+            try:
+                for manifest in (
+                    Path(__file__).resolve().parents[1] / "dinkster-pack.toml",
+                    fixture,
+                ):
+                    await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+                engine = composer.composition.make_engine(lambda _event: None)
+                graph = Graph(
+                    {
+                        "source": GraphNode("mesh-export-fixture.source"),
+                        "export": GraphNode("MeshToFile3D", {"mesh": Link("source", "mesh")}),
+                    }
+                )
+                result = await engine.run(graph, ["export"])
+                assert set(result.cached if replay else result.executed) == {"source", "export"}
+                output = result.outputs["export"]["model_3d"].resolve()
+                current = assert_export(output)
+                assert not data or current == data
+                data = current
+            finally:
+                await composer.close()
+            shutil.rmtree(tmp_path / "scratch")
+            assert assert_export(output) == data
+
+    asyncio.run(scenario())
 
 
 def test_mesh_serialization_embeds_distinct_fixed_reference_texture_bytes() -> None:

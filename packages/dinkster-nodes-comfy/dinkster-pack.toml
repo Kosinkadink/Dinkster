@@ -609,6 +609,7 @@ namespaces = [
     "FillHoles",
     "Get3DComponents",
     "DecimateMesh",
+    "MeshToFile3D",
 ]
 
 [pack.sandbox]

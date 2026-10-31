@@ -1,4 +1,4 @@
-"""Import mesh geometry through the public FILE_3D asset boundary."""
+"""Import and export mesh geometry through the public FILE_3D asset boundary."""
 
 from __future__ import annotations
 
@@ -22,7 +22,50 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
+    digest_bytes,
+    materialize_mesh,
+    produced_output_scratch,
 )
+
+
+class MeshToFile3D(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="MeshToFile3D",
+            display_name="Create 3D File (from Mesh)",
+            search_terms=("mesh to glb", "mesh to file", "export mesh"),
+            category="3d",
+            description=(
+                "Serialize a mesh to a GLB File3D object for Save / Preview 3D nodes, "
+                "carrying its UVs, colors, normals, texture, normal/occlusion/emissive "
+                "maps and material. Supports one item per batch only."
+            ),
+            inputs=(InputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
+            outputs=(OutputSpec("model_3d", TypeExpr.concrete(FILE_3D_GLB_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, mesh: object) -> Mapping[str, object]:
+        value = materialize_mesh(mesh)
+        if value.vertices.shape[0] > 1:
+            logging.warning(
+                "MeshToFile3D supports one item per batch only. Got %d; using first.",
+                value.vertices.shape[0],
+            )
+        serializer = importlib.import_module("dinkster_native.model3d.mesh")
+        glb = serializer.mesh_item_to_glb_bytes(value, 0)
+        if glb is None:
+            raise ValueError("MeshToFile3D: mesh is empty (no vertices/faces).")
+        vault = produced_output_scratch()
+        if vault is None:
+            raise RuntimeError("MeshToFile3D requires a produced-output store")
+        digest = digest_bytes(glb)
+        with vault.writer(digest) as writer:
+            writer.write(glb)
+            writer.commit()
+        source = AssetRef(digest, "mesh.glb", len(glb), "model/gltf-binary", resolver=vault)
+        return cls.outputs(model_3d={"format": "glb", "source": source})
 
 
 def _sniff_format(data: bytes) -> str:

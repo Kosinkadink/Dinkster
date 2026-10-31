@@ -3,6 +3,10 @@
 - Node packs can publish produced bytes through the public
   `dinkster_api.v1.produced_output_scratch` writer selector. It uses the existing
   worker scratch and active job authority without granting mounted-file access.
+- Create 3D File (from Mesh) exports the first mesh batch item as a GLB file,
+  preserving padded counts, vertex attributes, PBR texture maps and material
+  factors. The produced asset is readable across ordinary worker hosts and
+  cached executions; empty meshes are rejected.
 - Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
   Image, mask, normal and recording captures carry existing granted asset
   identities, rebound to the receiving host, rather than filesystem paths.
