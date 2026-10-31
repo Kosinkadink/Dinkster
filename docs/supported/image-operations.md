@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
+  coincident positions or splitting hard creases while retaining mesh attributes.
 - Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
   occlusion and normal maps as images, with neutral occlusion and normal fallbacks.
 - Native `WeldVertices` merges grid-coincident mesh vertices, averaging positions

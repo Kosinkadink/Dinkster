@@ -603,6 +603,7 @@ namespaces = [
     "PaintMesh",
     "WeldVertices",
     "MeshTextureToImage",
+    "MeshSmoothNormals",
 ]
 
 [pack.sandbox]
