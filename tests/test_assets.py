@@ -57,6 +57,8 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker, ValueCodec
 
+from tests.platform_support import symlink_or_skip
+
 # --- identity ---------------------------------------------------------------
 
 
@@ -667,7 +669,7 @@ def test_text_encoder_relative_binding_rechecks_host_and_worker_authority(
         else:
             outside = tmp_path / "outside.bin"
             outside.write_bytes(b"secret")
-            path.symlink_to(outside)
+            symlink_or_skip(path, outside)
             assert table.bind_name("vendor/encoder.bin", "model/text-encoder") is None
     for current in (ref, worker_ref):
         with pytest.raises(AssetError, match="unavailable"):
