@@ -9,6 +9,8 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import tomllib
 from pathlib import Path
@@ -16,12 +18,13 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
+from blake3 import blake3
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
 from packaging.utils import parse_wheel_filename
 
-from .environment_constraints import effective_constraints
+from .environment_constraints import effective_constraints, requirement_hashes
 from .environment_downloads import fetch_artifact
-from .environment_state import EnvironmentError, content_digest, write_document
+from .environment_state import EnvironmentError, content_digest, interpreter, write_document
 
 DEFAULT_VARIANTS = Path(__file__).with_name("local_variants.toml")
 
@@ -70,6 +73,8 @@ def local_selection(
         "platform": {"os": host, "arch": arch},
         "python": str(python) if python is not None else config["base"]["python"],
         "override": python is not None,
+        "interpreter": config.get("interpreters", {}).get(host),
+        "release": config["base"].get("release"),
         "index": row["torch-index"],
         "packages": config["base"]["packages"],
         "lock": lock,
@@ -135,7 +140,8 @@ def _wheels(
     rows: list[dict[str, Any]] = []
     for package in resolution.get("packages", []):
         candidates: list[tuple[int, str, str, dict[str, Any]]] = []
-        for wheel in package.get("wheels", []):
+        archives = [package["archive"]] if "archive" in package else []
+        for wheel in [*package.get("wheels", []), *archives]:
             url = wheel.get("url")
             if url is None:
                 url = Path(wheel["path"]).resolve().as_uri()
@@ -178,7 +184,7 @@ def _wheels(
                 "filename": filename,
                 "sha256": sha,
                 "size": size,
-                "url": url,
+                "url": "local" if urlsplit(url).scheme == "file" else url,
             }
         )
     return rows
@@ -188,9 +194,33 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
     """Resolve once, retain exact wheels, and return ordinary generation build inputs."""
     with tempfile.TemporaryDirectory(prefix="dinkster-local-") as directory:
         work = Path(directory)
-        python = Path(
-            _run(["uv", "python", "find", selection["python"], "--no-python-downloads"], cwd=source)
-        )
+        if selection["override"]:
+            python = Path(selection["python"]).resolve()
+        elif os.name == "nt":
+            _run(
+                [
+                    sys.executable,
+                    str(source / "scripts/prepare_windows_python.py"),
+                    "--output",
+                    str(work / "runtime"),
+                ],
+                cwd=source,
+            )
+            python = work / "runtime/python/python.exe"
+        else:
+            definition = selection["interpreter"]
+            archive = fetch_artifact(
+                (
+                    f"https://github.com/astral-sh/python-build-standalone/releases/download/{selection['release']}",
+                ),
+                definition["filename"],
+                store / "downloads" / definition["sha256"] / definition["filename"],
+                definition["sha256"],
+                definition["size"],
+            )
+            with tarfile.open(archive) as payload:
+                payload.extractall(work / "runtime", filter="data")
+            python = work / "runtime" / definition["executable"]
         exported = work / "export.txt"
         _run(
             [
@@ -281,17 +311,26 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         prefix = Path(
             _run([str(python), "-I", "-c", "import sys; print(sys.base_prefix)"], cwd=source)
         )
+        staging = work / "base"
+        shutil.copytree(
+            prefix,
+            staging / "python",
+            symlinks=False,
+            ignore=shutil.ignore_patterns("site-packages", "__pycache__"),
+        )
+        base["interpreter"]["files"] = {
+            path.relative_to(staging).as_posix(): content_digest(path)
+            for path in sorted((staging / "python").rglob("*"))
+            if path.is_file()
+        }
+        base["python"] = _run(
+            [str(python), "-I", "-c", "import platform; print(platform.python_version())"],
+            cwd=source,
+        )
         identity = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
         base["id"] = identity
         base_root = store / "bases" / identity[7:]
         if not base_root.exists():
-            staging = work / "base"
-            shutil.copytree(
-                prefix,
-                staging / "python",
-                symlinks=False,
-                ignore=shutil.ignore_patterns("site-packages", "__pycache__"),
-            )
             write_document(staging / "manifest.json", base)
             base_root.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(staging), base_root)
@@ -325,3 +364,65 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
             "worker_protocol": selection["workerProtocol"],
             "source_kind": "local",
         }
+
+
+def prepare_local_packs(
+    generation: Path,
+    *,
+    source: Path,
+    store: Path,
+    release: str,
+    selection: dict[str, Any],
+    in_process: tuple[str, ...] = (),
+) -> None:
+    """Resolve checkout pack requirements against this target, never a published base lock."""
+    from .environment_generations import pack_operation, prepare_pack_catalogs, stage_pack_sources
+
+    artifacts = store / "engines" / release[7:] / "artifacts"
+    links = [
+        argument
+        for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))
+        for argument in ("--find-links", str(store / "wheels" / digest))
+    ]
+    _run(
+        [
+            str(interpreter(generation)),
+            "-B",
+            str(source / "scripts/build_official_packs.py"),
+            "--version",
+            selection["version"],
+            "--output",
+            str(artifacts),
+            "--variant",
+            selection["variant"],
+            "--generation-python",
+            str(interpreter(generation)),
+            "--constraints",
+            str(generation / "constraints.txt"),
+            "--index",
+            "https://pypi.org/simple",
+            *links,
+        ],
+        cwd=source,
+    )
+    locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
+    for archive in artifacts.glob("*.zip"):
+        digest = blake3(archive.read_bytes()).hexdigest()
+        cached = artifacts / f"{digest}.zip"
+        if archive != cached:
+            shutil.copyfile(archive, cached)
+    for operation in ("preflight", "rebuild", "doctor"):
+        pack_operation(
+            operation,
+            generation=generation,
+            store=store,
+            variant=selection["variant"],
+            worker_protocol=selection["workerProtocol"],
+            own_environment_size=0,
+            locks=locks if operation != "doctor" else (),
+            in_process_packs=in_process,
+        )
+    stage_pack_sources(
+        generation, catalog_lock=artifacts / "official-packs.lock", artifacts=artifacts
+    )
+    prepare_pack_catalogs(generation, in_process)

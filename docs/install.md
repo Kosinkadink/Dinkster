@@ -106,8 +106,10 @@ without a suitable bundle, `dinkster-env --root /absolute/new-project setup
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.
 It does not fetch a channel or an engine/base release. The pinned interpreter
-must already be available locally; `--python /absolute/python` explicitly selects
-a host interpreter instead, including when a host interpreter row is missing.
+is downloaded and verified from the producer's interpreter definition, or reused
+from the store's download cache. Populate that cache before denying interpreter
+release access. `--python /absolute/python` explicitly selects a host interpreter
+instead, including when a host interpreter row is missing.
 `--variants /absolute/variants.toml` selects alternate producer definitions.
 
 Contributor setup exposes the same opt-in with `python scripts/setup_envs.py

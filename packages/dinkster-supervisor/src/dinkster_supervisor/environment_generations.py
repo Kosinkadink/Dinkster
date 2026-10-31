@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+from .environment_constraints import requirement_hashes
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -385,13 +386,19 @@ def build_generation(
             ignore=ignore_bytecode,
         )
         shutil.copyfile(constraints, destination / "constraints.txt")
+        if source_kind == "local":
+            shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
         python = interpreter(destination)
         if not python.is_file():
             raise EnvironmentError(f"base has no generation interpreter: {python}")
         base_python = source / python.relative_to(destination / "python")
         link_mode = "hardlink" if python.samefile(base_python) else "clone"
         wheels = store / "wheels"
-        links = [wheels, *sorted({path.parent for path in wheels.glob("*/*.whl")})]
+        hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
+        links = [
+            wheels,
+            *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+        ]
         command = [
             uv,
             "pip",

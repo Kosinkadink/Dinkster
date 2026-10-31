@@ -805,7 +805,10 @@ Settled:
   Explicit `setup --from-scratch` instead resolves the checkout's `uv.lock`
   locally using the selected producer variant's torch index. `--source` selects
   the checkout, `--variants` selects producer definitions, and `--python` explicitly
-  selects a host interpreter when no producer interpreter row fits. Local base
+  selects a host interpreter when no producer interpreter row fits. The pinned
+  interpreter is verified from the producer definition and cached separately;
+  denying interpreter release access requires that verified cache or an override.
+  Local base
   manifests and generations carry `source: local`. Doctor checks their recorded
   inventory; channel updates refuse them and offer a fresh published install.
   Desktop and automatic updates never select this development/fallback mode.

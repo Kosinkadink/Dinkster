@@ -91,6 +91,12 @@
 - Failed initial setup releases its own metadata and store registrations so a
   retry can select another data directory. Cached content, pre-existing settings,
   other projects' references and the diagnostic journal remain intact.
+- Explicit `dinkster-env setup --from-scratch` builds from the checkout lock
+  for development or when a published bundle does not fit. Contributor setup
+  accepts the same opt-in, with an explicit host interpreter override when its
+  platform row is missing. Local generations report their origin and recorded
+  drift; channel updates refuse them and offer a fresh published installation.
+  Default setup and Desktop remain published-bundle consumers.
 - Confirmed environment garbage collection keeps the current generation and its
   successful predecessor, and preserves cache references from other registered
   projects. Interrupted collection recovers before another confirmed mutation;

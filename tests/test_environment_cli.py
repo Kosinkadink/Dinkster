@@ -38,8 +38,33 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         *arguments,
         "--json",
     ]
+    if os.environ.get("DINKSTER_TEST_FORBID_RESOLUTION"):
+        command[1:3] = [
+            "-c",
+            """
+import runpy, sys
+from pathlib import Path
+from dinkster_supervisor import environment_local
+def forbidden(*args, **kwargs):
+    raise AssertionError("published paths must not resolve locally")
+environment_local.prepare_local = forbidden
+def audit(event, args):
+    if event != "subprocess.Popen" or Path(args[0]).stem != "uv":
+        return
+    command = args[1]
+    if "compile" in command:
+        forbidden()
+    if "sync" in command or "install" in command:
+        if "--offline" not in command or "--no-index" not in command:
+            forbidden()
+sys.addaudithook(audit)
+runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
+""",
+        ]
     result = (
-        run_with_diagnostics(command)
+        subprocess.run(command, capture_output=True, text=True, timeout=180)
+        if os.environ.get("DINKSTER_TEST_FORBID_RESOLUTION")
+        else run_with_diagnostics(command)
         if "setup" in arguments
         or "move" in arguments
         or ("doctor" in arguments and "--repair" in arguments)
@@ -148,6 +173,10 @@ def _runtime_project(root: Path) -> int:
 
 def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path: Path):
     _runtime_project(tmp_path)
+    settings = tmp_path / "project.json"
+    project = json.loads(settings.read_text())
+    project["mirrors"] = []
+    settings.write_text(json.dumps(project))
     metadata = tmp_path / "generations/1/generation.json"
     document = json.loads(metadata.read_text())
     document["source"] = "local"
@@ -384,6 +413,7 @@ def test_named_engine_requires_port_and_invalid_assignment_does_not_mutate(tmp_p
 def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):

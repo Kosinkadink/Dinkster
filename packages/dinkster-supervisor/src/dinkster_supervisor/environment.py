@@ -7,6 +7,7 @@ import json
 import sys
 from contextlib import ExitStack
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -74,8 +75,8 @@ def _settings(root: Path) -> dict[str, object] | None:
     variant, mirrors, port = document.get("variant"), document.get("mirrors"), document.get("port")
     if not isinstance(variant, str) or not variant:
         raise EnvironmentError("project variant must be a nonempty string")
-    if not isinstance(mirrors, list) or not mirrors:
-        raise EnvironmentError("project mirrors must be a nonempty array")
+    if not isinstance(mirrors, list):
+        raise EnvironmentError("project mirrors must be an array")
     if any(not isinstance(mirror, str) or not mirror for mirror in cast("list[object]", mirrors)):
         raise EnvironmentError("project mirrors must contain nonempty strings")
     if type(port) is not int or not 1 <= port <= 65535:
@@ -408,8 +409,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
                 catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
+                prepare_packs = None
                 if local is not None:
-                    from .environment_local import prepare_local
+                    from .environment_local import prepare_local, prepare_local_packs
 
                     print("\n".join(plan), file=sys.stderr, flush=True)
                     inputs = prepare_local(args.source.resolve(), local, store)
@@ -419,6 +421,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     engine_release = inputs["engine_release"]
                     worker_protocol = inputs["worker_protocol"]
                     pack_locks = tuple(args.pack_lock)
+                    prepare_packs = partial(
+                        prepare_local_packs,
+                        source=args.source.resolve(),
+                        store=store,
+                        release=engine_release,
+                        selection=local,
+                        in_process=in_process,
+                    )
                 else:
                     assert catalog is not None
                     base_id = catalog.channel.base_for(variant)
@@ -461,6 +471,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     catalog_lock=catalog_lock,
                     artifacts=source_artifacts,
                     source_kind="local" if local is not None else "published",
+                    prepare_packs=prepare_packs,
                 )
                 if workflow is not None and previous_root is not None:
                     revalidate()
