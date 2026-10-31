@@ -15,7 +15,7 @@ from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from dinkster_supervisor.environment_channels import write_channel
-from dinkster_supervisor.environment_downloads import fetch_artifact
+from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
 from dinkster_supervisor.environment_state import content_digest
 
 
@@ -60,9 +60,8 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
         for path in bases:
             base = json.loads(path.read_bytes())
             location = f"base/{base['variant']}/{base['id'][7:]}/manifest.json"
-            with urlopen(f"{public}/{location}", timeout=120) as response:
-                if response.read() != path.read_bytes():
-                    raise ValueError(f"public base manifest differs: {base['variant']}")
+            if read_metadata(public, location) != path.read_bytes():
+                raise ValueError(f"public base manifest differs: {base['variant']}")
         client = boto3.client(
             "s3",
             endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
@@ -134,9 +133,8 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
             ExtraArgs={"ContentType": "application/json", "CacheControl": "no-cache"},
             Config=transfer,
         )
-        with urlopen(f"{public}/channels/{channel}.json", timeout=120) as response:
-            if response.read() != path.read_bytes():
-                raise ValueError("public channel differs after publication")
+        if read_metadata(public, f"channels/{channel}.json") != path.read_bytes():
+            raise ValueError("public channel differs after publication")
         print(f"Published {channel} channel for engine {identity}")
 
 

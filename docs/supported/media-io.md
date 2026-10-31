@@ -1,5 +1,9 @@
 ## Media I/O
 
+- Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
+  Image, mask, normal and recording captures carry existing granted asset
+  identities, rebound to the receiving host, rather than filesystem paths.
+  Omitted captures and an empty recording remain distinct authored states.
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
