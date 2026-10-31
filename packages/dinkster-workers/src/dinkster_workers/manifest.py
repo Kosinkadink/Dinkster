@@ -83,6 +83,7 @@ from dinkster_protocol.pack_surfaces import PACK_SETTINGS_SCHEMA_MAX_BYTES, pack
 from dinkster_schema import (
     ComfyAliasRegistry,
     ComfyGroupRegistry,
+    PackCompatibility,
     canonical_claim,
     canonical_name,
     claim_covers,
@@ -2121,6 +2122,8 @@ class PackManifest:
     requires: tuple[str, ...]
     path: Path
     """The manifest file itself; the pack root is its parent directory."""
+    compatibility: PackCompatibility | None = None
+    """Pack-owned publication version and engine range; absent for unpublished sources."""
     contracts: PackContracts | None = None
     """Explicit host/API/inference contracts. None marks a legacy manifest."""
     dependencies: tuple[PackDependency, ...] = ()
@@ -2744,6 +2747,16 @@ def load_manifest(path: Path | str) -> PackManifest:
     if name_problem is not None:
         raise ManifestError(f"{manifest_path}: [pack] name {name!r} {name_problem}")
 
+    compatibility = None
+    if "version" in pack or "engine" in pack:
+        version, engine = pack.get("version"), pack.get("engine")
+        if not isinstance(version, str) or not isinstance(engine, str):
+            raise ManifestError(f"{manifest_path}: [pack] version and engine must be strings")
+        try:
+            compatibility = PackCompatibility(version=version, engine=engine)
+        except ValueError as exc:
+            raise ManifestError(f"{manifest_path}: invalid pack version or engine: {exc}") from exc
+
     namespaces = _parse_namespaces(pack.get("namespaces"), name, manifest_path)
     publisher = pack.get("publisher", "")
     if not isinstance(publisher, str) or (publisher and validate_name(publisher) is not None):
@@ -2886,6 +2899,7 @@ def load_manifest(path: Path | str) -> PackManifest:
         source_staging_entry=source_staging_entry,
         requires=tuple(cast("list[str]", requires_raw)),
         path=manifest_path,
+        compatibility=compatibility,
         contracts=_parse_contracts(pack.get("contracts"), manifest_path),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
         publisher=publisher,
