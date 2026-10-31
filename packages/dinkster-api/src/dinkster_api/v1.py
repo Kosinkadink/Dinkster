@@ -449,6 +449,7 @@ _PACK_MEDIA_EXPORTS = {
     "empty_document": "dinkster_image_document.document",
     "flatten": "dinkster_image_document.document",
     "raster_png": "dinkster_image_document.document",
+    "validate_image_document_encoded": "dinkster_image_document.document",
     "blend": "dinkster_image_document.blend",
     "dissolve_alpha": "dinkster_image_document.blend",
     "linear_to_srgb": "dinkster_image_document.blend",
@@ -538,6 +539,7 @@ if TYPE_CHECKING:
         empty_document,
         flatten,
         raster_png,
+        validate_image_document_encoded,
     )
     from dinkster_image_document.format import (
         BLEND_MODES,
@@ -577,6 +579,7 @@ __all__ = [
     "current_execution_context",
     "dissolve_alpha",
     "document_meta",
+    "validate_image_document_encoded",
     "empty_document",
     "export_ora",
     "export_psd",

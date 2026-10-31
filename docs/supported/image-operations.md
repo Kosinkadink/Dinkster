@@ -133,6 +133,10 @@
   rendering, per-layer previews, flatten/split, structural editing nodes, and
   safe native-placement fallback for stale edits; CPU reference rendering is
   bounded to 4,194,304 canvas pixels and 67,108,864 layer/mask work-pixels
+- Received image documents validate every non-inline resource against declared
+  source references without reading or publishing raster files; auxiliary
+  references are retained. Legacy layer stacks validate without publishing,
+  but their migrated resource lifetimes do not qualify for cleanup.
 - Isolated GLSL ES 3.00 image rendering through ANGLE with up to five image
   inputs, typed scalar and curve uniforms, four render targets, custom output
   dimensions, and 1-32 passes; Linux and Windows x86-64/ARM64 and macOS ARM64

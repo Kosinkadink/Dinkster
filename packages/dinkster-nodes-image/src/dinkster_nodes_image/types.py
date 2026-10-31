@@ -332,7 +332,7 @@ def register_image_types(registry: TypeRegistry) -> None:
         validate_image_encoded,
     )
 
-    from .layer_document import decode_layers, layer_meta, migrate_layers
+    from .layer_document import decode_layers, layer_meta, migrate_layers, validate_layers_encoded
     from .layer_recipe import coerce_delta, decode_delta, encode_delta
 
     if ASSET_TYPE not in registry:
@@ -413,6 +413,7 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=lambda data: coerce_document(decode_layers(data)),
             coerce=coerce_document,
             meta=layer_meta,
+            validate_encoded=validate_layers_encoded,
         )
         registry.register_rendition(
             LAYERS_TYPE,
