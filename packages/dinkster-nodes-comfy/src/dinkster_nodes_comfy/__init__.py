@@ -132,6 +132,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mesh import MESH_NODES
+from .mesh_holes import FillHoles
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
@@ -532,6 +533,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     MeshSmoothNormals,
     RenderUVAtlas,
     ApplyTextureToMesh,
+    FillHoles,
 )
 
 

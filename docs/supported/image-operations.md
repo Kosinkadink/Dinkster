@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `FillHoles` fills small boundary components under perimeter and vertex
+  limits, with optional pre-welding and open-chain filling.
 - Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
 )
 
 
-def _weld(
+def weld_vertices(
     vertices: Any, faces: Any, colors: Any, relative: float, absolute: float
 ) -> tuple[Any, Any, Any]:
     torch = importlib.import_module("torch")
@@ -91,53 +91,61 @@ class WeldVertices(Node):
     def execute(
         cls, *, mesh: object, epsilon_rel: float, epsilon_abs: float
     ) -> Mapping[str, object]:
-        torch = importlib.import_module("torch")
-        source: Any = materialize_mesh(mesh)
-        vertices: list[Any] = []
-        faces: list[Any] = []
-        colors: list[Any] = []
-        for index in range(source.vertices.shape[0]):
-            nv = (
-                int(source.vertex_counts[index])
-                if source.vertex_counts is not None
-                else source.vertices.shape[1]
+        return cls.outputs(
+            mesh=process_mesh_batch(
+                mesh, lambda v, f, c: weld_vertices(v, f, c, epsilon_rel, epsilon_abs)
             )
-            nf = (
-                int(source.face_counts[index])
-                if source.face_counts is not None
-                else source.faces.shape[1]
-            )
-            color = source.vertex_colors[index, :nv] if source.vertex_colors is not None else None
-            v, f, c = _weld(
-                source.vertices[index, :nv],
-                source.faces[index, :nf],
-                color,
-                epsilon_rel,
-                epsilon_abs,
-            )
-            vertices.append(v)
-            faces.append(f)
-            colors.append(c)
-        maximum = max(v.shape[0] for v in vertices)
-        maximum_faces = max(f.shape[0] for f in faces)
-        out: Any = copy.copy(source)
-        out.vertices = source.vertices.new_zeros((len(vertices), maximum, 3))
-        out.faces = source.faces.new_zeros((len(faces), maximum_faces, 3))
-        out.vertex_colors = (
-            source.vertex_colors.new_zeros((len(vertices), maximum, source.vertex_colors.shape[-1]))
-            if source.vertex_colors is not None
-            else None
         )
-        for index, (v, f, c) in enumerate(zip(vertices, faces, colors, strict=True)):
-            out.vertices[index, : v.shape[0]] = v
-            out.faces[index, : f.shape[0]] = f
-            if c is not None and out.vertex_colors is not None:
-                out.vertex_colors[index, : c.shape[0]] = c
-        out.vertex_counts = torch.tensor(
-            [v.shape[0] for v in vertices], dtype=torch.int64, device=out.vertices.device
+
+
+def process_mesh_batch(
+    mesh: object, operation: Callable[[Any, Any, Any], tuple[Any, Any, Any]]
+) -> Any:
+    torch = importlib.import_module("torch")
+    source: Any = materialize_mesh(mesh)
+    vertices: list[Any] = []
+    faces: list[Any] = []
+    colors: list[Any] = []
+    for index in range(source.vertices.shape[0]):
+        nv = (
+            int(source.vertex_counts[index])
+            if source.vertex_counts is not None
+            else source.vertices.shape[1]
         )
-        out.face_counts = torch.tensor(
-            [f.shape[0] for f in faces], dtype=torch.int64, device=out.faces.device
+        nf = (
+            int(source.face_counts[index])
+            if source.face_counts is not None
+            else source.faces.shape[1]
         )
-        out.uvs = out.normals = out.tangents = None
-        return cls.outputs(mesh=out)
+        color = source.vertex_colors[index, :nv] if source.vertex_colors is not None else None
+        v, f, c = operation(
+            source.vertices[index, :nv],
+            source.faces[index, :nf],
+            color,
+        )
+        vertices.append(v)
+        faces.append(f)
+        colors.append(c)
+    maximum = max(v.shape[0] for v in vertices)
+    maximum_faces = max(f.shape[0] for f in faces)
+    out: Any = copy.copy(source)
+    out.vertices = vertices[0].new_zeros((len(vertices), maximum, 3))
+    out.faces = faces[0].new_zeros((len(faces), maximum_faces, 3))
+    out.vertex_colors = (
+        colors[0].new_zeros((len(vertices), maximum, source.vertex_colors.shape[-1]))
+        if source.vertex_colors is not None
+        else None
+    )
+    for index, (v, f, c) in enumerate(zip(vertices, faces, colors, strict=True)):
+        out.vertices[index, : v.shape[0]] = v
+        out.faces[index, : f.shape[0]] = f
+        if c is not None and out.vertex_colors is not None:
+            out.vertex_colors[index, : c.shape[0]] = c
+    out.vertex_counts = torch.tensor(
+        [v.shape[0] for v in vertices], dtype=torch.int64, device=out.vertices.device
+    )
+    out.face_counts = torch.tensor(
+        [f.shape[0] for f in faces], dtype=torch.int64, device=out.faces.device
+    )
+    out.uvs = out.normals = out.tangents = None
+    return out
