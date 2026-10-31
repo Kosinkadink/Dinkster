@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
     CORE_STRING,
     LOAD3D_CAMERA_TYPE,
     LOAD3D_MODEL_INFO_TYPE,
@@ -74,6 +75,8 @@ MODEL_INFO = [
         (LOAD3D_CAMERA_TYPE, ORTHOGRAPHIC, ORTHOGRAPHIC),
         (LOAD3D_MODEL_INFO_TYPE, MODEL_INFO, MODEL_INFO),
         (LOAD3D_MODEL_INFO_TYPE, [], []),
+        (LOAD3D_CAMERA_TYPE, None, None),
+        (LOAD3D_MODEL_INFO_TYPE, None, None),
     ),
 )
 def test_camera_metadata_json_renditions(type_id: str, value: object, expected: object) -> None:
@@ -103,14 +106,15 @@ def test_camera_metadata_json_refuses_tensor_extensions_without_changing_portabi
             registry.render(wrapped, "json")
 
 
-@pytest.mark.parametrize("value", ([], MODEL_INFO))
-def test_load3d_model_info_preserves_order_and_transform_values(value: list[object]) -> None:
+@pytest.mark.parametrize("value", (None, [], MODEL_INFO))
+def test_load3d_model_info_preserves_order_and_transform_values(value: list[object] | None) -> None:
     registry = TypeRegistry()
     register_inference_types(registry)
     spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
     register_inference_types(registry)
     assert registry.spec(LOAD3D_MODEL_INFO_TYPE) is spec
     payload = spec.encode(value)
+    assert payload == encode_latent({"samples": value})
     assert spec.validate_encoded is not None
     spec.validate_encoded(payload, {})
     assert spec.decode(payload) == value
@@ -148,8 +152,10 @@ def test_load3d_model_info_rejects_malformed_transforms(value: object) -> None:
         spec.validate_encoded(payload, {})
 
 
-@pytest.mark.parametrize("value", (PERSPECTIVE, ORTHOGRAPHIC))
-def test_load3d_camera_roundtrip_preserves_complete_structure(value: dict[str, object]) -> None:
+@pytest.mark.parametrize("value", (None, PERSPECTIVE, ORTHOGRAPHIC))
+def test_load3d_camera_roundtrip_preserves_complete_structure(
+    value: dict[str, object] | None,
+) -> None:
     registry = TypeRegistry()
     register_inference_types(registry)
     spec = registry.spec(LOAD3D_CAMERA_TYPE)
@@ -157,11 +163,13 @@ def test_load3d_camera_roundtrip_preserves_complete_structure(value: dict[str, o
     assert registry.spec(LOAD3D_CAMERA_TYPE) is spec
     assert spec.validate_encoded is not None
     payload = spec.encode(value)
+    assert payload == encode_latent({"samples": value})
     spec.validate_encoded(payload, {})
     assert spec.decode(payload) == value
     assert spec.fingerprint is not None
     assert spec.fingerprint(spec.decode(payload)) == spec.fingerprint(value)
-    assert spec.fingerprint(dict(reversed(tuple(value.items())))) == spec.fingerprint(value)
+    if value is not None:
+        assert spec.fingerprint(dict(reversed(tuple(value.items())))) == spec.fingerprint(value)
     latent_fingerprint = registry.spec(LATENT_TYPE).fingerprint
     assert latent_fingerprint is not None
     assert latent_fingerprint({"samples": value}) != spec.fingerprint(value)
@@ -236,6 +244,7 @@ class CameraSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="load3d-camera-fixture.source",
+            inputs=(InputSpec("empty", TypeExpr.concrete(CORE_BOOLEAN), default=False),),
             outputs=(
                 OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),
                 OutputSpec("model_info", TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE)),
@@ -243,8 +252,11 @@ class CameraSource(Node):
         )
 
     @classmethod
-    def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(camera=PERSPECTIVE, model_info=MODEL_INFO)
+    def execute(cls, *, empty: bool = False) -> Mapping[str, object]:
+        return cls.outputs(
+            camera=None if empty else PERSPECTIVE,
+            model_info=None if empty else MODEL_INFO,
+        )
 
 
 class CameraConsumer(Node):
@@ -283,8 +295,7 @@ class CameraTransportConsumer(Node):
 
     @classmethod
     def execute(cls, *, camera: object, model_info: object) -> Mapping[str, object]:
-        assert camera == PERSPECTIVE
-        assert model_info == MODEL_INFO
+        assert (camera, model_info) in ((None, None), (PERSPECTIVE, MODEL_INFO))
         return cls.outputs(camera=camera, model_info=model_info)
 
 
@@ -347,7 +358,10 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
     asyncio.run(scenario())
 
 
-def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(tmp_path: Path) -> None:
+@pytest.mark.parametrize("empty", (False, True))
+def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
+    tmp_path: Path, empty: bool
+) -> None:
     async def scenario() -> None:
         test_directory = Path(__file__).parent
         modules = {
@@ -396,7 +410,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(tmp_
             )
             graph = Graph(
                 nodes={
-                    "source": GraphNode("load3d-camera-fixture.source"),
+                    "source": GraphNode("load3d-camera-fixture.source", {"empty": empty}),
                     "consumer": GraphNode(
                         "load3d-camera-transport.consumer",
                         {
@@ -408,12 +422,20 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(tmp_
             )
             engine = composer.composition.make_engine(lambda _event: None)
             first = await engine.run(graph, ["consumer"])
-            assert first.outputs["consumer"]["camera"].resolve() == PERSPECTIVE
-            assert first.outputs["consumer"]["model_info"].resolve() == MODEL_INFO
+            assert first.outputs["consumer"]["camera"].type_id == LOAD3D_CAMERA_TYPE
+            assert first.outputs["consumer"]["model_info"].type_id == LOAD3D_MODEL_INFO_TYPE
+            assert first.outputs["consumer"]["camera"].resolve() == (None if empty else PERSPECTIVE)
+            assert first.outputs["consumer"]["model_info"].resolve() == (
+                None if empty else MODEL_INFO
+            )
             assert set(first.executed) == {"source", "consumer"}
             replay = await engine.run(graph, ["consumer"])
-            assert replay.outputs["consumer"]["camera"].resolve() == PERSPECTIVE
-            assert replay.outputs["consumer"]["model_info"].resolve() == MODEL_INFO
+            assert replay.outputs["consumer"]["camera"].resolve() == (
+                None if empty else PERSPECTIVE
+            )
+            assert replay.outputs["consumer"]["model_info"].resolve() == (
+                None if empty else MODEL_INFO
+            )
             assert set(replay.cached) == {"source", "consumer"}
         finally:
             await composer.close()

@@ -94,6 +94,138 @@ def _assert_shared(first: Path, second: Path) -> None:
         pytest.fail("expected shared inode or Linux CoW extents")
 
 
+@pytest.mark.parametrize("provisioner", ["current", "cached-without-acquire", "without-acquire"])
+def test_public_setup_acquires_pack_wheel_absent_from_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provisioner: str
+) -> None:
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from dinkster_workers import pack_environment
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_environment import venv_python
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_environment_cli import _run
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments import build as publisher
+
+    original = publisher.standalone_tree
+    encode = publisher.canonical_json
+
+    def canonical_json(document: dict) -> bytes:
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    def standalone(root: Path) -> None:
+        original(root)
+        python = root / ("python.exe" if os.name == "nt" else "bin/python3")
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+        )
+        site.mkdir(parents=True, exist_ok=True)
+        (site / "fixture.pth").write_text(
+            "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+        )
+        if provisioner != "current":
+            target = site / "dinkster_workers"
+            shutil.copytree(
+                Path(pack_environment.__file__).parent,
+                target,
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            module = target / "pack_environment.py"
+            text = module.read_text()
+            text = text.replace(
+                'choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")',
+                'choices=("preflight", "rebuild", "doctor", "terminal", "references")',
+            )
+            module.write_text(text)
+
+    monkeypatch.setattr(publisher, "standalone_tree", standalone)
+    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "release", "fixture-cpu", free_port())
+    mirror = Path(fixture["mirror"])
+    index = tmp_path / "pypi"
+    index.mkdir()
+    wheel, sha = _wheel(index, "fixture_flatbuffers", "25.12.19", 73)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(index))
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    root, store = Path(fixture["root"]), Path(fixture["store"])
+    if provisioner == "cached-without-acquire":
+        cache = store / "wheels" / sha / wheel.name
+        cache.parent.mkdir(parents=True)
+        shutil.copyfile(wheel, cache)
+    try:
+        channel_path = mirror / "channels/main.json"
+        channel = json.loads(channel_path.read_bytes())
+        release = mirror / "engine" / channel["engine"]["release"][7:]
+        lock_path = release / "example-1.0-fixture-cpu.pack-lock.json"
+        PackLock(
+            "example",
+            "fixture-cpu",
+            ">=3.12",
+            ("fixture-flatbuffers==25.12.19",),
+            (),
+            (
+                LockedDistribution(
+                    "fixture-flatbuffers",
+                    "25.12.19",
+                    (
+                        LockedWheel(
+                            wheel.name,
+                            wheel.stat().st_size,
+                            sha,
+                            f"http://127.0.0.1:{server.server_port}/{wheel.name}",
+                        ),
+                    ),
+                ),
+            ),
+        ).write(lock_path)
+        manifest = json.loads((release / "release-manifest.json").read_bytes())
+        manifest["artifacts"].append(publisher.artifact(lock_path.name, lock_path.read_bytes()))
+        assert wheel.name not in {row["name"] for row in manifest["artifacts"]}
+        data = publisher.canonical_json(manifest) + b"\n"
+        (release / "release-manifest.json").write_bytes(data)
+        identity = hashlib.sha256(data).hexdigest()
+        release.rename(release.parent / identity)
+        channel["engine"]["release"] = "sha256:" + identity
+        channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
+        channel_path.write_bytes(publisher.canonical_json(channel))
+        code, result = _run(root, *fixture["commands"]["setup"][5:], "--yes")
+        if provisioner == "without-acquire":
+            assert code == 1, result
+            assert "selected engine cannot acquire missing pack wheels" in result["error"]
+            assert result["current"] is None
+            assert not (root / "generations/1").exists()
+            return
+        assert code == 0, result
+        assert result["current"] == 1
+        assert (store / "wheels" / sha / wheel.name).read_bytes() == wheel.read_bytes()
+        python = venv_python(root / "generations/1/packs/example")
+        assert (
+            subprocess.check_output(
+                [str(python), "-c", "import fixture_flatbuffers; print(fixture_flatbuffers.VALUE)"],
+                text=True,
+            ).strip()
+            == "73"
+        )
+    finally:
+        _run(root, "stop", "--yes")
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 @pytest.mark.parametrize(
     "problem",
     [
