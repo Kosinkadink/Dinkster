@@ -17,7 +17,17 @@ def test_child_output_and_timeout_diagnostics(
     module = tmp_path / "diagnostic_child.py"
     module.write_text(
         "import sys, threading\n"
+        "ready = threading.Event()\n"
+        "def changing_frames(depth):\n"
+        "    values = [str(depth), {'depth': depth}]\n"
+        "    return changing_frames(depth - 1) if depth else values\n"
+        "def active_child():\n"
+        "    ready.set()\n"
+        "    while True:\n"
+        "        changing_frames(24)\n"
         "def blocked_child():\n"
+        "    threading.Thread(target=active_child, daemon=True).start()\n"
+        "    ready.wait()\n"
         "    threading.Event().wait(90)\n"
         "if sys.argv[1] == 'blocked':\n"
         "    blocked_child()\n"
@@ -40,6 +50,7 @@ def test_child_output_and_timeout_diagnostics(
     assert "returncode before cleanup=None" in notes
     assert "Child stack before cleanup:" in notes
     assert "blocked_child" in notes
+    assert "active_child" in notes
     assert str(module) in notes
 
 
