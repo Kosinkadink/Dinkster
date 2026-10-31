@@ -75,7 +75,11 @@ Linux CPU base, a Windows NVIDIA/CPU base compatible with the detected
 hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
 Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
-content identities from Dinkster-Environments. Hash-locked workspace dependencies
+content identities from Dinkster-Environments. Setup checks the legacy full-id
+directory first; if absent, it finds that exact pinned id in the variant's
+`index.json` and verifies the labelled manifest before acquiring its archives.
+The index never selects a newer base or overrides a failed verification.
+Hash-locked workspace dependencies
 and editable packages are installed on top without resolving torch again.
 Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;

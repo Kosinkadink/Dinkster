@@ -8,11 +8,114 @@ import shlex
 import shutil
 import subprocess
 import sys
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
 from scripts import setup_envs
+
+
+@pytest.mark.parametrize("publication", ["legacy", "labelled", "wrong-manifest"])
+def test_setup_uses_pinned_full_id_and_same_archive_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publication: str
+) -> None:
+    from test_environment_artifacts import _mirror
+
+    from scripts import build_release
+
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    mirror = tmp_path / "mirror"
+    base, _, _ = _mirror(mirror)
+    identity = base["id"][7:]
+    legacy = mirror / "base" / base["variant"] / identity
+    label = f"2026-10-31-py3.14.10-torch1.0-{identity[:8]}"
+    if publication != "legacy":
+        base["label"] = label
+        if publication == "wrong-manifest":
+            base["python"] = "3.14.9"
+        published = legacy.with_name(label)
+        legacy.rename(published)
+        (published / "manifest.json").write_text(json.dumps(base))
+        index = [
+            {"id": "sha256:" + "f" * 64, "path": "base/fixture-cpu/newer-unpinned"},
+            {"id": base["id"], "path": f"base/{base['variant']}/{label}"},
+        ]
+        (published.parent / "index.json").write_text(json.dumps(index))
+    else:
+        # A stale or broken index must not override a valid legacy location.
+        (legacy.parent / "index.json").write_text("not valid JSON")
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: identity}))
+    monkeypatch.setenv("DINKSTER_EVIDENCE_ROOT", str(tmp_path / "no-evidence"))
+    monkeypatch.setattr(build_release, "workspace_projects", lambda *args: {})
+
+    def command(*args, **kwargs):
+        if args[:2] == ("uv", "export"):
+            (root / ".run/workspace-requirements.txt").write_text("")
+
+    monkeypatch.setattr(setup_envs, "command", command)
+    if publication == "wrong-manifest":
+        with pytest.raises(ValueError, match="base manifest digest mismatch"):
+            setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+        assert not (root / ".run").exists()
+        return
+    result = setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+    assert result == root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    receipt = json.loads((root / ".run/environment-base.json").read_text())
+    assert receipt["id"] == base["id"]
+    store = root / ".run/environment-store"
+    assert (store / "bases" / identity / base["interpreter"]["executable"]).is_file()
+    for wheel in base["wheels"]:
+        assert (store / "wheels" / wheel["sha256"] / wheel["filename"]).read_bytes() == (
+            store / "bases" / identity / "wheels" / wheel["filename"]
+        ).read_bytes()
+    assert {path.name for path in (store / "bases").iterdir()} == {identity}
+    if publication == "labelled":
+        assert all(label not in path.parts for path in store.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    "failure", ["forbidden", "transport", "corrupt", "wrong-id", "path", "variant", "duplicate"]
+)
+def test_setup_index_cannot_bypass_source_errors_or_full_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from dinkster_supervisor import environment_downloads
+
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    identity = "a" * 64
+    (root / "scripts/base_bundles.json").write_text(json.dumps({"linux-cpu": identity}))
+    label = "2026-10-31-py3.14.10-torch2.14.1-aaaaaaaa"
+    row = {"id": "sha256:" + identity, "path": f"base/linux-cpu/{label}"}
+    if failure == "wrong-id":
+        row["id"] = "sha256:" + "b" * 64
+    elif failure == "path":
+        row["path"] = f"base/linux-cpu/../{label}"
+    elif failure == "variant":
+        row["path"] = f"base/win-cpu/{label}"
+    index_reads = []
+
+    def metadata(mirror, relative):
+        if relative == f"base/linux-cpu/{identity}/manifest.json":
+            if failure == "forbidden":
+                raise HTTPError("https://example.invalid", 403, "forbidden", Message(), None)
+            if failure == "transport":
+                raise TimeoutError("metadata transport failed")
+            if failure == "corrupt":
+                return b"not valid JSON"
+            raise HTTPError("https://example.invalid", 404, "missing", Message(), None)
+        assert relative == "base/linux-cpu/index.json", "unsafe/unpinned fetch"
+        index_reads.append(relative)
+        return json.dumps([row, row] if failure == "duplicate" else [row]).encode()
+
+    monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
+    with pytest.raises((ValueError, OSError)):
+        setup_envs.setup(root, mirror="https://example.invalid")
+    assert len(index_reads) == (0 if failure in ("forbidden", "transport", "corrupt") else 1)
+    assert not (root / ".run").exists()
 
 
 @pytest.fixture
