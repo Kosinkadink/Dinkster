@@ -34,6 +34,10 @@
 - String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
   Long paths and documents can be read in full without the status descriptor's
   256-character inline preview limit. Retrieval retains job/scope authority.
+- Library-backed completed-value renditions retain vault read ownership until
+  rendering settles, including after request cancellation and before a source
+  descriptor opens. Independent readers keep their own lifetime. This does not
+  certify legacy migration references or enable cleanup.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.

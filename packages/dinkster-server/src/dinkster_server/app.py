@@ -3912,7 +3912,28 @@ async def handle_value(request: web.Request) -> web.Response:
             headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
         )
     try:
-        rendition = await registry.render_async(value, spec.kind, normalized_parameters or None)
+        library = request.app.get(LIBRARY_KEY)
+        if library is None:
+            rendition = await registry.render_async(value, spec.kind, normalized_parameters or None)
+        else:
+            from dinkster_assets.scratch import hold_produced_vault
+
+            with contextlib.closing(hold_produced_vault(library.vault.root)):
+                rendering = asyncio.create_task(
+                    registry.render_async(value, spec.kind, normalized_parameters or None)
+                )
+                cancelled = False
+                while not rendering.done():
+                    try:
+                        # Request cancellation must not interrupt a worker's source read.
+                        await asyncio.wait({rendering})
+                    except asyncio.CancelledError:
+                        cancelled = True
+                if cancelled:
+                    if not rendering.cancelled():
+                        rendering.exception()
+                    raise asyncio.CancelledError
+                rendition = rendering.result()
     except InvalidRenditionRequest as error:
         return _rendition_problem(400, "invalid_rendition_request", str(error))
     except RenditionUnavailable as error:

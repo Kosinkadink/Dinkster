@@ -8,7 +8,7 @@ import os
 import sqlite3
 import subprocess
 import threading
-from collections.abc import Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import pytest
+from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes, open_verified
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
@@ -41,9 +42,25 @@ from dinkster_server.auth import StaticBearerAuthenticator
 from dinkster_server.cleanup import inspect_cleanup, recover_produced_publications
 from dinkster_server.library import run_media_publication, run_owned_thread
 from dinkster_server.queue import JobState
-from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
+from dinkster_values import (
+    EncodedPayload,
+    Rendition,
+    RenditionUnavailable,
+    TypeRegistry,
+    Value,
+    ValueMeta,
+)
 from test_history import make_record
-from test_server import SCHEMAS, Sleeper, echo_graph, make_engine, reset_sleeper, wait_for_state
+from test_server import (
+    SCHEMAS,
+    Sleeper,
+    echo_graph,
+    finish_job,
+    make_engine,
+    reset_sleeper,
+    values_url,
+    wait_for_state,
+)
 
 
 def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Path) -> None:
@@ -86,6 +103,124 @@ def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Pa
             await asyncio.gather(task, return_exceptions=True)
             async with library.media_ingest_lock:
                 store.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["complete", "cancel", "unavailable", "cancel-unavailable"])
+def test_completed_rendition_retains_vault_until_renderer_settles(
+    tmp_path: Path, outcome: str
+) -> None:
+    async def scenario() -> None:
+        cancelled = outcome.startswith("cancel")
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        library = ServerLibrary(vault, store)
+        data = b"retained rendition source"
+        digest = digest_bytes(data)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(data))
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        inventory.adopted(digest, len(data))
+        ref = AssetRef(digest, "source", len(data), resolver=vault)
+        entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        handlers: list[asyncio.Task[None]] = []
+
+        async def mime(_metadata: Mapping[str, object]) -> str:
+            return "application/octet-stream"
+
+        async def resolve(
+            _metadata: Mapping[str, object], parameters: Mapping[str, str]
+        ) -> tuple[str, Mapping[str, str]]:
+            return "application/octet-stream", parameters
+
+        async def render(_value: Value, _parameters: Mapping[str, str]) -> Rendition:
+            entered.set()
+            try:
+                await release.wait()
+                if outcome.endswith("unavailable"):
+                    raise RenditionUnavailable("source no longer available")
+                return Rendition("held", "application/octet-stream", ref.read_bytes())
+            finally:
+                settled.set()
+
+        def factory(on_event: EventListener) -> Engine:
+            engine = make_engine(on_event)
+            engine.registry.register_relayed_rendition(
+                "STRING",
+                "held",
+                mime="application/octet-stream",
+                default=False,
+                version=None,
+                parameters=(),
+                defaults=None,
+                limits=None,
+                owner="worker",
+                resolve_mime=mime,
+                resolve=resolve,
+                render=render,
+            )
+            return engine
+
+        @web.middleware
+        async def observe(
+            request: web.Request,
+            handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+        ) -> web.StreamResponse:
+            if request.path == "/api/values":
+                assert request.task is not None
+                handlers.append(request.task)
+            return await handler(request)
+
+        app = create_app(factory, SCHEMAS, library=library)
+        app.middlewares.append(observe)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        pending: asyncio.Future[ClientResponse] | None = None
+        try:
+            await finish_job(client, echo_graph(), ["s"])
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
+            pending = asyncio.ensure_future(client.get(values_url("s", rendition="held")))
+            async with asyncio.timeout(10):
+                await entered.wait()
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+            if cancelled:
+                for _ in range(2):
+                    handlers[0].cancel()
+                    checkpoint = asyncio.Event()
+                    asyncio.get_running_loop().call_soon(checkpoint.set)
+                    await checkpoint.wait()
+                assert not handlers[0].done()
+                assert not settled.is_set()
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
+            # The request's lifetime cannot release a separate descriptor owner.
+            with ref.open() as independent:
+                release.set()
+                async with asyncio.timeout(10):
+                    await settled.wait()
+                if not cancelled:
+                    response = await pending
+                    assert response.status == (404 if outcome == "unavailable" else 200)
+                    if outcome == "complete":
+                        assert await response.read() == data
+                else:
+                    result = await asyncio.gather(handlers[0], return_exceptions=True)
+                    assert isinstance(result[0], asyncio.CancelledError)
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
+                assert independent.read() == data
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
+        finally:
+            release.set()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
+            await client.close()
 
     asyncio.run(scenario())
 
