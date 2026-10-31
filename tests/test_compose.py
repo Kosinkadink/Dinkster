@@ -4240,11 +4240,30 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "drift", ("valid", "type", "required", "default", "missing", "undeclared", "closed", "declared")
+    "drift",
+    (
+        "valid",
+        "presentation",
+        "type",
+        "required",
+        "default",
+        "lazy",
+        "missing",
+        "undeclared",
+        "closed",
+        "declared",
+    ),
 )
 def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None:
     from dinkster_protocol import Invocation
-    from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, elaborate
+    from dinkster_schema import (
+        InputSpec,
+        Node,
+        NodeSchema,
+        OutputSpec,
+        TypeExpr,
+        elaborate,
+    )
     from dinkster_values import register_core_types
     from dinkster_workers import InProcessWorker
 
@@ -4279,8 +4298,16 @@ def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None
             index = replace(index, required=True)
         elif drift == "default":
             index = replace(index, default=91)
+        elif drift == "lazy":
+            index = replace(index, lazy=True)
         elif drift == "declared":
             choice = replace(choice, required=False)
+        elif drift == "presentation":
+            choice = replace(
+                choice,
+                display_name="Authored choice",
+                doc="Choose the authored value.",
+            )
         effective = replace(effective, inputs=(choice, index))
         if drift == "missing":
             effective = replace(effective, inputs=(choice,))
@@ -4301,7 +4328,7 @@ def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None
                     effective_schema=effective,
                 )
             )
-            if drift == "valid":
+            if drift in {"valid", "presentation"}:
                 assert result.error is None
                 assert result.outputs is not None
                 assert result.outputs["result"].resolve() == "outside-menu|7"
