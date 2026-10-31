@@ -54,6 +54,10 @@
   controls, and structural extensions across execution hosts and caches
 - Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
   scales, and structural extensions across execution hosts and caches
+- Camera and model-transform values offer JSON renditions for browser consumers,
+  preserving complete camera fields and model order. Non-JSON extension data
+  remains portable but makes the JSON rendition unavailable rather than dropping
+  fields or substituting values
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
