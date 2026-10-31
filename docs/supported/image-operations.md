@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
+  colors and black boundary outlines.
 - Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
   coincident positions or splitting hard creases while retaining mesh attributes.
 - Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
