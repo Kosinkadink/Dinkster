@@ -241,6 +241,11 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
 
     with monkeypatch.context() as platform:
         platform.setattr(Path, "write_text", windows_write_text)
+        platform.setenv("GIT_CONFIG_COUNT", "2")
+        platform.setenv("GIT_CONFIG_KEY_0", "core.autocrlf")
+        platform.setenv("GIT_CONFIG_VALUE_0", "true")
+        platform.setenv("GIT_CONFIG_KEY_1", "core.eol")
+        platform.setenv("GIT_CONFIG_VALUE_1", "crlf")
         second = build_official_packs(root, tmp_path / "second", version=version)
     assert [path.name for path in first] == [path.name for path in second]
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]

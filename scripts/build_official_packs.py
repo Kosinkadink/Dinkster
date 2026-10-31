@@ -47,7 +47,21 @@ def build(
     commit = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
-    tracked = subprocess.check_output(["git", "-C", str(root), "archive", "--format=tar", commit])
+    # git archive applies checkout conversion even though its input is a commit.
+    tracked = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
+            "archive",
+            "--format=tar",
+            commit,
+        ]
+    )
     output.mkdir(parents=True, exist_ok=True)
     payloads: list[Path] = []
     locked: list[LockedPack] = []
