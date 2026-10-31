@@ -285,12 +285,18 @@ jobs:
           pattern: official-pack-locks-*
           merge-multiple: true
           path: .release/pack-locks
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-base-manifests
+          path: .release/bases
       - name: Admit native tools and pack locks into the engine release
         run: |
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
           arguments=()
+          for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
           for artifact in .release/tools/*.zip; do arguments+=(--artifact "$artifact"); done
           for artifact in .release/pack-locks/*.pack-lock.json; do arguments+=(--artifact "$artifact"); done
-          uv run --no-project --python 3.12 -m scripts.build_release --extend "${arguments[@]}"
+          uv run --locked --no-sync python -m scripts.build_release --extend "${arguments[@]}"
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:

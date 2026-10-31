@@ -153,6 +153,12 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         assert "-m scripts.build_release_pack_locks --release dist --base-manifest" in step["run"]
         assert step["env"] == {"VARIANT": "${{ matrix.variant }}"}
     admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
+    assert "for manifest in .release/bases/*/manifest.json" in admission
+    assert 'arguments+=(--base-manifest "$manifest")' in admission
+    assert (
+        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
+        in admission
+    )
     assert "for artifact in .release/pack-locks/*.pack-lock.json" in admission
     assert 'arguments+=(--artifact "$artifact")' in admission
     assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
@@ -1180,6 +1186,93 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
     for name, digest in final_sums.items():
         assert hashlib.sha256((output / name).read_bytes()).hexdigest() == digest
     assert json.loads(metadata.read_bytes()) == result
+
+
+@pytest.mark.parametrize(
+    "corruption", [None, "missing", "extra", "pack", "variant", "wheel-url", "index-url"]
+)
+def test_finalization_requires_complete_portable_official_dependency_locks(
+    tmp_path: Path, corruption: str | None
+) -> None:
+    from dinkster_registry.install import LockedPack, Lockfile
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts.build_release import write_manifest
+
+    output = tmp_path / "release"
+    output.mkdir()
+    catalog = output / "official-packs.lock"
+    catalog.write_text(
+        Lockfile.of(
+            [LockedPack("example", "1.2.3", "blake3:" + "a" * 64, "dinkster", (), "git:test")]
+        ).record_json()
+    )
+    write_manifest(output, {"format": "dinkster.engine/1", "version": "1.2.3"}, [catalog])
+    bases = []
+    candidates = []
+    for variant in ("linux-cpu", "win-cpu"):
+        base = {
+            "format": "dinkster.base/1",
+            "variant": variant,
+            "platform": {"os": "linux" if variant == "linux-cpu" else "windows", "arch": "x86_64"},
+            "python": "3.14.10",
+            "interpreter": {},
+            "wheels": [],
+            "replaces": [],
+            "workerProtocol": 11,
+            "nvidia": None,
+            "archive": {"format": "tar+zstd"},
+        }
+        canonical = json.dumps(base, sort_keys=True, separators=(",", ":")).encode("ascii")
+        base["id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+        base["archive"]["parts"] = []
+        path = tmp_path / f"{variant}.json"
+        path.write_text(json.dumps(base))
+        bases.append(path)
+        path = tmp_path / f"example-1.2.3-{variant}.pack-lock.json"
+        PackLock(
+            "wrong" if corruption == "pack" else "example",
+            "wrong" if corruption == "variant" else variant,
+            ">=3.12",
+            ("example-dependency==2.0",),
+            ("file:///resolver/index" if corruption == "index-url" else "https://pypi.org/simple",),
+            (
+                LockedDistribution(
+                    "example-dependency",
+                    "2.0",
+                    (
+                        LockedWheel(
+                            "example_dependency-2.0-py3-none-any.whl",
+                            17,
+                            "b" * 64,
+                            "file:///resolver/wheel.whl"
+                            if corruption == "wheel-url"
+                            else "https://example.test/wheel.whl",
+                        ),
+                    ),
+                ),
+            ),
+        ).write(path)
+        candidates.append(path)
+    if corruption == "missing":
+        candidates.pop()
+    elif corruption == "extra":
+        extra = tmp_path / "unlisted-1.2.3-linux-cpu.pack-lock.json"
+        extra.write_bytes(candidates[0].read_bytes())
+        candidates.append(extra)
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    if corruption:
+        with pytest.raises(ValueError, match="dependency lock"):
+            extend_release(output, candidates, base_manifests=bases)
+        assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+    else:
+        result = extend_release(output, candidates, base_manifests=bases)
+        assert {row["name"] for row in result["artifacts"]} == {
+            "official-packs.lock",
+            *(path.name for path in candidates),
+        }
+        for path in candidates:
+            assert (output / path.name).read_bytes() == path.read_bytes()
 
 
 def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(

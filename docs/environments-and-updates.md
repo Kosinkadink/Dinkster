@@ -628,6 +628,10 @@ Finalization verifies the original release, admits the tools ZIPs using the same
 artifact rows, and regenerates the manifest and checksums. Installation checks,
 GitHub release upload and PyPI selection consume this finalized directory.
 The tools ZIPs are not workspace wheels and are never uploaded to PyPI.
+Finalization also requires one dependency lock for every official catalog pack
+and selected base variant. It uses the registry and worker lock parsers to
+verify identities and refuses local wheel or index URLs before copying payloads
+or rewriting the release manifest.
 
 The engine release id used by channels is `sha256:` followed by the SHA-256
 of the exact `release-manifest.json` bytes. The manifest lists payload assets,
