@@ -44,6 +44,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_doctor.py::test_empty_pack_warns \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_preserves_first_authority \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_is_torch_free \
+  tests/test_compose.py::test_default_pack_prefers_loaded_source_tree_over_bundled_copy \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
   tests/test_compose.py::test_exact_node_claims_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
