@@ -132,6 +132,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mesh import MESH_NODES
+from .mesh_paint import PaintMesh
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -521,6 +522,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
     Trellis2TextureStage,
+    PaintMesh,
 )
 
 
