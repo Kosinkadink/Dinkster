@@ -6,11 +6,13 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
+from platform import machine
 from typing import Any, cast
 from urllib.parse import urlsplit
 
@@ -97,6 +99,16 @@ def base_details(base: dict[str, Any]) -> dict[str, object]:
     }
 
 
+def native_template(bases: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Select an interpreter donor by OS/architecture, not accelerator support."""
+    host = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+    arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(machine().lower(), machine().lower())
+    candidates = [base for base in bases.values() if base["platform"] == {"os": host, "arch": arch}]
+    if not candidates:
+        raise EnvironmentError(f"channel has no native interpreter donor for {host}/{arch}")
+    return min(candidates, key=lambda base: (base["nvidia"] is not None, base["variant"]))
+
+
 def build_custom_base(
     selection: dict[str, Any], template: dict[str, Any], sources: tuple[str, ...], store: Path
 ) -> dict[str, Any]:
@@ -120,55 +132,69 @@ def build_custom_base(
         requirements = [f"{name}=={version}" for name, version in roots.items()]
         if "torchvision" not in selection:
             requirements.append("torchvision")
+        host_platform = template["platform"]
+        host_os = {"windows": "win32", "macos": "darwin"}.get(host_platform["os"], "linux")
+        host_arch = "AMD64" if host_platform["os"] == "windows" else host_platform["arch"]
+        environment = f"sys_platform == '{host_os}' and platform_machine == '{host_arch}'"
         project = work / "pyproject.toml"
         project.write_text(
             '[project]\nname = "dinkster-custom-base"\nversion = "0"\n'
             + f"requires-python = {json.dumps('==' + template['python'])}\n"
             + f"dependencies = {json.dumps(requirements)}\n"
-            + '[[tool.uv.index]]\nname = "torch"\nexplicit = true\n'
+            + "[tool.uv]\n"
+            + f"environments = [{json.dumps(environment)}]\n"
+            + '[[tool.uv.index]]\nname = "torch"\n'
             + f"url = {json.dumps(selection['torch-index'])}\n"
+            + (
+                '[[tool.uv.index]]\nname = "extras"\n'
+                + f"url = {json.dumps(selection['extras-index'])}\n"
+                if selection["extras-index"].rstrip("/") != selection["torch-index"].rstrip("/")
+                else ""
+            )
             + "[tool.uv.sources]\n"
-            + "\n".join(f'{name} = {{ index = "torch" }}' for name in ("torch", "torchvision"))
-            + "\n",
+            + 'torch = { index = "torch" }\n',
             encoding="ascii",
         )
         output = work / "pylock.toml"
         run_local_command(
             [
                 "uv",
-                "pip",
-                "compile",
-                str(project),
+                "lock",
                 "--python",
                 str(python),
-                "--only-binary",
-                ":all:",
-                "--format",
-                "pylock.toml",
-                "--generate-hashes",
-                "--output-file",
-                str(output),
-                "--index",
-                selection["extras-index"],
+                "--no-build",
+                "--no-python-downloads",
                 "--default-index",
                 "https://pypi.org/simple",
+            ],
+            cwd=work,
+        )
+        run_local_command(
+            [
+                "uv",
+                "export",
+                "--frozen",
+                "--no-emit-project",
+                "--no-dev",
+                "--format",
+                "pylock.toml",
+                "--output-file",
+                str(output),
                 "--no-header",
             ],
             cwd=work,
         )
+        locked = tomllib.loads((work / "uv.lock").read_text(encoding="utf-8"))
         resolution = tomllib.loads(output.read_text(encoding="utf-8"))
         wheels = retain_wheels(resolution, python, store, work)
         for wheel in wheels:
             package = next(
-                package for package in resolution["packages"] if package["name"] == wheel["name"]
+                package
+                for package in locked["package"]
+                if package["name"] == wheel["name"] and package["version"] == wheel["version"]
             )
             wheel.update(
-                index=package.get(
-                    "index",
-                    selection["torch-index"]
-                    if wheel["name"] in {"torch", "torchvision"}
-                    else selection["extras-index"],
-                ),
+                index=package["source"]["registry"],
                 verification="index",
                 lockedVersion=None,
             )
@@ -197,7 +223,7 @@ def build_custom_base(
             "wheels": sorted(wheels, key=lambda wheel: wheel["filename"]),
             "replaces": sorted(set(template["replaces"]) | {wheel["name"] for wheel in wheels}),
             "workerProtocol": template["workerProtocol"],
-            "nvidia": template["nvidia"],
+            "nvidia": selection.get("nvidia"),
             "archive": {"format": "tar+zstd"},
         }
         identity = (
