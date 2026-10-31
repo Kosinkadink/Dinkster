@@ -48,6 +48,10 @@
   It returns a verified source lock and digest-addressed archives without
   changing a project or generation. Unavailable packs normally refuse the
   operation; optional missing-default reporting can return an empty source set.
+- Generation source admission checks each declared pack engine range against
+  the admitting interpreter's engine version before recording the source lock.
+  An incompatible range names the pack/version, range and target engine; a
+  refusal leaves the generation unsealed and its dependency inputs intact.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

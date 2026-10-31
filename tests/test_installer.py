@@ -151,10 +151,24 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
         ("lock", "unsupported lockfile format"),
         ("sealed", "fresh, unsealed"),
         ("relative", "absolute paths"),
+        (
+            "engine-below",
+            "pack example@1.2.3 declares engine >=0.0.3; engine 0.0.2 is incompatible",
+        ),
+        ("engine-above", "pack example@1.2.3 declares engine <0.0.2; engine 0.0.2 is incompatible"),
     ],
 )
 def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
     pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
+    engine = {"engine-below": ">=0.0.3", "engine-above": "<0.0.2"}.get(
+        problem or "", ">=0.0.2.dev0,<0.1"
+    )
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text().replace(
+            "[pack]\n", f'[pack]\nversion = "1.2.3"\nengine = "{engine}"\n'
+        )
+    )
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     archive = artifacts / "temporary.zip"
@@ -2966,7 +2980,7 @@ def test_registry_source_identity_comes_from_verified_archive(
     version = "2.3.2" if problem == "version" else "2.3.1"
     publisher = "" if problem == "publisher" else "acme"
     declaration = (
-        "" if problem == "declaration" else f'version = "{version}"\nengine = ">=0.4,<0.7"\n'
+        "" if problem == "declaration" else f'version = "{version}"\nengine = ">=0.0.2.dev0,<0.7"\n'
     )
     (pack / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
@@ -2982,10 +2996,10 @@ def test_registry_source_identity_comes_from_verified_archive(
     release = LockedPack("demo", "2.3.1", digest, "audit-actor", ())
     files = {
         "/v1/packs/demo/versions?limit=100": json.dumps(
-            {"items": [{"version": "2.3.1", "dinkster": ">=0.4,<0.7", "state": "active"}]}
+            {"items": [{"version": "2.3.1", "dinkster": ">=0.0.2.dev0,<0.7", "state": "active"}]}
         ).encode(),
         "/v1/packs/demo/versions/2.3.1": _release_record(
-            release, state="active", manifest={"dinkster": ">=0.4,<0.7"}
+            release, state="active", manifest={"dinkster": ">=0.0.2.dev0,<0.7"}
         ),
         "/v1/packs/demo/versions/2.3.1/download-tickets": _download_ticket(
             release, archive.read_bytes()
@@ -3000,7 +3014,7 @@ def test_registry_source_identity_comes_from_verified_archive(
         selected = resolve_compatible_release(registry, "demo", "2.0", "0.5")
         cached = tmp_path / f"{digest[7:]}.zip"
         cached.write_bytes(http_registry_fetcher(registry.endpoint)(selected))
-        engine = {"below": "0.3.9", "above": "0.7"}.get(problem or "", "0.5")
+        engine = {"below": "0.0.1", "above": "0.7"}.get(problem or "", "0.5")
         if problem:
             reason = {
                 "digest": "digest mismatch",
@@ -3009,8 +3023,8 @@ def test_registry_source_identity_comes_from_verified_archive(
                 "version": "archive manifest version is 2.3.2",
                 "publisher": "archive manifest has no publisher",
                 "declaration": "archive manifest has no pack version and engine range",
-                "below": "declares engine >=0.4,<0.7; engine 0.3.9 is incompatible",
-                "above": "declares engine >=0.4,<0.7; engine 0.7 is incompatible",
+                "below": "declares engine >=0.0.2.dev0,<0.7; engine 0.0.1 is incompatible",
+                "above": "declares engine >=0.0.2.dev0,<0.7; engine 0.7 is incompatible",
             }[problem]
             with pytest.raises(InstallError, match="demo@2.3.1") as refusal:
                 registry_source_lock(selected, cached, engine_version=engine)
