@@ -6,6 +6,9 @@
   A JSON manifest rendition preserves the source and named resource identities
   when reading completed job outputs; local bindings remain host-granted rather
   than becoming content digests.
+- Local asset bindings support byte reads for callers with local assets:read
+  permission. Reads require a live grant and unchanged file revision; they do not
+  index files, grant path access or advertise immutable caching.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
