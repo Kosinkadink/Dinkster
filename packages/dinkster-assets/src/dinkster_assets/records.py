@@ -528,6 +528,92 @@ class LibraryStore:
             ).fetchone()
         return _result_offer_from_row(row) if row is not None else None
 
+    def publish_terminal_result(
+        self,
+        scope: str,
+        job_ref: str,
+        attempt: int,
+        tokens: Sequence[str],
+        *,
+        state: str,
+        identity: Mapping[str, object],
+        artifacts_complete: bool,
+    ) -> dict[str, object]:
+        """Seal exact publications, never select a latest offer by output identity."""
+        scope = _clean_scope(scope)
+        if not job_ref or type(attempt) is not int or attempt < 1:
+            raise AssetError("terminal result identity is invalid")
+        if state not in {"completed", "failed", "cancelled"}:
+            raise AssetError("terminal result state is invalid")
+        if type(artifacts_complete) is not bool:
+            raise AssetError("terminal artifact completeness must be a boolean")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            outputs: dict[str, dict[str, dict[str, object]]] = {}
+            complete = state == "completed" and artifacts_complete
+            for token in tokens:
+                row = self._conn.execute(
+                    "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
+                    (scope, _result_offer_token(token)),
+                ).fetchone()
+                if row is None:
+                    raise AssetError("terminal result offer is unavailable")
+                offer = _result_offer_from_row(row)
+                if offer.job_ref != job_ref or offer.attempt != attempt:
+                    raise AssetError("terminal result offer belongs to a different execution")
+                node = outputs.setdefault(offer.node_id, {})
+                if offer.output_id in node:
+                    raise AssetError("terminal result publication is ambiguous")
+                node[offer.output_id] = offer.to_wire()
+                complete = complete and offer.complete
+            result: dict[str, object] = {
+                "scope": scope,
+                "jobRef": job_ref,
+                "attemptId": attempt,
+                "state": state,
+                "identity": dict(identity),
+                "resultOffers": outputs,
+                "artifacts": [] if artifacts_complete else None,
+                "complete": complete,
+            }
+            manifest = json.dumps(result, sort_keys=True, separators=(",", ":"))
+            existing = self._conn.execute(
+                "SELECT manifest FROM asset_terminal_results WHERE scope = ? AND job_ref = ?",
+                (scope, job_ref),
+            ).fetchone()
+            if existing is not None:
+                if existing["manifest"] != manifest:
+                    raise StaleRevision("terminal result publication is already sealed")
+            else:
+                self._conn.execute(
+                    "INSERT INTO asset_terminal_results (scope, job_ref, manifest) "
+                    "VALUES (?, ?, ?)",
+                    (scope, job_ref, manifest),
+                )
+        return result
+
+    def terminal_result(self, scope: str, job_ref: str) -> dict[str, object] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT manifest FROM asset_terminal_results WHERE scope = ? AND job_ref = ?",
+                (_clean_scope(scope), job_ref),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            raw = json.loads(row["manifest"])
+        except (TypeError, ValueError) as exc:
+            raise AssetError("terminal result publication is unreadable") from exc
+        if not isinstance(raw, dict):
+            raise AssetError("terminal result publication is invalid")
+        result = cast(dict[str, object], raw)
+        if (result.get("scope"), result.get("jobRef")) != (
+            scope,
+            job_ref,
+        ):
+            raise AssetError("terminal result publication identity is invalid")
+        return result
+
     def claim_result_assets(
         self,
         scope: str,

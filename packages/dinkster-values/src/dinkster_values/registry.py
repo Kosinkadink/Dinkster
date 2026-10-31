@@ -1084,6 +1084,20 @@ def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
     )
 
 
+def _coerce_string(obj: object) -> str:
+    if type(obj) is not str:
+        raise TypeError("STRING expects a string")
+    return obj
+
+
+def _validate_string_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    if not data.startswith(b"json:"):
+        raise ValueError("STRING expects canonical JSON encoding")
+    obj = _coerce_string(default_decode(data))
+    if default_encode(obj) != data:
+        raise ValueError("STRING expects canonical JSON encoding")
+
+
 def register_core_types(registry: TypeRegistry) -> None:
     """Primitives are envelope types like everything else (hazard H2)."""
     # Imported here because curve depends on this module's TypeRegistry.
@@ -1092,8 +1106,15 @@ def register_core_types(registry: TypeRegistry) -> None:
     # Core scalars inline as themselves (DESIGN 3.5): peeking an int or a
     # short string never needs a payload round trip. core.absent does NOT
     # inline - absence has its own channel, never a smuggled null.
-    for type_id in (CORE_INT, CORE_FLOAT, CORE_STRING):
+    for type_id in (CORE_INT, CORE_FLOAT):
         registry.register(type_id, inline=lambda obj: obj)
+    registry.register(
+        CORE_STRING,
+        coerce=_coerce_string,
+        inline=lambda obj: obj,
+        validate_encoded=_validate_string_encoded,
+        asset_references_complete=True,
+    )
     registry.register_rendition(
         CORE_STRING,
         "text",

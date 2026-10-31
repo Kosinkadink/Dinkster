@@ -40,6 +40,7 @@ from dinkster_server import (
 from dinkster_server.auth import StaticBearerAuthenticator
 from dinkster_server.cleanup import inspect_cleanup, recover_produced_publications
 from dinkster_server.library import run_media_publication, run_owned_thread
+from dinkster_server.queue import JobState
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
 from test_history import make_record
 from test_server import SCHEMAS, Sleeper, echo_graph, make_engine, reset_sleeper, wait_for_state
@@ -100,7 +101,8 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
             entered.set()
             assert release.wait(10)
 
-        async def settle(job: Job) -> None:
+        async def settle(job: Job, terminal_state: JobState) -> None:
+            assert terminal_state == "completed"
             await run_owned_thread(work)
 
         vault = AssetVault(tmp_path / "vault")

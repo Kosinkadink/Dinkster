@@ -307,6 +307,23 @@ def test_core_types_use_comfy_socket_identities_without_legacy_aliases() -> None
     assert not legacy_type_ids & set(registry.type_ids())
 
 
+def test_core_string_rejects_embedded_payloads_and_noncanonical_wire() -> None:
+    registry = make_registry()
+    spec = registry.spec(CORE_STRING)
+    assert spec.asset_references_complete
+    assert spec.validate_encoded is not None
+    text = 'a "quoted" path'
+    assert registry.wrap(CORE_STRING, text).resolve() == text
+    assert spec.encode(text) == b'json:"a \\"quoted\\" path"'
+    spec.validate_encoded(spec.encode(text), {})
+    for invalid in (None, True, 7, {"digest": "not-a-scalar"}, ["text"]):
+        with pytest.raises(TypeError, match="STRING expects a string"):
+            registry.wrap(CORE_STRING, invalid)
+    for wire in (b"pickle:unused", b"json:null", b'json:{"asset":1}', b'json: "spaced"'):
+        with pytest.raises((TypeError, ValueError)):
+            spec.validate_encoded(wire, {})
+
+
 def test_core_combo_is_string_shaped_but_type_distinct() -> None:
     registry = make_registry()
     assert CORE_COMBO in registry

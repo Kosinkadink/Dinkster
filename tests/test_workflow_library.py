@@ -161,7 +161,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0007_result_offers (head)" in current.stdout
+    assert "0008_terminal_results (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -557,6 +557,9 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
             {
                 "writer": Principal("writer", {"one": frozenset({"assets:read", "assets:write"})}),
                 "reader": Principal("reader", {"one": frozenset({"assets:read"})}),
+                "historian": Principal(
+                    "historian", {"one": frozenset({"assets:read", "history:read"})}
+                ),
             }
         )
         client = TestClient(
@@ -603,6 +606,24 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
             ).status == 403
             assert (await client.put(url, json=claim, headers=writer)).status == 400
             assert (await client.put(claim_url, json=claim, headers=writer)).status == 200
+            snapshot = library.store.publish_terminal_result(
+                "one",
+                "run",
+                1,
+                [offer.token],
+                state="completed",
+                identity={"clientId": "client"},
+                artifacts_complete=True,
+            )
+            terminal = "/api/library/terminal-results/run?scope=one"
+            historian = {"Authorization": "Bearer historian"}
+            assert (await client.get(terminal)).status == 401
+            assert (await client.get(terminal, headers=reader)).status == 403
+            assert (
+                await client.get(terminal.replace("one", "two"), headers=historian)
+            ).status == 403
+            response = await client.get(terminal, headers=historian)
+            assert response.status == 200 and await response.json() == snapshot
         finally:
             await client.close()
 
@@ -742,6 +763,7 @@ def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path
 
 def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Path) -> None:
     from dinkster_assets.value import ASSET_TYPE, register_asset_type
+    from dinkster_server import HistoryStore
 
     class ProduceAssets(Node):
         @classmethod
@@ -779,8 +801,12 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Pa
 
     async def scenario() -> None:
         library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
-        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        history = HistoryStore(tmp_path / "history.sqlite")
+        client = TestClient(
+            TestServer(create_app(engine, schemas, library=library, history=history))
+        )
         await client.start_server()
+        snapshots: dict[str, dict[str, object]] = {}
         try:
             tokens: list[str] = []
             for job_id in ("fresh", "cached"):
@@ -855,11 +881,128 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(tmp_path: Pa
                     if event["type"] == "job_state" and event["state"] == "completed"
                 ]
                 assert terminal[0]["resultOffers"] == status["resultOffers"]
+                url = f"/api/library/terminal-results/{status['jobRef']}?scope=local"
+                response = await client.get(url)
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                snapshot = await response.json()
+                assert snapshot == {
+                    "scope": "local",
+                    "jobRef": status["jobRef"],
+                    "attemptId": 1,
+                    "state": "completed",
+                    "identity": {
+                        "clientId": "client",
+                        "jobId": job_id,
+                        "sourceDocument": "",
+                        "principalId": "local",
+                        "principalKind": "human",
+                    },
+                    "resultOffers": status["resultOffers"],
+                    "artifacts": [],
+                    "complete": True,
+                }
+                snapshots[url] = snapshot
+                response = await client.delete(f"/api/history/{status['jobRef']}?scope=local")
+                assert response.status == 204
             assert len(set(tokens)) == 6
         finally:
             await client.close()
 
+        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            assert (await client.get("/api/jobs/client/fresh")).status == 404
+            for url, snapshot in snapshots.items():
+                response = await client.get(url)
+                assert response.status == 200
+                assert await response.json() == snapshot
+                assert (await client.get(url.replace("scope=local", "scope=other"))).status == 404
+            missing = await client.get("/api/library/terminal-results/tokenless-legacy?scope=local")
+            assert missing.status == 404
+            assert await missing.json() == {
+                "available": False,
+                "reason": "publication-unavailable",
+            }
+        finally:
+            await client.close()
+
     asyncio.run(scenario())
+
+
+def test_terminal_result_seals_exact_tokens_and_rejects_newer_substitution(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    try:
+        older = store.offer_result_assets(
+            "one", "run", 2, "r[3]/node", "a", 4, [DIGEST_A], complete=True
+        )
+        newer = store.offer_result_assets(
+            "one", "run", 2, "r[3]/node", "a", 5, [DIGEST_B], complete=True
+        )
+        identity = {"clientId": "client", "jobId": "mutable-job"}
+        snapshot = store.publish_terminal_result(
+            "one",
+            "run",
+            2,
+            [older.token],
+            state="completed",
+            identity=identity,
+            artifacts_complete=True,
+        )
+        assert snapshot["resultOffers"] == {"r[3]/node": {"a": older.to_wire()}}
+        assert snapshot["complete"] is True
+        assert (
+            store.publish_terminal_result(
+                "one",
+                "run",
+                2,
+                [older.token],
+                state="completed",
+                identity=identity,
+                artifacts_complete=True,
+            )
+            == snapshot
+        )
+        with pytest.raises(StaleRevision, match="sealed"):
+            store.publish_terminal_result(
+                "one",
+                "run",
+                2,
+                [newer.token],
+                state="completed",
+                identity=identity,
+                artifacts_complete=True,
+            )
+        for scope, run, attempt, tokens in (
+            ("other", "run", 2, [older.token]),
+            ("one", "different", 2, [older.token]),
+            ("one", "run", 3, [older.token]),
+            ("one", "run", 2, [older.token, newer.token]),
+        ):
+            with pytest.raises(AssetError):
+                store.publish_terminal_result(
+                    scope,
+                    run,
+                    attempt,
+                    tokens,
+                    state="completed",
+                    identity=identity,
+                    artifacts_complete=True,
+                )
+        assert store.terminal_result("one", "run") == snapshot
+        incomplete = store.publish_terminal_result(
+            "one",
+            "with-artifacts",
+            1,
+            [],
+            state="completed",
+            identity=identity,
+            artifacts_complete=False,
+        )
+        assert incomplete["complete"] is False and incomplete["artifacts"] is None
+    finally:
+        store.close()
 
 
 def test_result_offers_keep_exact_roots_across_claims_and_restart(tmp_path: Path) -> None:

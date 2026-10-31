@@ -54,6 +54,13 @@
   parent-output source rather than narrowing its roots. Unknown
   codecs remain incomplete. This does not cover live previews or restored
   history, certify frontend coverage, or enable cleanup.
+- Scoped terminal publication discovery retains original output tokens,
+  execution identity and provenance independently of process restart,
+  queue/cache retirement and ordinary history deletion. It never substitutes
+  a newer publication or reconstructs tokens for legacy rows. Artifact-bearing,
+  failed, cancelled and unknown-codec sets remain incomplete. This is source
+  discovery, not stored output payloads or completed frontend restoration;
+  cleanup remains disabled.
 - Durable terminal history retains external asset identities from target
   values, saved artifacts and their optional published previews independently
   of execution-cache entries, without storing output payloads or changing

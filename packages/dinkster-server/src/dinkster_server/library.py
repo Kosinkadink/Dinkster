@@ -1647,6 +1647,26 @@ async def handle_result_asset_offer(request: web.Request) -> web.Response:
     return web.json_response(offer.to_wire(), headers={"Cache-Control": "no-store"})
 
 
+async def handle_terminal_result(request: web.Request) -> web.Response:
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    resolve_scope(principal_for(request), "history:read", scope)
+    try:
+        result = await asyncio.to_thread(
+            request.app[LIBRARY_KEY].store.terminal_result,
+            scope,
+            request.match_info["job_ref"],
+        )
+    except (AssetError, sqlite3.Error):
+        return _json_error(503, "terminal result state is unavailable")
+    if result is None:
+        return web.json_response(
+            {"available": False, "reason": "publication-unavailable"},
+            status=404,
+            headers={"Cache-Control": "no-store"},
+        )
+    return web.json_response(result, headers={"Cache-Control": "no-store"})
+
+
 async def handle_retained_assets(request: web.Request) -> web.Response:
     """Explicit scoped reference manifests; document contents remain opaque."""
     scope = resolve_scope(
@@ -1845,6 +1865,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_put("/api/library/storage/policy", handle_cleanup_policy)
     app.router.add_post("/api/library/storage/clear", handle_cleanup_clear)
     app.router.add_get("/api/library/result-offers/{token}", handle_result_asset_offer)
+    app.router.add_get("/api/library/terminal-results/{job_ref}", handle_terminal_result)
     retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
     app.router.add_get(retention_path, handle_retained_assets)
     app.router.add_put(retention_path, handle_retained_assets)

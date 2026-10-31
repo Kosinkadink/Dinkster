@@ -178,7 +178,7 @@ class JobQueue:
         redactor: PathRedactor | None = None,
         store: QueuePersistence | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
-        settle_job: Callable[[Job], Awaitable[None]] | None = None,
+        settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], AbstractContextManager[object]] | None = None,
         publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
     ) -> None:
@@ -639,7 +639,7 @@ class JobQueue:
             try:
                 if self._settle_job is not None:
                     try:
-                        await self._settle_job(job)
+                        await self._settle_job(job, terminal_state)
                     except Exception:  # noqa: BLE001 - recovery cannot change a terminal result
                         log.exception("job settlement failed for job %s", job.key)
             finally:

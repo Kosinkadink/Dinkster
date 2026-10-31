@@ -285,8 +285,26 @@ Discovery is uncached; absence of `resultOffer` means no published source
 authority, not an empty asset set. Read the source binding and claim it before
 exposing a value or fetching its renditions. Byte responses and rendition
 cache keys do not establish retention authority.
-Live previews, restored history and global frontend coverage are not certified
-by this publication; collection remains disabled.
+
+`GET /api/library/terminal-results/{jobRef}?scope=` reads a sealed terminal
+publication set from the library, independently of queue/cache retirement,
+ordinary history deletion and backend restart. Scoped `assets:read` and
+`history:read` are required. Its identity includes client/job IDs, source
+document and principal facts; the top level carries actual jobRef, attempt,
+terminal state and the original `resultOffers`. Unknown or legacy publications
+return 404 `publication-unavailable`; no tuple/latest-output fallback exists.
+Ambiguous or foreign source tokens cannot be sealed, and a different snapshot
+cannot replace one already stored for that jobRef. Reads use `no-store`.
+This records source authority, not output payloads or a guarantee that every
+source remains claimable. Independent frozen/intermediate holders still need
+their own exact source token and acknowledged owner.
+
+Terminal jobs without artifacts advertise `artifacts: []`; artifact-bearing
+jobs currently report `artifacts: null` and `complete: false`, not a complete
+empty set. Failed/cancelled jobs and unaudited output codecs also remain
+incomplete. Terminal artifact/preview associations, live previews and actual
+frontend restoration are not certified by this publication; collection remains
+disabled.
 
 ### Backend synchronization
 

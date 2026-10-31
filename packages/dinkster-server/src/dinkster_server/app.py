@@ -356,7 +356,7 @@ from .preflight import (
     graph_provider_selections,
     parse_asset_consent,
 )
-from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue
+from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue, JobState
 from .redaction import PathRedactor
 from .settings import SETTINGS_CATEGORIES, RuntimeSettings, add_settings_routes
 from .training_sessions import TrainingSessionStore, add_training_routes
@@ -1285,7 +1285,7 @@ class ServerState:
         execution_journal: ExecutionJournal | None = None,
         full_free: FullFree | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
-        settle_job: Callable[[Job], Awaitable[None]] | None = None,
+        settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], contextlib.AbstractContextManager[object]] | None = None,
         publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
     ) -> None:
@@ -4671,18 +4671,47 @@ def create_app(
             return await run_media_publication(library, lambda: record_outputs(job, result))
         return result
 
-    async def settle_job(job: Job) -> None:
+    async def settle_job(job: Job, terminal_state: JobState) -> None:
         from .cleanup import POLICY_WAKE_KEY, RECOVERY_KEY, recover_produced_publications
         from .library import run_owned_thread
 
-        if library is not None and library.scratch_root is not None:
-            scratch = library.scratch_root
-            vault = library.vault
-            recovery = await run_owned_thread(
-                lambda: recover_produced_publications(vault, scratch, job=job.run_id)
+        assert library is not None
+        store = library.store
+
+        def persist_terminal() -> None:
+            store.publish_terminal_result(
+                job.scope,
+                job.run_id,
+                job.attempt,
+                [
+                    cast(str, offer["token"])
+                    for outputs in job.result_offers.values()
+                    for offer in outputs.values()
+                ],
+                state=terminal_state,
+                identity={
+                    "clientId": job.key.client_id,
+                    "jobId": job.key.job_id,
+                    "sourceDocument": job.source_document,
+                    "principalId": job.principal_id,
+                    "principalKind": job.principal_kind,
+                },
+                artifacts_complete=job.result is not None and not job.result.artifacts,
             )
-            app[RECOVERY_KEY].update(recovery)
-            app[POLICY_WAKE_KEY].set()
+
+        try:
+            if library.scratch_root is not None:
+                scratch = library.scratch_root
+                vault = library.vault
+                recovery = await run_owned_thread(
+                    lambda: recover_produced_publications(vault, scratch, job=job.run_id)
+                )
+                app[RECOVERY_KEY].update(recovery)
+        finally:
+            try:
+                await run_owned_thread(persist_terminal)
+            finally:
+                app[POLICY_WAKE_KEY].set()
 
     @contextlib.contextmanager
     def job_context(job: Job) -> Generator[None]:

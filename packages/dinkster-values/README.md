@@ -59,6 +59,9 @@ Core `STRING` values expose a default `text` rendition containing the full UTF-8
 text, including strings too long for inline status descriptors. Use
 `GET /api/values?...&rendition=text` for full execution-scoped text retrieval;
 the 256-character inline preview limit does not truncate that response.
+`STRING` accepts only Python strings and canonical JSON string encodings, not
+arbitrary embedded payloads or pickle encodings. This restriction makes its
+empty external asset reference set exhaustive.
 
 ### Bounded media streams
 

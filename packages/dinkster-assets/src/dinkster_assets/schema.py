@@ -104,6 +104,13 @@ sa.Index(
     metadata.tables["asset_result_offers"].c.scope,
     metadata.tables["asset_result_offers"].c.job_ref,
 )
+sa.Table(
+    "asset_terminal_results",
+    metadata,
+    sa.Column("scope", sa.Text, primary_key=True),
+    sa.Column("job_ref", sa.Text, primary_key=True),
+    sa.Column("manifest", sa.Text, nullable=False),
+)
 
 
 def migration_config() -> Config:
