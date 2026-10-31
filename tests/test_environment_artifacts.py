@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import zipfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -41,6 +42,17 @@ def _json(value: dict) -> bytes:
 
 def _artifact(name: str, data: bytes, *, key: str = "name") -> dict:
     return {key: name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def _wheel_payload(name: str, version: str, requirement: str) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(
+            f"{name}-{version}.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            f"Requires-Dist: {requirement}\n",
+        )
+    return output.getvalue()
 
 
 def _mirror(
@@ -311,15 +323,17 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
 
 
 @pytest.mark.parametrize("source", ["origin", "index"])
-@pytest.mark.parametrize("failure", [None, "hash", "size", "missing", "base-hash"])
+@pytest.mark.parametrize("failure", [None, "hash", "size", "missing", "base-hash", "dependency"])
 def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
     tmp_path: Path, source: str, failure: str | None
 ):
     mirror, store, packages = tmp_path / "release", tmp_path / "store", tmp_path / "packages"
-    base, _, _ = _mirror(mirror)
+    base, _, channel = _mirror(mirror)
     packages.mkdir()
     filename = "third_party-7.2-py3-none-any.whl"
-    payload = b"third-party locked binary bytes"
+    payload = _wheel_payload(
+        "third_party", "7.2", "fixture-base>=2" if failure == "dependency" else "fixture-base<2"
+    )
     (packages / filename).write_bytes(payload)
     index = packages / "simple/third-party"
     index.mkdir(parents=True)
@@ -343,6 +357,14 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
     try:
         origin = f"http://127.0.0.1:{server.server_port}"
         catalog = discover((str(mirror),), "main")
+        engine_filename = "fixture_engine-2.0-py3-none-any.whl"
+        engine_payload = _wheel_payload("fixture_engine", "2.0", "fixture-base>=1")
+        (mirror / "engine" / channel["engine"]["release"][7:] / engine_filename).write_bytes(
+            engine_payload
+        )
+        environment_artifacts.artifact_rows(catalog.engine["artifacts"], "name")[1].update(
+            _artifact(engine_filename, engine_payload)
+        )
         fields = ("name", "version", "filename", "size", "sha256", "index", "url")
         base_row = {key: base["wheels"][0][key] for key in fields}
         dependency = {
@@ -371,9 +393,16 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         elif failure == "base-hash":
             base_row["sha256"] = "a" * 64
         if failure is not None:
-            with pytest.raises((DownloadError, EnvironmentError)):
+            with pytest.raises(
+                (DownloadError, EnvironmentError),
+                match="third-party requires fixture-base>=2; base provides fixture-base 1.0"
+                if failure == "dependency"
+                else None,
+            ):
                 acquire(catalog, "fixture-cpu", store, package_index=package_index)
-            assert not (store / "wheels" / dependency["sha256"] / filename).exists()
+            assert (store / "wheels" / dependency["sha256"] / filename).exists() == (
+                failure == "dependency"
+            )
             assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
             assert not any(".tar.gz" in path for path in requests)
             if failure == "base-hash":
@@ -382,8 +411,7 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         constraints = acquire(catalog, "fixture-cpu", store, package_index=package_index)
         assert (store / "wheels" / dependency["sha256"] / filename).read_bytes() == payload
         assert set(constraints.read_text().splitlines()) == {
-            "fixture-engine==2.0 --hash=sha256:"
-            + hashlib.sha256(b"engine wheel bytes").hexdigest(),
+            "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(engine_payload).hexdigest(),
             "third-party==7.2 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
             "fixture-base==1.0 --hash=sha256:" + base_row["sha256"],
         }

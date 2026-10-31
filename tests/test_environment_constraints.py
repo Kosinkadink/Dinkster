@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import zipfile
+from pathlib import Path
+
 import pytest
-from dinkster_supervisor.environment_constraints import effective_constraints
+from dinkster_supervisor.environment_constraints import (
+    effective_constraints,
+    validate_base_requirements,
+)
 from dinkster_supervisor.environment_state import EnvironmentError
 
 
@@ -57,6 +63,45 @@ def test_variant_install_lock_requires_exact_backend_version_and_hash():
     ):
         with pytest.raises(EnvironmentError, match="engine lock"):
             effective_constraints(wrong, _base(), strict=True)
+
+
+@pytest.mark.parametrize(
+    ("requirement", "extra", "compatible"),
+    [
+        ("torch>=2.13,<2.15", False, True),
+        ("torch>=2.15", False, False),
+        ("torch==2.14.1", False, True),
+        ("nvidia-cublas>=13", False, False),
+        ('torch>=2.15; python_version < "3.14"', False, True),
+        ('torch>=2.15; python_version >= "3.14"', False, False),
+        ('torch>=2.15; extra == "accelerated"', False, True),
+        ('torch>=2.15; extra == "accelerated"', True, False),
+    ],
+)
+def test_base_compatibility_uses_wheel_specifiers_target_python_and_requested_extras(
+    tmp_path: Path, requirement: str, extra: bool, compatible: bool
+):
+    base = {**_base(), "python": "3.14.10"}
+    paths = []
+    for name, dependency in (
+        ("adapter", requirement),
+        ("consumer", "adapter[accelerated]" if extra else "adapter"),
+    ):
+        path = tmp_path / f"{name}-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(path, "w") as wheel:
+            wheel.writestr(
+                f"{name}-1.0.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\nRequires-Dist: {dependency}\n",
+            )
+        paths.append(path)
+    if compatible:
+        validate_base_requirements(tuple(paths), base)
+    else:
+        with pytest.raises(
+            EnvironmentError,
+            match="adapter requires .*base provides (torch 2.14.1\\+cpu|nvidia-cublas absent)",
+        ):
+            validate_base_requirements(tuple(paths), base)
 
 
 @pytest.mark.parametrize("version", ["2.15.0+cpu", "2.14.1.post1+cpu"])

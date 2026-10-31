@@ -21,7 +21,7 @@ from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel
 from packaging.version import Version
 
 from .environment_archives import extract_base
-from .environment_constraints import effective_constraints
+from .environment_constraints import effective_constraints, validate_base_requirements
 from .environment_downloads import fetch_artifact, read_metadata
 from .environment_state import (
     ArtifactLocation,
@@ -390,6 +390,21 @@ def dependency_wheels(selection: object) -> tuple[dict[str, object], ...]:
     return rows
 
 
+def engine_constraints(engine: dict[str, object], variant: str) -> str:
+    """Use the same exact variant requirements for native pack builds and user installs."""
+    selections = cast("dict[str, object]", engine["dependencies"])
+    additions = [
+        f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
+        for row in dependency_wheels(selections.get(variant))
+    ]
+    for row in artifact_rows(engine["artifacts"], "name"):
+        filename = cast("str", row["name"])
+        if filename.endswith(".whl"):
+            name, version, _, _ = parse_wheel_filename(filename)
+            additions.append(f"{name}=={version} --hash=sha256:{row['sha256']}")
+    return "\n".join(additions) + "\n"
+
+
 class _WheelLinks(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -444,6 +459,7 @@ def acquire(
     acquire_base(base, catalog.base_sources[variant], store)
     release_root = store / "engines" / catalog.channel.engine_release[7:]
     owned = cast("list[str]", base["replaces"])
+    nonbase_wheels: list[Path] = []
     for row in artifact_rows(catalog.engine["artifacts"], "name"):
         name, sha = cast("str", row["name"]), cast("str", row["sha256"])
         if name.endswith(".whl"):
@@ -454,6 +470,7 @@ def acquire(
             if distribution in owned:
                 continue
             destination = store / "wheels" / sha / name
+            nonbase_wheels.append(destination)
         elif name == "constraints.txt":
             destination = release_root / name
         else:
@@ -461,11 +478,11 @@ def acquire(
         fetch_artifact(catalog.engine_sources, name, destination, sha, cast("int", row["size"]))
     requirements = (release_root / "constraints.txt").read_text(encoding="utf-8")
     if selected is not None:
-        additions: list[str] = []
         for row in selected:
             name, sha = cast("str", row["filename"]), cast("str", row["sha256"])
             if row["name"] not in owned:
                 destination = store / "wheels" / sha / name
+                nonbase_wheels.append(destination)
                 if (
                     not destination.is_file()
                     or destination.is_symlink()
@@ -474,13 +491,8 @@ def acquire(
                 ):
                     source = _dependency_source(row, package_index)
                     fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
-            additions.append(f"{row['name']}=={row['version']} --hash=sha256:{sha}")
-        for row in artifact_rows(catalog.engine["artifacts"], "name"):
-            filename = cast("str", row["name"])
-            if filename.endswith(".whl"):
-                name, version, _, _ = parse_wheel_filename(filename)
-                additions.append(f"{name}=={version} --hash=sha256:{row['sha256']}")
-        requirements = "\n".join(additions)
+        requirements = engine_constraints(catalog.engine, variant)
+        validate_base_requirements(tuple(nonbase_wheels), base)
     merged = effective_constraints(requirements, base, strict=selected is not None)
     constraints = release_root / f"constraints-{variant}.txt"
     atomic_write(constraints, merged)

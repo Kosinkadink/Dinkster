@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from dinkster_supervisor.environment_archives import extract_base
+from dinkster_supervisor.environment_artifacts import engine_constraints
 from dinkster_supervisor.environment_constraints import effective_constraints
 from dinkster_supervisor.environment_downloads import fetch_artifact
 from dinkster_workers.pack_lock import PackLock
@@ -65,7 +66,7 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
         )
         constraints = work / "constraints.txt"
         constraints.write_text(
-            effective_constraints((release / "constraints.txt").read_text(), base),
+            effective_constraints(engine_constraints(engine, variant), base, strict=True),
             encoding="ascii",
         )
         wheel_urls = {row["filename"]: row["url"] for row in base["wheels"]}

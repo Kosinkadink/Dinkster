@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+from email.parser import BytesParser
+from pathlib import Path
 from typing import cast
+from zipfile import BadZipFile, ZipFile
 
+from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
@@ -17,6 +21,73 @@ _HASH = re.compile(r"(?<!\S)--hash=sha256:([0-9a-f]{64})(?=\s|$)")
 def requirement_hashes(requirements: str) -> frozenset[str]:
     """Keep every hashed alternative, including other-platform marker rows."""
     return frozenset(_HASH.findall(requirements.replace("\\\n", "").replace("\\\r\n", "")))
+
+
+def validate_base_requirements(wheels: tuple[Path, ...], base: dict[str, object]) -> None:
+    """Check installed non-base wheel requirements against a native base, without resolving."""
+    versions = {
+        cast("str", row["name"]): Version(cast("str", row["version"]))
+        for row in cast("list[dict[str, object]]", base["wheels"])
+    }
+    owned = set(cast("list[str]", base["replaces"]))
+    requirements: dict[str, list[Requirement]] = {}
+    for path in wheels:
+        try:
+            name, version, _, _ = parse_wheel_filename(path.name)
+            with ZipFile(path) as archive:
+                entries = [
+                    entry
+                    for entry in archive.namelist()
+                    if entry.endswith(".dist-info/METADATA") and len(entry.split("/")) == 2
+                ]
+                if len(entries) != 1:
+                    raise EnvironmentError(
+                        f"wheel must contain one distribution metadata: {path.name}"
+                    )
+                metadata = BytesParser().parsebytes(archive.read(entries[0]))
+            if (
+                canonicalize_name(str(metadata["Name"])) != name
+                or Version(str(metadata["Version"])) != version
+            ):
+                raise EnvironmentError(f"wheel metadata disagrees with filename: {path.name}")
+            requirements[name] = [Requirement(row) for row in metadata.get_all("Requires-Dist", [])]
+        except (BadZipFile, ValueError) as exc:
+            raise EnvironmentError(f"invalid wheel dependency metadata: {path.name}") from exc
+
+    environment = cast("dict[str, str]", default_environment())
+    python = Version(cast("str", base["python"]))
+    environment.update(
+        python_full_version=str(python),
+        python_version=f"{python.major}.{python.minor}",
+        implementation_version=str(python),
+    )
+    extras = {name: {""} for name in requirements}
+    changed = True
+    while changed:
+        changed = False
+        for name, dependencies in requirements.items():
+            for requirement in dependencies:
+                if requirement.marker is not None and not any(
+                    requirement.marker.evaluate({**environment, "extra": extra})
+                    for extra in extras[name]
+                ):
+                    continue
+                dependency = canonicalize_name(requirement.name)
+                if dependency in extras and not requirement.extras <= extras[dependency]:
+                    extras[dependency].update(requirement.extras)
+                    changed = True
+                if dependency not in owned:
+                    continue
+                actual = versions.get(dependency)
+                if (
+                    actual is None
+                    or requirement.url is not None
+                    or not requirement.specifier.contains(actual, prereleases=True)
+                ):
+                    raise EnvironmentError(
+                        f"{name} requires {requirement}; base provides {dependency} "
+                        f"{actual if actual is not None else 'absent'}"
+                    )
 
 
 def effective_constraints(engine: str, base: dict[str, object], *, strict: bool = False) -> str:

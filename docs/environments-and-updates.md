@@ -13,8 +13,8 @@ command line. Developers who change Dinkster itself work from a checkout
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
-| Lock | Dinkster's `uv.lock` at that commit, the single resolution every wheel hash comes from; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive, native tools and official pack artifacts; no third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
 | Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
@@ -209,9 +209,9 @@ is written when a push to `main` finishes the same workflow without a
 version: the engine release it names is a prerelease of the next version
 identified by commit. Both channels are served by the same client code path
 and differ only in the channel file. Neither resolves on the user's machine:
-every wheel an engine install needs is in the base bundle or the engine
-release, and when a commit adds a dependency the base does not carry, that
-commit's engine release includes the wheel until the next base picks it up.
+base wheels come from the base bundle, Dinkster wheels from the engine
+release, and non-base third-party wheels from their locked package origins
+or a configured package mirror. Every download checks its locked size and hash.
 The base is shared between the channels because it rebuilds only when its
 part of the lock changes.
 
@@ -671,6 +671,9 @@ lock and fetches missing non-base wheels from their locked PyPI artifact URLs
 into `wheels/<sha256>/<filename>`, using exact size/hash checks. It materializes
 hashed variant requirements and constructs generations offline from the store.
 No dependency resolution, source build or alternate-hash fallback occurs.
+Before generation construction, non-base wheel dependency specifiers must be
+satisfied by base-owned versions, including target Python markers and requested
+transitive extras. Failure names the requiring distribution and base version.
 Older releases without dependency metadata retain their original acquisition
 contract. OpenTimelineIO uses `dinkster-opentimelineio==0.19.0`; its import
 namespace remains `opentimelineio`.
@@ -798,14 +801,14 @@ or the supervisor station, and the same commands work without Desktop.
 
 ## Hosting
 
-GitHub releases host every artifact first. R2 under `releases.dinkster.org`
-mirrors them with no egress cost, and clients try mirrors in a configured
-order. Base bundles are the only large objects and are kept for the ten
+GitHub releases host Dinkster artifacts first. R2 under `releases.dinkster.org`
+mirrors them with no egress cost, and clients try artifact mirrors in a configured
+order. Third-party engine wheels come from their locked package origins or an
+explicit package mirror, not the Dinkster artifact mirror. Base bundles are kept for the ten
 newest ids per variant; every base manifest is kept forever. A client that
 needs a base whose archive is gone rebuilds it locally from the base
 manifest: it fetches each listed wheel by hash from the source index the
-manifest names and the interpreter from python-build-standalone, which is
-the one case where an engine install reads a package index. Stable engine
+manifest names and the interpreter from python-build-standalone. Stable engine
 releases are kept indefinitely. The workflow retains the newest 50
 commit-named main prereleases; stable releases, drafts and other prerelease
 tags are never removed by this cleanup. A region-specific mirror is one more

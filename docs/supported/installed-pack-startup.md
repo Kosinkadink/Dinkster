@@ -138,6 +138,9 @@
   The package index is saved for updates, independently of channel `--mirror`.
   Selected bases must match their variant install lock; intact shared-store
   wheels need no index access, and generation construction remains offline.
+- Setup/update refuses non-base dependencies whose version requirements are
+  not satisfied by the selected base, naming the requiring distribution and
+  base version before constructing or activating a generation.
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.

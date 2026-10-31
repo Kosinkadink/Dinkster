@@ -448,6 +448,10 @@ Published setup/update reads the engine's per-variant dependency lock and checks
 its exact base id and wheel identities against the producer manifest. Non-base
 wheels are fetched from their locked origins into the shared wheel store using
 exact filenames, sizes and SHA256; generation construction stays offline.
+Before constructing a generation, acquired non-base wheel metadata is checked
+against base-owned versions using its dependency specifiers, target Python
+markers and requested transitive extras. Incompatible or absent base
+distributions fail with the requiring distribution, specifier and base version.
 `--package-index URL` selects a simple package mirror offering those same locked
 filenames, without resolution, source builds, hash overrides or origin fallback.
 Confirmed setup saves it as project `packageIndex`; updates preserve it or change
