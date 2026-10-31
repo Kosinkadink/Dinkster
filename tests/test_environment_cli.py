@@ -43,16 +43,20 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         command[1:3] = [
             "-c",
             """
-import runpy, sys
+import runpy, shlex, sys
 from pathlib import Path
 from dinkster_supervisor import environment_local
 def forbidden(*args, **kwargs):
     raise AssertionError("published paths must not resolve locally")
 environment_local.prepare_local = forbidden
 def audit(event, args):
-    if event != "subprocess.Popen" or Path(args[0]).stem != "uv":
+    if event != "subprocess.Popen":
         return
     command = args[1]
+    if isinstance(command, str):
+        command = [part.strip('"') for part in shlex.split(command, posix=False)]
+    if Path(args[0] or command[0]).stem != "uv":
+        return
     if "compile" in command:
         forbidden()
     if "sync" in command or "install" in command:
