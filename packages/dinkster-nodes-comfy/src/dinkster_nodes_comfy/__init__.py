@@ -132,6 +132,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mesh import MESH_NODES
+from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
 from .mesh_texture import MeshTextureToImage
 from .mesh_weld import WeldVertices
@@ -527,6 +528,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     PaintMesh,
     WeldVertices,
     MeshTextureToImage,
+    MeshSmoothNormals,
 )
 
 
