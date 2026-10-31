@@ -12,6 +12,7 @@ from .declared import (
     declared_asset,
     install_declared_assets,
     mount_roots_for_kind,
+    produced_output_scratch,
     resolver_from_env,
     use_declared_asset_pack,
 )
@@ -256,6 +257,7 @@ __all__ = [
     "MountWriteAuthority",
     "MountsError",
     "mount_roots_for_kind",
+    "produced_output_scratch",
     "asset_selection_names",
     "asset_selection_options",
     "resolve_asset_selection",

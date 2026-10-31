@@ -13,10 +13,11 @@ import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 
-from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_registry import LockedPack, Lockfile, build_artifact, unpack_artifact
 from dinkster_registry.model import validate_version
 from dinkster_schema import canonical_claim
 from dinkster_workers import load_manifest
+from dinkster_workers.doctor import DoctorReport, diagnose_static
 from dinkster_workers.pack_lock import resolve_pack_lock
 
 
@@ -109,8 +110,23 @@ def build(
             manifest = load_manifest(manifest_path)
             if manifest.publisher != "dinkster":
                 raise ValueError(f"official pack {manifest.name!r} must declare publisher dinkster")
+            tests = pack_root / "tests"
+            if tests.is_dir():
+                shutil.rmtree(tests)
             payload = output / f"{manifest.name}-{version}.zip"
             digest = build_artifact(pack_root, payload)
+            with tempfile.TemporaryDirectory(prefix="dinkster-official-doctor-") as extracted:
+                artifact_root = unpack_artifact(payload, Path(extracted), digest)
+                artifact_manifest = load_manifest(artifact_root / "dinkster-pack.toml")
+                static = diagnose_static(artifact_root, artifact_manifest)
+                report = DoctorReport(
+                    pack_name=artifact_manifest.name,
+                    manifest_path=str(artifact_manifest.path),
+                    findings=static.findings,
+                )
+                print(report.to_json())
+                if not report.ok:
+                    raise ValueError(f"official pack {manifest.name!r} failed static doctor")
             locked.append(
                 LockedPack(
                     pack=manifest.name,

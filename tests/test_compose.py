@@ -2280,6 +2280,88 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("in_process", (True, False))
+def test_authored_inputs_execute_dependencies_and_invalidate_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    module = f"authored_inputs_{in_process}"
+    (tmp_path / f"{module}.py").write_text(
+        "from dinkster_schema import "
+        "ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "INT = TypeExpr.concrete('INT')\n"
+        "STRING = TypeExpr.concrete('STRING')\n"
+        "class Index(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='authored.index', inputs=(InputSpec('value', INT),), "
+        "outputs=(OutputSpec('value', INT),))\n"
+        "    @classmethod\n"
+        "    def execute(cls, value):\n"
+        "        return cls.outputs(value=value)\n"
+        "class Choice(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='authored.choice', inputs=(InputSpec('choice', "
+        "TypeExpr.concrete('COMBO'), widget=ComboWidget(options=(), editable_options=True)),), "
+        "outputs=(OutputSpec('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
+        "    @classmethod\n"
+        "    def execute(cls, choice, **kwargs):\n"
+        "        selected = kwargs[str(kwargs['index'])]\n"
+        "        return cls.outputs(result=f\"{choice}|{selected}|{kwargs['count']}\")\n"
+        "NODES = (Index, Choice)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "authored-inputs"\npublisher = "dinkster"\nnamespaces = ["authored"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\n',
+        encoding="ascii",
+    )
+    env = {
+        **WORKER_ENV,
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+    }
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
+            engine = composer.composition.make_engine(lambda _event: None)
+            inputs = {
+                "choice": "outside-menu",
+                "index": Link("index", "value"),
+                "2": TypedLiteral("STRING", "left"),
+                "9": TypedLiteral("STRING", "right"),
+                "count": TypedLiteral("INT", 13),
+            }
+            graph = Graph(
+                nodes={
+                    "index": GraphNode("authored.index", {"value": 9}),
+                    "choice": GraphNode("authored.choice", inputs),
+                }
+            )
+            first = await engine.run(graph, ["choice"])
+            assert first.outputs["choice"]["result"].resolve() == "outside-menu|right|13"
+            assert first.executed == ("index", "choice")
+            repeated = await engine.run(graph, ["choice"])
+            assert repeated.outputs["choice"]["result"].resolve() == "outside-menu|right|13"
+            assert repeated.cached == ("index", "choice")
+            assert repeated.executed == ()
+            graph = Graph(nodes={**graph.nodes, "index": GraphNode("authored.index", {"value": 2})})
+            changed_index = await engine.run(graph, ["choice"])
+            assert changed_index.outputs["choice"]["result"].resolve() == "outside-menu|left|13"
+            assert changed_index.executed == ("index", "choice")
+            inputs["2"] = TypedLiteral("STRING", "changed")
+            changed_option = await engine.run(graph, ["choice"])
+            assert changed_option.outputs["choice"]["result"].resolve() == "outside-menu|changed|13"
+            assert changed_option.executed == ("choice",)
+            assert changed_option.cached == ("index",)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     ("in_process", "supplied_registry"), ((True, False), (False, False), (False, True))
 )
@@ -4255,6 +4337,111 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
             await composition.close()
         # Composition close closes every worker: measurements die with it.
         assert reported.devices() == frozenset()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "valid",
+        "presentation",
+        "type",
+        "required",
+        "default",
+        "lazy",
+        "missing",
+        "undeclared",
+        "closed",
+        "declared",
+    ),
+)
+def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None:
+    from dinkster_protocol import Invocation
+    from dinkster_schema import (
+        InputSpec,
+        Node,
+        NodeSchema,
+        OutputSpec,
+        TypeExpr,
+        elaborate,
+    )
+    from dinkster_values import register_core_types
+    from dinkster_workers import InProcessWorker
+
+    calls: list[dict[str, object]] = []
+    declaration = NodeSchema(
+        node_type="authored.inputs",
+        inputs=(InputSpec("choice", TypeExpr.concrete("STRING")),),
+        outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+
+    class AuthoredInputs(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return (
+                replace(declaration, additional_inputs=None) if drift == "closed" else declaration
+            )
+
+        @classmethod
+        def execute(cls, **kwargs: object) -> Mapping[str, object]:
+            calls.append(kwargs)
+            return cls.outputs(result=f"{kwargs['choice']}|{kwargs['index']}")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        effective = elaborate(declaration, ("choice", "index"))
+        choice, index = effective.inputs
+        if drift == "type":
+            index = replace(index, type=TypeExpr.concrete("INT"))
+        elif drift == "required":
+            index = replace(index, required=True)
+        elif drift == "default":
+            index = replace(index, default=91)
+        elif drift == "lazy":
+            index = replace(index, lazy=True)
+        elif drift == "declared":
+            choice = replace(choice, required=False)
+        elif drift == "presentation":
+            choice = replace(
+                choice,
+                display_name="Authored choice",
+                doc="Choose the authored value.",
+            )
+        effective = replace(effective, inputs=(choice, index))
+        if drift == "missing":
+            effective = replace(effective, inputs=(choice,))
+        inputs = {
+            "choice": registry.wrap("STRING", "outside-menu"),
+            "index": registry.wrap("INT", 7),
+        }
+        if drift == "undeclared":
+            inputs["unlisted"] = registry.wrap("INT", 13)
+        worker = InProcessWorker({declaration.node_type: AuthoredInputs}, registry)
+        try:
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="authored-inputs",
+                    node_id="node",
+                    node_type=declaration.node_type,
+                    inputs=inputs,
+                    effective_schema=effective,
+                )
+            )
+            if drift in {"valid", "presentation"}:
+                assert result.error is None
+                assert result.outputs is not None
+                assert result.outputs["result"].resolve() == "outside-menu|7"
+                assert calls == [{"choice": "outside-menu", "index": 7}]
+            else:
+                assert result.error is not None
+                assert "schema skew" in result.error.message
+                assert result.outputs is None
+                assert calls == []
+        finally:
+            await worker.close()
 
     asyncio.run(scenario())
 
