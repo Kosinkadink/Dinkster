@@ -1356,6 +1356,115 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
     assert json.loads(metadata.read_bytes()) == result
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("corruption", [None, "size", "hash"])
+def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, corruption: str | None
+) -> None:
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts import build_release_pack_locks as builder
+
+    release = tmp_path / "release"
+    release.mkdir()
+    filename = "example_dependency-2.0+native-py3-none-any.whl"
+    wheel = release / filename
+    wheel.write_bytes(b"verified native wheel")
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    upstream = "https://files.example.test/locked/example_dependency-2.0%2Bnative-py3-none-any.whl"
+    (tmp_path / "uv.lock").write_text(
+        f'[[package]]\nname="example-dependency"\nversion="2.0+native"\n'
+        f'[[package.wheels]]\nurl="{upstream}"\nsize={wheel.stat().st_size}\n'
+        f'hash="sha256:{digest}"\n'
+    )
+    (release / "constraints.txt").write_text("example-dependency==2.0+native\n")
+    engine = {
+        "version": "1.2.3",
+        "label": "2026-10-31-1.2.3",
+        "workerProtocol": 11,
+        "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
+    }
+    if legacy:
+        engine.pop("label")
+        engine["tag"] = "main-" + "c" * 40
+    metadata = release / "release-manifest.json"
+    metadata.write_text(json.dumps(engine))
+    base = {
+        "id": "sha256:" + "b" * 64,
+        "variant": "linux-cpu",
+        "workerProtocol": 11,
+        "platform": {"os": "linux"},
+        "interpreter": {"executable": "python/bin/python3"},
+        "archive": {"parts": []},
+        "wheels": [],
+        "nvidia": None,
+    }
+    manifest = tmp_path / "base.json"
+    manifest.write_text(json.dumps(base))
+    monkeypatch.setattr(builder, "qualify", lambda *args: base)
+    monkeypatch.setattr(builder.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(builder, "extract_base", lambda *args, **kwargs: None)
+    monkeypatch.setattr(builder, "effective_constraints", lambda *args: "constraints\n")
+
+    def build_pack(root, output, **kwargs):
+        output.mkdir()
+        path = output / "example-1.2.3-linux-cpu.pack-lock.json"
+        PackLock(
+            "example",
+            "linux-cpu",
+            ">=3.12",
+            ("example-dependency==2.0+native",),
+            ("https://pypi.org/simple",),
+            (
+                LockedDistribution(
+                    "example-dependency",
+                    "2.0+native",
+                    (
+                        LockedWheel(
+                            filename,
+                            wheel.stat().st_size + (1 if corruption == "size" else 0),
+                            "a" * 64 if corruption == "hash" else digest,
+                            wheel.as_uri(),
+                        ),
+                    ),
+                ),
+            ),
+        ).write(path)
+        return (path,)
+
+    monkeypatch.setattr(builder, "build", build_pack)
+    if corruption:
+        with pytest.raises(ValueError, match="portable.*provenance"):
+            builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+        assert not (tmp_path / "locks").exists()
+        return
+    before = hashlib.sha256(metadata.read_bytes()).hexdigest()
+    [first] = builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+    first_lock = PackLock.read(first)
+    expected = (
+        "https://github.com/Kosinkadink/Dinkster/releases/download/main-"
+        + "c" * 40
+        + "/example_dependency-2.0%2Bnative-py3-none-any.whl"
+        if legacy
+        else upstream
+    )
+    assert first_lock.packages[0].wheels[0].url == expected
+    assert first_lock.packages[0].wheels[0].sha256 == digest
+    shutil.copyfile(first, release / first.name)
+    engine["artifacts"].append(
+        {
+            "name": first.name,
+            "sha256": hashlib.sha256(first.read_bytes()).hexdigest(),
+            "size": first.stat().st_size,
+        }
+    )
+    # Adding lock bytes changes identity, but must not change their own provenance.
+    metadata.write_text(json.dumps(engine))
+    assert hashlib.sha256(metadata.read_bytes()).hexdigest() != before
+    [second] = builder.build_locks(tmp_path, release, manifest, tmp_path / "second-locks")
+    assert second.read_bytes() == first.read_bytes()
+
+
 @pytest.mark.parametrize(
     "corruption", [None, "missing", "extra", "pack", "variant", "wheel-url", "index-url"]
 )
