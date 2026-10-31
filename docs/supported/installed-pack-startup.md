@@ -31,6 +31,10 @@
 - Pack manifests can declare an independent public pack version and a PEP 440
   engine compatibility range. Invalid or incomplete declarations are rejected
   without importing pack code.
+- The registry client can select the newest active pack version meeting a
+  minimum version and target engine range across paginated results. Active
+  prereleases inside those bounds remain eligible. The selected release is
+  checked again before returning its immutable artifact identity.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

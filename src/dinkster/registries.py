@@ -69,7 +69,9 @@ from dinkster_registry import (
     validate_artifact_digest,
     validate_version,
 )
-from dinkster_schema import canonical_name, validate_name
+from dinkster_schema import PackCompatibility, canonical_name, validate_name
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from dinkster.installer import RegistryFetcher, http_registry_fetcher
 
@@ -419,6 +421,7 @@ def resolve_release(
     pack: str,
     version: str,
     *,
+    engine_version: str | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
 ) -> LockedPack:
     """Turn ``pack@version`` into a digest-pinned :class:`LockedPack`
@@ -465,6 +468,22 @@ def resolve_release(
             f"{wanted_pack}@{version} with {answered_pack}@{answered_version}; "
             f"refusing the substitution"
         )
+    if engine_version is not None:
+        manifest = fields.get("manifest")
+        engine = (
+            cast("dict[str, object]", manifest).get("dinkster")
+            if isinstance(manifest, dict)
+            else None
+        )
+        if fields.get("state") != "active" or not isinstance(engine, str):
+            raise InstallError(
+                f"registry release {wanted_pack}@{version} is not active "
+                "with a declared engine range"
+            )
+        try:
+            PackCompatibility(version, engine).require_engine(wanted_pack, engine_version)
+        except ValueError as exc:
+            raise InstallError(f"registry release {wanted_pack}@{version}: {exc}") from exc
     digest_problem = validate_artifact_digest(digest)
     if digest_problem is not None:
         raise InstallError(
@@ -478,6 +497,91 @@ def resolve_release(
         publisher=canonical_name(publisher),
         claims=(),
         source=registry.source,
+    )
+
+
+def resolve_compatible_release(
+    registry: NamedRegistry,
+    pack: str,
+    minimum: str,
+    engine_version: str,
+    *,
+    timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+) -> LockedPack:
+    """Select the newest active compatible version from ONE registry, then pin its bytes.
+
+    Inspect every page: a pack's latest release need not support the target engine.
+    Recheck the selected release detail before trusting its installation identity.
+    """
+    wanted_pack = canonical_name(pack)
+    minimum_version = Version(minimum)
+    target_engine = Version(engine_version)
+    selected: Version | None = None
+    cursor = ""
+    seen: set[str] = set()
+    subject = f"versions of {wanted_pack}"
+    while True:
+        params = [("limit", "100")]
+        if cursor:
+            params.append(("cursor", cursor))
+        fields = _index_get(
+            registry,
+            f"/v1/packs/{wanted_pack}/versions?" + urllib.parse.urlencode(params),
+            action=f"resolving compatible {wanted_pack}",
+            subject=subject,
+            timeout=timeout,
+        )
+        rows = fields.get("items")
+        if not isinstance(rows, list):
+            raise InstallError(
+                f"registry {registry.label} answered {subject} without an items list"
+            )
+        for row in cast("list[object]", rows):
+            if not isinstance(row, dict):
+                raise InstallError(
+                    f"registry {registry.label} answered {subject} with a malformed row"
+                )
+            entry = cast("dict[str, object]", row)
+            version, engine, state = entry.get("version"), entry.get("dinkster"), entry.get("state")
+            if (
+                not isinstance(version, str)
+                or not isinstance(engine, str)
+                or not isinstance(state, str)
+            ):
+                raise InstallError(
+                    f"registry {registry.label} answered {subject} "
+                    "without version/engine/state strings"
+                )
+            try:
+                compatibility = PackCompatibility(version, engine)
+            except ValueError as exc:
+                raise InstallError(f"registry {registry.label} answered {subject}: {exc}") from exc
+            candidate = Version(compatibility.version)
+            if (
+                state == "active"
+                and candidate >= minimum_version
+                and (selected is None or candidate > selected)
+                and SpecifierSet(compatibility.engine).contains(target_engine, prereleases=True)
+            ):
+                selected = candidate
+        following = fields.get("nextCursor")
+        if following is not None and not isinstance(following, str):
+            raise InstallError(
+                f"registry {registry.label} answered {subject} with a malformed cursor"
+            )
+        cursor = following or ""
+        if not cursor:
+            break
+        if cursor in seen:
+            raise InstallError(f"registry {registry.label} repeated the cursor for {subject}")
+        seen.add(cursor)
+    if selected is None:
+        raise InstallError(
+            f"registry {registry.label} has no active {wanted_pack} >= {minimum} "
+            f"compatible with engine {engine_version}"
+        )
+    return resolve_release(
+        registry, wanted_pack, str(selected), engine_version=engine_version, timeout=timeout
     )
 
 

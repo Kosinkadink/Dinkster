@@ -23,6 +23,9 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
+  tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
+  tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
   tests/test_frontend_artifact.py \

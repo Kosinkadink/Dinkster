@@ -2783,6 +2783,123 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("minimum", "engine", "expected"),
+    [
+        ("1.0", "0.5", "10.0"),
+        ("1.0", "0.6", "2.8rc1"),
+        ("1.0", "0.4", "1.5"),
+        ("1.5", "0.4", "1.5"),
+        ("2.0", "0.4", None),
+        ("1.0", "0.3", None),
+    ],
+)
+def test_registry_resolves_newest_compatible_pack_across_all_pages(
+    minimum: str, engine: str, expected: str | None
+) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    versions = [
+        ("12.0", ">=0.7,<0.9", "active"),
+        ("11.0", ">=0.4,<0.7", "yanked"),
+        ("10.0", ">=0.5,<0.6", "active"),
+        ("2.9", ">=0.4,<0.7", "pending_review"),
+        ("2.8rc1", ">=0.6,<0.7", "active"),
+        ("2.7", ">=0.5,<0.6", "active"),
+        ("1.5", ">=0.4,<0.5", "active"),
+    ]
+    digests = {
+        version: "blake3:" + f"{index:064x}"
+        for index, (version, _, _) in enumerate(versions, start=1)
+    }
+    files: dict[str, bytes] = {}
+    for cursor, rows, following in (("", versions[:2], "older"), ("older", versions[2:], None)):
+        path = "/v1/packs/demo/versions?limit=100" + (f"&cursor={cursor}" if cursor else "")
+        files[path] = json.dumps(
+            {
+                "items": [
+                    {"version": version, "dinkster": bounds, "state": state}
+                    for version, bounds, state in rows
+                ],
+                "nextCursor": following,
+            }
+        ).encode()
+    for version, bounds, state in versions:
+        entry = LockedPack("demo", version, digests[version], "dinkster", ())
+        files[f"/v1/packs/demo/versions/{version}"] = _release_record(
+            entry, state=state, manifest={"dinkster": bounds}
+        )
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        if expected is None:
+            with pytest.raises(InstallError, match=f"demo.*{minimum}.*{engine}"):
+                resolve_compatible_release(registry, "demo", minimum, engine)
+        else:
+            selected = resolve_compatible_release(registry, "demo", minimum, engine)
+            assert selected.version == expected
+            assert selected.artifact_digest == digests[expected]
+            assert selected.pack == "demo"
+            assert selected.source == registry.source
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize("detail", [{"state": "yanked"}, {"manifest": {"dinkster": ">=0.8,<0.9"}}])
+def test_registry_selection_rechecks_exact_release_before_install(
+    detail: dict[str, object],
+) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    entry = LockedPack("demo", "3.1", "blake3:" + "b" * 64, "dinkster", ())
+    files = {
+        "/v1/packs/demo/versions?limit=100": json.dumps(
+            {"items": [{"version": "3.1", "dinkster": ">=0.4,<0.7", "state": "active"}]}
+        ).encode(),
+        "/v1/packs/demo/versions/3.1": _release_record(
+            entry, **{"state": "active", "manifest": {"dinkster": ">=0.4,<0.7"}, **detail}
+        ),
+    }
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        with pytest.raises(InstallError, match="demo@3.1"):
+            resolve_compatible_release(registry, "demo", "1.0", "0.5")
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"items": "bad"},
+        {"items": [42]},
+        {"items": [{"version": "1.0", "state": "active"}]},
+        {"items": [{"version": "v1.0", "dinkster": ">=0.4", "state": "active"}]},
+        {"items": [{"version": "1.0", "dinkster": "", "state": "active"}]},
+        {"items": [], "nextCursor": False},
+        {"items": [], "nextCursor": "again"},
+    ],
+)
+def test_registry_compatible_selection_refuses_malformed_pages(page: dict[str, object]) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    payload = json.dumps(page).encode()
+    server = _serve_artifacts(
+        {
+            "/v1/packs/demo/versions?limit=100": payload,
+            "/v1/packs/demo/versions?limit=100&cursor=again": payload,
+        },
+        [],
+    )
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        with pytest.raises(InstallError, match="registry.*versions of demo"):
+            resolve_compatible_release(registry, "demo", "1.0", "0.5")
+    finally:
+        server.shutdown()
+
+
 def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> None:
     """Browse asks ONE registry's pack index, parses rows strictly, and
     surfaces the query-bound keyset cursor; a malformed answer refuses

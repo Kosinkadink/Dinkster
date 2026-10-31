@@ -35,6 +35,15 @@ through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
 generation-based activation.
 
+`dinkster.registries.resolve_compatible_release(registry, pack, minimum,
+engine_version)` follows the service's version-list pages, chooses the newest
+active PEP 440 version at or above the minimum whose declared engine range
+admits the target, and returns the existing `LockedPack` model. Active pack
+prereleases remain eligible inside these bounds. The default declaration is
+not a byte pin; the returned installation identity is digest-pinned so archive
+acquisition can verify it. Resolution asks exactly one selected registry and
+rechecks the chosen release's state and range against its versioned detail.
+
 ## Template catalog
 
 `ReleaseIndex.template_catalog()` is the version 1 payload served by
