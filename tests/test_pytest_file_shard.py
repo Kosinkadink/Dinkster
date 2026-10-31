@@ -53,8 +53,8 @@ def test_file_shards_support_extended_counts(count: int) -> None:
     expected = {
         3: {
             "tests/test_environment_archives.py": 1,
-            "tests/test_environment_cli.py": 2,
-            "tests/test_environment_transactions.py": 3,
+            "tests/test_environment_cli.py": 3,
+            "tests/test_environment_transactions.py": 2,
         },
         4: {
             "tests/test_serve.py": 2,

@@ -26,6 +26,11 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
+- Graph admission rejects primitive literals that do not match their declared
+  input types, including boolean values on INT/FLOAT inputs and strings on
+  FLOAT inputs. Integer values remain valid on FLOAT inputs. The same checks
+  apply inside lists and to explicitly stamped literals, before nodes execute;
+  no node-level coercion is used to repair invalid literals.
 - String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
   Long paths and documents can be read in full without the status descriptor's
   256-character inline preview limit. Retrieval retains job/scope authority.
