@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tomllib
 import weakref
+from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from pathlib import Path
@@ -4160,8 +4161,6 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
     "drift", ("valid", "type", "required", "default", "missing", "undeclared", "closed", "declared")
 )
 def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None:
-    from collections.abc import Mapping
-
     from dinkster_protocol import Invocation
     from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, elaborate
     from dinkster_values import register_core_types
