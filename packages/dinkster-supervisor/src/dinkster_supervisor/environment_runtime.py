@@ -33,6 +33,7 @@ _GPU_ID = re.compile(r"(?:[0-9]+|GPU-[0-9A-Fa-f-]+)\Z")
 _STATES = frozenset({"starting", "ready", "failed", "stopped"})
 _STARTUP_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.05
+_STARTUP_LOG_TAIL_BYTES = 16 * 1024
 
 
 def start_engine(
@@ -127,14 +128,45 @@ def start_engine(
             return _public_row(inspected)
         if inspected["state"] == "failed" and _identity_matches(inspected):
             stop_engine(root, name, generation=generation)
-            raise EnvironmentError(f"engine {name} failed before becoming ready")
+            raise EnvironmentError(_startup_failure(name, log_path, inspected))
         if process.poll() is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
-            raise EnvironmentError(f"engine {name} exited before becoming ready")
+            raise EnvironmentError(
+                _startup_failure(name, log_path, record, exit_code=process.returncode)
+            )
         time.sleep(_POLL_INTERVAL)
     stop_engine(root, name, generation=generation)
-    raise EnvironmentError(f"engine {name} did not become ready")
+    raise EnvironmentError(_startup_failure(name, log_path, record, timed_out=True))
+
+
+def _startup_failure(
+    name: str,
+    log_path: Path,
+    record: dict[str, object],
+    *,
+    exit_code: int | None = None,
+    timed_out: bool = False,
+) -> str:
+    """Preserve the supervisor's startup cause with the child log tail."""
+    if timed_out:
+        cause = "did not become ready"
+    else:
+        detail = record.get("_startupDetail")
+        if isinstance(detail, str) and detail:
+            cause = f"failed before becoming ready: {detail}"
+        elif exit_code is not None:
+            cause = f"exited before becoming ready with exit code {exit_code}"
+        else:
+            cause = "failed before becoming ready"
+    try:
+        with log_path.open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            log.seek(max(0, log.tell() - _STARTUP_LOG_TAIL_BYTES))
+            tail = log.read().decode("utf-8", errors="replace").rstrip()
+    except OSError as exc:
+        tail = f"unavailable: {exc}"
+    return f"engine {name} {cause}\nstartup log {log_path}:\n{tail}"
 
 
 def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None:
@@ -386,6 +418,9 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     if status_document.get("instance") != inspected["instance"]:
         inspected["state"] = "failed"
         return inspected
+    detail = status_document.get("detail")
+    if isinstance(detail, str) and detail:
+        inspected["_startupDetail"] = detail
     supervisor = status_document.get("supervisor")
     if not isinstance(supervisor, dict):
         inspected["state"] = "failed"

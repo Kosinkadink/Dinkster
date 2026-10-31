@@ -560,8 +560,12 @@ def test_failed_candidate_listener_proves_cleanup_and_can_restart(tmp_path: Path
     port = free_port()
     prior = start_engine(tmp_path, 1, "main", port)
     try:
-        with pytest.raises(EnvironmentError, match="before becoming ready"):
+        with pytest.raises(EnvironmentError, match="before becoming ready") as failed:
             start_engine(tmp_path, 2, "main", port)
+        message = str(failed.value)
+        assert "exit code" in message
+        assert "startup log" in message
+        assert "OSError" in message
         stop_engine(tmp_path, "main", generation=2)
         assert engine_status(tmp_path) == (prior,)
         candidate = start_engine(tmp_path, 2, "main", free_port())
