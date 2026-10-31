@@ -233,9 +233,23 @@ GOLDEN_V1_SURFACE = (
     "LAYERS_TYPE",
     "LOAD3D_CAMERA_TYPE",
     "LOAD3D_MODEL_INFO_TYPE",
+    "LOAD_3D_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
+    "FILE_3D_TYPE",
+    "FILE_3D_GLB_TYPE",
+    "FILE_3D_GLTF_TYPE",
+    "FILE_3D_FBX_TYPE",
+    "FILE_3D_OBJ_TYPE",
+    "FILE_3D_STL_TYPE",
+    "FILE_3D_USDZ_TYPE",
+    "FILE_3D_PLY_TYPE",
+    "FILE_3D_SPLAT_TYPE",
+    "FILE_3D_SPZ_TYPE",
+    "FILE_3D_KSPLAT_TYPE",
+    "FILE_3D_SPLAT_ANY_TYPE",
+    "FILE_3D_POINT_CLOUD_ANY_TYPE",
     "MODEL_PATCH_TYPE",
     "MODEL_TYPE",
     "MOGE_GEOMETRY_TYPE",
@@ -405,10 +419,12 @@ GOLDEN_V1_SURFACE = (
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "produced_output_scratch",
     "asset_selection_names",
     "asset_selection_options",
     "resolve_asset_selection",
     "register_asset_type",
+    "register_load3d_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
     "AssetWidget",
@@ -422,6 +438,7 @@ GOLDEN_V1_SURFACE = (
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",
+    "register_file3d_types",
     "register_video_edit_type",
     "DITHERS",
     "FRAME_FORMATS",
@@ -596,37 +613,44 @@ assert "torch" not in sys.modules
 
 
 @pytest.mark.parametrize("native_first", (True, False))
-@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER"))
+@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER", "BACKGROUND_REMOVAL"))
+@pytest.mark.parametrize("preexisting", (False, True))
 def test_model_registration_preserves_resident_identity_without_torch(
-    native_first: bool, type_name: str
+    native_first: bool, type_name: str, preexisting: bool
 ) -> None:
     script = f"""
 import sys
 from dinkster_api.v1 import {type_name}_TYPE, TypeRegistry, register_inference_types
-from dinkster_memory.resident import default_pool
+from dinkster_memory.resident import ResidentPool, default_pool
 from dinkster_native.native import register_native_types
-from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, register_resident_type
 
 model_type = {type_name}_TYPE
 assert model_type == {type_name!r}
 registry = TypeRegistry()
+table = ResidentPool() if {preexisting!r} else default_pool()
+source = object()
+original = register_resident_type(registry, model_type, table=table) if {preexisting!r} else None
+original_encoded = original.encode(source) if original is not None else None
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
 spec = registry.spec(model_type)
+if original is not None:
+    assert spec is original
+    assert spec.decode(original_encoded) is source
 registrations[1](registry)
 assert registry.spec(model_type) is spec
 register_inference_types(registry)
 assert registry.spec(model_type) is spec
-assert default_pool() in registry.resident_tables
+assert table in registry.resident_tables
 assert "comfy.{type_name}" not in registry
-source = object()
 encoded = spec.encode(source)
 assert spec.decode(encoded) is source
 assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
 assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
-assert default_pool().release_resident(source)
+assert table.release_resident(source)
 try:
     spec.decode(encoded)
 except ResidentLookupError:

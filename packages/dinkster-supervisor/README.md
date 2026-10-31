@@ -98,6 +98,18 @@ The station management port adds:
 `create_station_app` are the main Python composition exports. The supervisor
 and station deliberately import no engine code.
 
+Supervisor, station and ingress listeners validate exactly one inbound HTTP
+Host before routing, CORS preflights or WebSocket upgrades. Loopback IP
+literals and the configured `--host` are accepted; other hostnames require
+repeatable `--allow-host HOST`. Unlisted, malformed, missing or duplicate
+Host headers receive `421` with `error: "host-not-allowed"` before proxying.
+Python app factories take the same `host` and `allow_hosts` inputs.
+
+This boundary prevents DNS rebinding even when the browser legitimately
+sends `Sec-Fetch-Site: same-origin` for its original hostname. The upstream
+Host is still rewritten for the internal engine connection; no forwarded
+Host header grants authority. Engine Host and Origin checks are unchanged.
+
 ## Design contract
 
 The supervisor owns the public port and almost nothing else: it binds in
@@ -243,8 +255,15 @@ verifies every listed local engine artifact, validates each unchanged base
 manifest and checks worker protocol and effective constraint compatibility.
 Only after all inputs pass does it atomically replace `channels/<name>.json`.
 It never downloads, changes publisher inputs or publishes to a remote service.
-The release workflow must invoke it only after successful asset publication;
-this local builder does not select published bases or wire that workflow.
+The release workflow validates a document after finalization, including on PRs.
+Its push-only channel job runs after GitHub asset publication and calls
+`scripts.publish_environment_channel` with the same selected base manifests.
+With all R2 settings present, it checks published engine/base manifest bytes,
+uploads only missing immutable engine objects, verifies their served hashes,
+and replaces the selected channel last. Failed payload checks leave the old
+channel untouched. An older main run cannot replace a newer main selection.
+Absent R2 settings skip publication explicitly. The workflow compatibility
+floor is `minimumDesktopVersion: "0.2.0"`; the local builder remains nonpublishing.
 
 `environment_downloads.fetch_artifact(mirrors, relative_path, destination,
 sha256, size)` downloads a known artifact from ordered local directories or
@@ -356,6 +375,12 @@ The setup confirmation plan includes that binding name, loopback port and ordere
 `CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
 Stopped bindings keep their assigned ports; only running bindings need new ports
 for candidate health checks alongside their previous processes.
+Managed local generations start with the project's `dinkster-library` persistence
+root (or the inherited `DINKSTER_LIBRARY_ROOT`), stale-catalog preparation and
+operator-only mount editing enabled. Generation selection remains the only pack
+source. Folder grants persist across stop/start; fixed sandbox grants still
+require a controlled restart. Remote connections and arbitrary supervisor/server
+commands do not acquire these options.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 

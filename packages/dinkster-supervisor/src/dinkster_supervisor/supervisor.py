@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import os
 import signal
@@ -123,6 +124,68 @@ _HOP_BY_HOP = frozenset(
 )
 # Content-Length is recomputed by the proxy's own streaming writer.
 _RESPONSE_DROP = _HOP_BY_HOP | {"content-length"}
+
+
+def _authority_hostname(authority: str) -> str | None:
+    if not authority or authority != authority.strip():
+        return None
+    if authority.startswith("["):
+        closing = authority.find("]")
+        if closing < 0:
+            return None
+        hostname = authority[1:closing]
+        suffix = authority[closing + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return None
+    else:
+        if authority.count(":") > 1:
+            return None
+        hostname, separator, port = authority.partition(":")
+        if separator and not port.isdigit():
+            return None
+    if not hostname or any(character.isspace() or character in "/\\@?#" for character in hostname):
+        return None
+    hostname = hostname.rstrip(".").lower()
+    try:
+        return str(ipaddress.ip_address(hostname))
+    except ValueError:
+        return hostname
+
+
+def install_host_validation(app: web.Application, hosts: Sequence[str]) -> None:
+    # Match engine authority parsing without importing it into this independent environment.
+    allowed: set[str] = set()
+    for host in hosts:
+        hostname = _authority_hostname(host)
+        if hostname is None:
+            try:
+                hostname = str(ipaddress.ip_address(host))
+            except ValueError:
+                raise ValueError("allowed hosts must be hostnames or IP address literals") from None
+        allowed.add(hostname)
+
+    @web.middleware
+    async def validate_host(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        authorities = request.headers.getall("Host", [])
+        hostname = _authority_hostname(authorities[0]) if len(authorities) == 1 else None
+        try:
+            loopback = hostname is not None and ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            loopback = False
+        if hostname is None or (not loopback and hostname not in allowed):
+            return web.json_response(
+                {
+                    "error": "host-not-allowed",
+                    "message": "the request Host is not allowed by this server",
+                },
+                status=421,
+            )
+        return await handler(request)
+
+    app.middlewares.append(validate_host)
 
 
 def _cors_origin(request: web.Request, allowed: frozenset[str]) -> str | None:
@@ -554,6 +617,8 @@ def create_supervisor_app(
     link: EngineLink,
     *,
     restart: Callable[[], Awaitable[None]] | None = None,
+    host: str = "127.0.0.1",
+    allow_hosts: Sequence[str] = (),
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
     shutdown_token: str | None = None,
@@ -569,6 +634,7 @@ def create_supervisor_app(
     app[INSTANCE_KEY] = instance
     app[SHUTDOWN_TOKEN_KEY] = shutdown_token
     app[SHUTDOWN_KEY] = shutdown
+    install_host_validation(app, (host, *allow_hosts))
     install_cors(app, app[CORS_KEY])
 
     async def manage_session(app: web.Application) -> None:
@@ -603,6 +669,13 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)
+    parser.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help="accept this HTTP Host in addition to the bind address and loopback IPs (repeatable)",
+    )
     parser.add_argument(
         "--instance",
         help="opaque launcher identifier echoed by /supervisor/status",
@@ -668,6 +741,8 @@ def main() -> None:
         app = create_supervisor_app(
             link,
             restart=engine.restart,
+            host=args.host,
+            allow_hosts=args.allow_host,
             allow_origins=args.allow_origin,
             instance=args.instance,
             shutdown_token=args.shutdown_token,

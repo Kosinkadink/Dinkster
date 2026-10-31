@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Dependency and build-backend provisioning belongs to setup, not the gate.
+export UV_OFFLINE=1
+
 uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
@@ -9,7 +12,7 @@ uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
 uv run --locked pyright --pythonplatform Windows
-uv run --locked python -m pytest -q \
+uv run --locked python -m pytest -q -m 'not network' \
   tests/test_disabled_features.py \
   tests/test_settings.py \
   tests/test_extension_factory_guard.py \
@@ -29,6 +32,7 @@ uv run --locked python -m pytest -q \
   tests/test_values.py \
   tests/test_graph.py \
   tests/test_graph_wire.py \
+  tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
   tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \

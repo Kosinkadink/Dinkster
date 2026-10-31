@@ -5,8 +5,9 @@ on:
     paths:
       - .github/workflows/dependency-runtime.yml
       - .github/actions/torch-cpu-suite/action.yml
-      - scripts/setup_envs.sh
-      - scripts/setup_envs.ps1
+      - scripts/setup_envs.py
+      - scripts/base_bundles.json
+      - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
       - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
@@ -146,40 +147,43 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
-      - name: Test receipt generation on the native platform
-        run: uv run --locked python -m pytest -q tests/test_minimax_h3_multigpu_receipt.py
-      - name: Resolve and install the constrained Linux CPU runtime
-        if: runner.os == 'Linux'
+      - name: Install the published CPU base and locked workspace
         shell: bash
         run: |
-          uv export --locked --all-packages --no-emit-project --no-emit-workspace \
-            --no-hashes --output-file "$RUNNER_TEMP/torch-versions.txt"
-          uv pip compile --python-version 3.12 --torch-backend cpu --generate-hashes \
-            --output-file "$RUNNER_TEMP/torch-constraints.txt" "$RUNNER_TEMP/torch-versions.txt"
-          CUDA_VISIBLE_DEVICES="" UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" \
-            bash scripts/setup_envs.sh
-          uv pip check --python .venv-torch/bin/python
-          .venv-torch/bin/python - <<'PY'
+          variant=linux-cpu
+          if [ "$RUNNER_OS" = Windows ]; then variant=win-cpu; fi
+          uv run --no-project python scripts/setup_envs.py --variant "$variant"
+      - name: Test receipt generation on the native platform
+        run: uv run --no-sync python -m pytest -q tests/test_minimax_h3_multigpu_receipt.py
+      - name: Verify the selected bundle and CPU runtime
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata
+          import json
+          import sys
+          from pathlib import Path
           import torch
           import torchvision
 
-          assert torch.__version__ == '2.14.1+cpu', torch.__version__
-          assert torchvision.__version__ == '0.29.1+cpu', torchvision.__version__
+          manifest = json.loads(Path('.run/environment-base.json').read_text())
+          assert sys.version.split()[0] == manifest['python']
+          for wheel in manifest['wheels']:
+              assert importlib.metadata.version(wheel['name']) == wheel['version'], wheel
+          names = {d.metadata['Name'].lower().replace('_', '-')
+                   for d in importlib.metadata.distributions()}
+          assert not any(name.startswith('nvidia-') or name == 'triton' for name in names)
+          assert torch.version.cuda is None
           boxes = torch.tensor([[0., 0., 2., 2.], [0., 0., 1., 1.], [3., 3., 4., 4.]])
           scores = torch.tensor([0.9, 0.8, 0.7])
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
-          print('Constrained CPU torch/torchvision imports and NMS passed')
+          print('Published CPU base, installed inventory and NMS passed:', manifest['id'])
           PY
       - name: Test public CPU sampler and attention contracts
-        if: runner.os == 'Linux'
         shell: bash
         run: |
-          uv pip install --python .venv-torch/bin/python \
-            --constraint "$RUNNER_TEMP/torch-constraints.txt" -e . -e packages/dinkster-nodes-comfy
-          .venv-torch/bin/python -m pytest -q \
+          uv run --no-sync python -m pytest -q \
             packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
             packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py

@@ -10,11 +10,17 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from platform import machine
+from types import SimpleNamespace
 
 import pytest
 import zstandard
 from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_supervisor import environment_artifacts
 from dinkster_supervisor.environment_artifacts import (
     acquire,
     acquire_pack_locks,
@@ -38,10 +44,19 @@ def _artifact(name: str, data: bytes, *, key: str = "name") -> dict:
 
 
 def _mirror(
-    root: Path, *, protocol: int = 11, damaged_archive: bool = False, variant: str = "fixture-cpu"
+    root: Path,
+    *,
+    protocol: int = 11,
+    damaged_archive: bool = False,
+    variant: str = "fixture-cpu",
+    target: tuple[str, str] | None = None,
 ) -> tuple[dict, dict, dict]:
     root.mkdir(parents=True)
-    python = "python/python.exe" if os.name == "nt" else "python/bin/python3"
+    system, arch = target or (
+        "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux",
+        {"amd64": "x86_64", "aarch64": "arm64"}.get(machine().lower(), machine().lower()),
+    )
+    python = "python/python.exe" if system == "windows" else "python/bin/python3"
     base_wheel = b"base wheel bytes; execution is covered by generation tests"
     wheel = {
         **_artifact("fixture_base-1.0-py3-none-any.whl", base_wheel, key="filename"),
@@ -61,7 +76,7 @@ def _mirror(
     base = {
         "format": "dinkster.base/1",
         "variant": variant,
-        "platform": {"os": "windows" if os.name == "nt" else "linux", "arch": "x86_64"},
+        "platform": {"os": system, "arch": arch},
         "python": "3.14.10",
         "interpreter": interpreter,
         "wheels": [wheel],
@@ -295,6 +310,66 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
         assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize(
+    ("target", "host", "architecture", "accepted"),
+    [
+        (("macos", "arm64"), "darwin", "arm64", True),
+        (("macos", "arm64"), "darwin", "aarch64", True),
+        (("macos", "arm64"), "darwin", "x86_64", False),
+        (("macos", "arm64"), "win32", "AMD64", False),
+        (("macos", "arm64"), "win32", "ARM64", False),
+        (("macos", "arm64"), "linux", "x86_64", False),
+        (("macos", "arm64"), "linux", "aarch64", False),
+        (("macos", "x86_64"), "darwin", "arm64", False),
+        (("windows", "x86_64"), "darwin", "arm64", False),
+        (("linux", "x86_64"), "darwin", "arm64", False),
+    ],
+)
+def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: tuple[str, str],
+    host: str,
+    architecture: str,
+    accepted: bool,
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    base, _, _ = _mirror(
+        mirror, variant="mac-arm64" if target[0] == "macos" else "fixture-cpu", target=target
+    )
+    catalog = discover((str(mirror),), "main")
+    monkeypatch.setattr(environment_artifacts, "sys", SimpleNamespace(platform=host))
+    monkeypatch.setattr(environment_artifacts, "machine", lambda: architecture)
+    variant = next(iter(catalog.bases))
+    if not accepted:
+        with pytest.raises(EnvironmentError, match="operating system|architecture"):
+            acquire(catalog, variant, store)
+        assert not store.exists()
+        return
+    # Exercise host admission without trying to execute a foreign interpreter on the test host.
+    cached_wheels = store / "bases" / base["id"][7:] / "wheels"
+    cached_wheels.mkdir(parents=True)
+    (cached_wheels / base["wheels"][0]["filename"]).write_bytes(
+        b"base wheel bytes; execution is covered by generation tests"
+    )
+    constraints = acquire(catalog, variant, store)
+    assert "fixture-base==1.0 --hash=sha256:" in constraints.read_text()
+    assert "nvidia-cublas" not in constraints.read_text()
+    assert next(store.glob("wheels/*/fixture_base*.whl")).read_bytes() == (
+        b"base wheel bytes; execution is covered by generation tests"
+    )
+
+
+@pytest.mark.parametrize("target", [("windows", "arm64"), ("linux", "arm64"), ("macos", "riscv64")])
+def test_discovery_rejects_unsupported_manifest_architectures(
+    tmp_path: Path, target: tuple[str, str]
+):
+    mirror = tmp_path / "mirror"
+    _mirror(mirror, target=target)
+    with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
+        discover((str(mirror),), "main")
+
+
 def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path: Path):
     first, second = tmp_path / "first", tmp_path / "second"
     _, engine, channel = _mirror(first)
@@ -348,6 +423,184 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         acquire(catalog, "fixture-cpu", store)
     assert not (store / "bases" / base["id"][7:]).exists()
     assert not list(store.glob("wheels/*/*.whl"))
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "base",
+        "engine",
+        "github",
+        "head",
+        "config",
+        "event",
+        "superseded",
+        "identical",
+        "absent",
+        "diverged",
+        "compare",
+        "unknown",
+        "channel",
+        "identical-bytes",
+    ],
+)
+def test_channel_publication_exposes_only_verified_payloads(
+    tmp_path: Path, monkeypatch, request, capsys, failure
+):
+    from botocore.exceptions import ClientError
+
+    from scripts import publish_environment_channel as publisher
+
+    source, public = tmp_path / "source", tmp_path / "public"
+    base, engine, channel = _mirror(source)
+    release = source / "engine" / channel["engine"]["release"][7:]
+    (release / "SHA256SUMS").write_bytes(b"fixture checksums")
+    base_path = source / "base/fixture-cpu" / base["id"][7:] / "manifest.json"
+    shutil.copytree(source / "base", public / "base")
+    (public / "channels").mkdir()
+    stable = b"stable channel must not change"
+    (public / "channels/stable.json").write_bytes(stable)
+    write_channel(
+        release, [base_path], channel="main", output_root=public, minimum_desktop_version="0.2.0"
+    )
+    published_commit = engine["commit"]
+    if failure not in {"identical", "identical-bytes"}:
+        published_engine = {**engine, "commit": "e" * 40}
+        published_commit = published_engine["commit"]
+        data = _json(published_engine)
+        identity = hashlib.sha256(data).hexdigest()
+        target = public / f"engine/{identity}/release-manifest.json"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(data)
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["engine"]["release"] = "sha256:" + identity
+        document["engine"]["locations"] = [
+            {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+        ]
+        (public / "channels/main.json").write_bytes(_json(document))
+    elif failure == "identical-bytes":
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["minimumDesktopVersion"] = "0.1.0"
+        (public / "channels/main.json").write_bytes(_json(document))
+    previous = (public / "channels/main.json").read_bytes()
+    if failure == "absent":
+        (public / "channels/main.json").unlink()
+
+    class MirrorHandler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            if failure == "channel" and self.path == "/channels/main.json":
+                self.send_error(403)
+                return
+            if self.headers.get("User-Agent", "").startswith("Python-urllib/"):
+                self.send_error(403)
+                return
+            super().do_GET()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(MirrorHandler, directory=str(public)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def cleanup():
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    request.addfinalizer(cleanup)
+    for name, value in {
+        "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": engine["commit"],
+        "R2_ACCESS_KEY_ID": "test",
+        "R2_SECRET_ACCESS_KEY": "test",
+        "R2_ACCOUNT_ID": "test",
+        "R2_BUCKET": "test",
+        "R2_PUBLIC_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+    }.items():
+        monkeypatch.setenv(name, value)
+    if failure == "config":
+        monkeypatch.delenv("R2_SECRET_ACCESS_KEY")
+    elif failure == "event":
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    elif failure == "base":
+        (public / base_path.relative_to(source)).write_bytes(b"wrong base manifest")
+    original_urlopen = publisher.urlopen
+
+    def published_input(url, **kwargs):
+        if url.startswith("https://api.github.com/"):
+            assert url == (
+                "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
+                f"{published_commit}...{engine['commit']}"
+            )
+            if failure == "compare":
+                raise ValueError("compare unavailable")
+            status = (
+                "identical"
+                if published_commit == engine["commit"]
+                else {"superseded": "behind", "diverged": "diverged", "unknown": "unknown"}.get(
+                    failure, "ahead"
+                )
+            )
+            return io.BytesIO(json.dumps({"status": status}).encode())
+        if url.startswith("https://github.com/"):
+            return io.BytesIO(
+                b"wrong"
+                if failure == "github"
+                else (release / "release-manifest.json").read_bytes()
+            )
+        return original_urlopen(url, **kwargs)
+
+    class ObjectStore:
+        def head_object(self, *, Bucket, Key):
+            if failure == "head":
+                raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadObject")
+            if not (public / Key).exists():
+                raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
+
+        def upload_file(self, filename, bucket, key, **kwargs):
+            if failure in {"identical", "identical-bytes"} and key == "channels/main.json":
+                pytest.fail("identical engine must not upload the channel")
+            target = public / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(filename, target)
+            if failure == "engine" and target.name == "constraints.txt":
+                target.write_bytes(b"corrupted uploaded engine bytes")
+
+    monkeypatch.setattr(publisher, "urlopen", published_input)
+    monkeypatch.setattr(publisher.boto3, "client", lambda *args, **kwargs: ObjectStore())
+    if failure in {
+        "base",
+        "engine",
+        "github",
+        "head",
+        "event",
+        "compare",
+        "unknown",
+        "channel",
+        "identical-bytes",
+    }:
+        from urllib.error import HTTPError
+
+        with pytest.raises((ValueError, ClientError, HTTPError)):
+            publisher.publish(release, [base_path], "main", "0.2.0")
+    else:
+        publisher.publish(release, [base_path], "main", "0.2.0")
+    assert (public / "channels/stable.json").read_bytes() == stable
+    if failure not in {None, "identical", "absent"}:
+        assert (public / "channels/main.json").read_bytes() == previous
+        if failure in {"superseded", "diverged"}:
+            output = capsys.readouterr().out
+            assert published_commit in output
+            assert engine["commit"] in output
+    else:
+        selected = discover((str(public),), "main")
+        assert selected.engine == engine
+        assert selected.bases == {"fixture-cpu": base}
+        before = {path: path.read_bytes() for path in public.rglob("*") if path.is_file()}
+        published_commit = engine["commit"]
+        publisher.publish(release, [base_path], "main", "0.2.0")
+        assert {path: path.read_bytes() for path in before} == before
 
 
 def test_channel_builder_round_trips_both_channels_without_changing_publisher_inputs(

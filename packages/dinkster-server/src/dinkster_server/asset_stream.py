@@ -1,14 +1,10 @@
-"""Verified asset streaming shared by the digest-addressed byte endpoints.
+"""Cancellation-safe streaming from an authority-checked asset descriptor.
 
-Two routes hand asset bytes to the network: the peer surface
-(``/assets/{digest}``, app.py) and the client surface
-(``/api/assets/{digest}``, library.py). Both must honor the same
-invariant - the digest names the bytes actually served - and the same
-mechanics: verify from an open descriptor (dinkster_assets.integrity),
-stream FROM THAT DESCRIPTOR (verify-then-reopen would recreate the
-replacement window a peer or browser would silently mirror), and never
-leak the descriptor, including when aiohttp cancels the handler while a
-worker-thread open or read is in flight. ``asyncio.to_thread`` does not
+Digest-addressed endpoints verify content identity before streaming; local
+bindings instead validate the live grant and file revision. Both stream from
+that same descriptor: checking then reopening would recreate the replacement
+window. Neither may leak the descriptor when aiohttp cancels the handler while
+a worker-thread open or read is in flight. ``asyncio.to_thread`` does not
 interrupt its worker on cancellation, so the pattern here is
 shield-plus-handoff: the awaiter may be cancelled, but the descriptor's
 closer becomes a completion callback on the still-running worker task -
@@ -19,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 
@@ -29,8 +26,8 @@ from dinkster_values import MEBIBYTE
 CHUNK = MEBIBYTE  # streamed read size: bounded memory for any asset size
 
 
-def _open_sized(path: Path, digest: str) -> tuple[BinaryIO, int]:
-    handle = open_verified(path, digest)
+def _open_sized(opener: Callable[[], BinaryIO]) -> tuple[BinaryIO, int]:
+    handle = opener()
     try:
         return handle, os.fstat(handle.fileno()).st_size
     except BaseException:
@@ -50,7 +47,12 @@ async def open_verified_sized(path: Path, digest: str) -> tuple[BinaryIO, int]:
     if the request dies while a multi-GB hash runs, the eventual descriptor
     is closed by a completion callback instead of leaking. Raises whatever
     ``open_verified`` raises (AssetIntegrityError, AssetError, OSError)."""
-    task = asyncio.ensure_future(asyncio.to_thread(_open_sized, path, digest))
+    return await open_sized(lambda: open_verified(path, digest))
+
+
+async def open_sized(opener: Callable[[], BinaryIO]) -> tuple[BinaryIO, int]:
+    """Open through the caller's asset authority without leaking on cancellation."""
+    task = asyncio.ensure_future(asyncio.to_thread(_open_sized, opener))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:

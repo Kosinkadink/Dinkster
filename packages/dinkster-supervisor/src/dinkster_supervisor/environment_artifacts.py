@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import os
 import re
 import shutil
 import sys
 from dataclasses import dataclass
 from http.client import HTTPException
 from pathlib import Path
+from platform import machine
 from typing import cast
 from urllib.parse import quote, urlparse
 
@@ -140,7 +140,10 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
         platform = cast("dict[str, object]", platform)
         if platform.get("os") not in ("windows", "linux", "macos"):
             raise EnvironmentError("base manifest platform is invalid")
-        if platform.get("arch") != "x86_64":
+        if platform.get("arch") != "x86_64" and (platform["os"], platform.get("arch")) != (
+            "macos",
+            "arm64",
+        ):
             raise EnvironmentError("unsupported base architecture")
         python = document.get("interpreter")
         if not isinstance(python, dict):
@@ -277,14 +280,17 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     )
 
 
-def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
-    """Populate verified artifacts and merged requirements under a held store writer lock."""
-    base_id = catalog.channel.base_for(variant)
-    base = catalog.bases[variant]
+def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path) -> Path:
+    """Acquire a validated base under a held store writer lock, without an engine release."""
+    base_id = cast("str", base["id"])
     platform = cast("dict[str, object]", base["platform"])
-    host = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+    host = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
     if platform["os"] != host:
         raise EnvironmentError("selected variant does not run on this operating system")
+    architecture = machine().lower()
+    architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
+    if platform["arch"] != architecture:
+        raise EnvironmentError("selected variant does not run on this architecture")
     base_root = store / "bases" / base_id[7:]
     created = not base_root.exists()
     if created:
@@ -295,7 +301,7 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
             )
         downloaded = tuple(
             fetch_artifact(
-                catalog.base_sources[variant],
+                sources,
                 cast("str", row["filename"]),
                 store / "downloads" / base_id[7:] / cast("str", row["filename"]),
                 cast("str", row["sha256"]),
@@ -329,6 +335,13 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
         if created:
             shutil.rmtree(base_root)
         raise
+    return base_root
+
+
+def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
+    """Populate verified artifacts and merged requirements under a held store writer lock."""
+    base = catalog.bases[variant]
+    acquire_base(base, catalog.base_sources[variant], store)
     release_root = store / "engines" / catalog.channel.engine_release[7:]
     owned = cast("list[str]", base["replaces"])
     for row in artifact_rows(catalog.engine["artifacts"], "name"):

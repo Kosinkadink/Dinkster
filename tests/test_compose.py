@@ -29,7 +29,8 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import EngineEvent
@@ -3211,6 +3212,107 @@ def test_serving_composer_incremental(tmp_path: Path) -> None:
             )
             assert result.outputs["c"]["value"].resolve() == "HI"
         finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("ending", ["success", "failure", "cancel", "native failure"])
+@pytest.mark.parametrize("other_job", ["other job", "../main job"])
+def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
+    tmp_path: Path, ending: str, other_job: str
+) -> None:
+    async def scenario() -> None:
+        scratch = tmp_path / "scratch"
+        entered = {job: asyncio.Event() for job in ("main", "other")}
+        resume = {job: asyncio.Event() for job in entered}
+        released: list[str] = []
+
+        class Policy:
+            async def select(
+                self,
+                node_type: str,
+                inputs: Mapping[str, Value],
+                candidates: tuple[str, Mapping[str, str]],
+                **context: object,
+            ) -> None:
+                value = inputs["a"].resolve()
+                if value in (5, 13):
+                    label = "other" if value == 13 else "main"
+                    entered[label].set()
+                    await resume[label].wait()
+                    if label == "main" and ending == "failure":
+                        raise RuntimeError("dispatch failed")
+
+            def release_run(self, run_id: str) -> None:
+                with claim_inactive_produced_job(scratch, run_id) as inactive:
+                    assert not inactive, "scratch released before native run settlement"
+                released.append(run_id)
+                if len(released) == 1 and ending == "native failure":
+                    raise RuntimeError("native settlement failed")
+
+        composer = ServingComposer(pack_scratch_root=scratch, native_policy=Policy())
+        tasks: list[asyncio.Task[object]] = []
+        try:
+            await composer.add_pack(default_pack_spec("dinkster-nodes-foundation"))
+            engine = composer.composition.make_engine(lambda event: None)
+            with pytest.raises(AssetError, match="ownership state is unavailable"):
+                with claim_inactive_produced_job(scratch, "unknown job"):
+                    pytest.fail("missing ownership state was treated as an idle job")
+            main = asyncio.create_task(
+                engine.run(
+                    Graph(
+                        nodes={
+                            "first": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
+                            "second": GraphNode(
+                                "std.math.add_ints", {"a": Link("first", "sum"), "b": 7}
+                            ),
+                        }
+                    ),
+                    ["second"],
+                    run_id="../main job",
+                    attempt_id=2,
+                )
+            )
+            other = asyncio.create_task(
+                composer.composition.make_engine(lambda event: None).run(
+                    Graph(nodes={"other": GraphNode("std.math.add_ints", {"a": 13, "b": 17})}),
+                    ["other"],
+                    run_id=other_job,
+                )
+            )
+            tasks.extend((main, other))
+            async with asyncio.timeout(20):
+                await asyncio.gather(*(event.wait() for event in entered.values()))
+                for job in ("../main job", other_job):
+                    with claim_inactive_produced_job(scratch, job) as inactive:
+                        assert not inactive
+                if ending == "cancel":
+                    main.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await main
+                else:
+                    resume["main"].set()
+                    if ending in ("failure", "native failure"):
+                        with pytest.raises(
+                            Exception, match="dispatch failed|native settlement failed"
+                        ):
+                            await main
+                    else:
+                        assert (await main).outputs["second"]["sum"].resolve() == 12
+                with claim_inactive_produced_job(scratch, "../main job") as inactive:
+                    assert inactive == (other_job != "../main job")
+                with claim_inactive_produced_job(scratch, other_job) as inactive:
+                    assert not inactive
+                assert released == ["../main job"]
+                resume["other"].set()
+                assert (await other).outputs["other"]["sum"].resolve() == 30
+                with claim_inactive_produced_job(scratch, other_job) as inactive:
+                    assert inactive
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await composer.close()
 
     asyncio.run(scenario())
