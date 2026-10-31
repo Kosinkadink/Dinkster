@@ -202,11 +202,14 @@ def _main() -> None:
     with _open_trace(trace_path) as trace:
         faulthandler.enable(file=trace)
         finished = threading.Event()
+        interval = 25 if mode == "supervisor" else 5
 
         def observe() -> None:
-            while not finished.wait(25 if mode == "supervisor" else 5):
+            while not finished.wait(interval):
                 # The asynchronous walker can race freed frames on CPython 3.12.
                 # An attached Python thread holds the GIL while dumping stacks.
+                trace.write(f"Timeout (0:00:{interval:02})!\n")
+                trace.flush()
                 faulthandler.dump_traceback(file=trace, all_threads=True)
 
         observer = threading.Thread(target=observe, daemon=True)
