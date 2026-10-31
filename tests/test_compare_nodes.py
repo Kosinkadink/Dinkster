@@ -14,6 +14,55 @@ import pytest
 
 
 @pytest.mark.parametrize(
+    ("widget", "file_input", "passed"),
+    [
+        ({"type": "COMBO", "editableOptions": True}, False, True),
+        ({"type": "COMBO"}, False, False),
+        ({"type": "COMBO", "editableOptions": 1}, False, False),
+        ({"type": "COMBO", "options": []}, False, True),
+        ({"type": "COMBO", "editableOptions": True, "options": ["actual"]}, False, False),
+        (
+            {"type": "COMBO", "editableOptions": True, "remote": {"route": "/api/choices"}},
+            False,
+            False,
+        ),
+        ({"type": "ASSET", "editableOptions": True}, False, False),
+        ({"type": "ASSET", "editableOptions": True}, True, True),
+    ],
+)
+def test_empty_editable_combo_options_preserve_other_choice_contracts(
+    widget: dict[str, Any], file_input: bool, passed: bool
+) -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": "Example",
+                "input_types": {
+                    "required": {"choice": ["COMBO", {"options": [], "file_input": file_input}]}
+                },
+                "return_types": [],
+            }
+        ]
+    }
+    native = {
+        "nodeType": "Example",
+        "interface": [
+            {
+                "role": "input",
+                "id": "choice",
+                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "widget": widget,
+            }
+        ],
+    }
+    result = compare_registry(reference, {"nodes": {"Example": native}})
+    assert result["passed"] is passed
+    assert result["rows"][0]["status"] == ("identical" if passed else "differs")
+
+
+@pytest.mark.parametrize(
     "name,parameter,baseline,observed,passed",
     [
         (
