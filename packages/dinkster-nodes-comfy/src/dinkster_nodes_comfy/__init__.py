@@ -132,7 +132,9 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mesh import MESH_NODES
+from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
+from .mesh_texture import MeshTextureToImage
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -525,6 +527,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Trellis2TextureStage,
     PaintMesh,
     WeldVertices,
+    MeshTextureToImage,
+    MeshSmoothNormals,
 )
 
 

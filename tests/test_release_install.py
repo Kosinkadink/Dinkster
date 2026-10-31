@@ -68,6 +68,38 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+    if project == "dinkster-api":
+        environment = tmp_path / "standalone-api"
+        subprocess.run(
+            ["uv", "venv", "--python", sys.executable, str(environment)],
+            cwd=tmp_path,
+            check=True,
+        )
+        python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--no-sources",
+                str(next(rebuilt.glob("*.whl"))),
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
+        result = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from dinkster_api.v1 import Node; print(Node.__name__)",
+            ],
+            cwd=tmp_path,
+            text=True,
+        )
+        assert result.strip() == "Node"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:

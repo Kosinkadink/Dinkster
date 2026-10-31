@@ -602,6 +602,8 @@ namespaces = [
     "Trellis2TextureStage",
     "PaintMesh",
     "WeldVertices",
+    "MeshTextureToImage",
+    "MeshSmoothNormals",
 ]
 
 [pack.sandbox]
