@@ -46,6 +46,7 @@ namespaces = [
     "ComfyNotNode",
     "ComfyAndNode",
     "ComfyOrNode",
+    "CustomCombo",
     "ComfySwitchNode",
     "StartLoop",
     "EndLoop",
