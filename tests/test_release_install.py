@@ -386,6 +386,23 @@ def test_release_failure_prints_service_and_publication_log_tails(
     assert "not a log" not in output
 
 
+def test_windows_runtime_admits_the_pinned_interpreter_before_installing_dependencies() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["windows-runtime"]["steps"]
+    setup_index = next(
+        index for index, step in enumerate(steps) if step.get("uses") == "astral-sh/setup-uv@v5"
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "./.github/actions/windows-python"
+    )
+    sync_index = next(index for index, step in enumerate(steps) if "uv sync" in step.get("run", ""))
+    assert steps[setup_index]["with"]["python-version"] == "3.14.10"
+    assert setup_index < admission_index < sync_index
+    assert "if" not in steps[admission_index]
+
+
 def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
     steps = workflow["jobs"]["registry-install"]["steps"]
@@ -653,13 +670,16 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     shared = wheel("shared", "py3-none-any")
     win = wheel("native", f"{tag}-{tag}-win_amd64")
     linux = wheel("native", f"{tag}-{tag}-manylinux_2_28_x86_64")
+    mac = wheel("native", f"{tag}-{tag}-macosx_14_0_arm64")
     wheel("native", "cp313-cp313-win_amd64")
-    wheel("native", "cp314-cp314-macosx_11_0_arm64")
+    wheel("native", f"{tag}-{tag}-macosx_15_0_arm64")
+    wheel("native", f"{tag}-{tag}-macosx_14_0_x86_64")
     wheel("native", "cp312-abi3-win_amd64")
     legacy = wheel("legacy", "py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64")
     oldest = wheel("oldest", "py3-none-manylinux1_x86_64.manylinux_2_5_x86_64")
     wheel("legacy", "py3-none-manylinux_2_29_x86_64")
     win_only = wheel("windows_only", "py3-none-any")
+    mac_only = wheel("mac_only", "py3-none-any")
     lock = ""
     requirements = []
     for package, wheels in records.items():
@@ -674,6 +694,11 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         marker = (
             f' ; sys_platform == "win32" and python_full_version >= "{python}"'
             if package == "windows_only"
+            else (
+                ' ; sys_platform == "darwin" and platform_machine == "arm64"'
+                ' and platform_system == "Darwin"'
+            )
+            if package == "mac_only"
             else ' ; sys_platform == "linux"'
             if package in {"legacy", "oldest"}
             else ""
@@ -726,16 +751,33 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     )
     linux_base_manifest = tmp_path / "linux-base-manifest.json"
     linux_base_manifest.write_text(json.dumps(linux_manifest))
-    base_manifests = [base_manifest, linux_base_manifest]
+    mac_manifest = {
+        **manifest,
+        "variant": "mac-arm64",
+        "platform": {"os": "macos", "arch": "arm64"},
+    }
+    identity = {key: value for key, value in mac_manifest.items() if key != "id"}
+    identity["archive"] = {"format": "tar+zstd"}
+    mac_manifest["id"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
+    mac_base_manifest = tmp_path / "mac-base-manifest.json"
+    mac_base_manifest.write_text(json.dumps(mac_manifest))
+    base_manifests = [base_manifest, linux_base_manifest, mac_base_manifest]
     output = tmp_path / "downloads"
     result = download_external_wheels(tmp_path, output, "uv", base_manifests)
     assert {path.name for path in result} == {
         shared.name,
         win.name,
         linux.name,
+        mac.name,
         legacy.name,
         oldest.name,
         win_only.name,
+        mac_only.name,
     }
     assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
     original = requirements[0]
@@ -1203,9 +1245,10 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     assert releases[1]["prerelease"] is False
 
 
+@pytest.mark.parametrize("system", ["windows", "macos"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
 ) -> None:
     from copy import deepcopy
 
@@ -1220,11 +1263,16 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         "[dependency-groups]\nengine-base = " + json.dumps(["numpy==2.5.1"])
     )
     tag = f"cp{python.split('.')[0]}{python.split('.')[1]}"
+    windows = system == "windows"
+    variant = "win-cpu" if windows else "mac-arm64"
+    target = "win_amd64" if windows else "macosx_14_0_arm64"
+    triple = "x86_64-pc-windows-msvc" if windows else "aarch64-apple-darwin"
+    executable = "python/python.exe" if windows else "python/bin/python3"
     lock = []
     wheels = []
     for name, version in pins.items():
-        torch = name in {"torch", "torchvision"}
-        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-win_amd64.whl"
+        torch = windows and name in {"torch", "torchvision"}
+        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-{target}.whl"
         digest = hashlib.sha256(name.encode()).hexdigest()
         url = f"https://example.invalid/{filename}"
         wheels.append(
@@ -1249,17 +1297,17 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     (tmp_path / "uv.lock").write_text("\n".join(lock))
     original: dict = dict(
         format="dinkster.base/1",
-        variant="win-cpu",
-        platform=dict(os="windows", arch="x86_64"),
+        variant=variant,
+        platform=dict(os=system, arch="x86_64" if windows else "arm64"),
         python=python,
         interpreter=dict(
-            filename=f"cpython-{python}+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            filename=f"cpython-{python}+20261026-{triple}-install_only_stripped.tar.gz",
             release="20261026",
-            executable="python/python.exe",
+            executable=executable,
             size=23,
             sha256="a" * 64,
             url="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
-            f"cpython-{python}%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            f"cpython-{python}%2B20261026-{triple}-install_only_stripped.tar.gz",
         ),
         wheels=wheels,
         replaces=list(pins),
@@ -1279,7 +1327,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         manifest = deepcopy(original)
         if change == "version":
             manifest["wheels"][-1]["version"] = "2.5.0"
-            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-win_amd64.whl"
+            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
         elif change == "wheel-hash":
             manifest["wheels"][-1]["sha256"] = "0" * 64
         elif change == "torch-index":
@@ -1289,7 +1337,9 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         elif change == "python":
             manifest["python"] = "3.11.9"
         elif change == "interpreter":
-            manifest["interpreter"]["executable"] = "python/bin/python3"
+            manifest["interpreter"]["executable"] = (
+                "python/bin/python3" if windows else "python/python.exe"
+            )
         elif change == "wheel-platform":
             manifest["wheels"][0]["filename"] = (
                 f"torch-2.14.1+cpu-{tag}-{tag}-manylinux_2_28_x86_64.whl"
@@ -1306,11 +1356,11 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             else [dict(filename="base.tar.zst.001", size=12, sha256=part_digest)]
         )
         manifest["signature"] = None
-        requested = f"base-win-cpu-{identity}"
+        requested = f"base-{variant}-{identity}"
         if change == "identity":
             manifest["workerProtocol"] = 12
         payload = (json.dumps(manifest, indent=3) + "\n").encode()
-        extras = dict(format="dinkster.extras/1", base=manifest["id"], variant="win-cpu", wheels=[])
+        extras = dict(format="dinkster.extras/1", base=manifest["id"], variant=variant, wheels=[])
         if change == "extras-base":
             extras["base"] = "sha256:" + "0" * 64
         elif change == "extras-variant":
@@ -1383,7 +1433,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     monkeypatch.setattr(subprocess, "Popen", stream_part)
     output = tmp_path / "engine-base-manifests"
     paths = acquire(tmp_path, [prepare("valid")], output)
-    assert paths == [output / "win-cpu/manifest.json"]
+    assert paths == [output / variant / "manifest.json"]
     assert paths[0].read_bytes() == payload
     streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
     assert streamed[0].read_bytes() == payload

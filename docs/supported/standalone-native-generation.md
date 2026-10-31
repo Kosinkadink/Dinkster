@@ -4,8 +4,8 @@
   without an output mount. Successful job results expose digest-backed artifacts
   through the existing verified asset-serving route.
 - Source checkouts can prepare and launch the browser UI without Desktop using
-  `run.sh` on Linux or `run.ps1` on Windows. macOS source setup is unsupported
-  until its published base bundle is available. The scripts select the native
+  `run.sh` on Linux or Apple Silicon macOS 14+, or `run.ps1` on Windows.
+  Intel macOS is unsupported. The scripts select the native
   execution environment and preserve local model mounts and outputs on reruns.
 - Without a ComfyUI root, the server advertises the native core node pack's
   executable class IDs directly. Workflows require every referenced node to be

@@ -205,6 +205,7 @@ class AssetRef:
 
         The path is a read-only view of content: treat it as scoped to this
         invocation, never store it in outputs (identity is the digest).
+        Managed produced bytes retain read ownership until this invocation ends.
         Legacy and direct resolvers without an ingest record hash from the open
         descriptor. A path is rebindable by nature - after return the only
         remaining window is a concurrent writer, which is outside the threat

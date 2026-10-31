@@ -68,6 +68,7 @@ from .supervisor import (
     EngineProcess,
     create_supervisor_app,
     install_cors,
+    install_host_validation,
 )
 
 __all__ = ["ManagedInstall", "Station", "create_station_app", "engine_command", "start_station"]
@@ -185,12 +186,17 @@ async def _handle_not_engine(request: web.Request) -> web.Response:
 
 
 def create_station_app(
-    managed: dict[str, ManagedInstall], *, allow_origins: tuple[str, ...] = ()
+    managed: dict[str, ManagedInstall],
+    *,
+    host: str = "127.0.0.1",
+    allow_hosts: tuple[str, ...] = (),
+    allow_origins: tuple[str, ...] = (),
 ) -> web.Application:
     """The management surface. Proxies nothing - install engines answer on
     their own ports through the ordinary supervisor app."""
     app = web.Application()
     app[MANAGED_KEY] = managed
+    install_host_validation(app, (host, *allow_hosts))
     install_cors(app, frozenset(allow_origins))
     app.router.add_get(STATUS_PATH, _handle_station_status)
     app.router.add_get("/supervisor/installs", _handle_installs)
@@ -221,6 +227,7 @@ async def start_station(
     *,
     host: str = "127.0.0.1",
     port: int = 3649,
+    allow_hosts: tuple[str, ...] = (),
     allow_origins: tuple[str, ...] = (),
     startup_timeout: float = 600.0,
     default_engine: list[str] | None = None,
@@ -265,11 +272,20 @@ async def start_station(
         await web.TCPSite(runner, host, bind_port).start()
 
     try:
-        await bind(create_station_app(managed, allow_origins=allow_origins), port)
+        await bind(
+            create_station_app(
+                managed, host=host, allow_hosts=allow_hosts, allow_origins=allow_origins
+            ),
+            port,
+        )
         for entry in managed.values():
             await bind(
                 create_supervisor_app(
-                    entry.link, restart=entry.engine.restart, allow_origins=allow_origins
+                    entry.link,
+                    restart=entry.engine.restart,
+                    host=host,
+                    allow_hosts=allow_hosts,
+                    allow_origins=allow_origins,
                 ),
                 entry.install.port,
             )
@@ -280,7 +296,14 @@ async def start_station(
             await store.initialize()
             members = {name: IngressMember(name, managed[name].link) for name in ingress.members}
             await bind(
-                create_ingress_app(members, ingress.primary, store, allow_origins=allow_origins),
+                create_ingress_app(
+                    members,
+                    ingress.primary,
+                    store,
+                    host=host,
+                    allow_hosts=allow_hosts,
+                    allow_origins=allow_origins,
+                ),
                 ingress.port,
             )
         for entry in managed.values():
@@ -300,6 +323,7 @@ async def _run_forever(
     *,
     host: str,
     port: int,
+    allow_hosts: tuple[str, ...],
     allow_origins: tuple[str, ...],
     startup_timeout: float,
     ingress: IngressDef | None,
@@ -308,6 +332,7 @@ async def _run_forever(
         installs,
         host=host,
         port=port,
+        allow_hosts=allow_hosts,
         allow_origins=allow_origins,
         startup_timeout=startup_timeout,
         ingress=ingress,
@@ -333,6 +358,13 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3649)
+    parser.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help="accept this HTTP Host in addition to the bind address and loopback IPs (repeatable)",
+    )
     parser.add_argument(
         "--allow-origin",
         action="append",
@@ -362,6 +394,7 @@ def main() -> None:
                 station_config.installs,
                 host=args.host,
                 port=args.port,
+                allow_hosts=tuple(args.allow_host),
                 allow_origins=tuple(args.allow_origin),
                 startup_timeout=args.startup_timeout,
                 ingress=station_config.ingress,
