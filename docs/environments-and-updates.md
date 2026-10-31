@@ -172,14 +172,14 @@ active generation; they do not authorize data deletion.
     "release": "sha256:<engine-hex>",
     "tag": "v0.3.1",
     "locations": [
-      { "type": "mirror", "path": "engine/<engine-hex>/release-manifest.json" }
+      { "type": "mirror", "path": "engine/2026-10-31-0.3.1-<hash8>/release-manifest.json" }
     ]
   },
   "base": {
     "win-cpu": {
       "id": "sha256:<base-hex>",
       "locations": [
-        { "type": "mirror", "path": "base/win-cpu/<base-hex>/manifest.json" }
+        { "type": "mirror", "path": "base/win-cpu/2026-10-30-py3.14.10-torch2.14.1-<hash8>/manifest.json" }
       ]
     }
   },
@@ -193,12 +193,17 @@ A channel update is one small file write, so a release that was built earlier
 and kept unpublished becomes live in seconds.
 
 Each selected variant names a base id and ordered location hints. The hex
-placeholders above stand for complete lowercase SHA-256 values. Mirror paths
+identity placeholders above stand for complete lowercase SHA-256 values;
+each path's `hash8` is the first eight digits of that artifact's identity. Mirror paths
 are relative to the configured mirror; an immutable GitHub location is
 `{type: "github", repository, tag, asset}`. A location never overrides digest
 verification. The engine id hashes the final release-manifest.json bytes,
-including its trailing newline; `engine.tag` is copied from that manifest,
-not inferred from its development version. Base ids use the base producer's
+including its trailing newline. New engine manifests carry a readable
+`label: YYYY-MM-DD-<version>` and UTC ISO 8601 `builtAt`, not `tag`:
+publication derives the directory `<label>-<hash8>` and the main prerelease
+tag `main-<label>-<hash8>` after finalizing the bytes. Stable tags stay
+`v<version>`. Old manifests with `tag` and old hash-only paths remain valid;
+existing publications are never renamed. Base ids use the base producer's
 canonical identity fields. The local channel builder validates publisher
 manifests, engine payload hashes, worker protocols and effective constraints
 before atomically replacing one channel file. It does not select base releases
@@ -228,7 +233,11 @@ the push-only channel job checks the selected public base manifests and GitHub
 engine manifest, mirrors missing engine objects, verifies served payload hashes,
 then writes the channel last with no-cache metadata. It uses the base producer's
 `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET` and
-`R2_PUBLIC_BASE_URL` settings; missing settings explicitly skip publication.
+`R2_PUBLIC_BASE_URL` settings. Before any GitHub asset upload, a read-only
+R2 preflight refuses an existing engine directory with the same hash8 but
+a different full identity; unavailable inventory or ambiguous partial
+directories fail closed. It repeats this check before mirroring payloads.
+R2 inventory credentials are therefore required for release publication.
 The serialized main-channel job compares the published engine commit with the
 candidate through GitHub's compare API, not with the live main head. An absent
 channel or an ancestor engine permits publication; the same commit verifies the
@@ -618,7 +627,7 @@ directory is the build artifact used by installation checks and publication:
 |---|---|
 | `*.whl` | Three workspace distributions: `dinkster`, `dinkster-api`, `dinkster-supervisor`; their workspace dependencies require the exact same release version |
 | `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the three built workspace wheels |
-| `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
+| `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `label`, UTC ISO 8601 `builtAt`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size`; older manifests carry `tag` instead of label/build date |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
 | `dinkster-tools-<os>-x86_64.zip` | Extraction-only environment client for Linux and Windows; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
@@ -650,6 +659,18 @@ of the exact `release-manifest.json` bytes. The manifest lists payload assets,
 not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
 basenames relative to the release directory. Clients verify the manifest
 against the channel id before trusting its artifact hashes.
+
+R2 engine payloads live at `engine/<label>-<hash8>/`. Each mirror publication
+rebuilds `engine/index.json` from the paginated bucket inventory, rather than
+appending an entry. Its array lists complete releases newest first, with
+`label`, full manifest `sha256` (hex), source `commit`, `version`, `builtAt`,
+total byte `size` (including manifest and checksums), and bucket-relative
+`path`. Incomplete uploads are omitted until their listed payloads exist
+at the recorded sizes; rerunning fills missing objects and rebuilds the index.
+Legacy rows retain their original hash-only path and have null label/build
+date, sorting after dated releases. Indexes are discovery aids, not identities
+or replacements for manifest verification. Local store paths continue to use
+full hashes only, never labels.
 
 The builder accepts repeated `--external-wheel PATH` candidates and checks
 each filename, size and SHA-256 against `uv.lock` before staging it. External
@@ -703,7 +724,7 @@ moves, not just a PyPI release.
 
 Tag releases use `vX.Y.Z` and require every workspace project's source
 version to equal `X.Y.Z`. A main commit uses GitHub release tag
-`main-<full commit>` and wheel version
+`main-<YYYY-MM-DD>-<version>-<hash8>` and wheel version
 `<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
 prereleases, never PyPI publications. The frontend bundle stays embedded even
 when its pinned frontend commit is unchanged. A temporary source tree gives
@@ -791,7 +812,7 @@ manifest: it fetches each listed wheel by hash from the source index the
 manifest names and the interpreter from python-build-standalone, which is
 the one case where an engine install reads a package index. Stable engine
 releases are kept indefinitely. The workflow retains the newest 50
-commit-named main prereleases; stable releases, drafts and other prerelease
+main prereleases, including legacy commit-named ones; stable releases, drafts and other prerelease
 tags are never removed by this cleanup. A region-specific mirror is one more
 entry in the client's mirror list and, when Dinkster does not operate it,
 serves only signed documents.

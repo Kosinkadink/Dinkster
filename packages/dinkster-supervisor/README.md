@@ -180,8 +180,9 @@ The channel format is `dinkster.channel/1`, with
 `minimumDesktopVersion`, and `signature`. Locations are a nonempty ordered array:
 `{type: "mirror", path}` names the complete manifest path relative to a configured
 mirror; `{type: "github", repository, tag, asset}` names an immutable release asset.
-Mirror paths are `engine/<release hex>/release-manifest.json` and
-`base/<variant>/<base hex>/manifest.json`. GitHub assets use those same manifest
+New mirror paths are `engine/<YYYY-MM-DD>-<version>-<hash8>/release-manifest.json`
+and `base/<variant>/<YYYY-MM-DD>-py<python>-torch<torch>[-cu<nnn>]-<hash8>/manifest.json`.
+Legacy full-hash directory paths remain supported. GitHub assets use those same manifest
 basenames, never alias tags. Both stable and main name exact content digests,
 never a latest-release lookup. Location hints do not replace digest verification.
 A null signature is acceptable only for a Dinkster-operated mirror; signed

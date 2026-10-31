@@ -15,6 +15,7 @@ import tomllib
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
@@ -473,10 +474,12 @@ def build(
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
         raise ValueError("worker boundary must declare PROTOCOL_VERSION")
+    built_at = datetime.now(UTC)
     manifest: dict[str, object] = {
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
-        "tag": tag or f"main-{git_head(root)}",
+        "builtAt": built_at.isoformat().replace("+00:00", "Z"),
+        "label": f"{built_at.date().isoformat()}-{version}",
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),

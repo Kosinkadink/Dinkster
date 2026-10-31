@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -18,6 +19,23 @@ from .environment_state import (
     relative_file,
     write_document,
 )
+
+
+def engine_publication_names(
+    engine: dict[str, object], identity: str, channel: str
+) -> tuple[str, str]:
+    """Derive external names only after the engine manifest bytes are final."""
+    label = engine.get("label")
+    if label is None:
+        return identity[7:], relative_file(engine.get("tag"))
+    if (
+        not isinstance(label, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9][A-Za-z0-9._+\-]*", label) is None
+    ):
+        raise EnvironmentError("engine label must be a portable dated version")
+    name = f"{label}-{identity[7:15]}"
+    tag = f"v{engine['version']}" if channel == "stable" else f"main-{name}"
+    return name, tag
 
 
 def write_channel(
@@ -36,7 +54,7 @@ def write_channel(
     engine = validate_manifest(data, engine_id, None)
     if engine.get("repository") != "Kosinkadink/Dinkster":
         raise EnvironmentError("channel engine must come from Kosinkadink/Dinkster")
-    tag = relative_file(engine.get("tag"))
+    engine_name, tag = engine_publication_names(engine, engine_id, channel)
     for row in artifact_rows(engine["artifacts"], "name"):
         artifact = release / cast("str", row["name"])
         if artifact.stat().st_size != row["size"] or content_digest(artifact) != "sha256:" + cast(
@@ -57,11 +75,10 @@ def write_channel(
         if base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError(f"workerProtocol mismatch for selected base {variant}")
         effective_constraints(constraints.decode("utf-8"), base)
+        base_name = base.get("label", base_id[7:])
         selected[variant] = {
             "id": base_id,
-            "locations": [
-                {"type": "mirror", "path": f"base/{variant}/{base_id[7:]}/manifest.json"}
-            ],
+            "locations": [{"type": "mirror", "path": f"base/{variant}/{base_name}/manifest.json"}],
         }
     document: dict[str, object] = {
         "format": "dinkster.channel/1",
@@ -70,7 +87,7 @@ def write_channel(
             "release": engine_id,
             "tag": tag,
             "locations": [
-                {"type": "mirror", "path": f"engine/{engine_id[7:]}/release-manifest.json"},
+                {"type": "mirror", "path": f"engine/{engine_name}/release-manifest.json"},
                 {
                     "type": "github",
                     "repository": "Kosinkadink/Dinkster",

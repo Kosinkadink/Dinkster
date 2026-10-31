@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tomllib
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -251,6 +252,12 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert preflight["uses"] == "actions/github-script@v7"
     assert "getReleaseByTag" in preflight["with"]["script"]
     assert "Refusing to overwrite an existing release" in preflight["with"]["script"]
+    release_steps = workflow["jobs"]["release"]["steps"]
+    collision_check = next(step for step in release_steps if "--preflight" in step.get("run", ""))
+    assert release_steps.index(collision_check) < release_steps.index(preflight)
+    assert "R2_BUCKET" in collision_check["env"]
+    assert "digest.slice(0, 8)" in preflight["with"]["script"]
+    assert "`v${manifest.version}`" in preflight["with"]["script"]
     assert next(
         step
         for step in workflow["jobs"]["release"]["steps"]
@@ -1217,6 +1224,10 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
+    built_at = datetime.fromisoformat(manifest["builtAt"])
+    assert built_at.tzinfo == UTC
+    assert manifest["label"] == f"{built_at.date().isoformat()}-1.2.3"
+    assert "tag" not in manifest
     assert set(manifest["workspaceWheels"]) == {
         "dinkster-1.2.3-py2.py3-none-any.whl",
         "dinkster_api-1.2.3-py2.py3-none-any.whl",
@@ -1281,7 +1292,8 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
         "format": "dinkster.engine/1",
         "commit": "a" * 40,
         "version": "1.2.3",
-        "tag": "v1.2.3",
+        "label": "2026-10-31-1.2.3",
+        "builtAt": "2026-10-31T12:00:00Z",
         "workerProtocol": 1,
         "workspaceWheels": [wheel.name],
         "artifacts": [
@@ -1442,7 +1454,9 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     releases = {
         number: {
             "id": number,
-            "tag_name": f"main-{number:040x}",
+            "tag_name": (
+                f"main-{number:040x}" if number % 2 else f"main-2026-10-31-0.4.2-{number:08x}"
+            ),
             "published_at": f"2026-10-28T00:00:{number:02d}Z",
             "prerelease": True,
             "draft": False,

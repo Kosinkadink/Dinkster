@@ -448,10 +448,13 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         "upload-forbidden",
         "upload-corrupt",
         "channel-recover",
+        "collision",
+        "partial",
     ],
 )
+@pytest.mark.parametrize("labelled", [False, True])
 def test_channel_publication_exposes_only_verified_payloads(
-    tmp_path: Path, monkeypatch, request, capsys, failure
+    tmp_path: Path, monkeypatch, request, capsys, failure, labelled
 ):
     from boto3.exceptions import S3UploadFailedError
     from botocore.exceptions import ClientError
@@ -463,6 +466,15 @@ def test_channel_publication_exposes_only_verified_payloads(
     release = source / "engine" / channel["engine"]["release"][7:]
     (release / "SHA256SUMS").write_bytes(b"fixture checksums")
     base_path = source / "base/fixture-cpu" / base["id"][7:] / "manifest.json"
+    if labelled:
+        engine.pop("tag")
+        engine.update(label="2026-10-31-0.4.0.dev1", builtAt="2026-10-31T12:00:00Z")
+        (release / "release-manifest.json").write_bytes(_json(engine) + b"\n")
+        base["label"] = f"2026-10-30-py3.14.10-torch2.14.1-{base['id'][7:15]}"
+        base_path.write_bytes(_json(base))
+        target = base_path.parent.with_name(base["label"])
+        base_path.parent.rename(target)
+        base_path = target / "manifest.json"
     shutil.copytree(source / "base", public / "base")
     (public / "channels").mkdir()
     stable = b"stable channel must not change"
@@ -476,13 +488,14 @@ def test_channel_publication_exposes_only_verified_payloads(
         published_commit = published_engine["commit"]
         data = _json(published_engine)
         identity = hashlib.sha256(data).hexdigest()
-        target = public / f"engine/{identity}/release-manifest.json"
+        name = f"{engine['label']}-{identity[:8]}" if labelled else identity
+        target = public / f"engine/{name}/release-manifest.json"
         target.parent.mkdir(parents=True)
         target.write_bytes(data)
         document = json.loads((public / "channels/main.json").read_bytes())
         document["engine"]["release"] = "sha256:" + identity
         document["engine"]["locations"] = [
-            {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+            {"type": "mirror", "path": f"engine/{name}/release-manifest.json"}
         ]
         (public / "channels/main.json").write_bytes(_json(document))
     elif failure == "identical-bytes":
@@ -492,6 +505,18 @@ def test_channel_publication_exposes_only_verified_payloads(
     previous = (public / "channels/main.json").read_bytes()
     if failure == "absent":
         (public / "channels/main.json").unlink()
+    elif failure == "collision":
+        short = hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()[:8]
+        orphan = public / f"engine/2026-10-29-0.4.0-{short}/constraints.txt"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_bytes(b"interrupted unknown publication")
+    elif failure == "partial":
+        sha = hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
+        name = f"{engine['label']}-{sha[:8]}" if labelled else sha
+        unfinished = public / f"engine/{name}/release-manifest.json"
+        unfinished.parent.mkdir(parents=True)
+        shutil.copyfile(release / unfinished.name, unfinished)
+        (public / "engine/index.json").write_bytes(b"interrupted stale index")
 
     class MirrorHandler(SimpleHTTPRequestHandler):
         def do_GET(self):
@@ -568,6 +593,22 @@ def test_channel_publication_exposes_only_verified_payloads(
     monkeypatch.setattr(publisher.time, "sleep", backoff)
 
     class ObjectStore:
+        def get_paginator(self, operation):
+            assert operation == "list_objects_v2"
+            return self
+
+        def paginate(self, *, Bucket, Prefix):
+            rows = [
+                {"Key": path.relative_to(public).as_posix(), "Size": path.stat().st_size}
+                for path in sorted((public / "engine").rglob("*"))
+                if path.is_file()
+            ]
+            yield {"Contents": rows[:1]}
+            yield {"Contents": rows[1:]}
+
+        def get_object(self, *, Bucket, Key):
+            return {"Body": io.BytesIO((public / Key).read_bytes())}
+
         def head_object(self, *, Bucket, Key):
             if failure == "head":
                 raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadObject")
@@ -631,6 +672,7 @@ def test_channel_publication_exposes_only_verified_payloads(
         "upload-exhaust",
         "upload-forbidden",
         "upload-corrupt",
+        "collision",
     }:
         from urllib.error import HTTPError
 
@@ -639,6 +681,10 @@ def test_channel_publication_exposes_only_verified_payloads(
     else:
         publisher.publish(release, [base_path], "main", "0.2.0")
     assert (public / "channels/stable.json").read_bytes() == stable
+    if failure == "collision":
+        assert attempts == {}
+    elif failure == "partial":
+        assert not any(key.endswith("/release-manifest.json") for key in attempts)
     if failure in {
         "upload-recover",
         "upload-exhaust",
@@ -660,7 +706,7 @@ def test_channel_publication_exposes_only_verified_payloads(
             assert sleeps == [1, 2, 4]
         if failure in {"upload-exhaust", "upload-forbidden", "upload-corrupt"}:
             assert "channels/main.json" not in attempts
-    if failure not in {None, "identical", "absent", "upload-recover", "channel-recover"}:
+    if failure not in {None, "identical", "absent", "upload-recover", "channel-recover", "partial"}:
         assert (public / "channels/main.json").read_bytes() == previous
         if failure in {"superseded", "diverged"}:
             output = capsys.readouterr().out
@@ -670,14 +716,115 @@ def test_channel_publication_exposes_only_verified_payloads(
         selected = discover((str(public),), "main")
         assert selected.engine == engine
         assert selected.bases == {"fixture-cpu": base}
+        index = json.loads((public / "engine/index.json").read_bytes())
+        full_id = hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
+        assert len(index) == 1
+        assert index[0]["sha256"] == full_id
+        assert index[0]["label"] == engine.get("label")
+        assert index[0]["size"] == sum(path.stat().st_size for path in release.iterdir())
         before = {path: path.read_bytes() for path in public.rglob("*") if path.is_file()}
         published_commit = engine["commit"]
         publisher.publish(release, [base_path], "main", "0.2.0")
         assert {path: path.read_bytes() for path in before} == before
 
 
+def test_engine_inventory_rebuilds_complete_index_and_refuses_real_hash8_collision(
+    tmp_path: Path, monkeypatch
+):
+    from scripts import publish_environment_channel as publisher
+
+    monkeypatch.setenv("R2_BUCKET", "fixture")
+    objects: dict[str, bytes] = {}
+
+    class Bucket:
+        def get_paginator(self, operation):
+            assert operation == "list_objects_v2"
+            return self
+
+        def paginate(self, **kwargs):
+            rows = [{"Key": key, "Size": len(value)} for key, value in objects.items()]
+            for row in rows:
+                yield {"Contents": [row]}
+
+        def get_object(self, *, Bucket, Key):
+            return {"Body": io.BytesIO(objects[Key])}
+
+        def upload_file(self, *args, **kwargs):
+            pytest.fail("inventory and collision preflight must never upload")
+
+    def manifest(commit: int, *, date: str = "2026-10-31", legacy: bool = False):
+        engine = {
+            "format": "dinkster.engine/1",
+            "repository": "Kosinkadink/Dinkster",
+            "label": f"{date}-0.4.2",
+            "builtAt": f"{date}T12:00:00Z",
+            "commit": f"{commit:040x}",
+            "version": "0.4.2",
+            "workerProtocol": 11,
+            "artifacts": [_artifact("constraints.txt", b"")],
+        }
+        if legacy:
+            del engine["label"], engine["builtAt"]
+            engine["tag"] = f"main-{commit:040x}"
+        data = _json(engine)
+        digest = hashlib.sha256(data).hexdigest()
+        name = digest if legacy else f"{engine['label']}-{digest[:8]}"
+        return engine, data, digest, f"engine/{name}"
+
+    first, first_data, first_id, first_path = manifest(42806)
+    _, _, colliding_id, _ = manifest(54162)
+    assert first_id != colliding_id and first_id[:8] == colliding_id[:8] == "49f9b0cc"
+    objects[f"{first_path}/release-manifest.json"] = first_data
+    bucket = Bucket()
+    publisher.check_collision(bucket, "sha256:" + first_id)
+    with pytest.raises(ValueError, match="hash8 collision"):
+        publisher.check_collision(bucket, "sha256:" + colliding_id)
+    del objects[f"{first_path}/release-manifest.json"]
+    objects[f"{first_path}/constraints.txt"] = b""
+    with pytest.raises(ValueError, match="unidentifiable directory"):
+        publisher.check_collision(bucket, "sha256:" + first_id)
+    objects[f"{first_path}/release-manifest.json"] = first_data
+    objects[f"{first_path}/SHA256SUMS"] = b"checksums"
+    _, old_data, old_id, old_path = manifest(1, legacy=True)
+    objects.update(
+        {
+            f"{old_path}/release-manifest.json": old_data,
+            f"{old_path}/constraints.txt": b"",
+            f"{old_path}/SHA256SUMS": b"old",
+        }
+    )
+    newer, new_data, new_id, new_path = manifest(2, date="2026-11-01")
+    objects[f"{new_path}/release-manifest.json"] = new_data
+    index = tmp_path / "index.json"
+    index.write_text("stale or interrupted index")
+    publisher.write_index(bucket, index)
+    rows = json.loads(index.read_bytes())
+    assert [row["sha256"] for row in rows] == [first_id, old_id]
+    assert rows[0] == {
+        "label": first["label"],
+        "sha256": first_id,
+        "commit": first["commit"],
+        "version": "0.4.2",
+        "builtAt": "2026-10-31T12:00:00Z",
+        "size": len(first_data) + len(b"checksums"),
+        "path": first_path,
+    }
+    assert rows[1]["label"] is None and rows[1]["builtAt"] is None
+    objects[f"{new_path}/constraints.txt"] = b""
+    objects[f"{new_path}/SHA256SUMS"] = b"new"
+    publisher.write_index(bucket, index)
+    rows = json.loads(index.read_bytes())
+    assert [row["sha256"] for row in rows] == [new_id, first_id, old_id]
+    assert rows[0]["label"] == newer["label"]
+    before = index.read_bytes()
+    publisher.write_index(bucket, index)
+    assert index.read_bytes() == before
+
+
+@pytest.mark.parametrize("labelled", [False, True])
 def test_channel_builder_round_trips_both_channels_without_changing_publisher_inputs(
     tmp_path: Path,
+    labelled: bool,
 ):
     mirror = tmp_path / "mirror"
     base, engine, channel = _mirror(mirror, variant="linux-cpu")
@@ -689,6 +836,15 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         mirror / "base" / variant / manifest["id"][7:] / "manifest.json"
         for variant, manifest in (("linux-cpu", base), ("win-cpu", extra))
     ]
+    if labelled:
+        engine.pop("tag")
+        engine.update(label="2026-10-31-0.4.0.dev1", builtAt="2026-10-31T12:00:00Z")
+        data = _json(engine) + b"\n"
+        (release / "release-manifest.json").write_bytes(data)
+        name = f"{engine['label']}-{hashlib.sha256(data).hexdigest()[:8]}"
+        target = release.with_name(name)
+        release.rename(target)
+        release = target
     before = {
         path: path.read_bytes()
         for tree in (mirror / "engine", mirror / "base")
@@ -718,7 +874,11 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         assert result.returncode == 0, result.stderr
         generated = json.loads((mirror / "channels" / f"{name}.json").read_bytes())
         assert generated["engine"]["release"] == expected_id
-        assert generated["engine"]["tag"] == engine["tag"]
+        assert generated["engine"]["tag"] == (
+            (f"v{engine['version']}" if name == "stable" else f"main-{release.name}")
+            if labelled
+            else engine["tag"]
+        )
         assert generated["minimumDesktopVersion"] == "0.7.2"
         selected = discover((str(mirror),), name)
         assert selected.engine == engine
@@ -726,9 +886,10 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         assert selected.channel.base_for("linux-cpu") == base["id"]
         assert selected.channel.base_for("win-cpu") == extra["id"]
         assert {path: path.read_bytes() for path in before} == before
-    assert (mirror / "channels/main.json").read_bytes() == (
-        mirror / "channels/stable.json"
-    ).read_bytes()
+    if not labelled:
+        assert (mirror / "channels/main.json").read_bytes() == (
+            mirror / "channels/stable.json"
+        ).read_bytes()
 
 
 @pytest.mark.parametrize(

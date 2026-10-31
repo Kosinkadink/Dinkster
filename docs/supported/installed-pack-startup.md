@@ -76,6 +76,9 @@
   updates can select another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
+- Published engine and base locations can carry readable dated labels alongside
+  their hash prefix. Existing hash-only locations remain installable, and local
+  stores keep full-hash directory names for both forms.
 - Base acquisition verifies ordered tar+zstd parts before streaming extraction.
   No external decoder executable or runtime decoder download is needed. Unsafe
   members refuse extraction before promotion. Internal symlinks are preserved
