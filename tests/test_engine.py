@@ -1188,6 +1188,32 @@ def test_validation_failure_raises() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("node_id", "input_id", "value"), [("b", "ratio", "normal"), ("g", "width", True)]
+)
+def test_invalid_scalar_literal_is_rejected_before_execution(
+    node_id: str, input_id: str, value: object
+) -> None:
+    async def scenario() -> None:
+        graph = image_graph()
+        node = graph.nodes[node_id]
+        assert isinstance(node, GraphNode)
+        graph = Graph(
+            nodes={**graph.nodes, node_id: replace(node, inputs={**node.inputs, input_id: value})}
+        )
+        with pytest.raises(GraphValidationError) as error:
+            await make_engine().run(graph, ["s"])
+        assert any(
+            diagnostic.severity == "error"
+            and diagnostic.code == "literal-type"
+            and diagnostic.node_id == node_id
+            and diagnostic.input_id == input_id
+            for diagnostic in error.value.diagnostics
+        )
+
+    asyncio.run(scenario())
+
+
 def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
     """The joint-contract case end to end: typed literals wrap with their
     stamp, so variable-, wildcard- and list<T>-typed inputs execute from
