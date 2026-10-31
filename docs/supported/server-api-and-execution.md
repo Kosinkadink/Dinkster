@@ -47,6 +47,26 @@
   release prevent stale clients from removing newer associations, including
   after restart or owner reuse. Association registration is explicit, not
   automatic history or preview integration; it does not enable cleanup.
+- Clients can read immutable scoped result offers and claim their exact
+  server-selected roots into fresh shown-result or preview owners. Durable
+  source bindings permit reconciliation after a lost acknowledgment; a claim
+  cannot overwrite an existing owner or revive a source after its last
+  protecting owner releases it. Library-backed jobs persist source offers
+  before fresh, cached and coalesced output events and terminal targets;
+  events, status and completed-value discovery expose the exact runtime
+  node/output binding. Selecting a nested element retains the complete
+  parent-output source rather than narrowing its roots. Unknown
+  codecs remain incomplete. This does not cover live previews or restored
+  history, certify frontend coverage, or enable cleanup.
+- Scoped terminal publication discovery retains original output tokens,
+  execution identity and provenance independently of process restart,
+  queue/cache retirement and ordinary history deletion. It never substitutes
+  a newer publication or reconstructs tokens for legacy rows. Terminal saved
+  artifacts carry original offers bound to the exact saved-file descriptor,
+  terminal index and optional published preview, retaining both identities.
+  Failed, cancelled and unknown-codec sets remain incomplete. This is source
+  discovery, not stored output payloads or completed frontend restoration;
+  cleanup remains disabled.
 - Durable terminal history retains external asset identities from target
   values, saved artifacts and their optional published previews independently
   of execution-cache entries, without storing output payloads or changing

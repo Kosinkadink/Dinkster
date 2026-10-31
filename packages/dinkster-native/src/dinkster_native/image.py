@@ -62,6 +62,7 @@ def register_image_type(registry: TypeRegistry, type_id: str) -> None:
         meta=mask_array_meta if type_id == MASK_V1_NAME else image_array_meta,
         validate_encoded=validate_image_encoded,
         validate_encoded_buffer=validate_image_encoded,
+        asset_references_complete=True,
     )
 
 

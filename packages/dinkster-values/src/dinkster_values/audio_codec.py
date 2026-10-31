@@ -313,7 +313,9 @@ def audio_encoded_meta(data: bytes | memoryview) -> Mapping[str, object]:
                 resident += len(chunk)
             else:
                 ref = asset_wire(source["asset"])
-                refs.setdefault(cast(str, ref["digest"]), ref)
+                previous = refs.setdefault(cast(str, ref["digest"]), ref)
+                if previous["size"] != ref["size"]:
+                    raise ValueError("AUDIO sources disagree about asset size")
         expected.update(
             codec_version=2,
             asset_refs=list(refs.values()),
@@ -334,12 +336,13 @@ def validate_audio_encoded(data: bytes | memoryview, metadata: Mapping[str, obje
         "channels",
         "layout",
         "codec_version",
-        "asset_refs",
     ):
         if key in metadata:
             got = tuple(cast(Any, metadata[key])) if key == "shape" else metadata[key]
             if got != expected.get(key):
                 raise ValueError(f"AUDIO metadata {key} does not match bytes")
+    if metadata.get("asset_refs", []) != expected.get("asset_refs", []):
+        raise ValueError("AUDIO metadata asset_refs does not match bytes")
 
 
 def audio_fingerprint(type_id: str) -> Callable[[object], str]:
@@ -369,7 +372,9 @@ def audio_meta(obj: object) -> Mapping[str, object]:
                 storage_kinds.add(storage_dtype(pcm))
             else:
                 ref = asset_wire(cast(object, source))
-                refs.setdefault(cast(str, ref["digest"]), ref)
+                previous = refs.setdefault(cast(str, ref["digest"]), ref)
+                if previous["size"] != ref["size"]:
+                    raise ValueError("AUDIO sources disagree about asset size")
         result = {
             **facts,
             "shape": (facts["batch"], facts["channels"], facts["frames"]),

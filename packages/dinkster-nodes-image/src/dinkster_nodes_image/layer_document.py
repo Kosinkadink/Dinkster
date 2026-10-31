@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     flatten,
     from_comfy_layers,
     ordered_layer_ids,
+    validate_image_document_encoded,
 )
 
 from .compositor_types import LAYERS_TYPE, LayerStack, decode_layer_stack, source_layer_fingerprint
@@ -80,6 +81,14 @@ def decode_layers(data: bytes) -> ImageDocument:
     if data.startswith(b"DINKSTER-LAYERS\x00\x01"):
         return migrate_layers(decode_layer_stack(data))
     return ImageDocument(data)
+
+
+def validate_layers_encoded(data: bytes, metadata: Mapping[str, object]) -> None:
+    if data.startswith(b"DINKSTER-LAYERS\x00\x01"):
+        # Migration can publish raster resources; admission only validates the stack.
+        decode_layer_stack(data)
+    else:
+        validate_image_document_encoded(data, metadata)
 
 
 def layer_meta(obj: object) -> Mapping[str, object]:

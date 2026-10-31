@@ -249,6 +249,67 @@ old values retained and the new value unpublished. An incomplete manifest
 must be acknowledged before exposing values whose identities are unknown.
 Cleanup cannot reclaim from incomplete or unregistered owner state.
 
+### Persisted result offers
+
+`GET /api/library/result-offers/{token}?scope=` reads an immutable server-created
+snapshot: `{token, scope, jobRef, attemptId, nodeId, outputId, publication,
+digests, complete}`. It requires scoped `assets:read`, returns 404 for an unknown
+token and never reconstructs roots from a current cache entry. The roots cover
+the complete parent output, including nested elements; rendition selectors do
+not create another source identity.
+
+To claim an offer, PUT `{revision: 0, sourceToken: token}` to a fresh
+`shown-result` or `preview` retention owner. The server selects the persisted
+roots and completeness; caller-supplied digests or completeness are rejected.
+The acknowledgment includes `sourceToken` in addition to the ordinary owner,
+revision and manifest. Existing owners return 409 rather than being overwritten.
+An unavailable or no-longer-protected source returns HTTP 409 with
+`{available: false, reason: "source-unavailable", error: ...}`. Reading an old
+offer alone does not establish that it can still be claimed.
+
+After a lost acknowledgment, GET the retention owner and compare its source
+token, canonical roots, completeness and revision before exposing anything.
+Do not replay the claim. Keep older owners until their own consumers settle;
+claiming a new source does not release them. Releasing an owner clears its
+source binding and preserves the revision tombstone. Offer and retention
+responses use `Cache-Control: no-store` so reconciliation reads durable state.
+Library-backed jobs persist offers before fresh, cached or coalesced node
+output descriptors enter their events. Each event's `resultOffers` maps output
+IDs to their immutable offers. Job status and terminal job events carry the
+same mapping nested under runtime node IDs, including retained target outputs.
+Each job gets its own source tokens even when another job produced the cached
+bytes. Opaque codecs remain incomplete rather than certifying an empty set.
+Completed `/api/values` JSON discovery includes the same `resultOffer` for the
+requested parent output, including when `element` selects a nested value.
+Discovery is uncached; absence of `resultOffer` means no published source
+authority, not an empty asset set. Read the source binding and claim it before
+exposing a value or fetching its renditions. Byte responses and rendition
+cache keys do not establish retention authority.
+
+`GET /api/library/terminal-results/{jobRef}?scope=` reads a sealed terminal
+publication set from the library, independently of queue/cache retirement,
+ordinary history deletion and backend restart. Scoped `assets:read` and
+`history:read` are required. Its identity includes client/job IDs, source
+document and principal facts; the top level carries actual jobRef, attempt,
+terminal state and the original `resultOffers`. Unknown or legacy publications
+return 404 `publication-unavailable`; no tuple/latest-output fallback exists.
+Ambiguous or foreign source tokens cannot be sealed, and a different snapshot
+cannot replace one already stored for that jobRef. Reads use `no-store`.
+This records source authority, not output payloads or a guarantee that every
+source remains claimable. Independent frozen/intermediate holders still need
+their own exact source token and acknowledged owner.
+
+Terminal `artifacts` contains the original immutable artifact offers, also
+exposed as `artifactOffers` in job status and terminal events. Each binds its
+terminal index and exact saved-file descriptor, including an optional published
+preview, rather than inventing an output ID. Its roots include both saved and
+preview identities; equal content at different saved locations retains distinct
+offers. Publication follows host save/catalog validation and precedes terminal
+exposure. Artifact-free jobs advertise `artifacts: []`; unknown sets use null,
+not a complete empty set. Failed/cancelled jobs and unaudited output codecs
+remain incomplete. Live previews and actual frontend restoration are not
+certified by this publication; collection remains disabled.
+
 ### Backend synchronization
 
 Library and history inspection hold their SQLite write transactions; cache

@@ -19,6 +19,7 @@ import pytest
 from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetError, AssetIntegrityError, AssetRef, AssetVault, digest_bytes
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
+from dinkster_assets.value import value_asset_references
 from dinkster_nodes_foundation.types import Curve
 from dinkster_nodes_media_io.audio import LoadAudio, SaveAudio, SaveAudioMP3, SaveAudioOpus
 from dinkster_nodes_media_io.audio_ops import (
@@ -183,6 +184,11 @@ def test_load_trim_gain_and_metadata_do_not_decode(source, monkeypatch: pytest.M
     assert audio_meta(value)["cost"] == {"ram": 0}
     with pytest.raises(ValueError, match="asset_refs"):
         validate_audio_encoded(memoryview(wire), {**audio_meta(value), "asset_refs": []})
+    with pytest.raises(ValueError, match="asset_refs"):
+        validate_audio_encoded(
+            memoryview(wire),
+            {key: item for key, item in audio_meta(value).items() if key != "asset_refs"},
+        )
 
 
 def test_sample_windows_and_order_survive_portable_round_trip(source) -> None:
@@ -1134,6 +1140,7 @@ def test_inline_encoded_audio_probes_without_decode_and_admits_without_probe(
         assert audio_encoded_meta(wire) == audio_meta(value)
         assert audio_meta(value)["cost"] == {"ram": len(data)}
         validate_audio_encoded(memoryview(wire), audio_meta(value))
+        validate_audio_encoded(memoryview(wire), {})
         decoded = decode_audio(wire)
         assert encode_audio(decoded) == wire
     np.testing.assert_array_equal(
@@ -1279,6 +1286,21 @@ def test_nested_inline_preorder_metadata_and_asset_binding(
     assert audio_encoded_meta(memoryview(wire)) == meta
     validate_audio_encoded(
         wire, {**meta, "cost": {"ram@consumer": expected[..., :11].nbytes + len(data)}}
+    )
+    with pytest.raises(ValueError, match="asset_refs"):
+        validate_audio_encoded(
+            wire, {key: item for key, item in meta.items() if key != "asset_refs"}
+        )
+    registry = TypeRegistry()
+    register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
+    assert value_asset_references(
+        {"audio": registry.wrap(AUDIO_TYPE, value)}, complete_registry=registry
+    ) == {asset.digest: asset}
+    assert (
+        value_asset_references(
+            {"audio": registry.wrap(AUDIO_TYPE, inline)}, complete_registry=registry
+        )
+        == {}
     )
     destination = AssetVault(tmp_path / "consumer")
     for ref in cast(list[dict], meta["asset_refs"]):
@@ -1442,12 +1464,28 @@ def test_concat_assets_are_deduplicated_in_first_encounter_order(source, monkeyp
     monkeypatch.setattr(AssetRef, "open", lambda self: pytest.fail("metadata opened asset"))
     assert audio_meta(value)["asset_refs"] == [second_ref, asset.to_wire()]
     assert audio_encoded_meta(encode_audio(value)) == audio_meta(value)
+    registry = TypeRegistry()
+    register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
+    roots = value_asset_references(
+        {"audio": registry.wrap(AUDIO_TYPE, value)}, complete_registry=registry
+    )
+    assert {digest: ref.size for digest, ref in roots.items()} == {
+        second_ref["digest"]: asset.size,
+        asset.digest: asset.size,
+    }
     unbound = append_audio_edit(
         root, {"concat": [{**root, "source": AssetRef.from_wire(asset.to_wire())}]}
     )
     bound = bind_audio_value(unbound, asset.resolver)
     child = cast(Any, bound["edits"])[0]["concat"][0]
     assert child["source"].resolver is asset.resolver
+    conflicting = append_audio_edit(
+        root, {"concat": [{**root, "source": {**asset.to_wire(), "size": asset.size + 1}}]}
+    )
+    with pytest.raises(ValueError, match="size"):
+        audio_meta(conflicting)
+    with pytest.raises(ValueError, match="size"):
+        audio_encoded_meta(encode_audio(conflicting))
 
 
 def test_repeated_concat_edits_and_channel_maps_preserve_order() -> None:

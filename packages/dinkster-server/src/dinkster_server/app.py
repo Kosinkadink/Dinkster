@@ -231,6 +231,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.acquisition_plan import AcquisitionSource
 from dinkster_assets.resolution import ResolutionStore
+from dinkster_assets.value import value_asset_references
 from dinkster_engine import (
     CompiledGraph,
     Engine,
@@ -269,6 +270,7 @@ from dinkster_protocol import (
     ExportSnapshot,
     PackSettingsSchema,
     PreviewPolicy,
+    SavedArtifact,
     attention_policy_config_from_wire,
     attention_policy_config_to_wire,
     canonical_extension_snapshot,
@@ -342,6 +344,7 @@ from .library import (
     add_library_routes,
     recover_asset_observations,
     run_media_publication,
+    run_owned_thread,
 )
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
@@ -354,7 +357,7 @@ from .preflight import (
     graph_provider_selections,
     parse_asset_consent,
 )
-from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue
+from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue, JobState
 from .redaction import PathRedactor
 from .settings import SETTINGS_CATEGORIES, RuntimeSettings, add_settings_routes
 from .training_sessions import TrainingSessionStore, add_training_routes
@@ -570,6 +573,30 @@ def value_descriptor(value: Value, registry: TypeRegistry | None = None) -> dict
     return descriptor
 
 
+def _artifact_wire(artifact: SavedArtifact) -> dict[str, object]:
+    return {
+        "nodeId": artifact.node_id,
+        "digest": artifact.digest,
+        "name": artifact.name,
+        "size": artifact.size,
+        "mediaType": artifact.media_type,
+        "virtualPath": artifact.virtual_path,
+        **(
+            {
+                "preview": {
+                    "digest": artifact.preview.digest,
+                    "name": artifact.preview.name,
+                    "size": artifact.preview.size,
+                    "mediaType": artifact.preview.media_type,
+                    "virtualPath": artifact.preview.virtual_path,
+                }
+            }
+            if artifact.preview is not None
+            else {}
+        ),
+    }
+
+
 def job_to_wire(
     job: Job,
     node_states: Mapping[str, str] | None,
@@ -604,6 +631,10 @@ def job_to_wire(
         wire["sourceDocument"] = job.source_document
     if job.error is not None:
         wire["error"] = job.error
+    if job.result_offers:
+        wire["resultOffers"] = {node: dict(offers) for node, offers in job.result_offers.items()}
+    if job.artifact_offers:
+        wire["artifactOffers"] = list(job.artifact_offers)
     if job.result is not None:
         wire["outputs"] = {
             node_id: {out: value_descriptor(v, registry) for out, v in outs.items()}
@@ -612,30 +643,7 @@ def job_to_wire(
         wire["executed"] = list(job.result.executed)
         wire["cached"] = list(job.result.cached)
         wire["skipped"] = list(job.result.skipped)
-        wire["artifacts"] = [
-            {
-                "nodeId": artifact.node_id,
-                "digest": artifact.digest,
-                "name": artifact.name,
-                "size": artifact.size,
-                "mediaType": artifact.media_type,
-                "virtualPath": artifact.virtual_path,
-                **(
-                    {
-                        "preview": {
-                            "digest": artifact.preview.digest,
-                            "name": artifact.preview.name,
-                            "size": artifact.preview.size,
-                            "mediaType": artifact.preview.media_type,
-                            "virtualPath": artifact.preview.virtual_path,
-                        }
-                    }
-                    if artifact.preview is not None
-                    else {}
-                ),
-            }
-            for artifact in job.result.artifacts
-        ]
+        wire["artifacts"] = [_artifact_wire(artifact) for artifact in job.result.artifacts]
     return wire
 
 
@@ -1281,8 +1289,9 @@ class ServerState:
         execution_journal: ExecutionJournal | None = None,
         full_free: FullFree | None = None,
         complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
-        settle_job: Callable[[Job], Awaitable[None]] | None = None,
+        settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], contextlib.AbstractContextManager[object]] | None = None,
+        publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1411,6 +1420,7 @@ class ServerState:
             complete_result=complete_result,
             settle_job=settle_job,
             job_context=job_context,
+            publish_outputs=publish_outputs,
         )
         default_budgets = {
             device: budget
@@ -2294,6 +2304,10 @@ class ServerState:
             )
         else:
             wire["jobRef"] = job.run_id
+            if event.kind in {"node_finished", "node_cached"} and event.node_id is not None:
+                offers = job.result_offers.get(event.node_id)
+                if offers is not None:
+                    wire["resultOffers"] = dict(offers)
             self._publish_job_event(job, wire, droppable=event.kind in DROPPABLE_KINDS)
 
     def _on_job_event(self, job: Job) -> None:
@@ -2308,6 +2322,12 @@ class ServerState:
         }
         if job.error is not None:
             wire["error"] = job.error
+        if job.result_offers:
+            wire["resultOffers"] = {
+                node: dict(offers) for node, offers in job.result_offers.items()
+            }
+        if job.artifact_offers:
+            wire["artifactOffers"] = list(job.artifact_offers)
         # Job transitions are the contract the frontend keys off; never shed.
         # (Terminal history rows are written by the queue itself, inline
         # through its QueuePersistence store, before this listener runs.)
@@ -3768,6 +3788,7 @@ async def handle_value(request: web.Request) -> web.Response:
             404, "unknown-output", f"node {node_id!r} has no output {output_id!r}"
         )
     value = outputs[output_id]
+    offer = job.result_offers.get(node_id, {}).get(output_id)
 
     for index_text in [e for e in query.get("element", "").split(",") if e]:
         try:
@@ -3801,6 +3822,7 @@ async def handle_value(request: web.Request) -> web.Response:
             {
                 "available": True,
                 "descriptor": value_descriptor(value, registry),
+                **({"resultOffer": offer} if offer is not None else {}),
                 "renditions": [
                     {
                         "kind": s.kind,
@@ -3820,7 +3842,8 @@ async def handle_value(request: web.Request) -> web.Response:
                     }
                     for s, mime in renditions
                 ],
-            }
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     spec = next(
@@ -4607,24 +4630,119 @@ def create_app(
     hook; embedders that do not host armed workers leave it unset.
     """
 
+    async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+        assert library is not None
+        job = state.queue.job_for_run(run_id)
+        if job is None:
+            raise AssetError("result publication has no admitted job")
+        previous = job.result_offers.get(node_id, {})
+        store = library.store
+
+        def persist() -> dict[str, dict[str, object]]:
+            offers: dict[str, dict[str, object]] = {}
+            for output_id, value in outputs.items():
+                complete = True
+                try:
+                    references = value_asset_references(
+                        {output_id: value}, complete_registry=state.engine.registry
+                    )
+                except AssetError:
+                    complete = False
+                    try:
+                        references = value_asset_references({output_id: value})
+                    except AssetError:
+                        references = {}
+                publication = cast(int, previous.get(output_id, {}).get("publication", 0)) + 1
+                offer = store.offer_result_assets(
+                    job.scope,
+                    job.run_id,
+                    job.attempt,
+                    node_id,
+                    output_id,
+                    publication,
+                    list(references),
+                    complete=complete,
+                )
+                offers[output_id] = offer.to_wire()
+            return offers
+
+        job.result_offers[node_id] = await run_owned_thread(persist)
+
     async def complete_result(job: Job, result: RunResult) -> RunResult:
-        if library is not None and result.artifacts:
+        for node_id, outputs in result.outputs.items():
+            if node_id not in job.result_offers:
+                await publish_outputs(job.run_id, node_id, outputs)
+        assert library is not None
+        store = library.store
+        if result.artifacts:
             record_outputs = library.record_saved_outputs
-            return await run_media_publication(library, lambda: record_outputs(job, result))
+            result = await run_media_publication(library, lambda: record_outputs(job, result))
+
+            def persist_artifacts() -> list[dict[str, object]]:
+                offers: list[dict[str, object]] = []
+                for index, artifact in enumerate(result.artifacts):
+                    roots = [artifact.digest]
+                    if artifact.preview is not None:
+                        roots.append(artifact.preview.digest)
+                    offer = store.offer_result_assets(
+                        job.scope,
+                        job.run_id,
+                        job.attempt,
+                        artifact.node_id,
+                        "",
+                        1,
+                        roots,
+                        complete=True,
+                        artifact={**_artifact_wire(artifact), "index": index},
+                    )
+                    offers.append(offer.to_wire())
+                return offers
+
+            job.artifact_offers = await run_owned_thread(persist_artifacts)
         return result
 
-    async def settle_job(job: Job) -> None:
+    async def settle_job(job: Job, terminal_state: JobState) -> None:
         from .cleanup import POLICY_WAKE_KEY, RECOVERY_KEY, recover_produced_publications
         from .library import run_owned_thread
 
-        if library is not None and library.scratch_root is not None:
-            scratch = library.scratch_root
-            vault = library.vault
-            recovery = await run_owned_thread(
-                lambda: recover_produced_publications(vault, scratch, job=job.run_id)
+        assert library is not None
+        store = library.store
+
+        def persist_terminal() -> None:
+            store.publish_terminal_result(
+                job.scope,
+                job.run_id,
+                job.attempt,
+                [
+                    cast(str, offer["token"])
+                    for outputs in job.result_offers.values()
+                    for offer in outputs.values()
+                ]
+                + [cast(str, offer["token"]) for offer in job.artifact_offers],
+                state=terminal_state,
+                identity={
+                    "clientId": job.key.client_id,
+                    "jobId": job.key.job_id,
+                    "sourceDocument": job.source_document,
+                    "principalId": job.principal_id,
+                    "principalKind": job.principal_kind,
+                },
+                artifacts_complete=job.result is not None,
             )
-            app[RECOVERY_KEY].update(recovery)
-            app[POLICY_WAKE_KEY].set()
+
+        try:
+            if library.scratch_root is not None:
+                scratch = library.scratch_root
+                vault = library.vault
+                recovery = await run_owned_thread(
+                    lambda: recover_produced_publications(vault, scratch, job=job.run_id)
+                )
+                app[RECOVERY_KEY].update(recovery)
+        finally:
+            try:
+                await run_owned_thread(persist_terminal)
+            finally:
+                app[POLICY_WAKE_KEY].set()
 
     @contextlib.contextmanager
     def job_context(job: Job) -> Generator[None]:
@@ -4665,6 +4783,7 @@ def create_app(
         complete_result=complete_result if library is not None else None,
         settle_job=settle_job if library is not None else None,
         job_context=job_context if library is not None else None,
+        publish_outputs=publish_outputs if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

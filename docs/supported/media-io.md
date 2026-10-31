@@ -52,6 +52,10 @@
 - Shared editor values preserve plural pixel boxes with metadata, image-comparison
   and compositor state, and nested tensor-layer documents including optional
   masks, transforms, authored layer order, and canvas dimensions
+- Native and Comfy compositor values validate encoded recipes before exposure
+  and retain declared auxiliary asset references. Document digests bind edits to
+  supplied layer documents, not filesystem access or asset retrieval. Cleanup
+  remains disabled.
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
@@ -119,6 +123,9 @@
   compression, lossless, and alpha controls
 - Asset-backed native video loading to IMAGE, optional AUDIO, fps, frame count,
   and duration, with rate, resize, start, frame-cap, and frame-selection controls
+- VIDEO asset references cover nested clips, component and complete soundtracks,
+  and declared timeline sources/resources. Conflicting sizes for one identity are
+  refused; raw inline video cannot declare external dependencies. Cleanup remains disabled.
 - Native video saving through PyAV: MP4/H.264 at 8 or 10 bits, WebM/VP9 at
   8 bits with optional alpha, WebM/AV1 and MP4/H.265 at 8 or 10 bits,
   ProRes including 4444 alpha, and lossless RGB/RGBA FFV1/MKV at 8 or 16 bits;
@@ -218,6 +225,9 @@
   explicit batch selection, normalized selectors in cache identity, and
   structured invalid or unavailable responses. Waveforms use fixed colors
   without antialiasing or labels
+- AUDIO asset references include nested concatenated sources. Encoded admission
+  rejects missing external references and conflicting byte sizes for one identity;
+  inline-only audio has no external asset dependency. This does not enable cleanup.
 - Native audio saving through PyAV: FLAC, MP3 with V0/128k/320k quality, and
   Opus with 64k-320k bit rates and 48 kHz coercion of unsupported rates; one
   ordered published asset per batch element under a mounted save target

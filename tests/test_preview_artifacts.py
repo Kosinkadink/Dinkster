@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import faulthandler
 import io
 import os
 import shutil
 import sqlite3
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -37,7 +39,7 @@ from dinkster_engine import Engine, EventListener, ExecutionError, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema.reporting import EncodedPreviewArtifact, capture_preview_artifacts
-from dinkster_server import ServerLibrary, create_app
+from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_server.library import recover_asset_observations
 from dinkster_server.queue import Job, JobKey
 from dinkster_workers.boundary import BoundaryError, _decode_preview_artifacts
@@ -236,14 +238,35 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                     },
                 )
                 assert response.status == 202
-                async with asyncio.timeout(5):
-                    while True:
-                        status = await (
-                            await client.get("/api/jobs/preview-client/preview-job")
-                        ).json()
-                        if status["state"] != "pending" and status["state"] != "running":
-                            break
-                        await asyncio.sleep(0)
+                try:
+                    async with asyncio.timeout(5):
+                        while True:
+                            status = await (
+                                await client.get("/api/jobs/preview-client/preview-job")
+                            ).json()
+                            if status["state"] != "pending" and status["state"] != "running":
+                                break
+                            await asyncio.sleep(0)
+                except TimeoutError:
+                    state = app[STATE_KEY]
+                    job = state.queue.get("preview-client", "preview-job")
+                    print(
+                        "Preview status timeout before cleanup:",
+                        {"in_process": in_process, "retained": retained, "nested": nested},
+                        None
+                        if job is None
+                        else {
+                            "state": job.state,
+                            "jobRef": job.run_id,
+                            "attempt": job.attempt,
+                            "nodes": state.node_states(job.run_id),
+                        },
+                        file=sys.stderr,
+                    )
+                    for task in asyncio.all_tasks():
+                        task.print_stack(file=sys.stderr)
+                    faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+                    raise
                 assert status["state"] == "completed"
                 artifact = status["artifacts"][0]
                 producing_node = "preview.0.0.inner.0.0.emit" if nested else "preview"
@@ -270,6 +293,38 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                     }
                     assert all(record.origin["node"] == producing_node for record in observations)
                     assert library.store.query_assets("local", project="another") == []
+                    (offer,) = status["artifactOffers"]
+                    assert offer == {
+                        "token": offer["token"],
+                        "scope": "local",
+                        "jobRef": status["jobRef"],
+                        "attemptId": 1,
+                        "nodeId": producing_node,
+                        "publication": 1,
+                        "artifact": {
+                            "nodeId": producing_node,
+                            "digest": digest_bytes(mp4),
+                            "name": "preview_00001.mp4",
+                            "size": len(mp4),
+                            "mediaType": "video/mp4",
+                            "virtualPath": "mounts/renders/preview_00001.mp4",
+                            "index": 0,
+                        },
+                        "digests": [digest_bytes(mp4)],
+                        "complete": True,
+                    }
+                    source = status["resultOffers"][producing_node]["out"]
+                    assert source["nodeId"] == producing_node
+                    assert source["outputId"] == "out"
+                    assert source["digests"] == [] and source["complete"] is True
+                    response = await client.get(
+                        f"/api/library/terminal-results/{status['jobRef']}?scope=local"
+                    )
+                    assert response.status == 200
+                    terminal = await response.json()
+                    assert terminal["complete"] is True
+                    assert terminal["artifacts"] == [offer]
+                    assert terminal["resultOffers"][producing_node]["out"] == source
                 asset = await client.get(f"/assets/{artifact['digest']}")
                 assert asset.status == 200
                 assert await asset.read() == mp4

@@ -162,7 +162,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0006_cleanup_policy (head)" in current.stdout
+    assert "0009_artifact_offers (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -629,6 +629,9 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
             {
                 "writer": Principal("writer", {"one": frozenset({"assets:read", "assets:write"})}),
                 "reader": Principal("reader", {"one": frozenset({"assets:read"})}),
+                "historian": Principal(
+                    "historian", {"one": frozenset({"assets:read", "history:read"})}
+                ),
             }
         )
         client = TestClient(
@@ -660,6 +663,39 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
             assert (await client.get(url, headers=reader)).status == 200
             assert (await client.get(url.replace("one", "two"), headers=reader)).status == 403
             assert (await client.delete(url + "&revision=1", headers=reader)).status == 403
+            offer = library.store.offer_result_assets(
+                "one", "run", 1, "node", "out", 1, [DIGEST_B], complete=True
+            )
+            source = f"/api/library/result-offers/{offer.token}?scope=one"
+            claim_url = "/api/library/retentions/preview/frame?scope=one"
+            claim = {"revision": 0, "sourceToken": offer.token}
+            assert (await client.get(source)).status == 401
+            assert (await client.get(source, headers=reader)).status == 200
+            assert (await client.get(source.replace("one", "two"), headers=reader)).status == 403
+            assert (await client.put(claim_url, json=claim, headers=reader)).status == 403
+            assert (
+                await client.put(claim_url.replace("one", "two"), json=claim, headers=writer)
+            ).status == 403
+            assert (await client.put(url, json=claim, headers=writer)).status == 400
+            assert (await client.put(claim_url, json=claim, headers=writer)).status == 200
+            snapshot = library.store.publish_terminal_result(
+                "one",
+                "run",
+                1,
+                [offer.token],
+                state="completed",
+                identity={"clientId": "client"},
+                artifacts_complete=True,
+            )
+            terminal = "/api/library/terminal-results/run?scope=one"
+            historian = {"Authorization": "Bearer historian"}
+            assert (await client.get(terminal)).status == 401
+            assert (await client.get(terminal, headers=reader)).status == 403
+            assert (
+                await client.get(terminal.replace("one", "two"), headers=historian)
+            ).status == 403
+            response = await client.get(terminal, headers=historian)
+            assert response.status == 200 and await response.json() == snapshot
         finally:
             await client.close()
 
@@ -710,6 +746,557 @@ def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> 
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        client = await make_client(tmp_path)
+        owner = "/api/library/retentions/shown-result/view?scope=local"
+        try:
+            store = client.app[LIBRARY_KEY].store
+            older = store.offer_result_assets(
+                "local", "run-a", 2, "r[3]/node", "image", 7, [DIGEST_A], complete=True
+            )
+            newer = store.offer_result_assets(
+                "local", "run-b", 1, "other-node", "video", 1, [DIGEST_B], complete=True
+            )
+            source = f"/api/library/result-offers/{older.token}?scope=local"
+            response = await client.get(source)
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            assert await response.json() == older.to_wire()
+            assert (await client.get(source.replace("local", "other"))).status == 404
+            assert (
+                await client.get("/api/library/result-offers/invalid?scope=local")
+            ).status == 400
+            for invalid in (
+                {"revision": True, "sourceToken": older.token},
+                {"revision": 1, "sourceToken": older.token},
+                {"revision": 0, "sourceToken": "invalid"},
+                {"revision": 0, "sourceToken": older.token, "digests": [DIGEST_B]},
+                {"revision": 0, "sourceToken": older.token, "complete": True},
+            ):
+                assert (await client.put(owner, json=invalid)).status == 400
+            response = await client.put(owner, json={"revision": 0, "sourceToken": older.token})
+            assert response.status == 200
+            acknowledged = await response.json()
+            assert acknowledged == {
+                "scope": "local",
+                "ownerKind": "shown-result",
+                "ownerId": "view",
+                "revision": 1,
+                "digests": [DIGEST_A],
+                "complete": True,
+                "sourceToken": older.token,
+            }
+            assert response.headers["Cache-Control"] == "no-store"
+            assert (
+                await client.put(owner, json={"revision": 0, "sourceToken": newer.token})
+            ).status == 409
+        finally:
+            await client.close()
+        client = await make_client(tmp_path)
+        try:
+            store = client.app[LIBRARY_KEY].store
+            # A lost acknowledgment is reconciled by reading, not replaying the claim.
+            assert await (await client.get(owner)).json() == acknowledged
+            assert await (await client.get(source)).json() == older.to_wire()
+            assert (
+                await client.put(owner, json={"revision": 0, "sourceToken": older.token})
+            ).status == 409
+            preview = "/api/library/retentions/preview/reader?scope=local"
+            assert (
+                await client.put(preview, json={"revision": 0, "sourceToken": older.token})
+            ).status == 200
+            assert (await client.delete(owner + "&revision=1")).status == 200
+            with store.hold_asset_references() as roots:
+                assert roots == {DIGEST_A, DIGEST_B}
+            assert (await client.delete(preview + "&revision=1")).status == 200
+            with store.hold_asset_references() as roots:
+                assert roots == {DIGEST_B}
+            response = await client.put(
+                "/api/library/retentions/preview/late?scope=local",
+                json={"revision": 0, "sourceToken": older.token},
+            )
+            assert response.status == 409
+            assert await response.json() == {
+                "available": False,
+                "reason": "source-unavailable",
+                "error": "result source is no longer protected or is not held here",
+            }
+            tombstone = await (await client.get(owner)).json()
+            assert tombstone["revision"] == 2 and tombstone["digests"] == []
+            assert "sourceToken" not in tombstone
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("nested", (False, True))
+def test_job_result_offers_bind_persisted_roots_before_event_replay(
+    tmp_path: Path, nested: bool
+) -> None:
+    from dinkster_api.v1 import Expansion, ExpansionBuilder
+    from dinkster_assets.value import ASSET_TYPE, register_asset_type
+    from dinkster_server import HistoryStore
+
+    class ProduceAssets(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.assets",
+                inputs=(),
+                outputs=tuple(
+                    OutputSpec(name, TypeExpr.concrete(ASSET_TYPE)) for name in ("left", "right")
+                )
+                + (OutputSpec("bundle", TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE))),),
+            )
+
+        @classmethod
+        async def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(
+                left=AssetRef(DIGEST_A, "left", 14),
+                right=AssetRef(DIGEST_B, "right", 26),
+                bundle=[AssetRef(DIGEST_A, "left", 14), AssetRef(DIGEST_B, "right", 26)],
+            )
+
+    class ExpandAssets(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return replace(
+                ProduceAssets.define_schema(), node_type="test.expand_assets", may_expand_graph=True
+            )
+
+        @classmethod
+        async def execute(cls) -> Expansion:
+            graph = ExpansionBuilder()
+            child = graph.node("test.assets", "leaf")
+            return graph.finalize(
+                left=child.out("left"), right=child.out("right"), bundle=child.out("bundle")
+            )
+
+    class NestedAssets(ExpandAssets):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return replace(super().define_schema(), node_type="test.nested_assets")
+
+        @classmethod
+        async def execute(cls) -> Expansion:
+            graph = ExpansionBuilder()
+            child = graph.node("test.expand_assets", "inner")
+            return graph.finalize(
+                left=child.out("left"), right=child.out("right"), bundle=child.out("bundle")
+            )
+
+    nodes = (ProduceAssets, ExpandAssets, NestedAssets)
+    schemas = build_schemas(nodes)
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        history = HistoryStore(tmp_path / "history.sqlite")
+        client = TestClient(
+            TestServer(create_app(engine, schemas, library=library, history=history))
+        )
+        await client.start_server()
+        snapshots: dict[str, dict[str, object]] = {}
+        try:
+            tokens: list[str] = []
+            for job_id in ("fresh", "cached"):
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "client",
+                        "jobId": job_id,
+                        "graph": {
+                            "nodes": {
+                                "producer": {
+                                    "nodeType": "test.nested_assets" if nested else "test.assets",
+                                    "inputs": {},
+                                }
+                            }
+                        },
+                        "targets": ["producer"],
+                    },
+                )
+                assert response.status == 202
+                async with asyncio.timeout(10):
+                    while True:
+                        status = await (await client.get(f"/api/jobs/client/{job_id}")).json()
+                        if status["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0)
+                assert status["state"] == "completed", status
+                runtime_nodes = (
+                    {"producer", "producer.0.0.inner", "producer.0.0.inner.0.0.leaf"}
+                    if nested
+                    else {"producer"}
+                )
+                assert set(status["resultOffers"]) == runtime_nodes
+                for node_id in runtime_nodes:
+                    offered = status["resultOffers"][node_id]
+                    assert set(offered) == {"left", "right", "bundle"}
+                    for output_id, roots in (
+                        ("left", [DIGEST_A]),
+                        ("right", [DIGEST_B]),
+                        ("bundle", sorted([DIGEST_A, DIGEST_B])),
+                    ):
+                        offer = offered[output_id]
+                        assert offer == {
+                            "token": offer["token"],
+                            "scope": "local",
+                            "jobRef": status["jobRef"],
+                            "attemptId": 1,
+                            "nodeId": node_id,
+                            "outputId": output_id,
+                            "publication": 1,
+                            "digests": roots,
+                            "complete": True,
+                        }
+                        persisted = library.store.result_asset_offer("local", offer["token"])
+                        assert persisted is not None and persisted.to_wire() == offer
+                        tokens.append(offer["token"])
+                        source = await client.get(
+                            f"/api/library/result-offers/{offer['token']}?scope=local"
+                        )
+                        assert source.status == 200
+                        assert await source.json() == offer
+                        if node_id != "producer":
+                            continue
+                        url = (
+                            f"/api/values?clientId=client&jobId={job_id}"
+                            f"&nodeId={node_id}&outputId={output_id}"
+                        )
+                        discovery = await client.get(url)
+                        assert discovery.status == 200
+                        assert discovery.headers["Cache-Control"] == "no-store"
+                        assert (await discovery.json())["resultOffer"] == offer
+                        if output_id == "bundle":
+                            for element in ("0", "1"):
+                                child = await (await client.get(url + f"&element={element}")).json()
+                                assert child["resultOffer"] == offer
+                                assert child["resultOffer"]["digests"] == sorted(
+                                    [DIGEST_A, DIGEST_B]
+                                )
+                replay = await (
+                    await client.get(f"/api/jobs/by-ref/{status['jobRef']}/events?after=0")
+                ).json()
+                result_events = [
+                    event
+                    for event in replay["events"]
+                    if event["type"] in {"node_finished", "node_cached"}
+                ]
+                assert len(result_events) == len(runtime_nodes)
+                assert {event["nodeId"] for event in result_events} == runtime_nodes
+                for event in result_events:
+                    assert event["resultOffers"] == status["resultOffers"][event["nodeId"]]
+                    if not nested or event["nodeId"].endswith(".leaf"):
+                        assert event["type"] == (
+                            "node_finished" if job_id == "fresh" else "node_cached"
+                        )
+                terminal = [
+                    event
+                    for event in replay["events"]
+                    if event["type"] == "job_state" and event["state"] == "completed"
+                ]
+                assert terminal[0]["resultOffers"] == status["resultOffers"]
+                url = f"/api/library/terminal-results/{status['jobRef']}?scope=local"
+                response = await client.get(url)
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                snapshot = await response.json()
+                assert snapshot == {
+                    "scope": "local",
+                    "jobRef": status["jobRef"],
+                    "attemptId": 1,
+                    "state": "completed",
+                    "identity": {
+                        "clientId": "client",
+                        "jobId": job_id,
+                        "sourceDocument": "",
+                        "principalId": "local",
+                        "principalKind": "human",
+                    },
+                    "resultOffers": status["resultOffers"],
+                    "artifacts": [],
+                    "complete": True,
+                }
+                snapshots[url] = snapshot
+                response = await client.delete(f"/api/history/{status['jobRef']}?scope=local")
+                assert response.status == 204
+            assert len(tokens) == len(set(tokens)) == (18 if nested else 6)
+        finally:
+            await client.close()
+
+        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            assert (await client.get("/api/jobs/client/fresh")).status == 404
+            for url, snapshot in snapshots.items():
+                response = await client.get(url)
+                assert response.status == 200
+                assert await response.json() == snapshot
+                assert (await client.get(url.replace("scope=local", "scope=other"))).status == 404
+            missing = await client.get("/api/library/terminal-results/tokenless-legacy?scope=local")
+            assert missing.status == 404
+            assert await missing.json() == {
+                "available": False,
+                "reason": "publication-unavailable",
+            }
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_terminal_result_seals_exact_tokens_and_rejects_newer_substitution(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    try:
+        older = store.offer_result_assets(
+            "one", "run", 2, "r[3]/node", "a", 4, [DIGEST_A], complete=True
+        )
+        newer = store.offer_result_assets(
+            "one", "run", 2, "r[3]/node", "a", 5, [DIGEST_B], complete=True
+        )
+        identity = {"clientId": "client", "jobId": "mutable-job"}
+        snapshot = store.publish_terminal_result(
+            "one",
+            "run",
+            2,
+            [older.token],
+            state="completed",
+            identity=identity,
+            artifacts_complete=True,
+        )
+        assert snapshot["resultOffers"] == {"r[3]/node": {"a": older.to_wire()}}
+        assert snapshot["complete"] is True
+        assert (
+            store.publish_terminal_result(
+                "one",
+                "run",
+                2,
+                [older.token],
+                state="completed",
+                identity=identity,
+                artifacts_complete=True,
+            )
+            == snapshot
+        )
+        with pytest.raises(StaleRevision, match="sealed"):
+            store.publish_terminal_result(
+                "one",
+                "run",
+                2,
+                [newer.token],
+                state="completed",
+                identity=identity,
+                artifacts_complete=True,
+            )
+        for scope, run, attempt, tokens in (
+            ("other", "run", 2, [older.token]),
+            ("one", "different", 2, [older.token]),
+            ("one", "run", 3, [older.token]),
+            ("one", "run", 2, [older.token, newer.token]),
+        ):
+            with pytest.raises(AssetError):
+                store.publish_terminal_result(
+                    scope,
+                    run,
+                    attempt,
+                    tokens,
+                    state="completed",
+                    identity=identity,
+                    artifacts_complete=True,
+                )
+        assert store.terminal_result("one", "run") == snapshot
+        incomplete = store.publish_terminal_result(
+            "one",
+            "with-artifacts",
+            1,
+            [],
+            state="completed",
+            identity=identity,
+            artifacts_complete=False,
+        )
+        assert incomplete["complete"] is False and incomplete["artifacts"] is None
+        artifacts: list[dict[str, object]] = [
+            {
+                "nodeId": "r[3]/node",
+                "digest": DIGEST_A,
+                "name": "first.exr",
+                "size": 23,
+                "mediaType": "image/x-exr",
+                "virtualPath": "mounts/output/first.exr",
+                "index": 0,
+                "preview": {
+                    "digest": DIGEST_B,
+                    "name": "view.png",
+                    "size": 57,
+                    "mediaType": "image/png",
+                    "virtualPath": f"previews/{DIGEST_B[7:]}/view.png",
+                },
+            },
+            {
+                "nodeId": "r[3]/node",
+                "digest": DIGEST_A,
+                "name": "second.exr",
+                "size": 23,
+                "mediaType": "image/x-exr",
+                "virtualPath": "mounts/output/second.exr",
+                "index": 1,
+            },
+        ]
+        offers = [
+            store.offer_result_assets(
+                "one", "saved", 3, "r[3]/node", "", 1, roots, complete=True, artifact=artifact
+            )
+            for roots, artifact in zip(([DIGEST_A, DIGEST_B], [DIGEST_A]), artifacts, strict=True)
+        ]
+        for invalid in ([offers[1].token], [offers[0].token, offers[0].token]):
+            with pytest.raises(AssetError, match="ambiguous"):
+                store.publish_terminal_result(
+                    "one",
+                    "saved",
+                    3,
+                    invalid,
+                    state="completed",
+                    identity=identity,
+                    artifacts_complete=True,
+                )
+        with pytest.raises(AssetError, match="identities"):
+            store.offer_result_assets(
+                "one",
+                "saved",
+                3,
+                "r[3]/node",
+                "",
+                1,
+                [DIGEST_A],
+                complete=True,
+                artifact=artifacts[0],
+            )
+        terminal = store.publish_terminal_result(
+            "one",
+            "saved",
+            3,
+            [offer.token for offer in offers],
+            state="completed",
+            identity=identity,
+            artifacts_complete=True,
+        )
+        assert terminal["artifacts"] == [offer.to_wire() for offer in offers]
+        assert terminal["resultOffers"] == {} and terminal["complete"] is True
+        assert [offer.to_wire()["artifact"] for offer in offers] == artifacts
+        assert all("outputId" not in offer.to_wire() for offer in offers)
+    finally:
+        store.close()
+
+
+def test_result_offers_keep_exact_roots_across_claims_and_restart(tmp_path: Path) -> None:
+    path = tmp_path / "library.sqlite"
+    store = LibraryStore(path)
+    try:
+        older = store.offer_result_assets(
+            "one", "run-a", 1, "r[3]/node", "image", 7, [DIGEST_A], complete=True
+        )
+        newer = store.offer_result_assets(
+            "one", "run-b", 1, "r[3]/node", "image", 1, [DIGEST_B], complete=True
+        )
+        assert older.token != newer.token
+        assert store.result_asset_offer("two", older.token) is None
+        assert store.claim_result_assets("two", older.token, "shown-result", "view") is None
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+        claimed = store.claim_result_assets("one", older.token, "shown-result", "view")
+        assert claimed is not None
+        assert claimed.digests == (DIGEST_A,) and claimed.revision == 1 and claimed.complete
+        assert claimed.to_wire()["sourceToken"] == older.token
+        with pytest.raises(StaleRevision):
+            store.claim_result_assets("one", newer.token, "shown-result", "view")
+        assert store.retained_assets("one", "shown-result", "view") == claimed
+    finally:
+        store.close()
+    store = LibraryStore(path)
+    try:
+        restored_offer = store.result_asset_offer("one", older.token)
+        assert restored_offer == older
+        assert restored_offer is not None
+        assert store.retained_assets("one", "shown-result", "view") == claimed
+        assert restored_offer.to_wire() == {
+            "token": older.token,
+            "scope": "one",
+            "jobRef": "run-a",
+            "attemptId": 1,
+            "nodeId": "r[3]/node",
+            "outputId": "image",
+            "publication": 7,
+            "digests": [DIGEST_A],
+            "complete": True,
+        }
+        other_view = store.claim_result_assets("one", older.token, "preview", "frozen")
+        assert other_view is not None and other_view.digests == (DIGEST_A,)
+        store.release_assets("one", "shown-result", "view", revision=1)
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+        store.release_assets("one", "preview", "frozen", revision=1)
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_B}
+        released = store.retained_assets("one", "shown-result", "view")
+        assert released is not None and released.source_token is None
+        assert store.result_asset_offer("one", older.token) == older
+        assert store.claim_result_assets("one", older.token, "preview", "late") is None
+        assert store.retained_assets("one", "preview", "late") is None
+    finally:
+        store.close()
+    store = LibraryStore(path)
+    try:
+        assert store.claim_result_assets("one", older.token, "preview", "reconnected") is None
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_B}
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_result_offers_never_certify_unknown_or_truncated_roots(
+    tmp_path: Path, oversized: bool
+) -> None:
+    store = LibraryStore(tmp_path / "library.sqlite")
+    try:
+        digests = [f"blake3:{index:064x}" for index in range(4097)] if oversized else []
+        offered = store.offer_result_assets(
+            "one", "run", 1, "node", "value", 1, digests, complete=oversized
+        )
+        assert not offered.complete
+        assert set(offered.digests) == set(digests)
+        with pytest.raises(AssetError, match="incomplete"):
+            with store.hold_asset_references():
+                pytest.fail("unknown or oversized offer was treated as complete")
+        if oversized:
+            with pytest.raises(AssetError, match="4096"):
+                store.claim_result_assets("one", offered.token, "shown-result", "candidate")
+            assert store.retained_assets("one", "shown-result", "candidate") is None
+        else:
+            claimed = store.claim_result_assets("one", offered.token, "preview", "candidate")
+            assert claimed is not None and not claimed.complete
+            with pytest.raises(AssetError, match="incomplete"):
+                with store.hold_asset_references():
+                    pytest.fail("an incomplete claim enabled collection")
+    finally:
+        store.close()
 
 
 def test_legacy_retention_migration_preserves_unknown_ownership(tmp_path: Path) -> None:
@@ -880,8 +1467,9 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
 
 
 @pytest.mark.parametrize("failure", ["", "catalog", "revoked"])
+@pytest.mark.parametrize("with_preview", [False, True])
 def test_completed_artifacts_are_cataloged_in_the_submitted_project(
-    tmp_path: Path, failure: str
+    tmp_path: Path, failure: str, with_preview: bool
 ) -> None:
     async def scenario() -> None:
         root = tmp_path / "output"
@@ -891,6 +1479,11 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
         mounts.scan("output")
         writer = AssetWriter(mounts)
         data = b"saved by the worker, not an input copy"
+        preview_buffer = BytesIO()
+        Image.new("RGB", (2, 3), (21, 43, 65)).save(preview_buffer, format="PNG")
+        preview_data = preview_buffer.getvalue()
+        preview_digest = digest_bytes(preview_data)
+        vault = AssetVault(tmp_path / "vault")
 
         class SavingWorker(InProcessWorker):
             async def invoke(
@@ -905,6 +1498,19 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                 )
                 if failure == "revoked":
                     mounts.remove("output")
+                preview = None
+                if with_preview:
+                    with vault.writer(preview_digest) as stream:
+                        stream.write(preview_data)
+                        stream.commit()
+                    preview = SavedArtifact(
+                        invocation.node_id,
+                        preview_digest,
+                        "preview.png",
+                        len(preview_data),
+                        "image/png",
+                        f"previews/{preview_digest[7:]}/preview.png",
+                    )
                 return replace(
                     result,
                     artifacts=(
@@ -915,6 +1521,7 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                             ref.size,
                             ref.media_type,
                             ref.virtual_path,
+                            preview,
                         ),
                     ),
                 )
@@ -932,9 +1539,10 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
 
         database = tmp_path / "library.sqlite"
         library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
+            vault=vault,
             store=LibraryStore(database),
             resolver=mounts,
+            local_resolver=mounts,
             upload_writer=writer,
             project_folders_for=lambda project: AssetFolderContext(
                 ("output",) if project == "film" else ()
@@ -946,6 +1554,7 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     "CREATE TRIGGER fail_output BEFORE INSERT ON asset_observations "
                     "BEGIN SELECT RAISE(ABORT, 'catalog offline'); END"
                 )
+        offer: dict[str, object] | None = None
         client = TestClient(TestServer(create_app(engine, SCHEMAS, library=library)))
         await client.start_server()
         try:
@@ -971,14 +1580,22 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     await asyncio.sleep(0.005)
             assert status["state"] == ("failed" if failure else "completed"), status
             records = library.store.query_assets("local", project="film", origin="produced")
-            assert len(records) == (0 if failure else 1)
+            assert len(records) == (0 if failure else 1 + int(with_preview))
             assert library.store.query_assets("local") == []
             assert library.store.query_assets("other", project="film") == []
             assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
-            assert library.vault.digests() == []
+            assert library.vault.digests() == ([preview_digest] if with_preview else [])
             assert (root / "result_00001.txt").read_bytes() == data
+            terminal_url = f"/api/library/terminal-results/{submitted['jobRef']}?scope=local"
+            terminal_response = await client.get(terminal_url)
+            assert terminal_response.status == 200
+            terminal = await terminal_response.json()
+            assert terminal["complete"] is (not failure)
+            assert terminal["artifacts"] == (None if failure else status["artifactOffers"])
             if not failure:
-                (record,) = records[0]
+                (record,) = library.store.query_assets(
+                    "local", project="film", digest=digest_bytes(data)
+                )[0]
                 assert record.asset.digest == digest_bytes(data)
                 assert record.asset.virtual_path == "mounts/output/result_00001.txt"
                 assert dict(record.origin) == {
@@ -986,6 +1603,61 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     "job": submitted["jobRef"],
                     "node": "save",
                 }
+                (offer,) = status["artifactOffers"]
+                assert offer is not None
+                expected_artifact = {
+                    "nodeId": "save",
+                    "digest": digest_bytes(data),
+                    "name": "result_00001.txt",
+                    "size": len(data),
+                    "mediaType": "video/mp4",
+                    "virtualPath": "mounts/output/result_00001.txt",
+                    **(
+                        {
+                            "preview": {
+                                "digest": preview_digest,
+                                "name": "preview.png",
+                                "size": len(preview_data),
+                                "mediaType": "image/png",
+                                "virtualPath": f"previews/{preview_digest[7:]}/preview.png",
+                            }
+                        }
+                        if with_preview
+                        else {}
+                    ),
+                }
+                assert status["artifacts"] == [expected_artifact]
+                assert offer == {
+                    "token": offer["token"],
+                    "scope": "local",
+                    "jobRef": submitted["jobRef"],
+                    "attemptId": 1,
+                    "nodeId": "save",
+                    "publication": 1,
+                    "digests": sorted(
+                        [digest_bytes(data), preview_digest]
+                        if with_preview
+                        else [digest_bytes(data)]
+                    ),
+                    "artifact": {**expected_artifact, "index": 0},
+                    "complete": True,
+                }
+                assert "outputId" not in offer
+                events = await (
+                    await client.get(f"/api/jobs/by-ref/{submitted['jobRef']}/events?after=0")
+                ).json()
+                terminal_events = [
+                    event
+                    for event in events["events"]
+                    if event["type"] == "job_state" and event["state"] == "completed"
+                ]
+                assert terminal_events[0]["artifactOffers"] == [offer]
+                response = await client.put(
+                    "/api/library/retentions/shown-result/artifact-view?scope=local",
+                    json={"revision": 0, "sourceToken": offer["token"]},
+                )
+                assert response.status == 200
+                assert (await response.json())["digests"] == offer["digests"]
         finally:
             await client.close()
         if failure == "catalog":
@@ -999,7 +1671,18 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
         )
         try:
             records = restarted.app[LIBRARY_KEY].store.query_assets("local", project="film")
-            assert len(records) == (0 if failure == "revoked" else 1)
+            assert len(records) == (
+                0 if failure == "revoked" else 1 + int(with_preview and not failure)
+            )
+            assert (await restarted.get("/api/jobs/client/save")).status == 404
+            response = await restarted.get(terminal_url)
+            assert response.status == 200 and await response.json() == terminal
+            if not failure:
+                assert offer is not None
+                response = await restarted.get(
+                    f"/api/library/result-offers/{offer['token']}?scope=local"
+                )
+                assert response.status == 200 and await response.json() == offer
             journals = list(library.vault.root.glob(".upload-observations/*.json"))
             assert len(journals) == (1 if failure == "revoked" else 0)
         finally:

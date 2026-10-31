@@ -5111,13 +5111,22 @@ def test_websocket_filters_other_clients() -> None:
     asyncio.run(scenario())
 
 
-def test_node_events_over_websocket_with_binary_preview() -> None:
+@pytest.mark.parametrize("with_library", (False, True))
+def test_node_events_over_websocket_with_binary_preview(tmp_path: Path, with_library: bool) -> None:
     """A reporting node's progress arrives as a typed JSON node_event; its
     preview arrives as one self-describing binary frame (length-prefixed
     JSON header + raw payload), never base64 in JSON."""
+    from dinkster_assets import AssetVault, LibraryStore
+    from dinkster_server import ServerLibrary
 
     async def scenario() -> None:
-        client = await make_client()
+        library = (
+            ServerLibrary(AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"))
+            if with_library
+            else None
+        )
+        client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+        await client.start_server()
         try:
             ws = await client.ws_connect("/api/events?clientId=c1")
             graph = Graph(nodes={"p": GraphNode("test.previewer", {"text": "go"})})
@@ -5162,9 +5171,34 @@ def test_node_events_over_websocket_with_binary_preview() -> None:
             assert "worker" not in preview_header
             assert "executionArm" not in preview_header
             assert preview_payload == b"\x89png-bytes"
+            assert preview_header["jobRef"] == event["jobRef"]
+            assert preview_header["seq"] < event["seq"]
+            replay = await (
+                await client.get(f"/api/jobs/by-ref/{event['jobRef']}/events?after=0")
+            ).json()
+            replayed_preview = next(
+                item for item in replay["events"] if item.get("event") == "preview"
+            )
+            assert replayed_preview == {**preview_header, "blobOmitted": True}
+            if library is not None:
+                assert library.vault.digests() == []
+                response = await client.get(
+                    f"/api/library/terminal-results/{event['jobRef']}?scope=local"
+                )
+                assert response.status == 200
+                terminal = await response.json()
+                assert terminal["complete"] is True
+                assert terminal["artifacts"] == []
+                assert set(terminal["resultOffers"]) == {"p"}
+                assert set(terminal["resultOffers"]["p"]) == {"out"}
+                output_offer = terminal["resultOffers"]["p"]["out"]
+                assert output_offer["digests"] == [] and output_offer["complete"] is True
+                with library.store.hold_asset_references() as roots:
+                    assert roots == set()
             await ws.close()
         finally:
             await client.close()
+        assert preview_payload == b"\x89png-bytes"
 
     asyncio.run(scenario())
 
