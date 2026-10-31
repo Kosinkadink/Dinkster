@@ -133,6 +133,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mesh import MESH_NODES
+from .mesh_decimate import DecimateMesh
 from .mesh_holes import FillHoles
 from .mesh_io import Get3DComponents
 from .mesh_normals import MeshSmoothNormals
@@ -537,6 +538,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     ApplyTextureToMesh,
     FillHoles,
     Get3DComponents,
+    DecimateMesh,
 )
 
 

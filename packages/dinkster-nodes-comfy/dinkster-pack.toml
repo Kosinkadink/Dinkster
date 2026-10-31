@@ -608,6 +608,7 @@ namespaces = [
     "ApplyTextureToMesh",
     "FillHoles",
     "Get3DComponents",
+    "DecimateMesh",
 ]
 
 [pack.sandbox]

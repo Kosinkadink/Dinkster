@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
+  with optional line and feature-edge quadrics and retained vertex colors.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
   merging transformed scene geometry and retaining the first material's textures
   and factors. External glTF data must be included in the FILE_3D resource map.
