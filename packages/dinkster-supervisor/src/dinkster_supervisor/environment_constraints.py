@@ -19,11 +19,11 @@ def requirement_hashes(requirements: str) -> frozenset[str]:
     return frozenset(_HASH.findall(requirements.replace("\\\n", "").replace("\\\r\n", "")))
 
 
-def effective_constraints(engine: str, base: dict[str, object]) -> str:
+def effective_constraints(engine: str, base: dict[str, object], *, strict: bool = False) -> str:
     """Replace precisely the base producer's owned closure, including remove-only rows.
 
-    The caller verifies manifest identity first. Local torch version suffixes
-    select a backend wheel but must match the engine's locked public version.
+    The caller verifies manifest identity first. Variant install locks require
+    exact versions and hashes; legacy exports match torch's public version.
     All unrelated requirement markers and hashes are retained verbatim.
     """
     replaces = base.get("replaces")
@@ -41,6 +41,7 @@ def effective_constraints(engine: str, base: dict[str, object]) -> str:
     owned = set(replacement_names)
     retained: list[str] = []
     locked: dict[str, set[Version]] = {}
+    hashes: dict[str, set[str]] = {}
     for line in engine.replace("\\\r\n", "").replace("\\\n", "").splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             retained.append(line)
@@ -60,6 +61,7 @@ def effective_constraints(engine: str, base: dict[str, object]) -> str:
         ):
             raise EnvironmentError("engine requirements must use exact version pins")
         name = canonicalize_name(requirement.name)
+        hashes.setdefault(name, set()).update(_HASH.findall(line))
         try:
             locked.setdefault(name, set()).add(Version(pins[0].version))
         except InvalidVersion as exc:
@@ -92,14 +94,15 @@ def effective_constraints(engine: str, base: dict[str, object]) -> str:
                 raise EnvironmentError(f"base wheel identity disagrees with filename: {name}")
             versions = locked.get(name, set())
             declared = wheel.get("lockedVersion")
-            if declared is not None:
+            if declared is not None and not strict:
                 if not isinstance(declared, str):
                     raise EnvironmentError(f"invalid lockedVersion for {name}")
                 versions = versions | {Version(declared)}
             if any(
                 candidate != parsed_version
                 and not (
-                    name in {"torch", "torchvision"}
+                    not strict
+                    and name in {"torch", "torchvision"}
                     and candidate.public == parsed_version.public
                     and candidate.local is None
                 )
@@ -112,5 +115,7 @@ def effective_constraints(engine: str, base: dict[str, object]) -> str:
         if not isinstance(sha, str):
             raise EnvironmentError(f"missing wheel digest: {name}")
         digest("sha256:" + sha)
+        if strict and (not versions or hashes.get(name) != {sha}):
+            raise EnvironmentError(f"base wheel {name} differs from the exact engine lock")
         additions.append(f"{name}=={version} --hash=sha256:{sha}")
     return "\n".join([*retained, *sorted(additions)]).strip() + "\n"

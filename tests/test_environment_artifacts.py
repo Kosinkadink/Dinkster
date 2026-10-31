@@ -64,7 +64,7 @@ def _mirror(
         "version": "1.0",
         "lockedVersion": "1.0",
         "index": "https://pypi.org/simple",
-        "url": "https://example.org/fixture.whl",
+        "url": "https://example.org/fixture_base-1.0-py3-none-any.whl",
         "verification": "lock",
     }
     interpreter = {
@@ -308,6 +308,94 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     )
     for path in acquired:
         assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("source", ["origin", "index"])
+@pytest.mark.parametrize("failure", [None, "hash", "size", "missing", "base-hash"])
+def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
+    tmp_path: Path, source: str, failure: str | None
+):
+    mirror, store, packages = tmp_path / "release", tmp_path / "store", tmp_path / "packages"
+    base, _, _ = _mirror(mirror)
+    packages.mkdir()
+    filename = "third_party-7.2-py3-none-any.whl"
+    payload = b"third-party locked binary bytes"
+    (packages / filename).write_bytes(payload)
+    index = packages / "simple/third-party"
+    index.mkdir(parents=True)
+    (index / "index.html").write_text(
+        f'<a href="../../{filename}#sha256=untrusted-index-hash">locked</a>'
+        '<a href="../../third_party-9.0.tar.gz">source must not be used</a>'
+    )
+    requests = []
+
+    class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            super().do_GET()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Handler, directory=str(packages)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        origin = f"http://127.0.0.1:{server.server_port}"
+        catalog = discover((str(mirror),), "main")
+        fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+        base_row = {key: base["wheels"][0][key] for key in fields}
+        dependency = {
+            **_artifact(filename, payload, key="filename"),
+            "name": "third-party",
+            "version": "7.2",
+            "index": origin + "/simple",
+            "url": (origin if source == "origin" else "https://unreachable.invalid")
+            + "/"
+            + filename,
+        }
+        catalog.engine["dependencies"] = {
+            "fixture-cpu": {"base": base["id"], "wheels": [base_row, dependency]}
+        }
+        data = _json(catalog.engine)
+        environment_artifacts.validate_manifest(
+            data, "sha256:" + hashlib.sha256(data).hexdigest(), None
+        )
+        package_index = origin + "/simple" if source == "index" else None
+        if failure == "hash":
+            (packages / filename).write_bytes(b"X" * len(payload))
+        elif failure == "size":
+            (packages / filename).write_bytes(payload + b"extra")
+        elif failure == "missing":
+            (packages / filename).unlink()
+        elif failure == "base-hash":
+            base_row["sha256"] = "a" * 64
+        if failure is not None:
+            with pytest.raises((DownloadError, EnvironmentError)):
+                acquire(catalog, "fixture-cpu", store, package_index=package_index)
+            assert not (store / "wheels" / dependency["sha256"] / filename).exists()
+            assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
+            assert not any(".tar.gz" in path for path in requests)
+            if failure == "base-hash":
+                assert not store.exists()
+            return
+        constraints = acquire(catalog, "fixture-cpu", store, package_index=package_index)
+        assert (store / "wheels" / dependency["sha256"] / filename).read_bytes() == payload
+        assert set(constraints.read_text().splitlines()) == {
+            "fixture-engine==2.0 --hash=sha256:"
+            + hashlib.sha256(b"engine wheel bytes").hexdigest(),
+            "third-party==7.2 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
+            "fixture-base==1.0 --hash=sha256:" + base_row["sha256"],
+        }
+        requested = list(requests)
+        (packages / filename).unlink()
+        (index / "index.html").unlink()
+        assert acquire(catalog, "fixture-cpu", store, package_index=package_index) == constraints
+        assert requests == requested
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 @pytest.mark.parametrize(

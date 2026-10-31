@@ -517,10 +517,13 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     base = json.loads(Path(fixture["baseManifest"]).read_bytes())
     base_id = base["id"][7:]
     port = free_port()
+    package_index = "https://packages.example.org/simple"
     arguments = (
         "setup",
         "--mirror",
         str(mirror),
+        "--package-index",
+        package_index,
         "--channel",
         "main",
         "--variant",
@@ -585,6 +588,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert installed["url"] == f"http://127.0.0.1:{port}"
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "project.json").read_bytes()
+        assert json.loads(initial_settings)["packageIndex"] == package_index
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
         code, second_plan = _run(
@@ -659,6 +663,7 @@ environment.main()
         elapsed = time.monotonic() - started
         assert code == 0, updated
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
+        assert json.loads((root / "project.json").read_bytes())["packageIndex"] == package_index
         assert Journal.read(journals[-1]).stage == "rolled-back"
         assert updated["current"] == 2 and updated["url"] != installed["url"]
         first, second = (root / "generations" / str(n) for n in (1, 2))

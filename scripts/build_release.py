@@ -277,13 +277,6 @@ def select_dependency_wheels(root: Path, uv: str, base_manifests: list[Path]) ->
             if requirement.url is not None:
                 raise ValueError(f"unsupported direct wheel requirement: {requirement.name}")
             if canonicalize_name(requirement.name) in owned:
-                base_wheel = selected.get(canonicalize_name(requirement.name))
-                if base_wheel is not None and not requirement.specifier.contains(
-                    base_wheel["version"], prereleases=True
-                ):
-                    raise ValueError(
-                        f"base wheel disagrees with locked version: {requirement.name}"
-                    )
                 continue
             hashes = set(re.findall(r"--hash=sha256:([0-9a-f]{64})", line))
             candidates = []

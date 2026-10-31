@@ -651,27 +651,43 @@ not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
 basenames relative to the release directory. Clients verify the manifest
 against the channel id before trusting its artifact hashes.
 
-The builder accepts repeated `--external-wheel PATH` candidates and checks
-each filename, size and SHA-256 against `uv.lock` before staging it. External
-wheels are release payloads, not entries in `workspaceWheels` for PyPI upload.
-The workflow uses `--download-external-wheels` to select the locked compatible
-Windows/Linux x86_64 CPython 3.14.10 wheels, evaluating target requirement
-markers and preferring native interpreter tags over older stable ABI tags.
-Every download must match the lock size and SHA-256 and an exported requirement
-hash. Direct requirements, missing compatible wheels and corrupted downloads
-fail the build; acquisition never resolves dependencies or falls back to source.
-Target markers are evaluated before source admission. OpenTimelineIO uses the
-`dinkster-opentimelineio==0.19.0` PyPI distribution through the same registry
-wheel path as other dependencies; the import namespace remains `opentimelineio`.
-Acquisition uses the unchanged native lock and export; offline consumers use
-exact version/hash requirements and supplied wheel files.
-Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
-manifest, including its canonical id, and `--target-variant NAME` identifies
-the selected targets. Only an exact filename/size/SHA-256 member present in
-every selected base can be omitted from a shared release. An unexpected or
-duplicate variant fails; incomplete or absent base coverage retains all
-candidates. The base's full transitive `wheels` list is authoritative, not a
-union of package names or a list of closure seeds.
+The builder uploads no third-party wheels. Repeated `--base-manifest PATH`
+inputs select verified `dinkster.base/1` manifests. Their producer-owned
+normalized `replaces` names are the sole ownership list, generated in
+Dinkster-Environments from variant roots and dependency closure. Ownership is
+not inferred from matching bytes across bases. Duplicate variants fail.
+
+The engine manifest's `dependencies` object records one install lock per
+variant: its exact `base` id and `wheels` rows containing normalized name,
+version, filename, size, SHA256, source index and artifact URL. Base-owned pins
+come directly from that variant's base manifest, including backend-local torch
+versions and variant-index hashes. Non-base pins come from `uv.lock` and its
+hashed export, evaluating target markers and preferring native interpreter
+tags over older stable ABI tags. Missing compatible binaries or direct URL
+requirements fail assembly; the builder does not fetch wheel payloads.
+
+Confirmed setup/update verifies the selected base against the variant install
+lock and fetches missing non-base wheels from their locked PyPI artifact URLs
+into `wheels/<sha256>/<filename>`, using exact size/hash checks. It materializes
+hashed variant requirements and constructs generations offline from the store.
+No dependency resolution, source build or alternate-hash fallback occurs.
+Older releases without dependency metadata retain their original acquisition
+contract. OpenTimelineIO uses `dinkster-opentimelineio==0.19.0`; its import
+namespace remains `opentimelineio`.
+
+`--package-index URL` on setup/update selects a simple package mirror instead
+of the recorded third-party origins. Only the exact locked filename is admitted;
+the lock's size and SHA256 remain authoritative, not index-provided hashes.
+The choice is saved in project `packageIndex` for updates and changes through
+the existing activation transaction. It is separate from repeatable `--mirror`,
+which selects channel/base/Dinkster artifact hosts. Intact store wheels require
+no index access. Repair, rollback and move remain offline.
+
+Finalization checks the complete release directory, rejecting third-party
+wheel entries and unlisted payloads. `release.yml` enforces 100,000,000 bytes
+including manifest/checksums and unchanged official pack artifacts/locks,
+excluding only native tools ZIPs, whose interpreters dominate their size.
+An over-budget release fails before upload.
 
 `python -m scripts.acquire_engine_bases --tag base-<variant>-<id-hex>`
 accepts repeated exact tags from `Kosinkadink/Dinkster-Environments` and

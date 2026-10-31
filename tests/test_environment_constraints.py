@@ -47,6 +47,18 @@ def test_selected_base_requirement_absent_from_engine_is_not_resolved():
     )
 
 
+def test_variant_install_lock_requires_exact_backend_version_and_hash():
+    exact = "torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n"
+    assert effective_constraints(exact, _base(), strict=True) == exact
+    for wrong in (
+        "torch==2.14.1 --hash=sha256:" + "b" * 64,
+        "torch==2.14.1+cpu --hash=sha256:" + "a" * 64,
+        "",
+    ):
+        with pytest.raises(EnvironmentError, match="engine lock"):
+            effective_constraints(wrong, _base(), strict=True)
+
+
 @pytest.mark.parametrize("version", ["2.15.0+cpu", "2.14.1.post1+cpu"])
 def test_variant_version_mismatch_fails_instead_of_overriding_engine_pin(version: str):
     engine = "torch==2.14.1 --hash=sha256:" + "a" * 64

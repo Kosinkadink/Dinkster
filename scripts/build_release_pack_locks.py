@@ -86,9 +86,8 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
             variant=variant,
             python=tree / base["interpreter"]["executable"],
             constraints=constraints,
-            indexes=tuple(
-                dict.fromkeys(["https://pypi.org/simple", *[w["index"] for w in base["wheels"]]])
-            ),
+            # Native base wheels come from find-links; backend indexes can shadow PyPI pins.
+            indexes=("https://pypi.org/simple",),
             find_links=(release, tree / "wheels"),
             accelerator="cuda" if base["nvidia"] is not None else "cpu",
         )

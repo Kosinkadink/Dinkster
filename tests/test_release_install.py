@@ -1092,6 +1092,10 @@ def test_dependency_metadata_uses_producer_ownership_names_per_variant(
             members = [row for row in members if row["name"] != "cpu_only"]
             next(row for row in members if row["name"] == "changed_hash")["sha256"] = "0" * 64
             next(row for row in members if row["name"] == "changed_size")["size"] += 1
+            transitive = next(row for row in members if row["name"] == "transitive")
+            transitive["version"] = "1.2"
+            transitive["filename"] = transitive["filename"].replace("-1.0-", "-1.2-")
+            transitive["url"] = transitive["url"].replace("-1.0-", "-1.2-")
         manifest = {
             "format": "dinkster.base/1",
             "variant": variant,
@@ -1141,6 +1145,10 @@ def test_dependency_metadata_uses_producer_ownership_names_per_variant(
         )
         path.write_text(json.dumps(manifest))
     result = select_dependency_wheels(tmp_path, "uv", manifests)
+    assert (
+        next(row for row in result["cuda"]["wheels"] if row["name"] == "transitive")["version"]
+        == "1.2"
+    )
     assert {row["name"] for row in result["cpu"]["wheels"]} == {
         "common",
         "transitive",
