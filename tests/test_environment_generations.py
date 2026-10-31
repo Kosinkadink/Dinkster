@@ -752,6 +752,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     root.mkdir()
     base = store / "bases" / ("a" * 64) / "python"
     _standalone_tree(base)
+    manifest = base.parent / "manifest.json"
+    manifest.write_text(json.dumps({"source": "user-defined", "variant": "studio-cuda"}))
     wheels = store / "wheels"
     wheels.mkdir()
     _, stable_hash = _wheel(wheels, "stable_fixture", "1.0", 40)
@@ -844,6 +846,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     _assert_shared(interpreter(first_dir), interpreter(second_dir))
     assert first.drift(first_dir) == ()
     assert second.drift(second_dir) == ()
+    for directory in (first_dir, second_dir):
+        assert (directory / "base-manifest.json").read_bytes() == manifest.read_bytes()
     assert any(name.endswith("in_process_fixture.py") for name, _ in first.files)
     catalog_name = "pack-sources/fixture/__pycache__/dinkster-schema-catalog/pack.json"
     assert catalog_name in dict(first.files)

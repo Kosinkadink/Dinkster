@@ -101,6 +101,9 @@
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
   Default setup and Desktop remain published-bundle consumers.
+- Status and doctor identify an active user-defined base by its variant name,
+  torch version and torch index. The base's provenance is retained with the
+  generation rather than inferred from the current variants file.
 - Confirmed environment garbage collection keeps the current generation and its
   successful predecessor, and preserves cache references from other registered
   projects. Interrupted collection recovers before another confirmed mutation;

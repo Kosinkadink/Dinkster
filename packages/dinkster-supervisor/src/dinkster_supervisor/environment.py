@@ -20,6 +20,7 @@ from .environment_collection import (
     recover_store_collection,
     store_collection_plan,
 )
+from .environment_custom import base_details
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -89,6 +90,12 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     settings = _settings(root)
     current = read_current(root)
     result["current"] = current
+    if current is not None and args.operation in {"status", "doctor"}:
+        manifest = root / "generations" / str(current) / "base-manifest.json"
+        if manifest.is_file():
+            base = read_document(manifest)
+            if base.get("source") == "user-defined":
+                result["base"] = base_details(base)
     if args.operation == "catalog":
         mirrors = tuple(args.mirror or (cast("list[str]", settings["mirrors"]) if settings else ()))
         channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")

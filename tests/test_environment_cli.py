@@ -131,6 +131,41 @@ def test_status_returns_configured_channel_and_variant_without_starting_anything
     assert not (root / "runtime").exists()
 
 
+def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
+    generation = _generation(tmp_path, 1).parent
+    manifest = {
+        "format": "dinkster.base/1",
+        "id": "sha256:" + "a" * 64,
+        "variant": "my-cuda",
+        "source": "user-defined",
+        "wheels": [
+            {
+                "name": "torch",
+                "version": "2.14.1+cu130",
+                "index": "https://download.pytorch.org/whl/cu130",
+            }
+        ],
+    }
+    (generation / "base-manifest.json").write_text(json.dumps(manifest))
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_text())
+    document["variant"] = "my-cuda"
+    document["files"]["base-manifest.json"] = content_digest(generation / "base-manifest.json")
+    metadata.write_text(json.dumps(document))
+    (tmp_path / "current").write_text("1\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    for operation in ("status", "doctor"):
+        code, result = _run(tmp_path, operation)
+        assert code == 0
+        assert result["base"] == {
+            "variant": "my-cuda",
+            "origin": "user-defined",
+            "torchVersion": "2.14.1+cu130",
+            "torchIndex": "https://download.pytorch.org/whl/cu130",
+        }
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
 def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Path):
     (tmp_path / "project.json").write_text('{"format":"dinkster.project/1","channel":null}')
     code, result = _run(tmp_path, "status")
