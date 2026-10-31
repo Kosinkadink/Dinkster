@@ -105,8 +105,16 @@ def _sha256_file(path: Path) -> str:
 
 
 def _save_file(tensors: Mapping[str, Any], path: Path) -> None:
-    safetensors_torch = importlib.import_module("safetensors.torch")
-    safetensors_torch.save_file(tensors, path, metadata=None)
+    try:
+        safetensors_torch = importlib.import_module("safetensors.torch")
+        save_file = safetensors_torch.save_file
+        if not callable(save_file):
+            raise TypeError("safetensors.torch.save_file is not callable")
+    except Exception as exc:  # noqa: BLE001 - normalize broken native installs
+        raise LegacyCheckpointError(
+            f"legacy-checkpoint-converter-unavailable: safetensors runtime: {exc}"
+        ) from exc
+    save_file(tensors, path, metadata=None)
 
 
 def _replace_file(source: Path, destination: Path) -> None:
@@ -125,6 +133,10 @@ def convert_legacy_checkpoint(source: Path, output: Path) -> LegacyConversionRes
     """Safely convert one torch-pickle checkpoint to deterministic safetensors."""
     try:
         torch = _load_torch_module()
+        if not callable(getattr(torch, "load", None)) or not isinstance(
+            getattr(torch, "Tensor", None), type
+        ):
+            raise TypeError("torch does not expose load and Tensor")
     except Exception as exc:  # noqa: BLE001 - normalize broken native installs
         raise LegacyCheckpointError(
             "legacy-checkpoint-converter-unavailable: torch is not installed in "
@@ -183,6 +195,8 @@ def convert_legacy_checkpoint(source: Path, output: Path) -> LegacyConversionRes
     ordered = {key: tensors[key] for key in sorted(tensors)}
     try:
         _save_file(ordered, output)
+    except LegacyCheckpointError:
+        raise
     except Exception as exc:  # noqa: BLE001 - normalize serializer/IO failures
         raise LegacyCheckpointError(
             f"legacy-checkpoint-conversion-failed: {source} -> {output}: {exc}"
