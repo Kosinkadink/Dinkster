@@ -368,6 +368,12 @@ The setup confirmation plan includes that binding name, loopback port and ordere
 `CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
 Stopped bindings keep their assigned ports; only running bindings need new ports
 for candidate health checks alongside their previous processes.
+Managed local generations start with the project's `dinkster-library` persistence
+root (or the inherited `DINKSTER_LIBRARY_ROOT`), stale-catalog preparation and
+operator-only mount editing enabled. Generation selection remains the only pack
+source. Folder grants persist across stop/start; fixed sandbox grants still
+require a controlled restart. Remote connections and arbitrary supervisor/server
+commands do not acquire these options.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 
