@@ -221,6 +221,38 @@ def test_ply_parse_defaults_missing_attributes() -> None:
     assert numpy.allclose(parsed["sh"], 0.0)
 
 
+@pytest.mark.parametrize("full_attributes", [False, True])
+def test_empty_ply_vertices_decode_to_empty_splat(full_attributes: bool) -> None:
+    properties = ["x", "y", "z"]
+    if full_attributes:
+        properties += ["scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
+        properties += ["opacity", "f_dc_0", "f_dc_1", "f_dc_2"]
+        properties += [f"f_rest_{index}" for index in range(9)]
+    data = (
+        "ply\nformat binary_little_endian 1.0\nelement vertex 0\n"
+        + "".join(f"property float {name}\n" for name in properties)
+        + "end_header\n"
+    ).encode("ascii")
+    expected_shapes = {
+        "positions": (1, 0, 3),
+        "scales": (1, 0, 3),
+        "rotations": (1, 0, 4),
+        "opacities": (1, 0, 1),
+        "sh": (1, 0, 4 if full_attributes else 1, 3),
+    }
+    for parsed in (parse_ply_splat(data), decode_splat_file(FakeAsset(data))):
+        mapping = cast("dict[str, Any]", parsed)
+        assert set(mapping) == set(expected_shapes)
+        for name, shape in expected_shapes.items():
+            assert mapping[name].shape == shape
+            assert mapping[name].dtype == numpy.float32
+            assert mapping[name].nbytes == 0
+        decoded = cast("dict[str, EncodedLatentTensor]", decode_splat(encode_splat(mapping)))
+        assert {name: record.shape for name, record in decoded.items()} == expected_shapes
+        with pytest.raises(ValueError, match="no gaussians"):
+            render_splat_ply(mapping)
+
+
 def test_ply_parse_maps_plain_colors_onto_the_sh_dc_band() -> None:
     header = (
         b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
