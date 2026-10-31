@@ -281,6 +281,7 @@ def test_release_lock_matrix_uses_each_selected_base_native_host(
     paths = []
     for variant, system in (
         ("linux-cpu", "linux"),
+        ("linux-nvidia", "linux"),
         ("mac-arm64", "macos"),
         ("win-cpu", "windows"),
         ("win-nvidia", "windows"),
@@ -300,6 +301,7 @@ def test_release_lock_matrix_uses_each_selected_base_native_host(
     assert json.loads(output.read_text().removeprefix("lock-matrix=")) == {
         "include": [
             {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+            {"variant": "linux-nvidia", "runner": "ubuntu-latest"},
             {"variant": "mac-arm64", "runner": "macos-latest"},
             {"variant": "win-cpu", "runner": "windows-latest"},
             {"variant": "win-nvidia", "runner": "windows-latest"},

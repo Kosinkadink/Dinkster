@@ -1,5 +1,10 @@
 ## Installed pack startup
 
+- Published base selection includes `linux-nvidia` for Linux x86_64 with
+  glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
+  3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.
+  Explicit CPU selections remain available; an absent published variant is
+  refused with the supported variants rather than resolved automatically.
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
 - Windows isolated packs and catalog probes support native extensions beneath

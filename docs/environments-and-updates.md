@@ -15,7 +15,7 @@ command line. Developers who change Dinkster itself work from a checkout
 |---|---|---|
 | Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` at that commit, the single resolution every wheel hash comes from; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
-| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
+| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu`, `mac-arm64` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
@@ -315,14 +315,16 @@ cu126 wheels, so that variant keeps torch 2.14.1 and the matching
 torchvision when the others move, and receives only the pins that still
 build against it.
 
-Supported variants: `win-nvidia` (cu132), `win-nvidia-cu126`, `win-cpu` and
-`linux-cpu`. The CPU variants run everything, an order of magnitude slower
+Published variants: `win-nvidia` and `linux-nvidia` (cu132),
+`win-nvidia-cu126`, `win-cpu`, `linux-cpu` and `mac-arm64` (Apple Silicon MPS).
+The Linux NVIDIA base carries the complete CUDA closure, including toolkit,
+NVIDIA libraries and triton; these are base-owned, not engine release payloads.
+The CPU variants run everything, an order of magnitude slower
 than the slowest GPU; they serve users who run the engine locally with
 remote workers, and CI and development machines without a GPU. Adding a
-variant is a new row, not new machinery: `linux-nvidia` is the same two
-rows on Linux wheels, `win-rocm` is torch from AMD's
+variant is a new row, not new machinery: a prospective `win-rocm` uses AMD's
 `stable.repo.amd.com/rocm/whl-next/` index with a per-architecture extra,
-and `win-xpu` is torch from the `xpu` index.
+and a prospective `win-xpu` uses torch from the `xpu` index.
 
 ### Choosing the NVIDIA variant
 
@@ -840,8 +842,8 @@ Settled:
   Packs over a local base resolve against that generation's constraints rather
   than selecting a published variant pack lock.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
-  `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
-  for wheels compiled against one torch triple.
+  `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu` and `mac-arm64`;
+  a per-variant extras index for wheels compiled against one torch triple.
 - NVIDIA variant chosen by driver, then by the lowest compute capability
   among the engine's assigned GPUs, detected with `nvidia-smi` and a WMI
   fallback, with an override; CPU is offered explicitly when no NVIDIA
