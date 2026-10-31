@@ -10,6 +10,9 @@
   provide a CustomCombo authoring editor or workflow projection.
   Workers reject input interfaces that disagree with their own declaration,
   including altered types, defaults, required flags and undeclared inputs.
+- Native CustomCombo returns the authored choice and index (zero when omitted),
+  accepting sparse and arbitrarily named extra inputs without an option-count
+  limit. This backend contract does not provide the frontend authoring editor.
 - The `--comfy-root` and `--execution-python` composition supports an installed
   inference package alongside source-only ComfyUI modules from the checkout,
   while sharing one inference module state and leaving source files unchanged.
