@@ -612,6 +612,7 @@ namespaces = [
     "DecimateMesh",
     "MeshToFile3D",
     "SaveGLB",
+    "SplatToFile3D",
 ]
 
 [pack.sandbox]
