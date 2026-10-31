@@ -49,6 +49,7 @@ from dinkster.workflow_requirements import (
     project_requirements,
 )
 from dinkster.workflow_requirements_api import add_workflow_requirement_routes
+from tests.platform_support import symlink_or_skip
 
 
 def workflow() -> dict[str, object]:
@@ -323,7 +324,7 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
             outside = tmp_path / "outside.bin"
             outside.write_bytes(b"first")
             first_path.unlink()
-            first_path.symlink_to(outside)
+            symlink_or_skip(first_path, outside)
             response = await client.post(
                 "/api/workflows/plan", json={**body, "project": "included"}
             )
