@@ -100,6 +100,59 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
     return python
 
 
+@pytest.mark.parametrize("failure", ["missing", "hash", "short", "oversize"])
+def test_pack_download_failure_names_pack_url_and_verification_result(
+    tmp_path: Path, failure: str
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
+    source = tmp_path / wheel.filename
+    if failure == "missing":
+        source.unlink()
+    else:
+        data = source.read_bytes()
+        source.write_bytes(
+            b"x" * len(data)
+            if failure == "hash"
+            else data[:-1]
+            if failure == "short"
+            else data + b"x"
+        )
+    lock = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (wheel,)),),
+    )
+    generation = tmp_path / "generations/1"
+    python = _generation(generation / "python", [])
+    plan = plan_pack(
+        lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=9000
+    )
+    store = tmp_path / "store"
+    with pytest.raises(ProvisionError) as error:
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=generation / "packs",
+            wheel_store=store,
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+        )
+    message = str(error.value)
+    assert f"pack example: {wheel.url}: download/verification failed:" in message
+    assert {
+        "missing": "urlopen error",
+        "hash": "wheel hash or size mismatch",
+        "short": "wheel hash or size mismatch",
+        "oversize": "wheel exceeds locked size",
+    }[failure] in message
+    assert not (store / wheel.sha256 / wheel.filename).exists()
+    assert not list(store.rglob("*.partial"))
+    assert not (generation / "packs/example").exists()
+
+
 @pytest.mark.parametrize("host_path", ["PYTHONPATH", "PYTHONUSERBASE"])
 def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_path: str

@@ -67,8 +67,11 @@
   their verified source ZIPs into target-interpreter admission automatically;
   missing admission support refuses activation. Selected-variant dependency locks
   are acquired from release artifacts unless explicitly overridden. Every selected
-  source pack needs a dependency lock, including empty closures; missing local
-  dependency wheels refuse offline construction. Confirmed updates can select
+  source pack needs a dependency lock, including empty closures. Confirmed setup
+  and updates acquire missing pack wheels from their locked URLs and verify size
+  and SHA256 before offline construction, including wheels absent from release
+  assets. Download failures identify the pack, URL and verification outcome.
+  Offline repair and move still require intact retained wheels. Confirmed updates can select
   another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
