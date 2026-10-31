@@ -1304,7 +1304,8 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
     ]
     for size, name in enumerate(names, 1):
         (tmp_path / name).write_bytes(b"x" * size)
-    manifest = {"workspaceWheels": names[:3]}
+    workspace_wheels = names[:3]
+    manifest: dict[str, object] = {"workspaceWheels": workspace_wheels}
     write_manifest(tmp_path, manifest, [tmp_path / name for name in names])
     expected = 1 + 2 + 3 + 4
     expected += len((tmp_path / "release-manifest.json").read_bytes())
@@ -1319,7 +1320,7 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
     write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
     with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
         check_release(tmp_path, 100_000_000)
-    manifest["workspaceWheels"].append(external)
+    workspace_wheels.append(external)
     write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
     with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
         check_release(tmp_path, 100_000_000)
