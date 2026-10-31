@@ -395,3 +395,86 @@ def test_spz_import_signed_coordinates_and_quaternion_layout(tmp_path: Path, ver
         expected = torch.cat([torch.zeros(2, 1), vector], dim=1)
         expected /= expected.norm(dim=1, keepdim=True)
         torch.testing.assert_close(value.rotations[0], expected)
+
+
+def ply_import_bytes(colored_points: bool) -> bytes:
+    properties = ["x", "y", "z"]
+    if colored_points:
+        header = "ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
+        header += "".join(f"property float {name}\n" for name in properties)
+        header += "".join(f"property uchar {name}\n" for name in ("red", "green", "blue"))
+        return (header + "end_header\n").encode("ascii") + struct.pack(
+            "<3f3B", -2.5, 1.25, 7, 32, 128, 240
+        )
+    properties += [f"f_dc_{index}" for index in range(3)]
+    properties += [f"f_rest_{index}" for index in (5, 0, 3, 1, 4, 2)]
+    properties += ["opacity"] + [f"scale_{index}" for index in range(3)]
+    properties += [f"rot_{index}" for index in range(4)]
+    header = "ply\nformat binary_little_endian 1.0\nelement vertex 2\n"
+    header += "".join(f"property float {name}\n" for name in properties)
+    rows = [
+        [
+            -1.25,
+            2.5,
+            0.125,
+            1,
+            2,
+            3,
+            32,
+            11,
+            22,
+            12,
+            31,
+            21,
+            0,
+            np.log(2),
+            np.log(0.5),
+            np.log(3),
+            -2,
+            0,
+            0,
+            0,
+        ],
+        [7, -4, 0.5, -1, 0.5, 2.5, -32, -11, -22, -12, -31, -21, np.log(3), 0, 0, 0, 0, 3, 4, 0],
+    ]
+    return (header + "end_header\n").encode("ascii") + b"".join(
+        struct.pack("<20f", *row) for row in rows
+    )
+
+
+@pytest.mark.parametrize("colored_points", [False, True])
+def test_ply_import_harmonics_order_activation_and_point_defaults(
+    tmp_path: Path, colored_points: bool
+) -> None:
+    data = ply_import_bytes(colored_points)
+    value = import_file(tmp_path, data, "ply")
+    if colored_points:
+        torch.testing.assert_close(value.positions, torch.tensor([[[-2.5, 1.25, 7]]]))
+        torch.testing.assert_close(value.scales, torch.full((1, 1, 3), 0.01))
+        torch.testing.assert_close(value.rotations, torch.tensor([[[1.0, 0, 0, 0]]]))
+        torch.testing.assert_close(value.opacities, torch.ones(1, 1, 1))
+        torch.testing.assert_close(
+            value.sh, (torch.tensor([[[[32, 128, 240]]]]) / 255 - 0.5) / 0.28209479177387814
+        )
+    else:
+        torch.testing.assert_close(
+            value.positions, torch.tensor([[[-1.25, 2.5, 0.125], [7, -4, 0.5]]])
+        )
+        torch.testing.assert_close(value.scales, torch.tensor([[[2.0, 0.5, 3], [1, 1, 1]]]))
+        torch.testing.assert_close(
+            value.rotations, torch.tensor([[[-1.0, 0, 0, 0], [0, 0.6, 0.8, 0]]])
+        )
+        torch.testing.assert_close(value.opacities, torch.tensor([[[0.5], [0.75]]]))
+        torch.testing.assert_close(
+            value.sh,
+            torch.tensor(
+                [
+                    [
+                        [[1.0, 2, 3], [11, 21, 31], [12, 22, 32]],
+                        [[-1, 0.5, 2.5], [-11, -21, -31], [-12, -22, -32]],
+                    ]
+                ]
+            ),
+        )
+    for field in (value.positions, value.scales, value.rotations, value.opacities, value.sh):
+        assert field.dtype == torch.float32 and field.is_contiguous()

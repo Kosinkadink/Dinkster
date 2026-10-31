@@ -244,7 +244,10 @@ class File3DToSplat(Node):
                     ("positions", "scales", "rotations", "opacities", "sh"), values, strict=True
                 )
             }
-        return cls.outputs(splat=materialize_splat(arrays))
+        splat = materialize_splat(arrays)
+        for key in ("positions", "scales", "rotations", "opacities", "sh"):
+            setattr(splat, key, getattr(splat, key).contiguous())
+        return cls.outputs(splat=splat)
 
 
 def _ksplat_bytes(value: Any, end: int) -> bytes:
