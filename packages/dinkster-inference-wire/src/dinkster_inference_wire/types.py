@@ -9,7 +9,6 @@ from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
     BACKGROUND_REMOVAL_TYPE,
-    BOUNDING_BOX_TYPE,
     BOUNDING_BOXES_TYPE,
     CAMERA_INFO_STATE_TYPE,
     CLIP_TYPE,
@@ -56,6 +55,7 @@ from dinkster_values import (
     decode_latent,
     encode_latent,
     latent_fingerprint,
+    register_box_types,
     register_resident_type,
     register_splat_type,
     register_video_edit_type,
@@ -157,8 +157,8 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
+    registered.extend(register_box_types(registry))
     for type_id in (
-        BOUNDING_BOX_TYPE,
         BOUNDING_BOXES_TYPE,
         CAMERA_INFO_STATE_TYPE,
         COLOR_TYPE,
