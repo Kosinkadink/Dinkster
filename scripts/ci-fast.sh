@@ -30,6 +30,8 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
   tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
   tests/test_installer.py::test_registry_source_identity_comes_from_verified_archive \
+  tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \
+  tests/test_installer.py::test_cli_prepares_compatible_registry_sources_without_generation_mutation \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
   tests/test_frontend_artifact.py \

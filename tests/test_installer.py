@@ -3041,6 +3041,153 @@ def test_registry_source_identity_comes_from_verified_archive(
         server.shutdown()
 
 
+def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
+    import tomllib
+
+    from packaging.version import Version
+
+    from dinkster.registries import DEFAULT_PACKS_PATH, default_pack_minimums
+
+    declared = default_pack_minimums()
+    assert tomllib.loads(DEFAULT_PACKS_PATH.read_text()) == {"packs": declared}
+    assert set(declared) == {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
+        "dinkster-vision-rtdetr",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
+    }
+    root = Path(__file__).resolve().parents[1]
+    manifests = {
+        manifest.name: manifest
+        for path in (root / "packages").glob("dinkster-nodes-*/**/dinkster-pack.toml")
+        for manifest in (installer_module.load_manifest(path),)
+    }
+    for pack, minimum in declared.items():
+        compatibility = manifests[pack].compatibility
+        assert compatibility is not None
+        assert Version(minimum) <= Version(compatibility.version)
+
+
+@pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])
+def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    from dinkster import __version__
+    from dinkster.registries import default_pack_minimums
+
+    pack_name = "dinkster-nodes-foundation"
+    source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
+    (source / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
+        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["std"]\n'
+        '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    archive = tmp_path / "published.zip"
+    digest = build_artifact(source, archive)
+    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    files = {
+        f"/v1/packs/{pack_name}/versions?limit=100": json.dumps(
+            {
+                "items": [
+                    {"version": "0.0.4", "dinkster": ">=0.2", "state": "active"},
+                    {"version": "0.0.3", "dinkster": ">=0.0.2.dev0,<0.1", "state": "active"},
+                ]
+            }
+        ).encode(),
+        f"/v1/packs/{pack_name}/versions/0.0.3": _release_record(
+            release, state="active", manifest={"dinkster": ">=0.0.2.dev0,<0.1"}
+        ),
+        f"/v1/packs/{pack_name}/versions/0.0.3/download-tickets": _download_ticket(
+            release, archive.read_bytes()
+        ),
+        f"/v1/artifacts/{digest}": (
+            b"x" * archive.stat().st_size if mode == "corrupt" else archive.read_bytes()
+        ),
+    }
+    server = _serve_artifacts({} if mode == "offline" else files, [])
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "current").write_text("7\n")
+    (root / "project.json").write_text('{"unchanged": true}\n')
+    before = {path.name: path.read_bytes() for path in root.iterdir()}
+    output = tmp_path / "prepared" / "dinkster.lock"
+    artifacts = tmp_path / "artifacts"
+    args = [
+        "--root",
+        str(root),
+        "--registry",
+        f"http://127.0.0.1:{server.server_port}",
+        "prepare-registry-sources",
+        "--catalog-lock",
+        str(output),
+        "--artifacts",
+        str(artifacts),
+    ]
+    if mode in {"partial", "offline"}:
+        args.append("--allow-missing")
+    else:
+        args.extend(["--minimum", f"{pack_name}@0.0.2"])
+        if mode == "strict":
+            args.extend(["--minimum", "missing@1.0"])
+    try:
+        if mode in {"strict", "corrupt"}:
+            with pytest.raises(SystemExit):
+                run_cli(*args)
+            error = capsys.readouterr().err
+            assert ("missing" if mode == "strict" else "digest mismatch") in error
+            assert not output.exists()
+            if mode == "corrupt":
+                assert not list(artifacts.iterdir())
+        else:
+            run_cli(*args)
+            report = json.loads(capsys.readouterr().out)
+            lock = Lockfile.from_record_json(output.read_text())
+            assert report["engineVersion"] == __version__
+            assert report["catalogLock"] == str(output)
+            assert report["artifacts"] == str(artifacts)
+            if mode == "offline":
+                assert not lock.packs and not report["packs"]
+                assert set(report["unavailable"]) == set(default_pack_minimums())
+            else:
+                assert lock.packs == (
+                    replace(
+                        release,
+                        publisher="dinkster",
+                        claims=("std",),
+                        source=f"registry:http://127.0.0.1:{server.server_port}",
+                    ),
+                )
+                assert report["packs"] == [pack_name]
+                cached = artifacts / f"{digest[7:]}.zip"
+                assert cached.read_bytes() == archive.read_bytes()
+                if mode == "partial":
+                    assert set(report["unavailable"]) == set(default_pack_minimums()) - {pack_name}
+                else:
+                    assert report["unavailable"] == {}
+                    files[f"/v1/artifacts/{digest}"] = b"x" * archive.stat().st_size
+                    run_cli(*args)
+                    assert json.loads(capsys.readouterr().out) == report
+                    retained = output.read_bytes()
+                    cached.write_bytes(b"x" * cached.stat().st_size)
+                    with pytest.raises(SystemExit):
+                        run_cli(*args)
+                    assert "digest mismatch" in capsys.readouterr().err
+                    assert output.read_bytes() == retained
+        assert {path.name: path.read_bytes() for path in root.iterdir()} == before
+    finally:
+        server.shutdown()
+
+
 def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> None:
     """Browse asks ONE registry's pack index, parses rows strictly, and
     surfaces the query-bound keyset cursor; a malformed answer refuses

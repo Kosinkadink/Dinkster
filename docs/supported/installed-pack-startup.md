@@ -43,6 +43,11 @@
   authority. Generation admission still rejects source identity mismatches.
   Registry downloads also require the ticket's nonnegative integer archive
   size and reject truncated or excess bytes before acquisition.
+- Registry source preparation resolves the committed default ids and minimum
+  versions, or an explicitly requested set, using the running engine's version.
+  It returns a verified source lock and digest-addressed archives without
+  changing a project or generation. Unavailable packs normally refuse the
+  operation; optional missing-default reporting can return an empty source set.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

@@ -61,6 +61,7 @@ import urllib.parse
 import urllib.request
 import warnings
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
@@ -69,6 +70,7 @@ from dinkster_registry import (
     ArtifactError,
     InstallError,
     LockedPack,
+    Lockfile,
     unpack_artifact,
     validate_artifact_digest,
     validate_version,
@@ -81,6 +83,7 @@ from packaging.version import Version
 from dinkster.installer import RegistryFetcher, http_registry_fetcher
 
 DEFAULT_REGISTRIES_FILENAME = "registries.toml"
+DEFAULT_PACKS_PATH = Path(__file__).with_name("default-packs.toml")
 AD_HOC_TOKEN_ENV = "DINKSTER_REGISTRY_TOKEN"
 DEFAULT_RESOLVE_TIMEOUT = 60.0
 
@@ -622,6 +625,62 @@ def registry_source_lock(selected: LockedPack, archive: Path, *, engine_version:
         ) from exc
 
 
+def default_pack_minimums() -> dict[str, str]:
+    """Read default ids and minimum versions, never installation byte identities."""
+    try:
+        document = tomllib.loads(DEFAULT_PACKS_PATH.read_text(encoding="utf-8"))
+        packs = document.get("packs")
+        if set(document) != {"packs"} or not isinstance(packs, dict) or not packs:
+            raise ValueError("expected a nonempty packs table")
+        minimums: dict[str, str] = {}
+        for name, minimum in packs.items():
+            if validate_name(name) or canonical_name(name) != name:
+                raise ValueError(f"invalid default pack id {name!r}")
+            if not isinstance(minimum, str) or validate_version(minimum):
+                raise ValueError(f"invalid minimum version for {name}")
+            minimums[name] = minimum
+        return minimums
+    except (OSError, ValueError) as exc:
+        raise InstallError(f"default pack declaration refused: {exc}") from exc
+
+
+def prepare_registry_sources(
+    registry: NamedRegistry,
+    minimums: Mapping[str, str],
+    artifacts: Path,
+    *,
+    engine_version: str,
+    allow_missing: bool = False,
+) -> tuple[Lockfile, dict[str, str]]:
+    """Resolve target-compatible sources without mutating any generation.
+
+    Fresh setup may retain available defaults and report unavailable packs.
+    Update requires the complete requested set before returning a source lock.
+    """
+    artifacts.mkdir(parents=True, exist_ok=True)
+    fetch = http_registry_fetcher(registry.endpoint, token=registry.token())
+    entries: list[LockedPack] = []
+    unavailable: dict[str, str] = {}
+    for pack, minimum in minimums.items():
+        try:
+            selected = resolve_compatible_release(registry, pack, minimum, engine_version)
+            cached = artifacts / f"{selected.artifact_digest.removeprefix('blake3:')}.zip"
+            if cached.exists():
+                entry = registry_source_lock(selected, cached, engine_version=engine_version)
+            else:
+                with tempfile.TemporaryDirectory(dir=artifacts, prefix="source-") as directory:
+                    staged = Path(directory) / "pack.zip"
+                    staged.write_bytes(fetch(selected))
+                    entry = registry_source_lock(selected, staged, engine_version=engine_version)
+                    staged.replace(cached)
+            entries.append(entry)
+        except (InstallError, OSError) as exc:
+            unavailable[pack] = f"{pack}: {exc}"
+    if unavailable and not allow_missing:
+        raise InstallError("registry pack preparation refused: " + "; ".join(unavailable.values()))
+    return Lockfile.of(entries), unavailable
+
+
 @dataclass(frozen=True)
 class PackSummary:
     """One row of the pack index: enough to pick a pack to install."""
@@ -832,8 +891,10 @@ __all__ = [
     "TemplateSummary",
     "browse_packs",
     "browse_templates",
+    "default_pack_minimums",
     "load_registries",
     "parse_registry_spec",
+    "prepare_registry_sources",
     "publish_release",
     "registry_source_lock",
     "resolve_compatible_release",

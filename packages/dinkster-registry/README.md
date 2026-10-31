@@ -44,6 +44,24 @@ not a byte pin; the returned installation identity is digest-pinned so archive
 acquisition can verify it. Resolution asks exactly one selected registry and
 rechecks the chosen release's state and range against its versioned detail.
 
+The committed `src/dinkster/default-packs.toml` declares default pack ids and
+minimum versions only, never exact release versions or archive bytes.
+Run source preparation with the target engine's interpreter:
+
+```sh
+python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts
+```
+
+The JSON result names the engine version, source lock, artifact cache, selected
+packs and unavailable-pack diagnostics. Each selected archive is size/digest
+verified and safely parsed without importing pack code. Existing cache entries
+are checked again before reuse. Repeat `--minimum PACK@VERSION` to select an
+explicit set instead of defaults. By default any unavailable pack refuses
+before writing the output lock; `--allow-missing` reports each unavailable pack
+and writes the available set, including an empty lock when none is available.
+This command prepares source inputs only; dependency locks and generation
+activation are separate steps. It never changes project or generation state.
+
 ## Template catalog
 
 `ReleaseIndex.template_catalog()` is the version 1 payload served by
