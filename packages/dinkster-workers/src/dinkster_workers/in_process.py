@@ -812,7 +812,7 @@ class InProcessWorker:
         }
         if base_schema.output_descriptors is not None:
             source_ids.add(base_schema.output_descriptors.input)
-        expressions = [output.type for output in base_schema.outputs]
+        expressions = [output.type for output in (*base_schema.outputs, *base_schema.output_families)]
         while expressions:
             expression = expressions.pop()
             if (
