@@ -1629,6 +1629,24 @@ async def handle_library_delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def handle_result_asset_offer(request: web.Request) -> web.Response:
+    """Read a persisted source snapshot, never regenerate it from a cache."""
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    try:
+        offer = await asyncio.to_thread(
+            request.app[LIBRARY_KEY].store.result_asset_offer,
+            scope,
+            request.match_info["token"],
+        )
+    except AssetError as exc:
+        return _json_error(400, str(exc))
+    except sqlite3.Error:
+        return _json_error(503, "result offer state is unavailable")
+    if offer is None:
+        return _json_error(404, "no such result offer")
+    return web.json_response(offer.to_wire(), headers={"Cache-Control": "no-store"})
+
+
 async def handle_retained_assets(request: web.Request) -> web.Response:
     """Explicit scoped reference manifests; document contents remain opaque."""
     scope = resolve_scope(
@@ -1643,24 +1661,47 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
             retained = await asyncio.to_thread(store.retained_assets, *key)
         elif request.method == "PUT":
             body = await _json_body(request)
-            if not {"revision", "digests"} <= set(body) or set(body) - {
-                "revision",
-                "digests",
-                "complete",
-            }:
-                return _json_error(
-                    400, "retained values require revision, digests and optional complete"
+            if "sourceToken" in body:
+                if (
+                    set(body) != {"revision", "sourceToken"}
+                    or type(body["revision"]) is not int
+                    or body["revision"] != 0
+                ):
+                    return _json_error(400, "result claims require revision 0 and sourceToken only")
+                retained = await asyncio.to_thread(
+                    store.claim_result_assets, scope, body["sourceToken"], key[1], key[2]
                 )
-            revision, digests = body["revision"], body["digests"]
-            if type(revision) is not int or not isinstance(digests, list):
-                return _json_error(400, "revision must be an integer and digests must be a list")
-            retained = await asyncio.to_thread(
-                store.retain_assets,
-                *key,
-                cast(list[str], digests),
-                revision=revision,
-                complete=body.get("complete", False),
-            )
+                if retained is None:
+                    return web.json_response(
+                        {
+                            "available": False,
+                            "reason": "source-unavailable",
+                            "error": "result source is no longer protected or is not held here",
+                        },
+                        status=409,
+                        headers={"Cache-Control": "no-store"},
+                    )
+            else:
+                if not {"revision", "digests"} <= set(body) or set(body) - {
+                    "revision",
+                    "digests",
+                    "complete",
+                }:
+                    return _json_error(
+                        400, "retained values require revision, digests and optional complete"
+                    )
+                revision, digests = body["revision"], body["digests"]
+                if type(revision) is not int or not isinstance(digests, list):
+                    return _json_error(
+                        400, "revision must be an integer and digests must be a list"
+                    )
+                retained = await asyncio.to_thread(
+                    store.retain_assets,
+                    *key,
+                    cast(list[str], digests),
+                    revision=revision,
+                    complete=body.get("complete", False),
+                )
         else:
             try:
                 revision = int(request.query.get("revision", ""))
@@ -1675,7 +1716,7 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
         return _json_error(503, "retained asset state is unavailable")
     if retained is None:
         return _json_error(404, "no such retained asset owner")
-    return web.json_response(retained.to_wire())
+    return web.json_response(retained.to_wire(), headers={"Cache-Control": "no-store"})
 
 
 async def handle_cleanup_policy(request: web.Request) -> web.Response:
@@ -1803,6 +1844,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_get("/api/library/storage", handle_cleanup_status)
     app.router.add_put("/api/library/storage/policy", handle_cleanup_policy)
     app.router.add_post("/api/library/storage/clear", handle_cleanup_clear)
+    app.router.add_get("/api/library/result-offers/{token}", handle_result_asset_offer)
     retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
     app.router.add_get(retention_path, handle_retained_assets)
     app.router.add_put(retention_path, handle_retained_assets)

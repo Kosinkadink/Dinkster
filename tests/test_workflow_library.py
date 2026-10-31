@@ -588,6 +588,21 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
             assert (await client.get(url, headers=reader)).status == 200
             assert (await client.get(url.replace("one", "two"), headers=reader)).status == 403
             assert (await client.delete(url + "&revision=1", headers=reader)).status == 403
+            offer = library.store.offer_result_assets(
+                "one", "run", 1, "node", "out", 1, [DIGEST_B], complete=True
+            )
+            source = f"/api/library/result-offers/{offer.token}?scope=one"
+            claim_url = "/api/library/retentions/preview/frame?scope=one"
+            claim = {"revision": 0, "sourceToken": offer.token}
+            assert (await client.get(source)).status == 401
+            assert (await client.get(source, headers=reader)).status == 200
+            assert (await client.get(source.replace("one", "two"), headers=reader)).status == 403
+            assert (await client.put(claim_url, json=claim, headers=reader)).status == 403
+            assert (
+                await client.put(claim_url.replace("one", "two"), json=claim, headers=writer)
+            ).status == 403
+            assert (await client.put(url, json=claim, headers=writer)).status == 400
+            assert (await client.put(claim_url, json=claim, headers=writer)).status == 200
         finally:
             await client.close()
 
@@ -634,6 +649,91 @@ def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> 
             assert (await response.json())["complete"]
             with store.hold_asset_references() as roots:
                 assert roots == set()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_result_offer_http_claims_reconcile_exact_sources_after_restart(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        client = await make_client(tmp_path)
+        owner = "/api/library/retentions/shown-result/view?scope=local"
+        try:
+            store = client.app[LIBRARY_KEY].store
+            older = store.offer_result_assets(
+                "local", "run-a", 2, "r[3]/node", "image", 7, [DIGEST_A], complete=True
+            )
+            newer = store.offer_result_assets(
+                "local", "run-b", 1, "other-node", "video", 1, [DIGEST_B], complete=True
+            )
+            source = f"/api/library/result-offers/{older.token}?scope=local"
+            response = await client.get(source)
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            assert await response.json() == older.to_wire()
+            assert (await client.get(source.replace("local", "other"))).status == 404
+            assert (
+                await client.get("/api/library/result-offers/invalid?scope=local")
+            ).status == 400
+            for invalid in (
+                {"revision": True, "sourceToken": older.token},
+                {"revision": 1, "sourceToken": older.token},
+                {"revision": 0, "sourceToken": "invalid"},
+                {"revision": 0, "sourceToken": older.token, "digests": [DIGEST_B]},
+                {"revision": 0, "sourceToken": older.token, "complete": True},
+            ):
+                assert (await client.put(owner, json=invalid)).status == 400
+            response = await client.put(owner, json={"revision": 0, "sourceToken": older.token})
+            assert response.status == 200
+            acknowledged = await response.json()
+            assert acknowledged == {
+                "scope": "local",
+                "ownerKind": "shown-result",
+                "ownerId": "view",
+                "revision": 1,
+                "digests": [DIGEST_A],
+                "complete": True,
+                "sourceToken": older.token,
+            }
+            assert response.headers["Cache-Control"] == "no-store"
+            assert (
+                await client.put(owner, json={"revision": 0, "sourceToken": newer.token})
+            ).status == 409
+        finally:
+            await client.close()
+        client = await make_client(tmp_path)
+        try:
+            store = client.app[LIBRARY_KEY].store
+            # A lost acknowledgment is reconciled by reading, not replaying the claim.
+            assert await (await client.get(owner)).json() == acknowledged
+            assert await (await client.get(source)).json() == older.to_wire()
+            assert (
+                await client.put(owner, json={"revision": 0, "sourceToken": older.token})
+            ).status == 409
+            preview = "/api/library/retentions/preview/reader?scope=local"
+            assert (
+                await client.put(preview, json={"revision": 0, "sourceToken": older.token})
+            ).status == 200
+            assert (await client.delete(owner + "&revision=1")).status == 200
+            with store.hold_asset_references() as roots:
+                assert roots == {DIGEST_A, DIGEST_B}
+            assert (await client.delete(preview + "&revision=1")).status == 200
+            with store.hold_asset_references() as roots:
+                assert roots == {DIGEST_B}
+            response = await client.put(
+                "/api/library/retentions/preview/late?scope=local",
+                json={"revision": 0, "sourceToken": older.token},
+            )
+            assert response.status == 409
+            assert await response.json() == {
+                "available": False,
+                "reason": "source-unavailable",
+                "error": "result source is no longer protected or is not held here",
+            }
+            tombstone = await (await client.get(owner)).json()
+            assert tombstone["revision"] == 2 and tombstone["digests"] == []
+            assert "sourceToken" not in tombstone
         finally:
             await client.close()
 

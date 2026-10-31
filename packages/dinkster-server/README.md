@@ -249,6 +249,33 @@ old values retained and the new value unpublished. An incomplete manifest
 must be acknowledged before exposing values whose identities are unknown.
 Cleanup cannot reclaim from incomplete or unregistered owner state.
 
+### Persisted result offers
+
+`GET /api/library/result-offers/{token}?scope=` reads an immutable server-created
+snapshot: `{token, scope, jobRef, attemptId, nodeId, outputId, publication,
+digests, complete}`. It requires scoped `assets:read`, returns 404 for an unknown
+token and never reconstructs roots from a current cache entry. The roots cover
+the complete parent output, including nested elements; rendition selectors do
+not create another source identity.
+
+To claim an offer, PUT `{revision: 0, sourceToken: token}` to a fresh
+`shown-result` or `preview` retention owner. The server selects the persisted
+roots and completeness; caller-supplied digests or completeness are rejected.
+The acknowledgment includes `sourceToken` in addition to the ordinary owner,
+revision and manifest. Existing owners return 409 rather than being overwritten.
+An unavailable or no-longer-protected source returns HTTP 409 with
+`{available: false, reason: "source-unavailable", error: ...}`. Reading an old
+offer alone does not establish that it can still be claimed.
+
+After a lost acknowledgment, GET the retention owner and compare its source
+token, canonical roots, completeness and revision before exposing anything.
+Do not replay the claim. Keep older owners until their own consumers settle;
+claiming a new source does not release them. Releasing an owner clears its
+source binding and preserves the revision tombstone. Offer and retention
+responses use `Cache-Control: no-store` so reconciliation reads durable state.
+These routes do not automatically publish execution or preview offers and do
+not certify global frontend coverage or enable collection.
+
 ### Backend synchronization
 
 Library and history inspection hold their SQLite write transactions; cache

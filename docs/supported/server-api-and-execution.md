@@ -43,6 +43,12 @@
   release prevent stale clients from removing newer associations, including
   after restart or owner reuse. Association registration is explicit, not
   automatic history or preview integration; it does not enable cleanup.
+- Clients can read immutable scoped result offers and claim their exact
+  server-selected roots into fresh shown-result or preview owners. Durable
+  source bindings permit reconciliation after a lost acknowledgment; a claim
+  cannot overwrite an existing owner or revive a source after its last
+  protecting owner releases it. This does not automatically publish offers
+  from execution or previews, or enable cleanup.
 - Durable terminal history retains external asset identities from target
   values, saved artifacts and their optional published previews independently
   of execution-cache entries, without storing output payloads or changing
