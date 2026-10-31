@@ -41,6 +41,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
+  tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
   tests/test_manifest.py::test_pack_declares_independent_version_and_engine_compatibility \
   tests/test_manifest.py::test_pack_rejects_invalid_version_or_engine_declaration \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_preserves_first_authority \

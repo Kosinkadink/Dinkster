@@ -6,9 +6,9 @@ public release; after that point, a wire change will add a new version with an
 explicit compatibility decoder and a documented support window.
 
 `dinkster-schema` is the typed, V3-native node interface model and node-authoring
-surface. It depends only on `dinkster-values`; graph validation, workers, the
-engine, the extension API, and protocol layers consume its schemas rather than
-maintaining parallel interface descriptions.
+surface. It depends on `dinkster-values` and Python `packaging`; graph validation,
+workers, the engine, the extension API, and protocol layers consume its schemas
+rather than maintaining parallel interface descriptions.
 
 ## Setup
 

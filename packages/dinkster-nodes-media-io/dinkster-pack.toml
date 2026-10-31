@@ -3,6 +3,8 @@
 
 [pack]
 name = "dinkster-nodes-media-io"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = ["av==18.1.0", "numpy>=1.26", "pillow>=10", "scipy>=1.11"]
 # dinkster is reserved. This first-party pack receives explicit host trust but

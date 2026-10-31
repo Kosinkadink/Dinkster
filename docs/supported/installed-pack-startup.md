@@ -30,7 +30,8 @@
   and the host API contract remain separate from Python requirements.
 - Pack manifests can declare an independent public pack version and a PEP 440
   engine compatibility range. Invalid or incomplete declarations are rejected
-  without importing pack code.
+  without importing pack code. Every first-party node pack declares both,
+  including development and engine-carried generation packs.
 - The registry client can select the newest active pack version meeting a
   minimum version and target engine range across paginated results. Active
   prereleases inside those bounds remain eligible. The selected release is
