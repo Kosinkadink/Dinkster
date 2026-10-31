@@ -270,6 +270,38 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                     }
                     assert all(record.origin["node"] == producing_node for record in observations)
                     assert library.store.query_assets("local", project="another") == []
+                    (offer,) = status["artifactOffers"]
+                    assert offer == {
+                        "token": offer["token"],
+                        "scope": "local",
+                        "jobRef": status["jobRef"],
+                        "attemptId": 1,
+                        "nodeId": producing_node,
+                        "publication": 1,
+                        "artifact": {
+                            "nodeId": producing_node,
+                            "digest": digest_bytes(mp4),
+                            "name": "preview_00001.mp4",
+                            "size": len(mp4),
+                            "mediaType": "video/mp4",
+                            "virtualPath": "mounts/renders/preview_00001.mp4",
+                            "index": 0,
+                        },
+                        "digests": [digest_bytes(mp4)],
+                        "complete": True,
+                    }
+                    source = status["resultOffers"][producing_node]["out"]
+                    assert source["nodeId"] == producing_node
+                    assert source["outputId"] == "out"
+                    assert source["digests"] == [] and source["complete"] is True
+                    response = await client.get(
+                        f"/api/library/terminal-results/{status['jobRef']}?scope=local"
+                    )
+                    assert response.status == 200
+                    terminal = await response.json()
+                    assert terminal["complete"] is True
+                    assert terminal["artifacts"] == [offer]
+                    assert terminal["resultOffers"][producing_node]["out"] == source
                 asset = await client.get(f"/assets/{artifact['digest']}")
                 assert asset.status == 200
                 assert await asset.read() == mp4

@@ -161,7 +161,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0008_terminal_results (head)" in current.stdout
+    assert "0009_artifact_offers (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -1001,6 +1001,75 @@ def test_terminal_result_seals_exact_tokens_and_rejects_newer_substitution(tmp_p
             artifacts_complete=False,
         )
         assert incomplete["complete"] is False and incomplete["artifacts"] is None
+        artifacts: list[dict[str, object]] = [
+            {
+                "nodeId": "r[3]/node",
+                "digest": DIGEST_A,
+                "name": "first.exr",
+                "size": 23,
+                "mediaType": "image/x-exr",
+                "virtualPath": "mounts/output/first.exr",
+                "index": 0,
+                "preview": {
+                    "digest": DIGEST_B,
+                    "name": "view.png",
+                    "size": 57,
+                    "mediaType": "image/png",
+                    "virtualPath": f"previews/{DIGEST_B[7:]}/view.png",
+                },
+            },
+            {
+                "nodeId": "r[3]/node",
+                "digest": DIGEST_A,
+                "name": "second.exr",
+                "size": 23,
+                "mediaType": "image/x-exr",
+                "virtualPath": "mounts/output/second.exr",
+                "index": 1,
+            },
+        ]
+        offers = [
+            store.offer_result_assets(
+                "one", "saved", 3, "r[3]/node", "", 1, roots, complete=True, artifact=artifact
+            )
+            for roots, artifact in zip(([DIGEST_A, DIGEST_B], [DIGEST_A]), artifacts, strict=True)
+        ]
+        for invalid in ([offers[1].token], [offers[0].token, offers[0].token]):
+            with pytest.raises(AssetError, match="ambiguous"):
+                store.publish_terminal_result(
+                    "one",
+                    "saved",
+                    3,
+                    invalid,
+                    state="completed",
+                    identity=identity,
+                    artifacts_complete=True,
+                )
+        with pytest.raises(AssetError, match="identities"):
+            store.offer_result_assets(
+                "one",
+                "saved",
+                3,
+                "r[3]/node",
+                "",
+                1,
+                [DIGEST_A],
+                complete=True,
+                artifact=artifacts[0],
+            )
+        terminal = store.publish_terminal_result(
+            "one",
+            "saved",
+            3,
+            [offer.token for offer in offers],
+            state="completed",
+            identity=identity,
+            artifacts_complete=True,
+        )
+        assert terminal["artifacts"] == [offer.to_wire() for offer in offers]
+        assert terminal["resultOffers"] == {} and terminal["complete"] is True
+        assert [offer.to_wire()["artifact"] for offer in offers] == artifacts
+        assert all("outputId" not in offer.to_wire() for offer in offers)
     finally:
         store.close()
 
@@ -1267,8 +1336,9 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
 
 
 @pytest.mark.parametrize("failure", ["", "catalog", "revoked"])
+@pytest.mark.parametrize("with_preview", [False, True])
 def test_completed_artifacts_are_cataloged_in_the_submitted_project(
-    tmp_path: Path, failure: str
+    tmp_path: Path, failure: str, with_preview: bool
 ) -> None:
     async def scenario() -> None:
         root = tmp_path / "output"
@@ -1278,6 +1348,11 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
         mounts.scan("output")
         writer = AssetWriter(mounts)
         data = b"saved by the worker, not an input copy"
+        preview_buffer = BytesIO()
+        Image.new("RGB", (2, 3), (21, 43, 65)).save(preview_buffer, format="PNG")
+        preview_data = preview_buffer.getvalue()
+        preview_digest = digest_bytes(preview_data)
+        vault = AssetVault(tmp_path / "vault")
 
         class SavingWorker(InProcessWorker):
             async def invoke(
@@ -1292,6 +1367,19 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                 )
                 if failure == "revoked":
                     mounts.remove("output")
+                preview = None
+                if with_preview:
+                    with vault.writer(preview_digest) as stream:
+                        stream.write(preview_data)
+                        stream.commit()
+                    preview = SavedArtifact(
+                        invocation.node_id,
+                        preview_digest,
+                        "preview.png",
+                        len(preview_data),
+                        "image/png",
+                        f"previews/{preview_digest[7:]}/preview.png",
+                    )
                 return replace(
                     result,
                     artifacts=(
@@ -1302,6 +1390,7 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                             ref.size,
                             ref.media_type,
                             ref.virtual_path,
+                            preview,
                         ),
                     ),
                 )
@@ -1319,9 +1408,10 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
 
         database = tmp_path / "library.sqlite"
         library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
+            vault=vault,
             store=LibraryStore(database),
             resolver=mounts,
+            local_resolver=mounts,
             upload_writer=writer,
             project_folders_for=lambda project: AssetFolderContext(
                 ("output",) if project == "film" else ()
@@ -1333,6 +1423,7 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     "CREATE TRIGGER fail_output BEFORE INSERT ON asset_observations "
                     "BEGIN SELECT RAISE(ABORT, 'catalog offline'); END"
                 )
+        offer: dict[str, object] | None = None
         client = TestClient(TestServer(create_app(engine, SCHEMAS, library=library)))
         await client.start_server()
         try:
@@ -1358,14 +1449,22 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     await asyncio.sleep(0.005)
             assert status["state"] == ("failed" if failure else "completed"), status
             records = library.store.query_assets("local", project="film", origin="produced")
-            assert len(records) == (0 if failure else 1)
+            assert len(records) == (0 if failure else 1 + int(with_preview))
             assert library.store.query_assets("local") == []
             assert library.store.query_assets("other", project="film") == []
             assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
-            assert library.vault.digests() == []
+            assert library.vault.digests() == ([preview_digest] if with_preview else [])
             assert (root / "result_00001.txt").read_bytes() == data
+            terminal_url = f"/api/library/terminal-results/{submitted['jobRef']}?scope=local"
+            terminal_response = await client.get(terminal_url)
+            assert terminal_response.status == 200
+            terminal = await terminal_response.json()
+            assert terminal["complete"] is (not failure)
+            assert terminal["artifacts"] == (None if failure else status["artifactOffers"])
             if not failure:
-                (record,) = records[0]
+                (record,) = library.store.query_assets(
+                    "local", project="film", digest=digest_bytes(data)
+                )[0]
                 assert record.asset.digest == digest_bytes(data)
                 assert record.asset.virtual_path == "mounts/output/result_00001.txt"
                 assert dict(record.origin) == {
@@ -1373,6 +1472,61 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                     "job": submitted["jobRef"],
                     "node": "save",
                 }
+                (offer,) = status["artifactOffers"]
+                assert offer is not None
+                expected_artifact = {
+                    "nodeId": "save",
+                    "digest": digest_bytes(data),
+                    "name": "result_00001.txt",
+                    "size": len(data),
+                    "mediaType": "video/mp4",
+                    "virtualPath": "mounts/output/result_00001.txt",
+                    **(
+                        {
+                            "preview": {
+                                "digest": preview_digest,
+                                "name": "preview.png",
+                                "size": len(preview_data),
+                                "mediaType": "image/png",
+                                "virtualPath": f"previews/{preview_digest[7:]}/preview.png",
+                            }
+                        }
+                        if with_preview
+                        else {}
+                    ),
+                }
+                assert status["artifacts"] == [expected_artifact]
+                assert offer == {
+                    "token": offer["token"],
+                    "scope": "local",
+                    "jobRef": submitted["jobRef"],
+                    "attemptId": 1,
+                    "nodeId": "save",
+                    "publication": 1,
+                    "digests": sorted(
+                        [digest_bytes(data), preview_digest]
+                        if with_preview
+                        else [digest_bytes(data)]
+                    ),
+                    "artifact": {**expected_artifact, "index": 0},
+                    "complete": True,
+                }
+                assert "outputId" not in offer
+                events = await (
+                    await client.get(f"/api/jobs/by-ref/{submitted['jobRef']}/events?after=0")
+                ).json()
+                terminal_events = [
+                    event
+                    for event in events["events"]
+                    if event["type"] == "job_state" and event["state"] == "completed"
+                ]
+                assert terminal_events[0]["artifactOffers"] == [offer]
+                response = await client.put(
+                    "/api/library/retentions/shown-result/artifact-view?scope=local",
+                    json={"revision": 0, "sourceToken": offer["token"]},
+                )
+                assert response.status == 200
+                assert (await response.json())["digests"] == offer["digests"]
         finally:
             await client.close()
         if failure == "catalog":
@@ -1386,7 +1540,18 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
         )
         try:
             records = restarted.app[LIBRARY_KEY].store.query_assets("local", project="film")
-            assert len(records) == (0 if failure == "revoked" else 1)
+            assert len(records) == (
+                0 if failure == "revoked" else 1 + int(with_preview and not failure)
+            )
+            assert (await restarted.get("/api/jobs/client/save")).status == 404
+            response = await restarted.get(terminal_url)
+            assert response.status == 200 and await response.json() == terminal
+            if not failure:
+                assert offer is not None
+                response = await restarted.get(
+                    f"/api/library/result-offers/{offer['token']}?scope=local"
+                )
+                assert response.status == 200 and await response.json() == offer
             journals = list(library.vault.root.glob(".upload-observations/*.json"))
             assert len(journals) == (1 if failure == "revoked" else 0)
         finally:

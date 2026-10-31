@@ -270,6 +270,7 @@ from dinkster_protocol import (
     ExportSnapshot,
     PackSettingsSchema,
     PreviewPolicy,
+    SavedArtifact,
     attention_policy_config_from_wire,
     attention_policy_config_to_wire,
     canonical_extension_snapshot,
@@ -572,6 +573,30 @@ def value_descriptor(value: Value, registry: TypeRegistry | None = None) -> dict
     return descriptor
 
 
+def _artifact_wire(artifact: SavedArtifact) -> dict[str, object]:
+    return {
+        "nodeId": artifact.node_id,
+        "digest": artifact.digest,
+        "name": artifact.name,
+        "size": artifact.size,
+        "mediaType": artifact.media_type,
+        "virtualPath": artifact.virtual_path,
+        **(
+            {
+                "preview": {
+                    "digest": artifact.preview.digest,
+                    "name": artifact.preview.name,
+                    "size": artifact.preview.size,
+                    "mediaType": artifact.preview.media_type,
+                    "virtualPath": artifact.preview.virtual_path,
+                }
+            }
+            if artifact.preview is not None
+            else {}
+        ),
+    }
+
+
 def job_to_wire(
     job: Job,
     node_states: Mapping[str, str] | None,
@@ -608,6 +633,8 @@ def job_to_wire(
         wire["error"] = job.error
     if job.result_offers:
         wire["resultOffers"] = {node: dict(offers) for node, offers in job.result_offers.items()}
+    if job.artifact_offers:
+        wire["artifactOffers"] = list(job.artifact_offers)
     if job.result is not None:
         wire["outputs"] = {
             node_id: {out: value_descriptor(v, registry) for out, v in outs.items()}
@@ -616,30 +643,7 @@ def job_to_wire(
         wire["executed"] = list(job.result.executed)
         wire["cached"] = list(job.result.cached)
         wire["skipped"] = list(job.result.skipped)
-        wire["artifacts"] = [
-            {
-                "nodeId": artifact.node_id,
-                "digest": artifact.digest,
-                "name": artifact.name,
-                "size": artifact.size,
-                "mediaType": artifact.media_type,
-                "virtualPath": artifact.virtual_path,
-                **(
-                    {
-                        "preview": {
-                            "digest": artifact.preview.digest,
-                            "name": artifact.preview.name,
-                            "size": artifact.preview.size,
-                            "mediaType": artifact.preview.media_type,
-                            "virtualPath": artifact.preview.virtual_path,
-                        }
-                    }
-                    if artifact.preview is not None
-                    else {}
-                ),
-            }
-            for artifact in job.result.artifacts
-        ]
+        wire["artifacts"] = [_artifact_wire(artifact) for artifact in job.result.artifacts]
     return wire
 
 
@@ -2322,6 +2326,8 @@ class ServerState:
             wire["resultOffers"] = {
                 node: dict(offers) for node, offers in job.result_offers.items()
             }
+        if job.artifact_offers:
+            wire["artifactOffers"] = list(job.artifact_offers)
         # Job transitions are the contract the frontend keys off; never shed.
         # (Terminal history rows are written by the queue itself, inline
         # through its QueuePersistence store, before this listener runs.)
@@ -4666,9 +4672,33 @@ def create_app(
         for node_id, outputs in result.outputs.items():
             if node_id not in job.result_offers:
                 await publish_outputs(job.run_id, node_id, outputs)
-        if library is not None and result.artifacts:
+        assert library is not None
+        store = library.store
+        if result.artifacts:
             record_outputs = library.record_saved_outputs
-            return await run_media_publication(library, lambda: record_outputs(job, result))
+            result = await run_media_publication(library, lambda: record_outputs(job, result))
+
+            def persist_artifacts() -> list[dict[str, object]]:
+                offers: list[dict[str, object]] = []
+                for index, artifact in enumerate(result.artifacts):
+                    roots = [artifact.digest]
+                    if artifact.preview is not None:
+                        roots.append(artifact.preview.digest)
+                    offer = store.offer_result_assets(
+                        job.scope,
+                        job.run_id,
+                        job.attempt,
+                        artifact.node_id,
+                        "",
+                        1,
+                        roots,
+                        complete=True,
+                        artifact={**_artifact_wire(artifact), "index": index},
+                    )
+                    offers.append(offer.to_wire())
+                return offers
+
+            job.artifact_offers = await run_owned_thread(persist_artifacts)
         return result
 
     async def settle_job(job: Job, terminal_state: JobState) -> None:
@@ -4687,7 +4717,8 @@ def create_app(
                     cast(str, offer["token"])
                     for outputs in job.result_offers.values()
                     for offer in outputs.values()
-                ],
+                ]
+                + [cast(str, offer["token"]) for offer in job.artifact_offers],
                 state=terminal_state,
                 identity={
                     "clientId": job.key.client_id,
@@ -4696,7 +4727,7 @@ def create_app(
                     "principalId": job.principal_id,
                     "principalKind": job.principal_kind,
                 },
-                artifacts_complete=job.result is not None and not job.result.artifacts,
+                artifacts_complete=job.result is not None,
             )
 
         try:

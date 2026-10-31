@@ -299,12 +299,16 @@ This records source authority, not output payloads or a guarantee that every
 source remains claimable. Independent frozen/intermediate holders still need
 their own exact source token and acknowledged owner.
 
-Terminal jobs without artifacts advertise `artifacts: []`; artifact-bearing
-jobs currently report `artifacts: null` and `complete: false`, not a complete
-empty set. Failed/cancelled jobs and unaudited output codecs also remain
-incomplete. Terminal artifact/preview associations, live previews and actual
-frontend restoration are not certified by this publication; collection remains
-disabled.
+Terminal `artifacts` contains the original immutable artifact offers, also
+exposed as `artifactOffers` in job status and terminal events. Each binds its
+terminal index and exact saved-file descriptor, including an optional published
+preview, rather than inventing an output ID. Its roots include both saved and
+preview identities; equal content at different saved locations retains distinct
+offers. Publication follows host save/catalog validation and precedes terminal
+exposure. Artifact-free jobs advertise `artifacts: []`; unknown sets use null,
+not a complete empty set. Failed/cancelled jobs and unaudited output codecs
+remain incomplete. Live previews and actual frontend restoration are not
+certified by this publication; collection remains disabled.
 
 ### Backend synchronization
 

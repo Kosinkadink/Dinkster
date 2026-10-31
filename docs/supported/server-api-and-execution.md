@@ -57,8 +57,10 @@
 - Scoped terminal publication discovery retains original output tokens,
   execution identity and provenance independently of process restart,
   queue/cache retirement and ordinary history deletion. It never substitutes
-  a newer publication or reconstructs tokens for legacy rows. Artifact-bearing,
-  failed, cancelled and unknown-codec sets remain incomplete. This is source
+  a newer publication or reconstructs tokens for legacy rows. Terminal saved
+  artifacts carry original offers bound to the exact saved-file descriptor,
+  terminal index and optional published preview, retaining both identities.
+  Failed, cancelled and unknown-codec sets remain incomplete. This is source
   discovery, not stored output payloads or completed frontend restoration;
   cleanup remains disabled.
 - Durable terminal history retains external asset identities from target

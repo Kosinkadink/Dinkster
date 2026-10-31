@@ -98,6 +98,7 @@ sa.Table(
     sa.Column("digests", sa.Text, nullable=False),
     sa.Column("complete", sa.Integer, nullable=False),
     sa.Column("claimed", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("artifact", sa.Text, nullable=True),
 )
 sa.Index(
     "asset_result_offers_source",

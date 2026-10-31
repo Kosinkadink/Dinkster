@@ -138,6 +138,7 @@ class Job:
     error: dict[str, Any] | None = None  # heterogeneous JSON error payload
     node_receipts: dict[str, dict[str, str]] = field(default_factory=lambda: {})
     result_offers: dict[str, dict[str, dict[str, object]]] = field(default_factory=lambda: {})
+    artifact_offers: list[dict[str, object]] = field(default_factory=lambda: [])
     task: asyncio.Task[None] | None = None
 
 

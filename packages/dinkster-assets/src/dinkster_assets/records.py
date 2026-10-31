@@ -245,6 +245,7 @@ class ResultAssetOffer:
     publication: int
     digests: tuple[str, ...]
     complete: bool
+    artifact_json: str | None = None
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -253,7 +254,11 @@ class ResultAssetOffer:
             "jobRef": self.job_ref,
             "attemptId": self.attempt,
             "nodeId": self.node_id,
-            "outputId": self.output_id,
+            **(
+                {"outputId": self.output_id}
+                if self.artifact_json is None
+                else {"artifact": json.loads(self.artifact_json)}
+            ),
             "publication": self.publication,
             "digests": list(self.digests),
             "complete": self.complete,
@@ -313,9 +318,46 @@ def _result_offer_token(token: object) -> str:
     return token
 
 
+def _artifact_offer_json(
+    artifact: Mapping[str, object], node_id: str, roots: tuple[str, ...]
+) -> str:
+    fields = {"nodeId", "digest", "name", "size", "mediaType", "virtualPath", "index"}
+    if set(artifact) not in (fields, fields | {"preview"}):
+        raise AssetError("artifact offer descriptor fields are invalid")
+    index = artifact["index"]
+    if artifact["nodeId"] != node_id or type(index) is not int or index < 0:
+        raise AssetError("artifact offer source identity is invalid")
+    descriptors = [artifact]
+    if "preview" in artifact:
+        raw = artifact["preview"]
+        if not isinstance(raw, Mapping):
+            raise AssetError("artifact offer preview descriptor is invalid")
+        preview = cast(Mapping[str, object], raw)
+        if set(preview) != fields - {"nodeId", "index"}:
+            raise AssetError("artifact offer preview descriptor is invalid")
+        descriptors.append(preview)
+    digests: list[str] = []
+    for descriptor in descriptors:
+        if any(
+            type(descriptor[name]) is not str or not descriptor[name]
+            for name in ("name", "mediaType", "virtualPath")
+        ) or (type(descriptor["size"]) is not int or descriptor["size"] < 0):
+            raise AssetError("artifact offer file descriptor is invalid")
+        ref = AssetRef.from_wire(descriptor)
+        if (
+            descriptor is not artifact
+            and ref.virtual_path != f"previews/{ref.digest[7:]}/{ref.name}"
+        ):
+            raise AssetError("artifact offer preview identity is invalid")
+        digests.append(ref.digest)
+    if _canonical_digests(digests) != roots:
+        raise AssetError("artifact offer identities do not match its descriptor")
+    return json.dumps(dict(artifact), sort_keys=True, separators=(",", ":"))
+
+
 def _result_offer_from_row(row: sqlite3.Row) -> ResultAssetOffer:
     token = _result_offer_token(row["token"])
-    for name in ("job_ref", "node_id", "output_id"):
+    for name in ("job_ref", "node_id"):
         if not isinstance(row[name], str) or not row[name]:
             raise AssetError("result offer source identity is invalid")
     for name in ("attempt", "publication"):
@@ -326,6 +368,16 @@ def _result_offer_from_row(row: sqlite3.Row) -> ResultAssetOffer:
             raise AssetError("result offer ownership state is invalid")
     try:
         digests = _canonical_digests(json.loads(row["digests"]))
+        artifact_json = row["artifact"]
+        if artifact_json is not None:
+            artifact = json.loads(artifact_json)
+            if not isinstance(artifact, dict) or row["output_id"] != "":
+                raise AssetError("artifact offer source identity is invalid")
+            artifact_json = _artifact_offer_json(
+                cast(dict[str, object], artifact), row["node_id"], digests
+            )
+        elif not isinstance(row["output_id"], str) or not row["output_id"]:
+            raise AssetError("result offer output identity is invalid")
     except (TypeError, ValueError) as exc:
         raise AssetError("result offer identities are unreadable") from exc
     return ResultAssetOffer(
@@ -338,6 +390,7 @@ def _result_offer_from_row(row: sqlite3.Row) -> ResultAssetOffer:
         row["publication"],
         digests,
         bool(row["complete"]),
+        artifact_json,
     )
 
 
@@ -478,16 +531,20 @@ class LibraryStore:
         digests: list[str],
         *,
         complete: bool,
+        artifact: Mapping[str, object] | None = None,
     ) -> ResultAssetOffer:
         """Persist the source's roots before exposing its token to a consumer."""
         scope = _clean_scope(scope)
-        if any(not name for name in (job_ref, node_id, output_id)):
+        if not job_ref or not node_id or (not output_id if artifact is None else output_id != ""):
             raise AssetError("result offer source identity is invalid")
         if any(type(version) is not int or version < 1 for version in (attempt, publication)):
             raise AssetError("result offer source version is invalid")
         if type(complete) is not bool:
             raise AssetError("result offer completeness must be a boolean")
         roots = _canonical_digests(digests)
+        artifact_json = (
+            _artifact_offer_json(artifact, node_id, roots) if artifact is not None else None
+        )
         offer = ResultAssetOffer(
             uuid.uuid4().hex,
             scope,
@@ -498,13 +555,14 @@ class LibraryStore:
             publication,
             roots,
             complete and len(roots) <= 4096,
+            artifact_json,
         )
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO asset_result_offers "
                 "(token, scope, job_ref, attempt, node_id, output_id, "
-                "publication, digests, complete) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "publication, digests, complete, artifact) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     offer.token,
                     scope,
@@ -515,6 +573,7 @@ class LibraryStore:
                     publication,
                     json.dumps(roots),
                     int(offer.complete),
+                    artifact_json,
                 ),
             )
         return offer
@@ -550,6 +609,7 @@ class LibraryStore:
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             outputs: dict[str, dict[str, dict[str, object]]] = {}
+            artifacts: list[dict[str, object]] = []
             complete = state == "completed" and artifacts_complete
             for token in tokens:
                 row = self._conn.execute(
@@ -561,10 +621,17 @@ class LibraryStore:
                 offer = _result_offer_from_row(row)
                 if offer.job_ref != job_ref or offer.attempt != attempt:
                     raise AssetError("terminal result offer belongs to a different execution")
-                node = outputs.setdefault(offer.node_id, {})
-                if offer.output_id in node:
-                    raise AssetError("terminal result publication is ambiguous")
-                node[offer.output_id] = offer.to_wire()
+                if offer.artifact_json is not None:
+                    if not artifacts_complete or json.loads(offer.artifact_json)["index"] != len(
+                        artifacts
+                    ):
+                        raise AssetError("terminal artifact publication is ambiguous")
+                    artifacts.append(offer.to_wire())
+                else:
+                    node = outputs.setdefault(offer.node_id, {})
+                    if offer.output_id in node:
+                        raise AssetError("terminal result publication is ambiguous")
+                    node[offer.output_id] = offer.to_wire()
                 complete = complete and offer.complete
             result: dict[str, object] = {
                 "scope": scope,
@@ -573,7 +640,7 @@ class LibraryStore:
                 "state": state,
                 "identity": dict(identity),
                 "resultOffers": outputs,
-                "artifacts": [] if artifacts_complete else None,
+                "artifacts": artifacts if artifacts_complete else None,
                 "complete": complete,
             }
             manifest = json.dumps(result, sort_keys=True, separators=(",", ":"))
