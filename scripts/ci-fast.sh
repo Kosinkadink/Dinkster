@@ -32,6 +32,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_values.py \
   tests/test_graph.py \
   tests/test_graph_wire.py \
+  tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
   tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \

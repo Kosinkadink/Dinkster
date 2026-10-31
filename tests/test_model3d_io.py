@@ -635,7 +635,8 @@ class ViewportCaptureProducer(Node):
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        vault = AssetVault(Path(os.environ["DINKSTER_PACK_SCRATCH"]) / "produced-assets")
+        vault = produced_output_scratch()
+        assert vault is not None
         digest = digest_bytes(VIEWPORT_CAPTURE)
         with vault.writer(digest) as writer:
             writer.write(VIEWPORT_CAPTURE)
