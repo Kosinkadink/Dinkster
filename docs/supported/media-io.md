@@ -3,6 +3,9 @@
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
+  A JSON manifest rendition preserves the source and named resource identities
+  when reading completed job outputs; local bindings remain host-granted rather
+  than becoming content digests.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
