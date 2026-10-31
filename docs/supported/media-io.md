@@ -1,5 +1,8 @@
 ## Media I/O
 
+- Node packs can publish produced bytes through the public
+  `dinkster_api.v1.produced_output_scratch` writer selector. It uses the existing
+  worker scratch and active job authority without granting mounted-file access.
 - Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
   Image, mask, normal and recording captures carry existing granted asset
   identities, rebound to the receiving host, rather than filesystem paths.

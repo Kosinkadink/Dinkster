@@ -419,6 +419,7 @@ GOLDEN_V1_SURFACE = (
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "produced_output_scratch",
     "asset_selection_names",
     "asset_selection_options",
     "resolve_asset_selection",
