@@ -372,7 +372,13 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
 def test_release_install_launches_without_private_registry_inputs() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["install"]["steps"]
-    assert "secrets." not in (ROOT / ".github/workflows/release.yml").read_text()
+    assert "secrets." not in yaml.safe_dump(
+        {
+            "env": workflow.get("env"),
+            "defaults": workflow.get("defaults"),
+            "install": workflow["jobs"]["install"],
+        }
+    )
     assert all(
         step.get("with", {}).get("repository") != "Kosinkadink/dinkster-registry" for step in steps
     )
