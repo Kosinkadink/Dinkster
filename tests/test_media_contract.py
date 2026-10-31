@@ -416,6 +416,52 @@ def test_forged_layout_is_rejected_without_decoding() -> None:
         validate_image_encoded(data, {"channels": {"layout": "rgba", "alpha": "straight"}})
 
 
+@pytest.mark.parametrize("type_id", ["IMAGE", "MASK"])
+@pytest.mark.parametrize("registration", ["image", "media_io", "inference", "native"])
+def test_inline_media_has_no_external_asset_dependencies(type_id, registration) -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_inference_wire.media_wire import register_media_types as register_wire
+    from dinkster_native.image import register_image_type
+    from dinkster_nodes_image import register_image_types
+    from dinkster_nodes_media_io import register_media_types
+    from dinkster_values import default_encode
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    if registration == "native":
+        register_image_type(registry, type_id)
+    else:
+        {
+            "image": register_image_types,
+            "media_io": register_media_types,
+            "inference": register_wire,
+        }[registration](registry)
+    array = np.arange(6, dtype=np.float32).reshape((1, 2, 3) if type_id == "MASK" else (1, 1, 2, 3))
+    wrapped = registry.wrap(type_id, array)
+    assert value_asset_references({"media": wrapped}, complete_registry=registry) == {}
+    codec = ValueCodec(registry, shm_threshold=1 << 20)
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    assert segments == []
+    restored, _ = codec.decode(wire, blobs, [])
+    assert value_asset_references({"media": restored}, complete_registry=registry) == {}
+    np.testing.assert_array_equal(restored.resolve(), array)
+    validator = registry.spec(type_id).validate_encoded_buffer
+    assert validator is not None
+    invented_ref = AssetRef(digest_bytes(b"outside"), "outside.bin", 7).to_wire()
+    with memoryview(encode_image_array(array)) as data:
+        validator(data, {**wrapped.meta.entries, "asset_refs": []})
+        for references in ([invented_ref], None):
+            with pytest.raises(ValueError, match="asset_refs"):
+                validator(data, {**wrapped.meta.entries, "asset_refs": references})
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [invented_ref]}
+    )
+    with pytest.raises(EncodedPayloadValidationError, match="asset_refs"):
+        codec.decode(wire, blobs, [])
+
+
 @pytest.mark.parametrize("channels", [2, 4])
 def test_png_rendition_unpremultiplies_without_mutating_input(channels) -> None:
     from dinkster_values import render_image_png

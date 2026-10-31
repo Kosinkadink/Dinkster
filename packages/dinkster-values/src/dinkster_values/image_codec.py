@@ -413,6 +413,8 @@ def image_encoded_meta(data: bytes | memoryview, *, mask: bool = False) -> dict[
 
 def validate_image_encoded(data: bytes | memoryview, meta: Mapping[str, object]) -> None:
     expected = image_encoded_meta(data, mask="polarity" in meta or "semantic" in meta)
+    if meta.get("asset_refs", []) != []:
+        raise ValueError("inline media asset_refs must be empty")
     for key, value in expected.items():
         if key in meta and json.dumps(meta[key], sort_keys=True) != json.dumps(
             value, sort_keys=True

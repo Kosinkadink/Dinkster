@@ -129,6 +129,7 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
                 input_convert=image_input,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
+                asset_references_complete=True,
             )
         registered.append(registry.spec(type_id))
         if not any(item.kind == "png" for item in registry.renditions_of(type_id)):
