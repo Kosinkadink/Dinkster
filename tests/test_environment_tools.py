@@ -10,14 +10,56 @@ import sysconfig
 import tarfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_environment_generations import _standalone_tree, _wheel
 
+from scripts import build_native_tools
 from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("host,system", [("linux", "linux"), ("darwin", "macos")])
+def test_native_tools_selects_the_producer_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, system: str
+) -> None:
+    (tmp_path / "variants.toml").write_text(
+        '[base]\nrelease = "20261026"\n'
+        '[interpreters.linux]\nfilename = "linux.tar.gz"\nsize = 17\n'
+        f'sha256 = "{"a" * 64}"\nexecutable = "python/bin/python3"\n'
+        '[interpreters.macos]\nfilename = "apple-arm64.tar.gz"\nsize = 29\n'
+        f'sha256 = "{"b" * 64}"\nexecutable = "python/bin/python3"\n',
+        encoding="ascii",
+    )
+    monkeypatch.setattr(build_native_tools, "sys", SimpleNamespace(platform=host))
+
+    def download(source: str, destination: Path, size: int, digest: str) -> None:
+        # Stop at the verified-download boundary; no foreign executable can run here.
+        expected = {
+            "linux": ("linux.tar.gz", 17, "a" * 64),
+            "macos": ("apple-arm64.tar.gz", 29, "b" * 64),
+        }[system]
+        assert (source.rsplit("/", 1)[-1], size, digest) == expected
+        assert "/20261026/" in source
+        raise RuntimeError("selected approved interpreter")
+
+    monkeypatch.setattr(build_native_tools, "acquire", download)
+    with pytest.raises(RuntimeError, match="selected approved interpreter"):
+        build_native_tools.build(tmp_path, tmp_path / "supervisor.whl", tmp_path / "tools")
+    assert not (tmp_path / "tools").exists()
+
+
+def test_native_tools_refuses_unknown_hosts_before_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "variants.toml").write_text("", encoding="ascii")
+    monkeypatch.setattr(build_native_tools, "sys", SimpleNamespace(platform="freebsd"))
+    with pytest.raises(ValueError, match="unsupported native tools platform: freebsd"):
+        build_native_tools.build(tmp_path, tmp_path / "supervisor.whl", tmp_path / "tools")
+    assert not (tmp_path / "tools").exists()
 
 
 def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) -> None:
