@@ -209,6 +209,10 @@
   inspection, label/score/area filtering with result limits, stable
   multi-key sorting, and conversion to per-detection plus combined union
   masks with box rasterization and signed dilation
+- Region and detection transport rejects malformed numeric records, framed
+  bytes and masks before exposing received values. Negative region origins,
+  zero dimensions, optional full-frame soft masks and declared auxiliary
+  asset dependencies remain supported across image and vision providers.
 - COCO object detection (`Detect Objects`) through the standard, digest-pinned
   float32 CPU vision components
   (DETR ResNet-50); the prompt filters the fixed COCO class set by

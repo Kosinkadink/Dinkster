@@ -30,6 +30,8 @@ from dinkster_api.v1 import (
     encode_detection,
     encode_region,
     region_meta,
+    validate_detection_encoded,
+    validate_region_encoded,
 )
 
 from .compositor_types import (
@@ -377,6 +379,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=decode_region,
             coerce=coerce_region,
             meta=region_meta,
+            validate_encoded=validate_region_encoded,
+            asset_references_complete=True,
         )
     if DETECTION_TYPE not in registry:
         registry.register(
@@ -385,6 +389,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=decode_detection,
             coerce=coerce_detection,
             meta=detection_meta,
+            validate_encoded=validate_detection_encoded,
+            asset_references_complete=True,
         )
     if POSE_TYPE not in registry:
         registry.register(

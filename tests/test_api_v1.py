@@ -354,6 +354,8 @@ GOLDEN_V1_SURFACE = (
     "encode_detection",
     "encode_region",
     "region_meta",
+    "validate_detection_encoded",
+    "validate_region_encoded",
     # -- model3d codec (dinkster-values.model3d_codec): raw GLB bytes across
     # boundaries, the original container as the browser rendition, and the
     # asset<MODEL3D> file decode provider.

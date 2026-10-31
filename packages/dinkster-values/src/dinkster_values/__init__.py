@@ -140,6 +140,8 @@ from .detection_codec import (
     encode_detection,
     encode_region,
     region_meta,
+    validate_detection_encoded,
+    validate_region_encoded,
 )
 from .image_codec import (
     IMAGE_BATCH_MERGER_ID,
@@ -541,6 +543,8 @@ __all__ = [
     "decode_detection",
     "decode_region",
     "detection_meta",
+    "validate_detection_encoded",
+    "validate_region_encoded",
     "decode_image_array",
     "decode_image_components",
     "open_image_components",
