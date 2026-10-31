@@ -1,5 +1,8 @@
 ## Installed pack startup
 
+- Catalog-driven packs explicitly declare their remote gateway node source.
+  Offline doctor reports that source without treating zero static schemas as
+  a missing-node warning; broken imports and invalid declarations still fail.
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
 - Windows isolated packs and catalog probes support native extensions beneath
