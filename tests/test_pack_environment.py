@@ -100,7 +100,10 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
     return python
 
 
-def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("host_path", ["PYTHONPATH", "PYTHONUSERBASE"])
+def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_path: str
+) -> None:
     torch = _wheel(tmp_path, "torch", "2.14.1", "torch", "value = 41\n")
     cv = _wheel(tmp_path, "opencv-contrib-python-headless", "5.0", "cv2", "value = 17\n")
     extra = _wheel(
@@ -133,7 +136,26 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(tmp_pa
     for number in (1, 2):
         generation = tmp_path / "generations" / str(number)
         parent = _generation(generation, [torch, cv])
-        facts = GenerationPackages.inspect(parent)
+        with monkeypatch.context() as environment:
+            environment.setenv(host_path, str(tmp_path / "host"))
+            site = (
+                Path(
+                    subprocess.check_output(
+                        [str(parent), "-c", "import site; print(site.getusersitepackages())"],
+                        text=True,
+                    ).strip()
+                )
+                if host_path == "PYTHONUSERBASE"
+                else tmp_path / "host"
+            )
+            metadata = site / "host_only-9.0.dist-info"
+            metadata.mkdir(parents=True, exist_ok=True)
+            (metadata / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: host-only\nVersion: 9.0\n"
+            )
+            facts = GenerationPackages.inspect(parent)
+        assert facts.versions["torch"] == "2.14.1"
+        assert "host-only" not in facts.versions
         plan = plan_pack(lock, facts, variant="linux-cpu", own_environment_size=987654)
         assert not plan.conflicts
         assert plan.wheels == (extra,)
