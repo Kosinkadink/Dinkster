@@ -1690,6 +1690,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             numpy["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
         elif change == "wheel-hash":
             numpy["sha256"] = "0" * 64
+        elif change in {"historical-index", "historical-lock"}:
+            toolkit = next(row for row in manifest["wheels"] if row["name"] == "cuda-toolkit")
+            toolkit["lockedVersion"] = "12.9.0" if change == "historical-index" else "13.2.2"
+            toolkit["verification"] = "index" if change == "historical-index" else "lock"
         elif change == "optional-interface-version":
             sympy = next(row for row in manifest["wheels"] if row["name"] == "sympy")
             sympy.update(
@@ -1804,6 +1808,9 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     assert paths[0].read_bytes() == payload
     streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
     assert streamed[0].read_bytes() == payload
+    for change in ("historical-index", "historical-lock"):
+        historical = acquire(tmp_path, [prepare(change)], tmp_path / change)
+        assert historical[0].read_bytes() == payload
     for change in (
         "version",
         "wheel-hash",

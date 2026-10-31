@@ -98,9 +98,15 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
             raise ValueError(f"invalid or duplicate base wheel: {name}")
         members[name] = version
         locked = packages.get(name, [])
-        matching = [p for p in locked if p["version"] == wheel["lockedVersion"]]
-        if (locked and not matching) or (not locked and wheel["lockedVersion"] is not None):
-            raise ValueError(f"base wheel falsely claims engine lock provenance: {name}")
+        declared = wheel["lockedVersion"]
+        if declared is not None and not isinstance(declared, str):
+            raise ValueError(f"invalid base wheel lock provenance: {name}")
+        if declared is not None:
+            Version(declared)
+        if wheel["verification"] not in {"lock", "index"} or (
+            wheel["verification"] == "lock" and declared != str(version)
+        ):
+            raise ValueError(f"base wheel falsely claims artifact verification: {name}")
         if name in interfaces and {Version(value).public for value in interfaces[name]} != {
             version.public
         }:
@@ -108,7 +114,7 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
         identity = (wheel["size"], "sha256:" + wheel["sha256"])
         artifacts = [
             row
-            for package in matching
+            for package in locked
             for row in package.get("wheels", [])
             if unquote(urlsplit(row["url"]).path).rsplit("/", 1)[-1] == wheel["filename"]
         ]
@@ -118,8 +124,6 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
             if not version.local or wheel["index"] != index or wheel["verification"] != "index":
                 raise ValueError(f"base torch source disagrees with variant index: {name}")
         else:
-            if wheel["verification"] != ("lock" if exact else "index"):
-                raise ValueError(f"base wheel falsely claims artifact verification: {name}")
             if wheel["index"] != "https://pypi.org/simple":
                 raise ValueError(f"base wheel does not use the producer package index: {name}")
             if name in interfaces and artifacts and not exact:
