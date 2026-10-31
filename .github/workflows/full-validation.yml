@@ -115,7 +115,7 @@ jobs:
             python-version: "3.14.10"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
-            run_checks: true
+            run_checks: false
             timeout-minutes: 45
           - os: windows
             runner: windows
@@ -129,7 +129,7 @@ jobs:
             python-version: "3.14.10"
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
-            run_checks: false
+            run_checks: true
             timeout-minutes: 30
           - os: windows
             runner: windows
