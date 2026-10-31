@@ -294,6 +294,10 @@ def _decode_pose(data: bytes) -> object:
     return _coerce_pose(record)
 
 
+def _validate_pose_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    _decode_pose(data)
+
+
 def _pose_meta(obj: object) -> Mapping[str, object]:
     pose = _coerce_pose(obj)
     return {
@@ -399,6 +403,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=_decode_pose,
             coerce=_coerce_pose,
             meta=_pose_meta,
+            validate_encoded=_validate_pose_encoded,
+            asset_references_complete=True,
         )
     if LAYERS_TYPE not in registry:
         registry.register(

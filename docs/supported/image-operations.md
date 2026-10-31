@@ -104,7 +104,9 @@
   stage B prior conditioning, and super-resolution control inputs
 - Typed `dinkster.region` rectangle values for shared crop and placement geometry
 - Typed per-frame `dinkster.pose` keypoint and skeleton values, including
-  OpenPose/controlnet_aux JSON import and export and human/AP10K rendering
+  OpenPose/controlnet_aux JSON import and export and human/AP10K rendering;
+  received pose values reject malformed data before exposure and retain
+  declared source dependencies
 - Image or mask resize by dimensions, one side, longest or shortest side, scale
   factor, total pixels, or an image-or-mask reference; stretch, fit, fill, and
   pad modes with apply conditions and anchors; constant, edge-average,
