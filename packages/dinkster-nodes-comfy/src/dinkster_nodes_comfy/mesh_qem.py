@@ -17,8 +17,6 @@ from dinkster_api.v1 import report_progress
 from .mesh_holes import connected_labels as _connected_labels
 from .mesh_weld import weld_vertices
 
-torch = importlib.import_module("torch")
-
 
 @dataclass
 class QEMConfig:
@@ -80,6 +78,7 @@ def _sorted_edge_halfedges(
     num_verts: int,
 ) -> tuple[Any, Any, Any]:
     """Return half-edge keys min(a,b)*(V+1)+max(a,b), face ids and slot ids in key order."""
+    torch = importlib.import_module("torch")
     device = faces.device
     F = faces.shape[0]
     e_all = torch.cat([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], dim=0)
@@ -97,6 +96,7 @@ def _manifold_edge_pairs(
     sorted_faces: Any,
 ) -> tuple[Any, Any, Any]:
     """Edges shared by exactly 2 faces; returns (pair_keys, fa, fb)."""
+    torch = importlib.import_module("torch")
     if sorted_keys.shape[0] < 2:
         empty = sorted_keys.new_empty(0)
         return empty, empty, empty
@@ -120,6 +120,7 @@ _EDGE_CHUNK = 1 << 21  # edges per pass of the collapse errors
 
 def _line_quadric_planes(pa: Any, pb: Any) -> tuple[Any, Any, Any]:
     """Return two planes per edge whose squared distances sum to distance from its line."""
+    torch = importlib.import_module("torch")
     e = pb - pa
     elen = torch.norm(e, dim=-1, keepdim=True).clamp_min(1e-12)
     e_unit = e / elen
@@ -146,6 +147,7 @@ def _add_line_quadrics(
     skip_he_mask: Any = None,
 ) -> Any:
     """Accumulate area-weighted half-edge line quadrics, excluding masked edges."""
+    torch = importlib.import_module("torch")
     a_all = torch.cat([faces[:, 0], faces[:, 1], faces[:, 2]], dim=0).long()
     b_all = torch.cat([faces[:, 1], faces[:, 2], faces[:, 0]], dim=0).long()
     pa = verts[a_all]
@@ -172,6 +174,7 @@ def _build_quadrics(
     b_edges: Any,
 ) -> Any:
     """Per-vertex face-plane quadrics with configured line, boundary and feature terms."""
+    torch = importlib.import_module("torch")
     V = verts.shape[0]
     dtype = verts.dtype
     device = verts.device
@@ -284,6 +287,7 @@ def _edge_errors(
     vert_is_boundary: Any = None,
 ) -> tuple[Any, Any, Any]:
     """Per-edge positions, costs and validity, snapping midpoints to boundary endpoints."""
+    torch = importlib.import_module("torch")
     n_edges = edges.shape[0]
     dtype = verts.dtype
     device = verts.device
@@ -353,6 +357,7 @@ def _greedy_matching(
     max_select: int,
 ) -> Any:
     """Select independent edges whose (cost, index) key wins at both endpoints."""
+    torch = importlib.import_module("torch")
     device = edges.device
     n_edges = edges.shape[0]
     if n_edges == 0:
@@ -388,6 +393,7 @@ def _build_vert_to_faces_pad(
     max_deg: int,
 ) -> Any:
     """(V, max_deg) incident-face table, -1 padded; faces beyond max_deg are dropped."""
+    torch = importlib.import_module("torch")
     device = faces.device
     F = faces.shape[0]
     if F == 0:
@@ -418,6 +424,7 @@ def _quality_checks_fused(
     chunk_size: int = 100_000,
 ) -> tuple[Any, Any, Any]:
     """Return normal flips, skinny penalties and optional link validity for each collapse."""
+    torch = importlib.import_module("torch")
     E = edges.shape[0]
     device = verts.device
     flip_out = torch.zeros(E, dtype=torch.int32, device=device)
@@ -544,6 +551,7 @@ def _drop_degenerate_faces(
     min_area: float = 1e-14,
 ) -> Any:
     """Drop faces with repeated indices or area below min_area."""
+    torch = importlib.import_module("torch")
     if faces.numel() == 0:
         return faces
     idx_bad = (
@@ -566,6 +574,7 @@ def _collapse_slivers(
     max_aspect_ratio: float = 0.0,
 ) -> Any:
     """Resolve sliver triangles by collapsing each sliver's shortest edge (no holes)."""
+    torch = importlib.import_module("torch")
     if faces.numel() == 0 or (min_angle_deg <= 0 and max_aspect_ratio <= 0):
         return faces
 
@@ -612,6 +621,7 @@ def _collapse_slivers(
 
 def _drop_duplicate_faces(faces: Any) -> Any:
     """Remove duplicate vertex sets, preserving the first occurrence's winding."""
+    torch = importlib.import_module("torch")
     if faces.shape[0] <= 1:
         return faces
     groups, inv = torch.unique(torch.sort(faces, dim=1)[0], dim=0, return_inverse=True)
@@ -627,6 +637,7 @@ def _folded_faces(faces: Any) -> Any:
     """(F,) bool: faces sharing their vertex set with another face.
     Marks every mixed-winding face and all but the first same-winding repeat.
     """
+    torch = importlib.import_module("torch")
     key_sorted, order = torch.sort(faces, dim=1)
     groups, inv = torch.unique(key_sorted, dim=0, return_inverse=True)
     n_groups = groups.shape[0]
@@ -650,6 +661,7 @@ def _drop_unused_verts(
     colors: Any = None,
 ) -> tuple[Any, Any, Any]:
     """Remove vertices not referenced by any face; remap faces and filter colors."""
+    torch = importlib.import_module("torch")
     if verts.shape[0] == 0 or faces.numel() == 0:
         return verts, faces, colors
     used = torch.zeros(verts.shape[0], dtype=torch.bool, device=verts.device)
@@ -669,6 +681,7 @@ def _split_touching_sheets(v: Any, f: Any, max_passes: int = 4) -> tuple[Any, An
     Conflicting pairings flip the least certain member up to max_passes times.
     A closed, consistently oriented mesh stays closed.
     """
+    torch = importlib.import_module("torch")
     dev = f.device
     m = f.shape[0]
     n = int(f.max()) + 1
@@ -792,6 +805,7 @@ def _repair_nonmanifold_edges(
     faces: Any,
 ) -> tuple[Any, Any, Any]:
     """Explode corners, then re-merge only across manifold edges; retain source indices."""
+    torch = importlib.import_module("torch")
     if faces.numel() == 0:
         return verts, faces, torch.arange(verts.shape[0], device=verts.device)
     nf = faces.shape[0]
@@ -820,6 +834,7 @@ def _repair_nonmanifold_edges(
 
 def _kitchen_op(name: str, tensor: Any) -> Any:
     """Return the kitchen op only when its CUDA backend can execute it."""
+    torch = importlib.import_module("torch")
     ck = getattr(importlib.import_module("dinkster_inference.quant_ops"), "ck", None)
     if ck is None or not hasattr(ck, name) or not tensor.is_cuda:
         return None
@@ -842,6 +857,7 @@ def _drop_small_components(
     min_faces: int,
 ) -> Any:
     """Faces of the connected components with at least min_faces faces."""
+    torch = importlib.import_module("torch")
     if faces.numel() == 0 or min_faces <= 1:
         return faces
     labels = _connected_labels(torch.cat([faces[:, :2], faces[:, 1:]]), verts.shape[0])
@@ -865,6 +881,7 @@ def clean_mesh(
     max_aspect_ratio: float = 0.0,
 ) -> tuple[Any, Any, Any]:
     """Weld and remove degenerate faces, slivers, duplicates, tiny components and unused verts."""
+    torch = importlib.import_module("torch")
     f = faces.long() if faces.numel() > 0 else faces
     if weld_epsilon_rel > 0:
         eps = (
@@ -887,6 +904,7 @@ def qem_simplify(
     config: QEMConfig | None = None,
 ) -> tuple[Any, Any, Any]:
     """QEM-simplify a mesh to about target_faces faces; returns (v, f, colors)."""
+    torch = importlib.import_module("torch")
     cfg = config or QEMConfig()
 
     device = vertices.device
