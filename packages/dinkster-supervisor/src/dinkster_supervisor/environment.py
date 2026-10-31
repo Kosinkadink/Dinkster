@@ -477,6 +477,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     artifacts=source_artifacts,
                     source_kind="local" if local is not None else "published",
                     prepare_packs=prepare_packs,
+                    acquire_pack_wheels=local is None,
                 )
                 if workflow is not None and previous_root is not None:
                     revalidate()
