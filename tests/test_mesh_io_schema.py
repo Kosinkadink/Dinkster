@@ -1,0 +1,35 @@
+"""The mesh file declaration and registration do not import tensor runtimes."""
+
+import subprocess
+import sys
+
+
+def test_get_3d_components_cold_schema() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.mesh_io import Get3DComponents
+from dinkster_workers import load_manifest
+assert COMFY_NODES.count(Get3DComponents) == 1
+schema = Get3DComponents.schema()
+assert [slot.id for slot in schema.inputs] == ['model_3d']
+assert set(schema.inputs[0].type.types) == {
+    'FILE_3D', 'FILE_3D_GLB', 'FILE_3D_GLTF', 'FILE_3D_OBJ', 'FILE_3D_STL'
+}
+assert [(slot.id, slot.type.types) for slot in schema.outputs] == [('mesh', ('MESH',))]
+manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')
+assert manifest.namespaces.count('Get3DComponents') == 1
+assert 'dinkster_nodes_comfy.mesh_gltf_read' not in sys.modules
+assert 'dinkster_nodes_comfy.mesh_file_read' not in sys.modules
+""",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

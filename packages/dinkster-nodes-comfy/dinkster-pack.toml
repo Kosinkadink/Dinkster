@@ -607,6 +607,7 @@ namespaces = [
     "RenderUVAtlas",
     "ApplyTextureToMesh",
     "FillHoles",
+    "Get3DComponents",
 ]
 
 [pack.sandbox]

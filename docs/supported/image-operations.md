@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
+  merging transformed scene geometry and retaining the first material's textures
+  and factors. External glTF data must be included in the FILE_3D resource map.
 - Native `FillHoles` fills small boundary components under perimeter and vertex
   limits, with optional pre-welding and open-chain filling.
 - Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
