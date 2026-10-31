@@ -57,8 +57,12 @@ def _nested_diagnostics(directory: Path) -> str:
     rows = []
     for path in sorted(directory.glob("nested-*.json")):
         record = json.loads(path.read_text())
-        pid_path = path.with_suffix(".pid")
-        pid = int(pid_path.read_text()) if pid_path.exists() else record["pid"]
+        pid = None
+        for suffix in (".pid", ".launcher"):
+            pid_path = path.with_suffix(suffix)
+            if pid_path.exists():
+                pid = int(pid_path.read_text())
+                break
         exit_path = path.with_suffix(".exit")
         code = int(exit_path.read_text()) if exit_path.exists() else None
         state, code = (
@@ -193,13 +197,13 @@ def _trace_nested_commands(directory: Path) -> None:
             if self.trace_path is not None:
                 # Register before spawning so timeout collection includes children still starting.
                 temporary = self.trace_path.with_suffix(".tmp")
-                temporary.write_text(json.dumps({"pid": None, "module": module}))
+                temporary.write_text(json.dumps({"module": module}))
                 temporary.replace(self.trace_path)
             super().__init__(args, *positional, **keywords)
             if self.trace_path is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
-                temporary.write_text(json.dumps({"pid": self.pid, "module": module}))
-                temporary.replace(self.trace_path)
+                temporary.write_text(str(self.pid))
+                temporary.replace(self.trace_path.with_suffix(".launcher"))
 
         def _record_exit(self, code):
             if self.trace_path is not None and code is not None:
