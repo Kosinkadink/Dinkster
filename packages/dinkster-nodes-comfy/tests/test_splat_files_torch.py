@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
+    FILE_3D_TYPE,
     SPLAT_TYPE,
     AssetRef,
     Node,
@@ -27,7 +28,7 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_assets import AssetVault
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_nodes_comfy.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_values import register_core_types
 
@@ -478,3 +479,92 @@ def test_ply_import_harmonics_order_activation_and_point_defaults(
         )
     for field in (value.positions, value.scales, value.rotations, value.opacities, value.sh):
         assert field.dtype == torch.float32 and field.is_contiguous()
+
+
+def empty_ply_bytes(full_attributes: bool) -> bytes:
+    if full_attributes:
+        return (
+            ply_import_bytes(False)
+            .split(b"end_header\n", 1)[0]
+            .replace(b"element vertex 2", b"element vertex 0")
+            + b"end_header\n"
+        )
+    return (
+        b"ply\nformat binary_little_endian 1.0\nelement vertex 0\n"
+        b"property float x\nproperty float y\nproperty float z\nend_header\n"
+    )
+
+
+@pytest.mark.parametrize("in_process", [False, True])
+@pytest.mark.parametrize("full_attributes", [False, True])
+def test_empty_ply_import_hosts_and_restart_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, full_attributes: bool
+) -> None:
+    data = empty_ply_bytes(full_attributes)
+    vault = AssetVault(tmp_path / "vault")
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    environment = {
+        "CUDA_VISIBLE_DEVICES": "",
+        "DINKSTER_ACCELERATOR": "cpu",
+        "DINKSTER_ASSET_VAULT": str(vault.root),
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    source = AssetRef(digest, "empty.ply", len(data), resolver=vault)
+
+    async def scenario() -> None:
+        for replay in (False, True):
+            registry = TypeRegistry()
+            register_core_types(registry)
+            register_file3d_types(registry, vault)
+            composer = ServingComposer(
+                registry=registry,
+                worker_env=environment,
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+                pack_scratch_root=tmp_path / "scratch",
+            )
+            try:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=Path(__file__).resolve().parents[1] / "dinkster-pack.toml",
+                        in_process=in_process,
+                    )
+                )
+                graph = Graph(
+                    {
+                        "import": GraphNode(
+                            "File3DToSplat",
+                            {
+                                "model_3d": TypedLiteral(
+                                    FILE_3D_TYPE, {"format": "ply", "source": source.to_wire()}
+                                )
+                            },
+                        )
+                    }
+                )
+                result = await composer.composition.make_engine(lambda _event: None).run(
+                    graph, ["import"]
+                )
+                assert set(result.cached if replay else result.executed) == {"import"}
+                splat = materialize_splat(result.outputs["import"]["splat"].resolve())
+                assert splat.positions.shape == splat.scales.shape == (1, 0, 3)
+                assert splat.rotations.shape == (1, 0, 4)
+                assert splat.opacities.shape == (1, 0, 1)
+                assert splat.sh.shape == (1, 0, 3 if full_attributes else 1, 3)
+                assert splat.counts is None
+                for field in (
+                    splat.positions,
+                    splat.scales,
+                    splat.rotations,
+                    splat.opacities,
+                    splat.sh,
+                ):
+                    assert field.dtype == torch.float32 and field.is_contiguous()
+            finally:
+                await composer.close()
+
+    asyncio.run(scenario())
