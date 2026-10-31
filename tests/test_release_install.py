@@ -1357,7 +1357,9 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-@pytest.mark.parametrize("corruption", [None, "size", "hash"])
+@pytest.mark.parametrize(
+    "corruption", [None, "size", "hash", "upstream-size", "upstream-hash", "missing"]
+)
 def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, corruption: str | None
 ) -> None:
@@ -1374,8 +1376,11 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     upstream = "https://files.example.test/locked/example_dependency-2.0%2Bnative-py3-none-any.whl"
     (tmp_path / "uv.lock").write_text(
         f'[[package]]\nname="example-dependency"\nversion="2.0+native"\n'
-        f'[[package.wheels]]\nurl="{upstream}"\nsize={wheel.stat().st_size}\n'
-        f'hash="sha256:{digest}"\n'
+        f'[[package.wheels]]\nurl="{upstream}"\n'
+        f"size={wheel.stat().st_size + (1 if corruption == 'upstream-size' else 0)}\n"
+        f'hash="sha256:{"a" * 64 if corruption == "upstream-hash" else digest}"\n'
+        if corruption != "missing"
+        else "package=[]\n"
     )
     (release / "constraints.txt").write_text("example-dependency==2.0+native\n")
     engine = {
@@ -1433,7 +1438,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         return (path,)
 
     monkeypatch.setattr(builder, "build", build_pack)
-    if corruption:
+    if corruption in ("size", "hash") or (corruption and not legacy):
         with pytest.raises(ValueError, match="portable.*provenance"):
             builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
         assert not (tmp_path / "locks").exists()

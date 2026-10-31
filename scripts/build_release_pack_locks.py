@@ -6,9 +6,10 @@ import argparse
 import json
 import platform
 import tempfile
+import tomllib
 from dataclasses import replace
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from dinkster_supervisor.environment_archives import extract_base
 from dinkster_supervisor.environment_constraints import effective_constraints
@@ -68,17 +69,31 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
             effective_constraints((release / "constraints.txt").read_text(), base),
             encoding="ascii",
         )
-        wheel_urls = {row["filename"]: row["url"] for row in base["wheels"]}
-        wheel_urls.update(
-            {
-                row["name"]: (
+        wheel_urls = {
+            (row["filename"], row["size"], row["sha256"]): row["url"] for row in base["wheels"]
+        }
+        upstream = {
+            (
+                unquote(urlsplit(wheel["url"]).path.rsplit("/", 1)[-1]),
+                wheel["size"],
+                wheel["hash"].removeprefix("sha256:"),
+            ): wheel["url"]
+            for package in tomllib.loads((root / "uv.lock").read_text())["package"]
+            for wheel in package.get("wheels", [])
+            if urlsplit(wheel["url"]).scheme == "https"
+        }
+        for row in engine["artifacts"]:
+            if not row["name"].endswith(".whl"):
+                continue
+            key = (row["name"], row["size"], row["sha256"])
+            if "tag" in engine:
+                wheel_urls[key] = (
                     "https://github.com/Kosinkadink/Dinkster/releases/download/"
                     f"{quote(engine['tag'], safe='')}/{quote(row['name'], safe='')}"
                 )
-                for row in engine["artifacts"]
-                if row["name"].endswith(".whl")
-            }
-        )
+            elif key in upstream:
+                # Lock bytes contribute to the final engine id, so cannot name its tag.
+                wheel_urls[key] = upstream[key]
         built = build(
             root,
             work / "packs",
@@ -98,21 +113,23 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
         for path in built:
             if path in locks:
                 lock = PackLock.read(path)
-                # Resolver-local find-links paths cannot escape into a published lock.
+                packages = []
+                for package in lock.packages:
+                    wheels = []
+                    for wheel in package.wheels:
+                        if urlsplit(wheel.url).scheme == "file":
+                            key = (wheel.filename, wheel.size, wheel.sha256)
+                            if key not in wheel_urls:
+                                raise ValueError(
+                                    "local wheel has no verified portable URL provenance: "
+                                    f"{wheel.filename}"
+                                )
+                            wheel = replace(wheel, url=wheel_urls[key])
+                        wheels.append(wheel)
+                    packages.append(replace(package, wheels=tuple(wheels)))
                 replace(
                     lock,
-                    packages=tuple(
-                        replace(
-                            package,
-                            wheels=tuple(
-                                replace(wheel, url=wheel_urls[wheel.filename])
-                                if urlsplit(wheel.url).scheme == "file"
-                                else wheel
-                                for wheel in package.wheels
-                            ),
-                        )
-                        for package in lock.packages
-                    ),
+                    packages=tuple(packages),
                 ).write(staged / path.name)
             elif (
                 not (release / path.name).is_file()
