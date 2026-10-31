@@ -217,6 +217,45 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
+def test_release_lock_matrix_uses_each_selected_base_native_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import acquire_engine_bases
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    selection = next(
+        step["run"] for step in workflow["jobs"]["build"]["steps"] if step.get("id") == "bases"
+    )
+    paths = []
+    for variant, system in (
+        ("linux-cpu", "linux"),
+        ("mac-arm64", "macos"),
+        ("win-cpu", "windows"),
+        ("win-nvidia", "windows"),
+        ("win-nvidia-cu126", "windows"),
+    ):
+        path = tmp_path / f"{variant}.json"
+        path.write_text(json.dumps({"variant": variant, "platform": {"os": system}}))
+        paths.append(path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/base_bundles.json").write_text("{}")
+    output = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(acquire_engine_bases, "acquire", lambda *args: paths)
+    script = selection.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    exec(compile(script, "release base selection", "exec"), {})
+    assert json.loads(output.read_text().removeprefix("lock-matrix=")) == {
+        "include": [
+            {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+            {"variant": "mac-arm64", "runner": "macos-latest"},
+            {"variant": "win-cpu", "runner": "windows-latest"},
+            {"variant": "win-nvidia", "runner": "windows-latest"},
+            {"variant": "win-nvidia-cu126", "runner": "windows-latest"},
+        ]
+    }
+
+
 @pytest.mark.parametrize(
     ("job", "project", "environment"),
     [

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import platform
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -25,7 +25,7 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
     raw = json.loads(manifest.read_bytes())
     variant = raw["variant"]
     base = qualify(root, manifest, f"base-{variant}-{raw['id'][7:]}")
-    system = "windows" if os.name == "nt" else "linux"
+    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     if base["platform"]["os"] != system:
         raise ValueError("pack locks must be resolved on the selected base's native host")
     if output.exists():

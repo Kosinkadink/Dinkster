@@ -80,7 +80,8 @@ jobs:
           rows = []
           for path in paths:
               base = json.loads(path.read_text())
-              runner = {'linux': 'ubuntu-latest', 'windows': 'windows-latest'}[base['platform']['os']]
+              runner = {'linux': 'ubuntu-latest', 'windows': 'windows-latest',
+                        'macos': 'macos-latest'}[base['platform']['os']]
               rows.append({'variant': base['variant'], 'runner': runner})
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('lock-matrix=' + json.dumps({'include': rows}) + '\n')
