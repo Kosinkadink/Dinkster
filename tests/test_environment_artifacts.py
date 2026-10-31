@@ -453,9 +453,7 @@ def test_channel_publication_exposes_only_verified_payloads(
                 return
             super().do_GET()
 
-    server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), partial(MirrorHandler, directory=str(public))
-    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(MirrorHandler, directory=str(public)))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
