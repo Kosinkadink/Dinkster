@@ -11,6 +11,10 @@
   first-frame selection, source-size zero fallback and canvas-based conversion.
   `CropByBBoxes` broadcasts a single box or flat box list across image frames;
   per-frame lists retain last-frame repetition and per-frame union cropping.
+  Box and placement payloads have no external resource fields; declared
+  auxiliary asset references remain retained across worker boundaries.
+  Conflicting sizes for one identity refuse reference accounting. Cleanup
+  remains disabled.
 - Native `PadImageNode` pads image batches by explicit dimensions, a multiplier,
   or a size multiple, using solid-color feathering or repeated mirrored edges.
 - Native `ImageUpscaleWithModel` runs tiled single-image model upscaling with
