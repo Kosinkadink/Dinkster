@@ -311,6 +311,41 @@ def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
     assert diags == []
 
 
+@pytest.mark.parametrize(
+    ("extra", "expected_code"),
+    (
+        (TypedLiteral("INT", 7), None),
+        (TypedLiteral("STRING", "seven"), None),
+        (7, "literal-on-nonconcrete"),
+        (TypedLiteral("missing.type", 7), "typed-literal-unknown-type"),
+        (TypedLiteral("list<INT>", 7), "literal-shape"),
+    ),
+)
+def test_authored_inputs_use_ordinary_typed_literal_admission(
+    extra: object, expected_code: str | None
+) -> None:
+    schemas = {
+        "test.authored": NodeSchema(
+            node_type="test.authored",
+            inputs=(InputSpec("choice", STRING),),
+            additional_inputs=TypeExpr.wildcard(),
+        )
+    }
+    graph = Graph(
+        nodes={
+            "authored": GraphNode(
+                "test.authored",
+                {"choice": "outside-menu", "2": extra, "9": TypedLiteral("STRING", "nine")},
+            )
+        }
+    )
+    diagnostics = validate(graph, schemas, ["authored"], known_types={"INT", "STRING"})
+    if expected_code is None:
+        assert diagnostics == []
+    else:
+        assert any(d.code == expected_code and d.severity == "error" for d in diagnostics)
+
+
 def test_typed_literal_malformed_type_id_is_error() -> None:
     for bad in ("", "list<>", "list<INT", "core<int>", "list<list<>>"):
         graph = Graph(nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral(bad, 7)})})

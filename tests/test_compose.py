@@ -2279,6 +2279,88 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("in_process", (True, False))
+def test_authored_inputs_execute_dependencies_and_invalidate_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    module = f"authored_inputs_{in_process}"
+    (tmp_path / f"{module}.py").write_text(
+        "from dinkster_schema import "
+        "ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "INT = TypeExpr.concrete('INT')\n"
+        "STRING = TypeExpr.concrete('STRING')\n"
+        "class Index(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='authored.index', inputs=(InputSpec('value', INT),), "
+        "outputs=(OutputSpec('value', INT),))\n"
+        "    @classmethod\n"
+        "    def execute(cls, value):\n"
+        "        return cls.outputs(value=value)\n"
+        "class Choice(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='authored.choice', inputs=(InputSpec('choice', "
+        "TypeExpr.concrete('COMBO'), widget=ComboWidget(options=(), editable_options=True)),), "
+        "outputs=(OutputSpec('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
+        "    @classmethod\n"
+        "    def execute(cls, choice, **kwargs):\n"
+        "        selected = kwargs[str(kwargs['index'])]\n"
+        "        return cls.outputs(result=f\"{choice}|{selected}|{kwargs['count']}\")\n"
+        "NODES = (Index, Choice)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "authored-inputs"\npublisher = "dinkster"\nnamespaces = ["authored"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\n',
+        encoding="ascii",
+    )
+    env = {
+        **WORKER_ENV,
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+    }
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
+            engine = composer.composition.make_engine(lambda _event: None)
+            inputs = {
+                "choice": "outside-menu",
+                "index": Link("index", "value"),
+                "2": TypedLiteral("STRING", "left"),
+                "9": TypedLiteral("STRING", "right"),
+                "count": TypedLiteral("INT", 13),
+            }
+            graph = Graph(
+                nodes={
+                    "index": GraphNode("authored.index", {"value": 9}),
+                    "choice": GraphNode("authored.choice", inputs),
+                }
+            )
+            first = await engine.run(graph, ["choice"])
+            assert first.outputs["choice"]["result"].resolve() == "outside-menu|right|13"
+            assert first.executed == ("index", "choice")
+            repeated = await engine.run(graph, ["choice"])
+            assert repeated.outputs["choice"]["result"].resolve() == "outside-menu|right|13"
+            assert repeated.cached == ("index", "choice")
+            assert repeated.executed == ()
+            graph = Graph(nodes={**graph.nodes, "index": GraphNode("authored.index", {"value": 2})})
+            changed_index = await engine.run(graph, ["choice"])
+            assert changed_index.outputs["choice"]["result"].resolve() == "outside-menu|left|13"
+            assert changed_index.executed == ("index", "choice")
+            inputs["2"] = TypedLiteral("STRING", "changed")
+            changed_option = await engine.run(graph, ["choice"])
+            assert changed_option.outputs["choice"]["result"].resolve() == "outside-menu|changed|13"
+            assert changed_option.executed == ("choice",)
+            assert changed_option.cached == ("index",)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     ("in_process", "supplied_registry"), ((True, False), (False, False), (False, True))
 )
