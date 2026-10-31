@@ -34,6 +34,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "test_default_catalog_publishes_only_owned_translation_carriers" in export["run"]
     decode = fast["steps"][-1]
     assert "tools/validate_default_catalog.mjs" in decode["run"]
+    assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     assert decode["env"]["CATALOG"] == export["env"]["DINKSTER_CATALOG_WIRE_OUTPUT"]
     assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
 
@@ -47,6 +48,12 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     jobs = workflow["jobs"]
     assert "coverage" not in jobs
     root = jobs["test"]
+    decode = next(
+        step
+        for step in root["steps"]
+        if "tools/validate_default_catalog.mjs" in step.get("run", "")
+    )
+    assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     linux = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "linux"]
     assert [(row["shard"], row["pytest_args"]) for row in linux] == [
         (index, f"-p tools.pytest_file_shard --file-shard {index}/6") for index in range(1, 7)
