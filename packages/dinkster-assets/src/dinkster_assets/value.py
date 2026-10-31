@@ -314,6 +314,7 @@ def register_video_value_type(
         fingerprint=video_fingerprint(type_id),
         meta=video_meta,
         validate_encoded_buffer=validate_video_encoded,
+        asset_references_complete=True,
     )
     registry.register_rendition(
         type_id, "original", mime=video_rendition_mime, render=render_video_original

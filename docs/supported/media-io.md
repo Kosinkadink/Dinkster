@@ -101,6 +101,9 @@
   compression, lossless, and alpha controls
 - Asset-backed native video loading to IMAGE, optional AUDIO, fps, frame count,
   and duration, with rate, resize, start, frame-cap, and frame-selection controls
+- VIDEO asset references cover nested clips, component and complete soundtracks,
+  and declared timeline sources/resources. Conflicting sizes for one identity are
+  refused; raw inline video cannot declare external dependencies. Cleanup remains disabled.
 - Native video saving through PyAV: MP4/H.264 at 8 or 10 bits, WebM/VP9 at
   8 bits with optional alpha, WebM/AV1 and MP4/H.265 at 8 or 10 bits,
   ProRes including 4444 alpha, and lossless RGB/RGBA FFV1/MKV at 8 or 16 bits;
