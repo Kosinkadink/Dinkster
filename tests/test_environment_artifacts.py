@@ -426,10 +426,27 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "base", "engine", "github", "head", "config", "event", "superseded"]
+    "failure",
+    [
+        None,
+        "base",
+        "engine",
+        "github",
+        "head",
+        "config",
+        "event",
+        "superseded",
+        "identical",
+        "absent",
+        "diverged",
+        "compare",
+        "unknown",
+        "channel",
+        "identical-bytes",
+    ],
 )
 def test_channel_publication_exposes_only_verified_payloads(
-    tmp_path: Path, monkeypatch, request, failure
+    tmp_path: Path, monkeypatch, request, capsys, failure
 ):
     from botocore.exceptions import ClientError
 
@@ -442,12 +459,39 @@ def test_channel_publication_exposes_only_verified_payloads(
     base_path = source / "base/fixture-cpu" / base["id"][7:] / "manifest.json"
     shutil.copytree(source / "base", public / "base")
     (public / "channels").mkdir()
-    previous = b"previous channel must survive failed publication"
-    for name in ("main", "stable"):
-        (public / f"channels/{name}.json").write_bytes(previous)
+    stable = b"stable channel must not change"
+    (public / "channels/stable.json").write_bytes(stable)
+    write_channel(
+        release, [base_path], channel="main", output_root=public, minimum_desktop_version="0.2.0"
+    )
+    published_commit = engine["commit"]
+    if failure not in {"identical", "identical-bytes"}:
+        published_engine = {**engine, "commit": "e" * 40}
+        published_commit = published_engine["commit"]
+        data = _json(published_engine)
+        identity = hashlib.sha256(data).hexdigest()
+        target = public / f"engine/{identity}/release-manifest.json"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(data)
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["engine"]["release"] = "sha256:" + identity
+        document["engine"]["locations"] = [
+            {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+        ]
+        (public / "channels/main.json").write_bytes(_json(document))
+    elif failure == "identical-bytes":
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["minimumDesktopVersion"] = "0.1.0"
+        (public / "channels/main.json").write_bytes(_json(document))
+    previous = (public / "channels/main.json").read_bytes()
+    if failure == "absent":
+        (public / "channels/main.json").unlink()
 
     class MirrorHandler(SimpleHTTPRequestHandler):
         def do_GET(self):
+            if failure == "channel" and self.path == "/channels/main.json":
+                self.send_error(403)
+                return
             if self.headers.get("User-Agent", "").startswith("Python-urllib/"):
                 self.send_error(403)
                 return
@@ -485,11 +529,20 @@ def test_channel_publication_exposes_only_verified_payloads(
 
     def published_input(url, **kwargs):
         if url.startswith("https://api.github.com/"):
-            return io.BytesIO(
-                json.dumps(
-                    {"object": {"sha": "e" * 40 if failure == "superseded" else engine["commit"]}}
-                ).encode()
+            assert url == (
+                "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
+                f"{published_commit}...{engine['commit']}"
             )
+            if failure == "compare":
+                raise ValueError("compare unavailable")
+            status = (
+                "identical"
+                if published_commit == engine["commit"]
+                else {"superseded": "behind", "diverged": "diverged", "unknown": "unknown"}.get(
+                    failure, "ahead"
+                )
+            )
+            return io.BytesIO(json.dumps({"status": status}).encode())
         if url.startswith("https://github.com/"):
             return io.BytesIO(
                 b"wrong"
@@ -506,6 +559,8 @@ def test_channel_publication_exposes_only_verified_payloads(
                 raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
 
         def upload_file(self, filename, bucket, key, **kwargs):
+            if failure in {"identical", "identical-bytes"} and key == "channels/main.json":
+                pytest.fail("identical engine must not upload the channel")
             target = public / key
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(filename, target)
@@ -514,19 +569,36 @@ def test_channel_publication_exposes_only_verified_payloads(
 
     monkeypatch.setattr(publisher, "urlopen", published_input)
     monkeypatch.setattr(publisher.boto3, "client", lambda *args, **kwargs: ObjectStore())
-    if failure and failure not in {"config", "superseded"}:
-        with pytest.raises((ValueError, ClientError)):
+    if failure in {
+        "base",
+        "engine",
+        "github",
+        "head",
+        "event",
+        "compare",
+        "unknown",
+        "channel",
+        "identical-bytes",
+    }:
+        from urllib.error import HTTPError
+
+        with pytest.raises((ValueError, ClientError, HTTPError)):
             publisher.publish(release, [base_path], "main", "0.2.0")
     else:
         publisher.publish(release, [base_path], "main", "0.2.0")
-    assert (public / "channels/stable.json").read_bytes() == previous
-    if failure:
+    assert (public / "channels/stable.json").read_bytes() == stable
+    if failure not in {None, "identical", "absent"}:
         assert (public / "channels/main.json").read_bytes() == previous
+        if failure in {"superseded", "diverged"}:
+            output = capsys.readouterr().out
+            assert published_commit in output
+            assert engine["commit"] in output
     else:
         selected = discover((str(public),), "main")
         assert selected.engine == engine
         assert selected.bases == {"fixture-cpu": base}
         before = {path: path.read_bytes() for path in public.rglob("*") if path.is_file()}
+        published_commit = engine["commit"]
         publisher.publish(release, [base_path], "main", "0.2.0")
         assert {path: path.read_bytes() for path in before} == before
 
