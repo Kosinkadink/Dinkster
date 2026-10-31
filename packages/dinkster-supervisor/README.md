@@ -345,6 +345,16 @@ the target before activation. Catalogs enter the sealed file inventory even
 though their `__pycache__/dinkster-schema-catalog` location is excluded from
 source artifact identities. Additional `prepare_packs` staging runs before sealing.
 
+For a custom base, the target interpreter can run that same source command with
+`--prepare-locks ABS --variant NAME` to prepare standard dependency locks in a
+new caller-owned scratch directory. It verifies the selected lock's exact
+archives and manifest claims, then resolves their declared requirements against
+the unsealed target's `constraints.txt`, using repeated `--index` and
+`--find-links` inputs and optional `--accelerator`. JSON adds `locks`, the output
+paths. This mode does not admit sources, change the source lock or seal the
+generation. The caller retains the scratch directory through provisioning and
+removes it afterward; no custom lock schema or store path is introduced.
+
 `environment_archives.extract_base(parts, destination, platform=..., executable=...,
 expected_parts=...)` verifies every ordered part's size and SHA-256 before streaming
 one zstd decoder into tar extraction with the data filter. The caller supplies the

@@ -106,6 +106,10 @@
   generation rather than inferred from the current variants file.
   Custom definitions name an exact torch version and HTTPS torch index;
   their optional extras index defaults to PyPI.
+- Custom pack dependency preparation reads the exact selected source archives,
+  verifies their identities and resolves standard dependency locks against the
+  target generation's constraints. It does not rebuild packs from a checkout
+  or require a published lock for the custom variant.
 - Confirmed environment garbage collection keeps the current generation and its
   successful predecessor, and preserves cache references from other registered
   projects. Interrupted collection recovers before another confirmed mutation;

@@ -358,6 +358,86 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
 
 
+def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_path: Path) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    pinned = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    newer = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
+    source = tmp_path / "selected-source"
+    source.mkdir()
+    manifest = source / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="example"\nnamespaces=["example"]\npublisher="dinkster"\n'
+        'requires=["fixture-extra>=1"]\n[pack.entry]\nnodes="nodes:NODES"\n'
+    )
+    (source / "nodes.py").write_text('raise AssertionError("pack code must not be imported")\n')
+    archive = tmp_path / "selected.zip"
+    identity = build_artifact(source, archive)
+    artifact = tmp_path / f"{identity.removeprefix('blake3:')}.zip"
+    archive.rename(artifact)
+    catalog = tmp_path / "selected.lock"
+    catalog.write_text(
+        Lockfile.of(
+            [LockedPack("example", "3.7", identity, "dinkster", ("example",))]
+        ).record_json()
+    )
+    # The checkout is not an input: resolution must use the locked archive's requirements.
+    manifest.write_text("invalid checkout TOML\n")
+    generation = tmp_path / "unsealed"
+    generation.mkdir()
+    constraints = generation / "constraints.txt"
+    constraints.write_text(f"fixture-extra==1.2 --hash=sha256:{pinned.sha256}\n")
+    original = {path: path.read_bytes() for path in (catalog, artifact, constraints)}
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster.generation_packs",
+        "--generation",
+        str(generation),
+        "--catalog-lock",
+        str(catalog),
+        "--artifacts",
+        str(tmp_path),
+        "--prepare-locks",
+        str(tmp_path / "resolved"),
+        "--variant",
+        "my-custom-cuda",
+        "--find-links",
+        str(tmp_path),
+        "--json",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    response = json.loads(result.stdout)
+    assert response["errors"] == []
+    assert response["packs"] == ["example"]
+    assert len(response["locks"]) == 1
+    lock = PackLock.read(Path(response["locks"][0]))
+    assert lock.pack == "example" and lock.variant == "my-custom-cuda"
+    assert lock.requirements == ("fixture-extra>=1",)
+    assert [(package.name, package.version) for package in lock.packages] == [
+        ("fixture-extra", "1.2")
+    ]
+    assert lock.packages[0].wheels == (pinned,)
+    assert {path: path.read_bytes() for path in original} == original
+    assert sorted(path.name for path in generation.iterdir()) == ["constraints.txt"]
+    constraints.write_text(f"fixture-extra==2.0 --hash=sha256:{newer.sha256}\n")
+    command[command.index("--prepare-locks") + 1] = str(tmp_path / "newer-target")
+    updated = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert updated.returncode == 0, updated.stderr
+    updated_lock = PackLock.read(Path(json.loads(updated.stdout)["locks"][0]))
+    assert updated_lock.packages[0].version == "2.0"
+    assert updated_lock.packages[0].wheels == (newer,)
+    assert PackLock.read(Path(response["locks"][0])).packages[0].version == "1.2"
+    artifact.write_bytes(b"damaged selected archive")
+    command[command.index("--prepare-locks") + 1] = str(tmp_path / "refused")
+    refused = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert refused.returncode == 1
+    assert json.loads(refused.stdout)["errors"]
+    assert not list((tmp_path / "refused").glob("*.pack-lock.json"))
+    assert not (generation / "dinkster.lock").exists()
+
+
 def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_path: Path) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
     _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
