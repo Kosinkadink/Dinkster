@@ -858,6 +858,7 @@ angle = [
 dev = [
     { name = "boto3" },
     { name = "dinkster-opentimelineio" },
+    { name = "dinkster-supervisor" },
     { name = "hypothesis" },
     { name = "onnxruntime" },
     { name = "pyright" },
@@ -871,6 +872,10 @@ dev = [
 engine-base = [
     { name = "numpy" },
     { name = "opencv-contrib-python-headless" },
+]
+release-publication = [
+    { name = "boto3" },
+    { name = "dinkster-supervisor" },
 ]
 
 [package.metadata]
@@ -907,6 +912,7 @@ angle = [
 dev = [
     { name = "boto3", specifier = ">=1.40,<2" },
     { name = "dinkster-opentimelineio", specifier = "==0.19.0" },
+    { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "onnxruntime", specifier = "==1.29.0" },
     { name = "pyright", specifier = ">=1.1.390" },
@@ -920,6 +926,10 @@ dev = [
 engine-base = [
     { name = "numpy", specifier = "==2.5.1" },
     { name = "opencv-contrib-python-headless", specifier = "==5.0.0.93" },
+]
+release-publication = [
+    { name = "boto3", specifier = ">=1.40,<2" },
+    { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
 ]
 
 [[package]]

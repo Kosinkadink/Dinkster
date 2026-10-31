@@ -466,7 +466,7 @@ jobs:
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
         run: |
-          uv sync --locked --package dinkster-supervisor
+          uv sync --locked --only-group release-publication
           arguments=()
           for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
           uv run --locked --no-sync python -m scripts.publish_environment_channel \

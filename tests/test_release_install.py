@@ -178,6 +178,10 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert channel["if"] == "github.event_name == 'push'"
     assert channel["concurrency"]["cancel-in-progress"] is False
     publication = channel["steps"][-1]
+    assert "uv sync --locked --only-group release-publication" in publication["run"]
+    groups = tomllib.loads((ROOT / "pyproject.toml").read_text())["dependency-groups"]
+    assert "dinkster-supervisor" in groups["release-publication"]
+    assert any(requirement.startswith("boto3") for requirement in groups["release-publication"])
     assert "-m scripts.publish_environment_channel" in publication["run"]
     assert "--minimum-desktop-version 0.2.0" in publication["run"]
     assert publication["env"]["R2_ACCESS_KEY_ID"] == "${{ secrets.R2_ACCESS_KEY_ID }}"

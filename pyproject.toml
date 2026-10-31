@@ -53,7 +53,9 @@ angle = [
     "comfy-angle==0.1.1",
     "PyOpenGL>=3.1.8,<4",
 ]
+release-publication = ["boto3>=1.40,<2", "dinkster-supervisor"]
 dev = [
+    { include-group = "release-publication" },
     "hypothesis>=6",
     "onnxruntime==1.29.0",
     "pytest>=8",
@@ -64,7 +66,6 @@ dev = [
     "scipy-stubs>=1.18.1.0",
     "dinkster-opentimelineio==0.19.0",
     "threadpoolctl>=3.7",
-    "boto3>=1.40,<2",
 ]
 
 [tool.uv]
