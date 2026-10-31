@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
 from .mesh_weld import process_mesh_batch, weld_vertices
 
 
-def _connected_labels(edges: Any, count: int) -> Any:
+def connected_labels(edges: Any, count: int) -> Any:
     torch = importlib.import_module("torch")
     kitchen = getattr(importlib.import_module("dinkster_inference.quant_ops"), "ck", None)
     if kitchen is not None and hasattr(kitchen, "connected_components") and edges.is_cuda:
@@ -66,7 +66,7 @@ def _fill_boundaries(
         return vertices, faces, colors
     directed = edges[torch.isin(keys, boundary)]
     src, tgt = directed[:, 0].long(), directed[:, 1].long()
-    labels = _connected_labels(torch.stack([src, tgt], 1), size)
+    labels = connected_labels(torch.stack([src, tgt], 1), size)
     components, edge_component = torch.unique(labels[src], return_inverse=True)
     count = components.shape[0]
     edge_count = torch.bincount(edge_component, minlength=count)
