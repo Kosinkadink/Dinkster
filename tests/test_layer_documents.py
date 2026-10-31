@@ -757,6 +757,117 @@ def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
         assert stale and unchanged.data == edited.data
 
 
+@pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
+def test_compositor_boundary_retains_auxiliary_references_without_retrieving_document(
+    type_id, monkeypatch
+) -> None:
+    from dinkster_assets import AssetRef, AssetVault, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_nodes_image.layer_recipe import replay_compositor
+    from dinkster_values import default_encode
+
+    value = document()
+    identifier = value.to_record()["rootLayerIds"][0]
+    delta = {
+        "version": 2,
+        "documentDigest": digest_bytes(value.data),
+        "commands": [{"op": "layer", "id": identifier, "changes": {"visible": False}}],
+    }
+    registry = TypeRegistry()
+    register_image_types(registry)
+    codec = ValueCodec(registry)
+    wrapped = registry.wrap(type_id, delta)
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    expected = canonical_json(delta).encode()
+    assert blobs[cast(int, cast(dict[str, object], wire["payload"])["blob"])] == expected
+    auxiliary = AssetRef(digest_bytes(b"auxiliary"), "source.json", 9)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [auxiliary.to_wire()]}
+    )
+
+    def forbid_io(*args, **kwargs):
+        pytest.fail("compositor admission must not retrieve or publish a document")
+
+    monkeypatch.setattr(ImageDocument, "read_resource", forbid_io)
+    monkeypatch.setattr(AssetVault, "writer", forbid_io)
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.fingerprint == wrapped.fingerprint
+    assert received.resolve() == delta
+    assert value_asset_references({"delta": received}, complete_registry=registry) == {
+        auxiliary.digest: auxiliary
+    }
+    edited, stale = replay_compositor(value, received.resolve(), value)
+    assert not stale
+    assert edited.to_record()["layers"][identifier]["visible"] is False
+    unchanged, stale = replay_compositor(edited, received.resolve(), edited)
+    assert stale and unchanged.data == edited.data
+    payload = cast(dict[str, object], wire["payload"])
+    blobs[cast(int, payload["blob"])] = json.dumps(delta, indent=2).encode()
+    noncanonical, _ = codec.decode(wire, blobs, [])
+    assert noncanonical.resolve() == delta
+    first = TypeRegistry()
+    first_spec = first.register(type_id)
+    register_image_types(first)
+    assert first.spec(type_id) is first_spec
+    assert not first_spec.asset_references_complete
+
+
+@pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
+@pytest.mark.parametrize("data", [b"not json", b"[]", b'{"unknown":true}'])
+def test_compositor_boundary_refuses_invalid_encoding_before_exposure(type_id, data) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError
+
+    registry = TypeRegistry()
+    register_image_types(registry)
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap(type_id, {}), blobs, segments)
+    payload = cast(dict[str, object], wire["payload"])
+    blobs[cast(int, payload["blob"])] = data
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
+
+
+@pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        {},
+        {"version": 1, "canvas": {"w": 3, "h": 2}, "inputs": [], "layers": []},
+        {"version": 2, "documentDigest": None, "commands": [{"op": "unknown"}]},
+    ],
+)
+def test_compositor_boundary_preserves_existing_legacy_and_deferred_command_forms(
+    type_id, recipe
+) -> None:
+    from dinkster_assets.value import value_asset_references
+    from dinkster_nodes_image.layer_recipe import replay_compositor
+
+    registry = TypeRegistry()
+    register_image_types(registry)
+    codec = ValueCodec(registry)
+    expected = (
+        {"version": 2, "documentDigest": None, "commands": []}
+        if type_id == "COMPOSITOR" and recipe == {}
+        else recipe
+    )
+    wrapped = registry.wrap(type_id, recipe)
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    assert blobs[cast(int, cast(dict[str, object], wire["payload"])["blob"])] == (
+        canonical_json(expected).encode()
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == expected
+    assert received.fingerprint == wrapped.fingerprint
+    assert value_asset_references({"recipe": received}, complete_registry=registry) == {}
+    if recipe.get("commands"):
+        value = document()
+        with pytest.raises(InvalidDocument, match="unknown document command"):
+            replay_compositor(value, received.resolve(), value)
+
+
 @pytest.mark.parametrize("color_space", ["perceptual", "linear"])
 def test_compositor_preview_digest_binds_repeated_apply_to_input(monkeypatch, color_space) -> None:
     from dinkster_assets import digest_bytes

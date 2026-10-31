@@ -47,6 +47,10 @@ def decode_delta(data: bytes) -> object:
     return coerce_delta(json.loads(data))
 
 
+def validate_delta_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    decode_delta(data)
+
+
 def prepare_compositor(source: object, obj: object) -> tuple[ImageDocument, str, bool]:
     from .layer_document import migrate_layers
 

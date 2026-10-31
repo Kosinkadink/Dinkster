@@ -38,6 +38,10 @@
 - Shared editor values preserve plural pixel boxes with metadata, image-comparison
   and compositor state, and nested tensor-layer documents including optional
   masks, transforms, authored layer order, and canvas dimensions
+- Native and Comfy compositor values validate encoded recipes before exposure
+  and retain declared auxiliary asset references. Document digests bind edits to
+  supplied layer documents, not filesystem access or asset retrieval. Cleanup
+  remains disabled.
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries

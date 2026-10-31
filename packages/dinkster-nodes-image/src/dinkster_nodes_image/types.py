@@ -333,7 +333,7 @@ def register_image_types(registry: TypeRegistry) -> None:
     )
 
     from .layer_document import decode_layers, layer_meta, migrate_layers, validate_layers_encoded
-    from .layer_recipe import coerce_delta, decode_delta, encode_delta
+    from .layer_recipe import coerce_delta, decode_delta, encode_delta, validate_delta_encoded
 
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
@@ -434,6 +434,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=decode_delta,
             coerce=coerce_delta,
             meta=lambda obj: {"version": coerce_delta(obj)["version"]},
+            validate_encoded=validate_delta_encoded,
+            asset_references_complete=True,
         )
     register_comfy_layers(registry)
     register_comfy_compositor(registry)
