@@ -152,6 +152,7 @@ def register_file3d_types(
             fingerprint=lambda value: stable_hash([type_id.encode("utf-8"), encode(value)]),
             meta=meta,
             validate_encoded=validate,
+            asset_references_complete=True,
         )
 
     return tuple(

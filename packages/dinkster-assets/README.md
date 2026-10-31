@@ -10,8 +10,10 @@ migrations. Caches, workers, and the server build on it.
 atom to declare exhaustive external-reference metadata. Unknown atoms or
 malformed identities refuse instead of certifying an empty set. Lists and
 tuples retain every typed descendant, independent of display descriptor caps.
-The base asset type opts in; custom aliases remain unknown until their
-reference metadata contract is declared explicitly.
+The base asset type and FILE_3D family opt in. FILE_3D declares its source and
+every explicit sidecar and validates those declarations against the payload.
+Custom aliases and other types remain unknown until their reference metadata
+contract is declared explicitly.
 
 Selected indexed files use ordinary `AssetRef` values from the engine-written
 index. The live mounts snapshot remains their resolver, so revoked grants stop
