@@ -1,5 +1,16 @@
 ## Image operations
 
+- `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
+  transports flat or per-frame pixel boxes and normalized prompt elements.
+  Both accept JSON only, retaining frame order, integer/float coordinates,
+  negative origins, zero dimensions, labels, scores and declared metadata.
+  Normalized elements retain thousandths in ymin/xmin/ymax/xmax order, text
+  and palettes. Unknown fields, embedded references, nonfinite coordinates
+  and pickle payloads are refused before reconstruction. Global `ARRAY`
+  remains unrestricted by the placement contract. Layer placement retains
+  first-frame selection, source-size zero fallback and canvas-based conversion.
+  `CropByBBoxes` broadcasts a single box or flat box list across image frames;
+  per-frame lists retain last-frame repetition and per-frame union cropping.
 - Native `PadImageNode` pads image batches by explicit dimensions, a multiplier,
   or a size multiple, using solid-color feathering or repeated mirrored edges.
 - Native `ImageUpscaleWithModel` runs tiled single-image model upscaling with
