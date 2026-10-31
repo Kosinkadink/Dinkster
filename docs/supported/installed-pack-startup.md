@@ -104,6 +104,8 @@
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the
   generation rather than inferred from the current variants file.
+  Custom definitions name an exact torch version and HTTPS torch index;
+  their optional extras index defaults to PyPI.
 - Confirmed environment garbage collection keeps the current generation and its
   successful predecessor, and preserves cache references from other registered
   projects. Interrupted collection recovers before another confirmed mutation;

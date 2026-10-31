@@ -28,6 +28,7 @@ from dinkster_supervisor.environment_artifacts import (
     discover,
 )
 from dinkster_supervisor.environment_channels import write_channel
+from dinkster_supervisor.environment_custom import custom_selection, variant_file
 from dinkster_supervisor.environment_downloads import DownloadError
 from dinkster_supervisor.environment_state import EnvironmentError
 from test_environment_generations import _standalone_tree
@@ -791,3 +792,66 @@ def test_channel_builder_refuses_invalid_inputs_without_replacing_channels(
             )
         assert {path: path.read_bytes() for path in before} == before
         assert not (tmp_path / "absent").exists()
+
+
+def test_custom_variant_file_precedence_and_optional_extras_index(tmp_path: Path):
+    root, store = tmp_path / "project", tmp_path / "store"
+    assert variant_file(root, store, None) is None
+    assert not root.exists() and not store.exists()
+    root.mkdir()
+    store.mkdir()
+    definition = (
+        "[variants.custom-cuda]\n"
+        'torch = "2.14.1+cu130"\n'
+        'torch-index = "https://download.pytorch.org/whl/cu130"\n'
+    )
+    fallback = store / "variants.toml"
+    fallback.write_text(definition)
+    assert variant_file(root, store, None) == fallback
+    project = root / "variants.toml"
+    project.write_text(definition)
+    assert variant_file(root, store, None) == project
+    explicit = tmp_path / "explicit.toml"
+    explicit.write_text(definition + 'extras-index = "https://extras.example.org/simple"\n')
+    assert variant_file(root, store, explicit) == explicit
+    template = {"platform": {"os": "linux", "arch": "x86_64"}}
+    selected = custom_selection(explicit, "custom-cuda", template)
+    assert selected is not None
+    assert selected["torch"] == "2.14.1+cu130"
+    assert selected["torch-index"] == "https://download.pytorch.org/whl/cu130"
+    assert selected["extras-index"] == "https://extras.example.org/simple"
+    assert selected["sourceFile"] == str(explicit)
+    assert (
+        selected["definitionDigest"]
+        == "sha256:" + hashlib.sha256(explicit.read_bytes()).hexdigest()
+    )
+    default = custom_selection(project, "custom-cuda", template)
+    assert default is not None and default["extras-index"] == "https://pypi.org/simple"
+    assert custom_selection(project, "published-cpu", template) is None
+    assert (
+        explicit.read_text() == definition + 'extras-index = "https://extras.example.org/simple"\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'torch = ">=2.14"',
+        'torch-index = "http://download.pytorch.org/whl/cu130"',
+        'extras-index = "https://user:password@example.org/simple"',
+        'os = "windows"',
+    ],
+)
+def test_custom_variant_rejects_invalid_definitions_before_store_creation(
+    tmp_path: Path, extra: str
+):
+    row = {
+        "torch": 'torch = "2.14.1"',
+        "torch-index": 'torch-index = "https://download.pytorch.org/whl/cu130"',
+    }
+    row[extra.split(" =")[0]] = extra
+    definition = tmp_path / "variants.toml"
+    definition.write_text("[variants.custom-cuda]\n" + "\n".join(row.values()))
+    with pytest.raises(EnvironmentError):
+        custom_selection(definition, "custom-cuda", {"platform": {"os": "linux", "arch": "x86_64"}})
+    assert set(tmp_path.iterdir()) == {definition}

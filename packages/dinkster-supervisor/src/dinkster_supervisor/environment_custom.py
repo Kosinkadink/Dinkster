@@ -47,7 +47,8 @@ def custom_selection(path: Path, variant: str, template: dict[str, Any]) -> dict
         return None
     if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None or not isinstance(value, dict):
         raise EnvironmentError("custom variant must be a named TOML table")
-    row: dict[str, Any] = config["variants"][variant]
+    row: dict[str, Any] = {**config["variants"][variant]}
+    row.setdefault("extras-index", "https://pypi.org/simple")
     for key in ("torch", "torch-index", "extras-index"):
         if not isinstance(row.get(key), str) or not row[key]:
             raise EnvironmentError(f"variants.{variant} requires {key}")
