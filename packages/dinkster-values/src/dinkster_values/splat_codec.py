@@ -374,8 +374,8 @@ def parse_ply_splat(data: bytes) -> object:
             if len(parts) != 3 or parts[1] not in _PLY_DTYPES:
                 raise ValueError(f"splat PLY property {line.strip()!r} is unsupported")
             props.append((parts[2], "<" + _PLY_DTYPES[parts[1]]))
-    if elements == 0 or count < 1 or not props:
-        raise ValueError("splat PLY must declare a non-empty vertex element")
+    if elements == 0 or not props:
+        raise ValueError("splat PLY must declare a vertex element with properties")
     record_dtype = numpy.dtype(props)
     if body + count * record_dtype.itemsize > len(data):
         raise ValueError("splat PLY vertex data is truncated")
@@ -430,7 +430,7 @@ def parse_ply_splat(data: bytes) -> object:
     }
 
 
-SPLAT_FILE_DECODER_ID = "dinkster.splat-file@1"
+SPLAT_FILE_DECODER_ID = "dinkster.splat-file@2"
 """Stable identity of :func:`decode_splat_file` for coerced-input cache
 fingerprints (typed assets: identity = asset digest + provider identity).
 Bump the ``@N`` suffix whenever the decode SEMANTICS change - same file
