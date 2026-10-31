@@ -107,6 +107,32 @@ def test_splat_export_preserves_first_item_and_file_layout(
         torch.testing.assert_close(getattr(source, name), tensor, rtol=0, atol=0)
 
 
+def test_splat_export_quantization_limits_and_quaternion_sign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DINKSTER_PACK_SCRATCH", raising=False)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    source = export_splat()
+    source.positions[0, 0] = torch.tensor([3000.0, -3000.0, 0.5 / 4096])
+    source.rotations[0, 0] = torch.tensor([-1.0, 1.0, -1.0, 1.0])
+    source.scales[0, 0] = torch.tensor([0.0, 1.0, np.exp(10)])
+    source.opacities[0, 0, 0] = 1.1
+    source.sh[0, 0, 0] = torch.tensor([-10.0, 0.0, 10.0])
+    output = SplatToFile3D.execute(splat=source, format="spz")["model_3d"]
+    assert isinstance(output, dict)
+    raw = gzip.decompress(output["source"].read_bytes())
+    assert raw[16:25] == bytes([255, 255, 127, 0, 0, 128, 0, 0, 0])
+    assert raw[25:29] == bytes([255, 0, 128, 255])
+    assert raw[29:32] == bytes([0, 160, 255])
+    assert raw[32:] == bytes([64, 191, 64])
+    output = SplatToFile3D.execute(splat=source, format="ksplat")["model_3d"]
+    assert isinstance(output, dict)
+    data = output["source"].read_bytes()
+    assert struct.unpack_from("<4f", data, 5120 + 24) == (-0.5, 0.5, -0.5, 0.5)
+    assert data[-4:] == bytes([0, 128, 255, 255])
+    assert source.rotations[0, 0].tolist() == [-1.0, 1.0, -1.0, 1.0]
+
+
 def test_splat_export_refuses_empty_unknown_format_and_missing_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
