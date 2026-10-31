@@ -177,6 +177,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
         {"os": "linux", "runner": "ubuntu-latest"},
         {"os": "windows", "runner": "windows-latest"},
+        {"os": "macos", "runner": "macos-latest"},
     ]
     locks = workflow["jobs"]["pack-locks"]
     assert locks["runs-on"] == "${{ matrix.runner }}"
