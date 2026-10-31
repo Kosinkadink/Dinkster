@@ -23,6 +23,8 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
+  tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \

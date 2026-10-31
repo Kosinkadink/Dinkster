@@ -32,7 +32,9 @@ def _validate_vector(
         raise ValueError(f"{type_id} {name} must be a numeric mapping")
 
 
-def _validate_camera(value: object) -> dict[str, object]:
+def _validate_camera(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
     if type(value) is not dict:
         raise ValueError("LOAD3D_CAMERA must be a mapping")
     camera = cast("dict[str, object]", value)
@@ -54,7 +56,7 @@ def _validate_camera(value: object) -> dict[str, object]:
     return camera
 
 
-def _decode(data: bytes) -> dict[str, object]:
+def _decode(data: bytes) -> dict[str, object] | None:
     frame = cast("dict[str, object]", decode_latent(data))
     if set(frame) != {"samples"}:
         raise ValueError("LOAD3D_CAMERA frame must contain only samples")
@@ -98,11 +100,13 @@ def register_load3d_camera_type(registry: TypeRegistry) -> TypeSpec:
     return spec
 
 
-def _decode_model_info(data: bytes) -> list[dict[str, object]]:
+def _decode_model_info(data: bytes) -> list[dict[str, object]] | None:
     frame = cast("dict[str, object]", decode_latent(data))
     if set(frame) != {"samples"}:
         raise ValueError("LOAD3D_MODEL_INFO frame must contain only samples")
     models = frame["samples"]
+    if models is None:
+        return None
     if type(models) is not list:
         raise ValueError("LOAD3D_MODEL_INFO must be a list of transforms")
     for model in cast("list[object]", models):
