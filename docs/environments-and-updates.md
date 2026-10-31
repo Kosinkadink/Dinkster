@@ -222,6 +222,18 @@ redundant.
 
 `minimumDesktopVersion` lets a channel refuse a Desktop shell too old to
 drive the engine it names; the shell updates itself first.
+The release workflow sets this floor explicitly to `0.2.0`. PR finalization
+validates the channel locally without publishing. After GitHub release upload,
+the push-only channel job checks the selected public base manifests and GitHub
+engine manifest, mirrors missing engine objects, verifies served payload hashes,
+then writes the channel last with no-cache metadata. It uses the base producer's
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET` and
+`R2_PUBLIC_BASE_URL` settings; missing settings explicitly skip publication.
+The serialized main-channel job compares the published engine commit with the
+candidate through GitHub's compare API, not with the live main head. An absent
+channel or an ancestor engine permits publication; the same commit verifies the
+existing channel bytes without an upload. A descendant or diverged published
+engine retains its channel, and the candidate keeps its immutable payloads.
 
 `signature` is reserved. Mirrors Dinkster operates serve documents with a
 null signature, checked only by the sha256 digests they carry and by the
@@ -628,6 +640,10 @@ Finalization verifies the original release, admits the tools ZIPs using the same
 artifact rows, and regenerates the manifest and checksums. Installation checks,
 GitHub release upload and PyPI selection consume this finalized directory.
 The tools ZIPs are not workspace wheels and are never uploaded to PyPI.
+Finalization also requires one dependency lock for every official catalog pack
+and selected base variant. It uses the registry and worker lock parsers to
+verify identities and refuses local wheel or index URLs before copying payloads
+or rewriting the release manifest.
 
 The engine release id used by channels is `sha256:` followed by the SHA-256
 of the exact `release-manifest.json` bytes. The manifest lists payload assets,
@@ -787,9 +803,20 @@ Settled:
 - Base pins: Python 3.14, torch 2.14.1, numpy 2.5,
   `opencv-contrib-python-headless` 5.0; `win-nvidia` on cu132;
   `win-nvidia-cu126` keeps torch 2.14.1 when the other variants move.
-- Engine installs never resolve; they fetch artifacts named by hash on
-  either channel. The one index read is rebuilding a base whose archive is
-  no longer hosted, from its retained base manifest.
+- Default engine installs fetch artifacts named by hash on either channel.
+  Rebuilding an expired base archive uses its retained manifest without resolving.
+  Explicit `setup --from-scratch` instead resolves the checkout's `uv.lock`
+  locally using the selected producer variant's torch index. `--source` selects
+  the checkout, `--variants` selects producer definitions, and `--python` explicitly
+  selects a host interpreter when no producer interpreter row fits. The pinned
+  interpreter is verified from the producer definition and cached separately;
+  denying interpreter release access requires that verified cache or an override.
+  Local base
+  manifests and generations carry `source: local`. Doctor checks their recorded
+  inventory; channel updates refuse them and offer a fresh published install.
+  Desktop and automatic updates never select this development/fallback mode.
+  Packs over a local base resolve against that generation's constraints rather
+  than selecting a published variant pack lock.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
   `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
   for wheels compiled against one torch triple.

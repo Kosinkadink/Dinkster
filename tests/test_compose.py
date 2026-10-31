@@ -1356,11 +1356,11 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:62f4b5905d372f5a68471935e9c558b5e2f76584f6e52d94bb398fcc519f7f2b",
+            "blake3:2fb372b70fb76436a18cade218a6a7f1ecb95235fc74138d0ebdc1a48d06d791",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:2f1951aedebcce850e6b3fa8171a45412d89f770a6c66bd223cc170c06fb2f9d",
+            "blake3:da0b719ba4fb703d6d980dd6c74360a859491a568044dda4ef69a2c2454e62d8",
         ),
         (
             "dinkster-nodes-remote",
@@ -2242,38 +2242,148 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
             else:
                 await composer.reload_pack("dinkster-nodes-comfy")
             assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
-                        "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
-                        "false": GraphNode("PrimitiveBoolean", {"value": False}),
-                        "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
-                        "and": GraphNode(
-                            "ComfyAndNode",
-                            {
-                                "values.value0": Link("length", "length"),
-                                "values.value1": Link("false", "BOOLEAN"),
-                            },
-                        ),
-                        "or": GraphNode(
-                            "ComfyOrNode",
-                            {
-                                "values.value0": Link("false", "BOOLEAN"),
-                                "values.value1": Link("length", "length"),
-                            },
-                        ),
-                    }
-                ),
-                ["length", "not", "and", "or"],
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                    "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                    "false": GraphNode("PrimitiveBoolean", {"value": False}),
+                    "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
+                    "and": GraphNode(
+                        "ComfyAndNode",
+                        {
+                            "values.value0": Link("length", "length"),
+                            "values.value1": Link("false", "BOOLEAN"),
+                        },
+                    ),
+                    "or": GraphNode(
+                        "ComfyOrNode",
+                        {
+                            "values.value0": Link("false", "BOOLEAN"),
+                            "values.value1": Link("length", "length"),
+                        },
+                    ),
+                    "combo_default": GraphNode("CustomCombo", {"choice": ""}),
+                    "combo_index": GraphNode("PrimitiveInt", {"value": 205}),
+                    "combo": GraphNode(
+                        "CustomCombo",
+                        {
+                            "choice": "outside-menu",
+                            "index": Link("combo_index", "INT"),
+                            "2": TypedLiteral("STRING", "unused sparse option"),
+                            "205": Link("text", "STRING"),
+                            "label": TypedLiteral("STRING", "arbitrary extra name"),
+                            **{str(i): TypedLiteral("INT", i) for i in range(300, 405)},
+                        },
+                    ),
+                }
             )
+            targets = ["length", "not", "and", "or", "combo_default", "combo"]
+            result = await engine.run(graph, targets)
             assert result.outputs["length"]["length"].resolve() == 2
             assert result.outputs["not"]["BOOLEAN"].resolve() is False
             assert result.outputs["and"]["BOOLEAN"].resolve() is False
             assert result.outputs["or"]["BOOLEAN"].resolve() is True
+            assert result.outputs["combo_default"]["STRING"].resolve() == ""
+            assert result.outputs["combo_default"]["INDEX"].resolve() == 0
+            assert result.outputs["combo"]["STRING"].resolve() == "outside-menu"
+            assert result.outputs["combo"]["INDEX"].resolve() == 205
+            repeated = await engine.run(graph, targets)
+            assert repeated.executed == ()
+            assert "combo" in repeated.cached
+            assert repeated.outputs["combo"]["INDEX"].resolve() == 205
+            changed = Graph(
+                nodes={**graph.nodes, "combo_index": GraphNode("PrimitiveInt", {"value": -7})}
+            )
+            changed_result = await engine.run(changed, ["combo"])
+            assert changed_result.outputs["combo"]["STRING"].resolve() == "outside-menu"
+            assert changed_result.outputs["combo"]["INDEX"].resolve() == -7
+            assert "combo" in changed_result.executed
             with pytest.raises(CompositionError, match="overlaps"):
                 await composer.add_pack(PackSpec(manifest=other_manifest))
             assert set(composer.composition.schemas) == set(claims)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_authored_inputs_execute_dependencies_and_invalidate_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    module = f"authored_inputs_{in_process}"
+    (tmp_path / f"{module}.py").write_text(
+        "from dinkster_schema import "
+        "ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "INT = TypeExpr.concrete('INT')\n"
+        "STRING = TypeExpr.concrete('STRING')\n"
+        "class Index(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='authored.index', inputs=(InputSpec('value', INT),), "
+        "outputs=(OutputSpec('value', INT),))\n"
+        "    @classmethod\n"
+        "    def execute(cls, value):\n"
+        "        return cls.outputs(value=value)\n"
+        "class Choice(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='authored.choice', inputs=(InputSpec('choice', "
+        "TypeExpr.concrete('COMBO'), widget=ComboWidget(options=(), editable_options=True)),), "
+        "outputs=(OutputSpec('result', STRING),), additional_inputs=TypeExpr.wildcard())\n"
+        "    @classmethod\n"
+        "    def execute(cls, choice, **kwargs):\n"
+        "        selected = kwargs[str(kwargs['index'])]\n"
+        "        return cls.outputs(result=f\"{choice}|{selected}|{kwargs['count']}\")\n"
+        "NODES = (Index, Choice)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "authored-inputs"\npublisher = "dinkster"\nnamespaces = ["authored"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\n',
+        encoding="ascii",
+    )
+    env = {
+        **WORKER_ENV,
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+    }
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
+            engine = composer.composition.make_engine(lambda _event: None)
+            inputs = {
+                "choice": "outside-menu",
+                "index": Link("index", "value"),
+                "2": TypedLiteral("STRING", "left"),
+                "9": TypedLiteral("STRING", "right"),
+                "count": TypedLiteral("INT", 13),
+            }
+            graph = Graph(
+                nodes={
+                    "index": GraphNode("authored.index", {"value": 9}),
+                    "choice": GraphNode("authored.choice", inputs),
+                }
+            )
+            first = await engine.run(graph, ["choice"])
+            assert first.outputs["choice"]["result"].resolve() == "outside-menu|right|13"
+            assert first.executed == ("index", "choice")
+            repeated = await engine.run(graph, ["choice"])
+            assert repeated.outputs["choice"]["result"].resolve() == "outside-menu|right|13"
+            assert repeated.cached == ("index", "choice")
+            assert repeated.executed == ()
+            graph = Graph(nodes={**graph.nodes, "index": GraphNode("authored.index", {"value": 2})})
+            changed_index = await engine.run(graph, ["choice"])
+            assert changed_index.outputs["choice"]["result"].resolve() == "outside-menu|left|13"
+            assert changed_index.executed == ("index", "choice")
+            inputs["2"] = TypedLiteral("STRING", "changed")
+            changed_option = await engine.run(graph, ["choice"])
+            assert changed_option.outputs["choice"]["result"].resolve() == "outside-menu|changed|13"
+            assert changed_option.executed == ("choice",)
+            assert changed_option.cached == ("index",)
         finally:
             await composer.close()
 
@@ -4255,6 +4365,111 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
             await composition.close()
         # Composition close closes every worker: measurements die with it.
         assert reported.devices() == frozenset()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "valid",
+        "presentation",
+        "type",
+        "required",
+        "default",
+        "lazy",
+        "missing",
+        "undeclared",
+        "closed",
+        "declared",
+    ),
+)
+def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None:
+    from dinkster_protocol import Invocation
+    from dinkster_schema import (
+        InputSpec,
+        Node,
+        NodeSchema,
+        OutputSpec,
+        TypeExpr,
+        elaborate,
+    )
+    from dinkster_values import register_core_types
+    from dinkster_workers import InProcessWorker
+
+    calls: list[dict[str, object]] = []
+    declaration = NodeSchema(
+        node_type="authored.inputs",
+        inputs=(InputSpec("choice", TypeExpr.concrete("STRING")),),
+        outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+
+    class AuthoredInputs(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return (
+                replace(declaration, additional_inputs=None) if drift == "closed" else declaration
+            )
+
+        @classmethod
+        def execute(cls, **kwargs: object) -> Mapping[str, object]:
+            calls.append(kwargs)
+            return cls.outputs(result=f"{kwargs['choice']}|{kwargs['index']}")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        effective = elaborate(declaration, ("choice", "index"))
+        choice, index = effective.inputs
+        if drift == "type":
+            index = replace(index, type=TypeExpr.concrete("INT"))
+        elif drift == "required":
+            index = replace(index, required=True)
+        elif drift == "default":
+            index = replace(index, default=91)
+        elif drift == "lazy":
+            index = replace(index, lazy=True)
+        elif drift == "declared":
+            choice = replace(choice, required=False)
+        elif drift == "presentation":
+            choice = replace(
+                choice,
+                display_name="Authored choice",
+                doc="Choose the authored value.",
+            )
+        effective = replace(effective, inputs=(choice, index))
+        if drift == "missing":
+            effective = replace(effective, inputs=(choice,))
+        inputs = {
+            "choice": registry.wrap("STRING", "outside-menu"),
+            "index": registry.wrap("INT", 7),
+        }
+        if drift == "undeclared":
+            inputs["unlisted"] = registry.wrap("INT", 13)
+        worker = InProcessWorker({declaration.node_type: AuthoredInputs}, registry)
+        try:
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="authored-inputs",
+                    node_id="node",
+                    node_type=declaration.node_type,
+                    inputs=inputs,
+                    effective_schema=effective,
+                )
+            )
+            if drift in {"valid", "presentation"}:
+                assert result.error is None
+                assert result.outputs is not None
+                assert result.outputs["result"].resolve() == "outside-menu|7"
+                assert calls == [{"choice": "outside-menu", "index": 7}]
+            else:
+                assert result.error is not None
+                assert "schema skew" in result.error.message
+                assert result.outputs is None
+                assert calls == []
+        finally:
+            await worker.close()
 
     asyncio.run(scenario())
 

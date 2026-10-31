@@ -6,15 +6,35 @@ import json
 import os
 import re
 import subprocess
+import sys
+import time
 
 
 def prune(repository: str) -> list[int]:
-    pages = json.loads(
-        subprocess.check_output(
-            ["gh", "api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"],
-            text=True,
-        )
-    )
+    attempt = 0
+    while True:
+        try:
+            listing = subprocess.check_output(
+                ["gh", "api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"],
+                text=True,
+                stderr=subprocess.PIPE,
+            )
+            break
+        except subprocess.CalledProcessError as error:
+            attempt += 1
+            message = error.stderr or str(error)
+            print(message, file=sys.stderr, flush=True)
+            if attempt == 4 or not re.search(
+                r"stream error:|connection (reset|refused)|timeout|unexpected eof|"
+                r"http (429|5[0-9]{2})",
+                message,
+                re.IGNORECASE,
+            ):
+                raise
+            delay = 2 ** (attempt - 1)
+            print(f"Release listing failed; retrying in {delay}s", file=sys.stderr, flush=True)
+            time.sleep(delay)
+    pages = json.loads(listing)
     releases = [
         release
         for page in pages
@@ -32,6 +52,8 @@ def prune(repository: str) -> list[int]:
         if (
             not current["prerelease"]
             or current["draft"]
+            or current["published_at"] is None
+            or current["id"] != release["id"]
             or current["tag_name"] != release["tag_name"]
         ):
             continue

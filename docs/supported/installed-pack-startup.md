@@ -67,9 +67,13 @@
   their verified source ZIPs into target-interpreter admission automatically;
   missing admission support refuses activation. Selected-variant dependency locks
   are acquired from release artifacts unless explicitly overridden. Every selected
-  source pack needs a dependency lock, including empty closures; missing local
-  dependency wheels refuse offline construction. Confirmed updates can select
-  another channel or variant, retaining the old selection until candidate health
+  source pack needs a dependency lock, including empty closures. Confirmed setup
+  and updates acquire missing pack wheels from their locked URLs and verify size
+  and SHA256 before offline construction, including wheels absent from release
+  assets. Download failures identify the pack, URL and verification outcome.
+  Offline repair and move still require intact retained wheels. Releases without
+  pack acquisition support can still build from complete cached wheels. Confirmed
+  updates can select another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
 - Base acquisition verifies ordered tar+zstd parts before streaming extraction.
@@ -91,6 +95,12 @@
 - Failed initial setup releases its own metadata and store registrations so a
   retry can select another data directory. Cached content, pre-existing settings,
   other projects' references and the diagnostic journal remain intact.
+- Explicit `dinkster-env setup --from-scratch` builds from the checkout lock
+  for development or when a published bundle does not fit. Contributor setup
+  accepts the same opt-in, with an explicit host interpreter override when its
+  platform row is missing. Local generations report their origin and recorded
+  drift; channel updates refuse them and offer a fresh published installation.
+  Default setup and Desktop remain published-bundle consumers.
 - Confirmed environment garbage collection keeps the current generation and its
   successful predecessor, and preserves cache references from other registered
   projects. Interrupted collection recovers before another confirmed mutation;
@@ -181,6 +191,11 @@
   and atomically writes the existing stable/main channel format. It preserves
   publisher inputs and requires no network. Hosted channel publication and
   published-base selection are not provided by this local command.
+- Hosted publication retries transient mirror upload failures with bounded
+  backoff and verifies all mirrored payload bytes before exposing the channel.
+  Prerelease housekeeping reports exhausted transport retries independently;
+  its failure does not prevent a successfully published release from advancing
+  the verified channel. Stable and draft releases are not pruned.
 - Confirmed gc collects obsolete generation trees while retaining current and
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and

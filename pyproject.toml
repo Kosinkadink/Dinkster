@@ -53,7 +53,10 @@ angle = [
     "comfy-angle==0.1.1",
     "PyOpenGL>=3.1.8,<4",
 ]
+release-publication = ["boto3>=1.40,<2", "dinkster-supervisor"]
 dev = [
+    "boto3>=1.40,<2",
+    "dinkster-supervisor",
     "hypothesis>=6",
     "onnxruntime==1.29.0",
     "pytest>=8",

@@ -93,6 +93,14 @@ def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
         setup_envs.select_base(bases)
 
 
+def test_from_scratch_contributor_setup_names_missing_host_row(tmp_path: Path):
+    root = Path(setup_envs.__file__).resolve().parents[1]
+    variants = tmp_path / "variants.toml"
+    variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
+    with pytest.raises(ValueError, match=r"missing variants.toml row: variants.absent-host"):
+        setup_envs.setup(root, from_scratch=True, variant="absent-host", variants=variants)
+
+
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
 def test_apple_silicon_selects_mac_bundle_without_cuda_probe(bases, monkeypatch, arch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")

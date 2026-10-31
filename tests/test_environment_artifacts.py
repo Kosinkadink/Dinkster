@@ -10,6 +10,9 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from platform import machine
 from types import SimpleNamespace
@@ -420,6 +423,257 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         acquire(catalog, "fixture-cpu", store)
     assert not (store / "bases" / base["id"][7:]).exists()
     assert not list(store.glob("wheels/*/*.whl"))
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "base",
+        "engine",
+        "github",
+        "head",
+        "config",
+        "event",
+        "superseded",
+        "identical",
+        "absent",
+        "diverged",
+        "compare",
+        "unknown",
+        "channel",
+        "identical-bytes",
+        "upload-recover",
+        "upload-exhaust",
+        "upload-forbidden",
+        "upload-corrupt",
+        "channel-recover",
+    ],
+)
+def test_channel_publication_exposes_only_verified_payloads(
+    tmp_path: Path, monkeypatch, request, capsys, failure
+):
+    from boto3.exceptions import S3UploadFailedError
+    from botocore.exceptions import ClientError
+
+    from scripts import publish_environment_channel as publisher
+
+    source, public = tmp_path / "source", tmp_path / "public"
+    base, engine, channel = _mirror(source)
+    release = source / "engine" / channel["engine"]["release"][7:]
+    (release / "SHA256SUMS").write_bytes(b"fixture checksums")
+    base_path = source / "base/fixture-cpu" / base["id"][7:] / "manifest.json"
+    shutil.copytree(source / "base", public / "base")
+    (public / "channels").mkdir()
+    stable = b"stable channel must not change"
+    (public / "channels/stable.json").write_bytes(stable)
+    write_channel(
+        release, [base_path], channel="main", output_root=public, minimum_desktop_version="0.2.0"
+    )
+    published_commit = engine["commit"]
+    if failure not in {"identical", "identical-bytes"}:
+        published_engine = {**engine, "commit": "e" * 40}
+        published_commit = published_engine["commit"]
+        data = _json(published_engine)
+        identity = hashlib.sha256(data).hexdigest()
+        target = public / f"engine/{identity}/release-manifest.json"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(data)
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["engine"]["release"] = "sha256:" + identity
+        document["engine"]["locations"] = [
+            {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+        ]
+        (public / "channels/main.json").write_bytes(_json(document))
+    elif failure == "identical-bytes":
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["minimumDesktopVersion"] = "0.1.0"
+        (public / "channels/main.json").write_bytes(_json(document))
+    previous = (public / "channels/main.json").read_bytes()
+    if failure == "absent":
+        (public / "channels/main.json").unlink()
+
+    class MirrorHandler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            if failure == "channel" and self.path == "/channels/main.json":
+                self.send_error(403)
+                return
+            if self.headers.get("User-Agent", "").startswith("Python-urllib/"):
+                self.send_error(403)
+                return
+            super().do_GET()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(MirrorHandler, directory=str(public)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def cleanup():
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    request.addfinalizer(cleanup)
+    for name, value in {
+        "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": engine["commit"],
+        "R2_ACCESS_KEY_ID": "test",
+        "R2_SECRET_ACCESS_KEY": "test",
+        "R2_ACCOUNT_ID": "test",
+        "R2_BUCKET": "test",
+        "R2_PUBLIC_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+    }.items():
+        monkeypatch.setenv(name, value)
+    if failure == "config":
+        monkeypatch.delenv("R2_SECRET_ACCESS_KEY")
+    elif failure == "event":
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    elif failure == "base":
+        (public / base_path.relative_to(source)).write_bytes(b"wrong base manifest")
+    original_urlopen = publisher.urlopen
+
+    def published_input(url, **kwargs):
+        if url.startswith("https://api.github.com/"):
+            assert url == (
+                "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
+                f"{published_commit}...{engine['commit']}"
+            )
+            if failure == "compare":
+                raise ValueError("compare unavailable")
+            status = (
+                "identical"
+                if published_commit == engine["commit"]
+                else {"superseded": "behind", "diverged": "diverged", "unknown": "unknown"}.get(
+                    failure, "ahead"
+                )
+            )
+            return io.BytesIO(json.dumps({"status": status}).encode())
+        if url.startswith("https://github.com/"):
+            return io.BytesIO(
+                b"wrong"
+                if failure == "github"
+                else (release / "release-manifest.json").read_bytes()
+            )
+        return original_urlopen(url, **kwargs)
+
+    attempts = {}
+    active = set()
+    sleeps = []
+
+    def backoff(delay):
+        assert not active, "application retry overlapped an unfinished object transfer"
+        sleeps.append(delay)
+
+    monkeypatch.setattr(publisher.time, "sleep", backoff)
+
+    class ObjectStore:
+        def head_object(self, *, Bucket, Key):
+            if failure == "head":
+                raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadObject")
+            if not (public / Key).exists():
+                raise ClientError({"ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
+
+        def upload_file(self, filename, bucket, key, **kwargs):
+            if failure in {"identical", "identical-bytes"} and key == "channels/main.json":
+                pytest.fail("identical engine must not upload the channel")
+            assert key not in active
+            active.add(key)
+            try:
+                attempts[key] = attempts.get(key, 0) + 1
+                config = kwargs["Config"]
+                assert config.max_concurrency == 1 and config.use_threads is False
+                affected = (
+                    failure
+                    in {"upload-recover", "upload-exhaust", "upload-forbidden", "upload-corrupt"}
+                    and key.endswith("/constraints.txt")
+                ) or (failure == "channel-recover" and key == "channels/main.json")
+                if affected and (
+                    attempts[key] < 3 or failure in {"upload-exhaust", "upload-forbidden"}
+                ):
+                    error = ClientError(
+                        {
+                            "ResponseMetadata": {
+                                "HTTPStatusCode": 403 if failure == "upload-forbidden" else 503
+                            },
+                            "Error": {
+                                "Code": "AccessDenied"
+                                if failure == "upload-forbidden"
+                                else "ServiceUnavailable",
+                                "Message": (
+                                    "Reduce your concurrent request rate for the same object."
+                                ),
+                            },
+                        },
+                        "PutObject",
+                    )
+                    raise S3UploadFailedError("fixture upload failed") from error
+            finally:
+                active.remove(key)
+            target = public / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(filename, target)
+            if failure in {"engine", "upload-corrupt"} and target.name == "constraints.txt":
+                target.write_bytes(b"corrupted uploaded engine bytes")
+
+    monkeypatch.setattr(publisher, "urlopen", published_input)
+    monkeypatch.setattr(publisher.boto3, "client", lambda *args, **kwargs: ObjectStore())
+    if failure in {
+        "base",
+        "engine",
+        "github",
+        "head",
+        "event",
+        "compare",
+        "unknown",
+        "channel",
+        "identical-bytes",
+        "upload-exhaust",
+        "upload-forbidden",
+        "upload-corrupt",
+    }:
+        from urllib.error import HTTPError
+
+        with pytest.raises((ValueError, ClientError, HTTPError, S3UploadFailedError)):
+            publisher.publish(release, [base_path], "main", "0.2.0")
+    else:
+        publisher.publish(release, [base_path], "main", "0.2.0")
+    assert (public / "channels/stable.json").read_bytes() == stable
+    if failure in {
+        "upload-recover",
+        "upload-exhaust",
+        "upload-forbidden",
+        "upload-corrupt",
+        "channel-recover",
+    }:
+        key = (
+            "channels/main.json"
+            if failure == "channel-recover"
+            else next(key for key in attempts if key.endswith("/constraints.txt"))
+        )
+        assert attempts[key] == {"upload-exhaust": 4, "upload-forbidden": 1}.get(failure, 3)
+        if failure == "upload-forbidden":
+            assert sleeps == []
+        else:
+            assert sleeps[:2] == [1, 2]
+        if failure == "upload-exhaust":
+            assert sleeps == [1, 2, 4]
+        if failure in {"upload-exhaust", "upload-forbidden", "upload-corrupt"}:
+            assert "channels/main.json" not in attempts
+    if failure not in {None, "identical", "absent", "upload-recover", "channel-recover"}:
+        assert (public / "channels/main.json").read_bytes() == previous
+        if failure in {"superseded", "diverged"}:
+            output = capsys.readouterr().out
+            assert published_commit in output
+            assert engine["commit"] in output
+    else:
+        selected = discover((str(public),), "main")
+        assert selected.engine == engine
+        assert selected.bases == {"fixture-cpu": base}
+        before = {path: path.read_bytes() for path in public.rglob("*") if path.is_file()}
+        published_commit = engine["commit"]
+        publisher.publish(release, [base_path], "main", "0.2.0")
+        assert {path: path.read_bytes() for path in before} == before
 
 
 def test_channel_builder_round_trips_both_channels_without_changing_publisher_inputs(

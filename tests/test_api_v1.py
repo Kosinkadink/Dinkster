@@ -234,6 +234,7 @@ GOLDEN_V1_SURFACE = (
     "LAYERS_TYPE",
     "LOAD3D_CAMERA_TYPE",
     "LOAD3D_MODEL_INFO_TYPE",
+    "LOAD_3D_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -315,6 +316,7 @@ GOLDEN_V1_SURFACE = (
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",
+    "register_box_types",
     "register_curve_type",
     "register_resource_handle_type",
     "render_audio_wav",
@@ -421,10 +423,12 @@ GOLDEN_V1_SURFACE = (
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "produced_output_scratch",
     "asset_selection_names",
     "asset_selection_options",
     "resolve_asset_selection",
     "register_asset_type",
+    "register_load3d_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
     "AssetWidget",
@@ -459,7 +463,9 @@ GOLDEN_V1_SURFACE = (
     "copy_media_semantics",
     "mask_array_meta",
     "media_semantics",
+    "validate_bounding_box_encoded",
     "validate_image_encoded",
+    "validate_placement_array_encoded",
 )
 
 

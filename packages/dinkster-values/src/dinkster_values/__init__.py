@@ -30,6 +30,11 @@ from .audio_codec import (
     render_audio_wav,
 )
 from .audio_lazy import channel_layout as audio_channel_layout
+from .box_codec import (
+    register_box_types,
+    validate_bounding_box_encoded,
+    validate_placement_array_encoded,
+)
 from .builtin_types import (
     ARRAY_TYPE,
     ASSET_TYPE,
@@ -93,6 +98,7 @@ from .builtin_types import (
     LAYERS_TYPE,
     LOAD3D_CAMERA_TYPE,
     LOAD3D_MODEL_INFO_TYPE,
+    LOAD_3D_TYPE,
     MASK_TYPE,
     MESH_TYPE,
     MODEL3D_TYPE,
@@ -426,6 +432,7 @@ __all__ = [
     "LAYERS_TYPE",
     "LOAD3D_CAMERA_TYPE",
     "LOAD3D_MODEL_INFO_TYPE",
+    "LOAD_3D_TYPE",
     "ListPayload",
     "TuplePayload",
     "MEDIA_AUDIO_UPLOAD_LIMIT_BYTES",
@@ -641,6 +648,9 @@ __all__ = [
     "video_rendition_mime",
     "video_source",
     "validate_latent_encoded",
+    "register_box_types",
+    "validate_bounding_box_encoded",
+    "validate_placement_array_encoded",
     "CURVE_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
     "MAX_CURVE_POINTS",

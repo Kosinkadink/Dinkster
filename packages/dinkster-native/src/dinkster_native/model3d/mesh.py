@@ -1,4 +1,4 @@
-"""Mesh inspection and GLB bytes matching ComfyUI 25dfc16f9ac0 nodes_save_3d."""
+"""Mesh inspection and GLB bytes from ComfyUI bc5f880dbdd4 nodes_save_3d."""
 
 from __future__ import annotations
 
@@ -68,7 +68,9 @@ def mesh_info(mesh: TriangleMeshBatch[torch.Tensor]) -> str:
     return info
 
 
-def mesh_item_to_glb_bytes(mesh: TriangleMeshBatch[torch.Tensor], index: int) -> bytes | None:
+def mesh_item_to_glb_bytes(
+    mesh: TriangleMeshBatch[torch.Tensor], index: int, metadata: dict[str, str] | None = None
+) -> bytes | None:
     """Serialize a batch item, including PBR attributes; empty items return None."""
     vertex_count = mesh.vertices.shape[1]
     face_count = mesh.faces.shape[1]
@@ -149,7 +151,7 @@ def mesh_item_to_glb_bytes(mesh: TriangleMeshBatch[torch.Tensor], index: int) ->
             f"{name} must be (B, H, W, 3), got {tuple(tensor.shape)}"
         )
         buffer = BytesIO()
-        Image.fromarray(array, mode="RGB").save(buffer, format="PNG")
+        Image.fromarray(array, mode="RGB").save(buffer, format="PNG", compress_level=4)
         blobs[name] = buffer.getvalue()
 
     offsets: dict[str, int] = {}
@@ -320,6 +322,8 @@ def mesh_item_to_glb_bytes(mesh: TriangleMeshBatch[torch.Tensor], index: int) ->
     gltf["materials"] = [material]
     if extensions_used:
         gltf["extensionsUsed"] = extensions_used
+    if metadata:
+        gltf["asset"]["extras"] = metadata
     gltf_json = json.dumps(gltf).encode("utf8")
     gltf_json += b" " * (-len(gltf_json) % 4)
     return b"".join(

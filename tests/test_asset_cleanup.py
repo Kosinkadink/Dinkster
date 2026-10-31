@@ -62,6 +62,8 @@ from test_server import (
     wait_for_state,
 )
 
+from tests.platform_support import symlink_or_skip
+
 
 def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Path) -> None:
     async def scenario() -> None:
@@ -451,7 +453,7 @@ def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
     outside.mkdir()
     (outside / "keep").write_bytes(b"not job scratch")
     link = source.root / "escape"
-    link.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(link, outside, target_is_directory=True)
     result = recover_produced_publications(vault, scratch)
     assert result["blockedInspections"] == 1
     assert result["reclaimedFiles"] == 0
@@ -687,7 +689,7 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
             outside = tmp_path / "outside"
             outside.write_bytes(data)
             path.unlink()
-            path.symlink_to(outside)
+            symlink_or_skip(path, outside)
         elif fault == "size":
             path.write_bytes(data + b"extra")
         elif fault == "journal":
@@ -854,7 +856,7 @@ def test_scratch_accounting_waits_for_host_and_store_owners_without_deleting(
             outside = tmp_path / "outside"
             outside.write_bytes(b"not managed")
             escape = produced.root / "escape"
-            escape.symlink_to(outside)
+            symlink_or_skip(escape, outside)
             assert (await status())["temporaryBytes"] is None
             assert outside.read_bytes() == b"not managed"
             escape.unlink()
@@ -1523,7 +1525,7 @@ def test_collection_refuses_unsafe_adoptions(
         if damage == "corrupt":
             path.write_bytes(b"x" * len(data))
         elif damage == "linked-sidecar":
-            path.with_name(path.name + ".unsafe").symlink_to(outside)
+            symlink_or_skip(path.with_name(path.name + ".unsafe"), outside)
         before = path.read_bytes()
         try:
             result = await inspect_cleanup(
@@ -1558,7 +1560,7 @@ def test_storage_accounting_refuses_escaping_vault_shard(tmp_path: Path) -> None
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / ("ab" * 32)).write_bytes(b"untouched external bytes")
-        (vault.root / "ab").symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(vault.root / "ab", outside, target_is_directory=True)
         try:
             status = await inspect_cleanup(vault, store, None, MemoryLRUCache())
             assert status["vaultBytes"] is None

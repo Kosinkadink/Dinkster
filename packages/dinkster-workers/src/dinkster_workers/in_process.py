@@ -84,6 +84,7 @@ from dinkster_schema import (
     plan_asset_coercion,
     resolved_type_expr,
     resolved_type_id,
+    schema_signature,
     use_capture_budget,
     use_reporter,
 )
@@ -577,6 +578,8 @@ class InProcessWorker:
         schema = invocation.effective_schema
 
         skew = self._check_output_provenance(base_schema, invocation)
+        if skew is None:
+            skew = self._check_input_provenance(base_schema, invocation)
         if skew is not None:
             return InvocationResult(
                 error=NodeError(
@@ -835,6 +838,59 @@ class InProcessWorker:
             await pending_waiter
 
         return reporter, close
+
+    def _check_input_provenance(
+        self, base_schema: NodeSchema, invocation: Invocation
+    ) -> str | None:
+        supplied = dict.fromkeys((*invocation.inputs, *invocation.connected_undemanded_inputs))
+        # Lazy demand changes availability order, not authored family order.
+        stored: dict[str, object] = {
+            spec.id: None for spec in invocation.effective_schema.inputs if spec.id in supplied
+        }
+        stored.update((name, None) for name in supplied if name not in stored)
+        source_ids = {
+            family.count.input for family in base_schema.output_families if family.count is not None
+        }
+        if base_schema.output_descriptors is not None:
+            source_ids.add(base_schema.output_descriptors.input)
+        expressions = [
+            output.type for output in (*base_schema.outputs, *base_schema.output_families)
+        ]
+        while expressions:
+            expression = expressions.pop()
+            if (
+                expression.kind == "tuple_element"
+                and isinstance(expression.index, str)
+                and expression.index in invocation.inputs
+            ):
+                source_ids.add(expression.index)
+            if expression.element is not None:
+                expressions.append(expression.element)
+            expressions.extend(expression.elements)
+        try:
+            for input_id in source_ids:
+                stored[input_id] = invocation.inputs[input_id].resolve()
+            expected = elaborate(
+                base_schema,
+                stored,
+                dict(invocation.output_members),
+                dict(invocation.effective_schema.slot_choices),
+            )
+            # Host-derived menus and display metadata are not input authority.
+            matches = schema_signature(expected) == schema_signature(
+                replace(expected, inputs=invocation.effective_schema.inputs)
+            )
+        except (KeyError, ValueError, UnresolvablePayload) as error:
+            return f"schema skew: invalid authored inputs: {error}"
+        if not matches:
+            return "schema skew: input interface differs from worker projection"
+        admitted = {spec.id for spec in expected.inputs}
+        if any(
+            name not in admitted
+            for name in (*invocation.inputs, *invocation.connected_undemanded_inputs)
+        ):
+            return "schema skew: supplied input is absent from the effective interface"
+        return None
 
     def _check_output_provenance(
         self, base_schema: NodeSchema, invocation: Invocation

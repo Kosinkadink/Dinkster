@@ -56,6 +56,16 @@ from multidict import MultiDict, MultiDictProxy
 from PIL import Image
 
 
+@pytest.fixture(autouse=True)
+def _sufficient_latent_disk_space(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Upload behavior must not depend on runner disk pressure. Reserve tests
+    # override this probe to exercise insufficient headroom explicitly.
+    monkeypatch.setattr(
+        "dinkster_server.library.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=8 * 1024**3),
+    )
+
+
 def _png_chunk(kind: bytes, payload: bytes) -> bytes:
     body = kind + payload
     return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
@@ -1644,12 +1654,16 @@ def test_latent_ingest_requires_auth_scope_and_admission_capacity(tmp_path: Path
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("free_bytes", "expected_status"),
+    [(2 * 1024**3 - 1, 507), (2 * 1024**3, 201)],
+)
 def test_latent_ingest_preserves_filesystem_headroom(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, free_bytes: int, expected_status: int
 ) -> None:
     monkeypatch.setattr(
         "dinkster_server.library.shutil.disk_usage",
-        lambda _path: SimpleNamespace(free=2 * 1024 * 1024 * 1024 - 1),
+        lambda _path: SimpleNamespace(free=free_bytes),
     )
 
     async def scenario() -> None:
@@ -1659,9 +1673,11 @@ def test_latent_ingest_preserves_filesystem_headroom(
                 "/api/assets/latent?scope=local&name=sample.latent",
                 data=_latent(),
             )
-            assert response.status == 507
+            assert response.status == expected_status
             assert library.latent_reserved_bytes == [0]
-            assert library.vault.digests() == []
+            assert library.vault.digests() == (
+                [] if expected_status == 507 else [digest_bytes(_latent())]
+            )
         finally:
             await client.close()
 

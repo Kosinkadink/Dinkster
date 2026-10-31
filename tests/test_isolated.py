@@ -101,6 +101,7 @@ from dinkster_workers.boundary import (
 from dinkster_workers.doctor import diagnose
 from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
 from dinkster_workers.session import BoundarySession, WorkerDied
+from dinkster_workers.transport import TOKEN_ENV, BoundaryListener, connect_endpoint
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
 from tests.platform_support import symlink_or_skip
@@ -422,6 +423,82 @@ def test_group_validates_every_workgroup_handler_before_connecting(
                 use_shm=False,
             )
         assert connected == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancel_before_second", [False, True])
+def test_group_connects_all_peers_before_synchronous_hello_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_before_second: bool
+) -> None:
+    async def scenario() -> None:
+        manifests: list[str] = []
+        for name in ("first", "second"):
+            root = tmp_path / name
+            root.mkdir()
+            manifests.append(str(write_iso_manifest(root, name=name)))
+        first = await BoundaryListener.create(tmp_path, transport="tcp")
+        second = await BoundaryListener.create(
+            tmp_path, transport="tcp", token=first.child_env[TOKEN_ENV]
+        )
+        monkeypatch.setenv(TOKEN_ENV, first.child_env[TOKEN_ENV])
+        first_connected = asyncio.Event()
+        allow_second = asyncio.Event()
+
+        async def controlled_connect(
+            endpoint: str,
+        ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            listener = first if endpoint == first.endpoint else second
+            if listener is second:
+                await allow_second.wait()
+            pair = await connect_endpoint(endpoint)
+            await listener.connected
+            if listener is first:
+                first_connected.set()
+            return pair
+
+        def capability() -> bool:
+            assert second.connected.done(), "hello preparation blocked a sibling connection"
+            return True
+
+        monkeypatch.setattr(host_module, "connect_endpoint", controlled_connect)
+        monkeypatch.setattr(host_module, "_legacy_checkpoint_conversion_capable", capability)
+        task = asyncio.create_task(
+            host_module.serve_many(
+                (first.endpoint, second.endpoint),
+                manifests,
+                shm_threshold=DEFAULT_SHM_THRESHOLD,
+                use_shm=False,
+            )
+        )
+        try:
+            await asyncio.wait_for(first_connected.wait(), 2)
+            if cancel_before_second:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                reader, _writer = first.connected.result()
+                assert await asyncio.wait_for(read_frame(reader), 2) is None
+            else:
+                allow_second.set()
+                pairs = await asyncio.wait_for(asyncio.gather(first.connected, second.connected), 2)
+                for name, (reader, writer) in zip(("first", "second"), pairs, strict=True):
+                    frame = await asyncio.wait_for(read_frame(reader), 2)
+                    assert frame is not None
+                    assert frame[0]["type"] == "hello"
+                    assert frame[0]["pack"] == name
+                    assert frame[0]["convertLegacyCheckpoint"] is True
+                    await write_frame(writer, {"type": "shutdown"}, [])
+                await asyncio.wait_for(task, 2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            for listener in (first, second):
+                if listener.connected.done() and not listener.connected.cancelled():
+                    _reader, writer = listener.connected.result()
+                    writer.close()
+                    await writer.wait_closed()
+                await listener.close()
 
     asyncio.run(scenario())
 
@@ -1825,9 +1902,96 @@ def test_worker_conversion_refusal_is_distinct_from_transport_failure(
     asyncio.run(scenario())
 
 
-def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) -> None:
+@pytest.mark.parametrize("broken", ["torch", "torch-api", "safetensors", "safetensors-api"])
+def test_worker_hello_discovers_broken_runtime_without_importing_it(
+    tmp_path: Path, broken: str
+) -> None:
+    from dinkster.compose import PackSpec, ServingComposer
+    from dinkster.serve import _schedule_legacy_checkpoint_conversion
+
+    torch_imported = tmp_path / "torch-imported"
+    safetensors_imported = tmp_path / "safetensors-torch-imported"
+    torch_runtime = {
+        "torch": "raise OSError('broken native Torch runtime')\n",
+        "torch-api": "load = None\nTensor = None\n",
+    }.get(broken, "class Tensor: pass\ndef load(*args, **kwargs): return {}\n")
     (tmp_path / "torch.py").write_text(
-        "raise ModuleNotFoundError('No module named torch', name='torch')\n",
+        f"from pathlib import Path\nPath({str(torch_imported)!r}).touch()\n{torch_runtime}",
+        encoding="utf-8",
+    )
+    safetensors = tmp_path / "safetensors"
+    safetensors.mkdir()
+    (safetensors / "__init__.py").write_text("", encoding="utf-8")
+    (safetensors / "torch.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(safetensors_imported)!r}).touch()\n"
+        + (
+            "save_file = None\n"
+            if broken == "safetensors-api"
+            else "raise OSError('broken native safetensors runtime')\n"
+        ),
+        encoding="utf-8",
+    )
+    source = tmp_path / "weights.ckpt"
+    source.write_bytes(b"legacy checkpoint")
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    DEV_MANIFEST,
+                    env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
+                    aimdo="off",
+                )
+            )
+            worker = composer.composition._isolated[0]
+            assert worker.can_convert_legacy_checkpoint is True
+            assert not torch_imported.exists()
+            assert not safetensors_imported.exists()
+            with pytest.raises(RuntimeError, match="legacy-checkpoint-converter-unavailable"):
+                await worker.convert_legacy_checkpoint(source, "weights.ckpt")
+            assert torch_imported.exists()
+            assert safetensors_imported.exists() == broken.startswith("safetensors")
+            assert await _schedule_legacy_checkpoint_conversion(
+                composer, source, "weights.ckpt"
+            ) == ("transport-failure", None)
+            assert worker.alive
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
+    import torch
+    from dinkster_compat_comfy.legacy_sources import discover_converted_sidecar
+    from safetensors.torch import load_file
+
+    source = tmp_path / "weights.ckpt"
+    torch.save({"weight": torch.tensor([3.0, -2.0])}, source)
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(DEV_MANIFEST, core_registry(), aimdo_arm="off")
+        try:
+            await worker.start()
+            assert worker.can_convert_legacy_checkpoint is True
+            assert await worker.convert_legacy_checkpoint(source, "weights.ckpt") == (
+                "success",
+                None,
+            )
+            sidecar = discover_converted_sidecar(source)
+            assert sidecar is not None
+            assert load_file(sidecar)["weight"].tolist() == [3.0, -2.0]
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) -> None:
+    (tmp_path / "sitecustomize.py").write_text(
+        "import sys\nsys.modules['torch'] = None\n",
         encoding="utf-8",
     )
 
