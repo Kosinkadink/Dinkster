@@ -308,6 +308,59 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     )
     for path in acquired:
         assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
+    retained = store / "engines" / channel["engine"]["release"][7:] / "release-manifest.json"
+    assert retained.read_bytes() == _json(engine) + b"\n"
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16"])
+def test_acquisition_retains_original_discovery_bytes_without_refetch(
+    tmp_path: Path, encoding: str
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _, engine, channel = _mirror(mirror)
+    previous = mirror / "engine" / channel["engine"]["release"][7:]
+    del engine["tag"]
+    engine["label"] = "2026-11-01-0.4.0.dev1"
+    data = (json.dumps(engine, indent=3) + "\r\n").encode(encoding)
+    identity = hashlib.sha256(data).hexdigest()
+    release = mirror / "engine" / f"{engine['label']}-{identity[:8]}"
+    shutil.copytree(previous, release)
+    manifest = release / "release-manifest.json"
+    manifest.write_bytes(data)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"] = [
+        {"type": "mirror", "path": f"engine/{release.name}/release-manifest.json"}
+    ]
+    (mirror / "channels/main.json").write_bytes(_json(channel))
+    catalog = discover((str(mirror),), "main")
+    assert not store.exists()
+    manifest.write_bytes(b"changed after discovery")
+    acquire(catalog, "fixture-cpu", store)
+    retained = store / "engines" / identity / "release-manifest.json"
+    assert retained.read_bytes() == data
+    assert hashlib.sha256(retained.read_bytes()).hexdigest() == identity
+    assert all(engine["label"] not in part for path in store.rglob("*") for part in path.parts)
+    retained.write_bytes(b"corrupt cache")
+    acquire(catalog, "fixture-cpu", store)
+    assert retained.read_bytes() == data
+
+
+@pytest.mark.parametrize("change", ["missing", "bytes", "parsed"])
+def test_acquisition_refuses_inconsistent_retained_manifest_before_cache_creation(
+    tmp_path: Path, change: str
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _mirror(mirror)
+    catalog = discover((str(mirror),), "main")
+    if change == "missing":
+        catalog.engine_bytes = b""
+    elif change == "bytes":
+        catalog.engine_bytes += b"\n"
+    else:
+        catalog.engine["version"] = "0.5.0"
+    with pytest.raises(EnvironmentError, match="metadata|manifest"):
+        acquire(catalog, "fixture-cpu", store)
+    assert not store.exists()
 
 
 @pytest.mark.parametrize(
@@ -388,6 +441,10 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
     assert (
         next((tmp_path / "store/wheels").glob("*/fixture_engine*.whl")).read_bytes()
         == b"engine wheel bytes"
+    )
+    retained = tmp_path / "store/engines" / release / "release-manifest.json"
+    assert (
+        retained.read_bytes() == (second / f"engine/{release}/release-manifest.json").read_bytes()
     )
 
 

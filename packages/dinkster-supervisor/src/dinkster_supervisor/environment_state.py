@@ -87,13 +87,13 @@ def read_document(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def atomic_write(path: Path, text: str) -> None:
+def atomic_write(path: Path, text: str | bytes) -> None:
     """Flush the new contents before publishing a pointer or journal stage."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8") if isinstance(text, str) else text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)

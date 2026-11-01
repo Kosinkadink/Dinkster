@@ -292,7 +292,10 @@ wheels and populates `wheels/<sha256 hex>/<filename>`. Engine-owned wheel and
 constraints artifacts are verified through the same downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
 the generation. Effective constraints are stored under
-`engines/<release hex>/constraints-<variant>.txt`. A base without hosted parts
+`engines/<release hex>/constraints-<variant>.txt`. The original verified engine
+manifest bytes are atomically retained at `engines/<release hex>/release-manifest.json`,
+without reserialization or another metadata fetch. Missing or inconsistent
+catalog bytes refuse acquisition before cache creation. A base without hosted parts
 currently reports that manifest reconstruction is required; it never resolves
 or substitutes dependencies silently.
 
