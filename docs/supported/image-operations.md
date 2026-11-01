@@ -46,6 +46,8 @@
   converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
+- Portable shape-subdivision values retain ordered sparse stages, feature and
+  coordinate tensors, explicit shapes and exact rational scales, without caches.
 - Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
   occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
