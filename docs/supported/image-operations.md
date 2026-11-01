@@ -1,5 +1,10 @@
 ## Image operations
 
+- `DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
+  transport depth, source images and cameras, per-frame face and body detections,
+  face topology, masks, canonical colors and external rig state without dropping
+  optional fields or converting NumPy arrays to tensors. Numeric dtypes, scalar
+  arrays, frame order and unsigned rig indices survive transport.
 - `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
   transports flat or per-frame pixel boxes and normalized prompt elements.
   Both accept JSON only, retaining frame order, integer/float coordinates,
@@ -103,6 +108,10 @@
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- DA3, MediaPipe face-detection and SAM3D Body model values retain their
+  complete model wrappers in the holding worker when passed between nodes.
+- Structural tensor values preserve unsigned 16-bit joint indices and unsigned
+  32-bit mesh faces without narrowing their values to a signed integer range.
 - Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
   optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional
