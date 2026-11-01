@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import cast
 
 from aiohttp import web
@@ -17,14 +18,14 @@ from dinkster_workers import PackManifest
 from .mounts_api import MOUNTS_KEY, MountService
 from .project_folders import ProjectFolders
 from .workflow_requirements import (
+    VARIANT_DEVICES,
     PackRequirement,
     RequirementError,
+    generation_device,
     manifest_unavailability,
     plan_workflow_requirements,
     project_requirements,
 )
-
-VARIANTS = ("linux-cpu", "win-cpu", "win-nvidia", "win-nvidia-cu126")
 
 
 def _asset_present(
@@ -68,6 +69,7 @@ def add_workflow_requirement_routes(
     *,
     manifests: Callable[[], Mapping[str, PackManifest]],
     engine_variant: str | None = None,
+    generation: Path | None = None,
 ) -> None:
     async def handle_plan(request: web.Request) -> web.Response:
         principal = principal_for(request)
@@ -95,8 +97,16 @@ def add_workflow_requirement_routes(
                 raise RequirementError(
                     "engine variant is undeclared; supply variant or launch with --engine-variant"
                 )
-            if not isinstance(variant, str) or variant not in VARIANTS:
-                raise RequirementError(f"variant must be one of {', '.join(VARIANTS)}")
+            if not isinstance(variant, str):
+                raise RequirementError("variant must be a string")
+            device = None
+            if variant not in VARIANT_DEVICES:
+                if generation is None or variant != engine_variant:
+                    raise RequirementError(
+                        f"variant must be one of {', '.join(VARIANT_DEVICES)} "
+                        "or the selected generation's variant"
+                    )
+                device = await asyncio.to_thread(generation_device, generation, variant)
             project = raw.get("project")
             if project is not None:
                 ProjectFolders.validate_project(cast(str, project))
@@ -105,7 +115,7 @@ def add_workflow_requirement_routes(
                 raise RequirementError(consent)
             _, hinted = consent
             requirements = project_requirements(cast("list[object]", workflows))
-        except (json.JSONDecodeError, RequirementError, AssetError, MountsError) as exc:
+        except (ValueError, OSError, AssetError, MountsError) as exc:
             raise web.HTTPBadRequest(
                 text=json.dumps({"error": str(exc)}), content_type="application/json"
             ) from exc
@@ -117,7 +127,7 @@ def add_workflow_requirement_routes(
             manifest = declared.get(pack.pack)
             if manifest is None or installed.get(pack.pack) != pack.version:
                 return "saved-version manifest is unavailable for compatibility planning"
-            return manifest_unavailability(pack, manifest, variant)
+            return manifest_unavailability(pack, manifest, cast("str", variant), device=device)
 
         def sources(digest: str) -> list[AssetSource]:
             leads: list[AssetSource] = [RemoteSource(url) for url in hinted.get(digest, ())]

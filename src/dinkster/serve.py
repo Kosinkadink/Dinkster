@@ -2189,6 +2189,7 @@ def main(argv: list[str] | None = None) -> None:
                 for name, spec in composer.pack_specs().items()
             },
             engine_variant=args.engine_variant,
+            generation=args.generation,
         )
         if installer is not None:
             # Live install activation: reconcile the served surface with
