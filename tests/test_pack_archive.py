@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
@@ -459,3 +460,184 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
             await composer.close()
 
     asyncio.run(execute())
+
+
+@pytest.mark.parametrize("problem", [None, "path", "case", "compression", "order", "junk"])
+def test_registry_archive_admission_requires_canonical_bytes(problem: str | None) -> None:
+    from dinkster_registry import artifact_digest
+    from dinkster_registry.archive_admission import extracted_archive, run_ingest_integrity
+
+    files = [("dinkster-pack.toml", MANIFEST.encode()), ("nodes.py", b"NODES = []\n")]
+    if problem == "path":
+        files.append(("../escape.py", b"escape"))
+    elif problem == "case":
+        files.append(("NODES.py", b"collision"))
+    elif problem == "order":
+        files.reverse()
+    elif problem == "junk":
+        files.append(("build/output.py", b"ignored"))
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for name, payload in files:
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = 0o644 << 16
+            if problem == "compression":
+                info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, payload)
+    data = output.getvalue()
+    digest = artifact_digest(data)
+    result = run_ingest_integrity(data, len(data), digest)
+    assert result.blocked is (problem is not None)
+    if problem is None:
+        assert result.data == {"artifactDigest": digest, "size": len(data)}
+        with extracted_archive(data) as root:
+            assert (root / "nodes.py").read_bytes() == b"NODES = []\n"
+        assert not root.exists()
+        assert run_ingest_integrity(data, len(data) + 1, digest).findings[0].code == (
+            "integrity.size-mismatch"
+        )
+        assert run_ingest_integrity(data, len(data), artifact_digest(b"other")).findings[
+            0
+        ].code == ("integrity.digest-mismatch")
+    else:
+        assert result.findings[0].code == "integrity.invalid-archive"
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload", "code", "effect"),
+    [
+        ("clean.py", b"NODES = []", None, None),
+        ("secret.txt", b"-----BEGIN PRIVATE KEY-----", "security.confirmed-secret", "block"),
+        ("bad.txt", b"dinkster-known-bad-test-payload", "security.known-bad-file", "block"),
+        ("native.bin", b"MZbinary", "security.native-binary", "review"),
+        ("nested.bin", b"\x1f\x8bgzip", "security.nested-archive", "review"),
+        ("nodes.pyc", b"bytecode", "security.obfuscated-code", "review"),
+    ],
+)
+def test_registry_archive_security_preserves_block_and_review(
+    tmp_path: Path, filename: str, payload: bytes, code: str | None, effect: str | None
+) -> None:
+    from dinkster_registry import build_artifact
+    from dinkster_registry.archive_admission import run_fast_security
+
+    root = write_pack(tmp_path / "pack")
+    (root / filename).write_bytes(payload)
+    archive = tmp_path / "pack.zip"
+    build_artifact(root, archive)
+    result = run_fast_security(archive.read_bytes())
+    assert [(finding.code, finding.effect) for finding in result.findings] == (
+        [] if code is None else [(code, effect)]
+    )
+    assert result.blocked is (effect == "block")
+    assert result.review is (effect == "review")
+    assert result.data == {
+        "status": "failed" if effect == "block" else "warning" if effect else "passed",
+        "policyVersion": "registry-scan/1",
+    }
+
+
+@pytest.mark.parametrize("engine", ["0.8.9", "0.9.0", "0.9.7", "1.0.0"])
+def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engine: str) -> None:
+    from dinkster_registry.archive_admission import run_manifest_admission
+
+    root = write_pack(tmp_path / "pack")
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        MANIFEST.replace("[pack]\n", '[pack]\nversion = "2.3.0"\nengine = ">=0.9,<1"\n')
+        + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+    )
+    result = run_manifest_admission(root, "archive-test", "2.3.0", engine_version=engine)
+    assert result.blocked is (engine in {"0.8.9", "1.0.0"})
+    if result.blocked:
+        message = result.findings[0].message
+        assert "archive-test@2.3.0" in message and ">=0.9,<1" in message and engine in message
+    else:
+        assert result.data is not None and result.data["dinkster"] == ">=0.9,<1"
+    mismatch = run_manifest_admission(root, "archive-test", "2.3.1")
+    assert mismatch.blocked and "does not match submission" in mismatch.findings[0].message
+
+
+@pytest.mark.parametrize(
+    ("declaration", "message"),
+    [
+        ('license = "LicenseRef-Private"', "requires a root LICENSE"),
+        ('license = "not-a-license"', "Unknown license"),
+        ('repository = "http://example.org/pack"', "must be an HTTPS URL"),
+        ('dinkster = "nonsense"', "Invalid specifier"),
+    ],
+)
+def test_registry_manifest_admission_refuses_invalid_metadata(
+    tmp_path: Path, declaration: str, message: str
+) -> None:
+    from dinkster_registry.archive_admission import run_manifest_admission
+
+    root = write_pack(tmp_path / "pack")
+    (root / "dinkster-pack.toml").write_text(
+        MANIFEST.replace("[pack]\n", f"[pack]\n{declaration}\n")
+        + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+    )
+    result = run_manifest_admission(root, "archive-test", "1.0.0")
+    assert result.blocked and result.findings[0].code == "manifest.invalid"
+    assert message in result.findings[0].message
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("problem", ["empty", "remote", "exception", "output", "timeout"])
+def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem: str) -> None:
+    from dinkster_registry.archive_admission import ProbeSettings, run_executable_probe
+
+    root = write_pack(tmp_path / "pack")
+    if problem == "remote":
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(
+            MANIFEST.replace("[pack]\n", '[pack]\nnode-source = "remote-gateway-catalog"\n')
+        )
+    elif problem == "exception":
+        (root / "nodes.py").write_text('raise ValueError("private operator detail")\n')
+    elif problem == "output":
+        (root / "nodes.py").write_text('import os\nos.write(1, b"x" * 100000)\nNODES = []\n')
+    elif problem == "timeout":
+        (root / "nodes.py").write_text("import time\ntime.sleep(2)\nNODES = []\n")
+    result = run_executable_probe(
+        root,
+        settings=ProbeSettings(
+            probe_timeout_seconds=1 if problem == "timeout" else 30,
+            probe_output_limit_bytes=4096,
+            probe_operator_tail_bytes=512,
+        ),
+        require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1",
+    )
+    codes = {finding.code for finding in result.findings}
+    if problem == "remote":
+        assert not result.blocked and result.data == {"schemas": []}
+    else:
+        assert result.blocked
+        expected = {
+            "empty": "probe.no-schemas",
+            "exception": "probe.invalid-report"
+            if os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
+            else "entry.unresolvable",
+            "output": "probe.output-limit",
+            "timeout": "probe.timeout",
+        }[problem]
+        assert expected in codes
+    assert all("private operator detail" not in finding.message for finding in result.findings)
+    assert result.operator_details is not None
+    assert len(str(result.operator_details["stdoutTail"]).encode()) <= 512
+
+
+def test_registry_probe_refuses_degraded_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry.archive_admission import run_executable_probe
+    from dinkster_workers.sandbox import ProbeJail
+
+    root = write_pack(tmp_path / "pack")
+    monkeypatch.setattr(
+        "dinkster_registry.archive_admission.detect_probe_jail",
+        lambda: ProbeJail(bwrap="/usr/bin/true", user_namespaces=False),
+    )
+    result = run_executable_probe(root)
+    assert result.blocked and result.findings[0].code == "probe.isolation-unavailable"
+    assert result.operator_details == {"jail": "degraded"}

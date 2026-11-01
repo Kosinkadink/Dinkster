@@ -20,6 +20,7 @@ from dinkster_nodes_comfy.mesh_holes import FillHoles
 from dinkster_nodes_comfy.mesh_remesh import RemeshMesh
 from dinkster_nodes_comfy.mesh_render import RenderMesh
 from dinkster_nodes_comfy.mesh_weld import WeldVertices
+from dinkster_nodes_comfy.voxel_texture import BakeTextureFromVoxel
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(WeldVertices) == 1
 schema = WeldVertices.schema()
@@ -78,6 +79,15 @@ assert [slot.id for slot in schema.inputs] == [
 assert [slot.default for slot in schema.inputs[2:]] == [1024, 0.05, True]
 assert schema.outputs[0].type.types == ('IMAGE',)
 assert 'dinkster_nodes_comfy.mesh_bake_ops' not in sys.modules
+assert COMFY_NODES.count(BakeTextureFromVoxel) == 1
+assert manifest.namespaces.count('BakeTextureFromVoxel') == 1
+schema = BakeTextureFromVoxel.schema()
+assert [slot.id for slot in schema.inputs] == [
+    'mesh', 'voxel_colors', 'texture_size', 'reference_mesh'
+]
+assert schema.inputs[2].default == 2048 and not schema.inputs[3].required
+assert [slot.id for slot in schema.outputs] == ['base_color', 'metallic', 'roughness']
+assert all(slot.type.types == ('IMAGE',) for slot in schema.outputs)
 """,
         ],
         capture_output=True,
