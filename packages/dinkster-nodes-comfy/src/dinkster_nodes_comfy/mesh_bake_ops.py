@@ -198,8 +198,9 @@ def fill_gutters(image: Any, mask: Any) -> Any:
                 ny, nx = (yy + dy).clamp(0, height - 1), (xx + dx).clamp(0, width - 1)
                 cy, cx = by[ny, nx], bx[ny, nx]
                 valid = cy >= 0
-                candidate = torch.where(valid, (yy - cy) ** 2 + (xx - cx) ** 2, 1 << 30)
-                current = torch.where(by >= 0, (yy - by) ** 2 + (xx - bx) ** 2, 1 << 30)
+                # Squared pixel distances need a sentinel above the supported image diagonal.
+                candidate = torch.where(valid, (yy - cy) ** 2 + (xx - cx) ** 2, 1_073_741_824)
+                current = torch.where(by >= 0, (yy - by) ** 2 + (xx - bx) ** 2, 1_073_741_824)
                 take = valid & (candidate < current)
                 by, bx = torch.where(take, cy, by), torch.where(take, cx, bx)
         step //= 2
@@ -229,7 +230,8 @@ def bake_occlusion(
     model_management = importlib.import_module("dinkster_inference.model_management")
     device = low_vertices.device
     free = model_management.get_free_memory(device)
-    ray_chunk = int(min(1 << 22, max(1 << 20, (free * 0.25) / (samples * 4 + 200))))
+    # Bounds count rays, after converting the free-memory estimate to the same unit.
+    ray_chunk = int(min(4_194_304, max(1_048_576, (free * 0.25) / (samples * 4 + 200))))
     face_index, bary, mask = rasterize_uv(low_faces, uvs, size)
     if not bool(mask.any()):
         return torch.ones((size, size, 3), device=device)
