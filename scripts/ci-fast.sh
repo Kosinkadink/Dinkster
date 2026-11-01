@@ -10,8 +10,16 @@ uv run --locked python scripts/check_extension_factories.py \
 uv run --locked python scripts/check_builtin_type_spellings.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
-uv run --locked pyright
-uv run --locked pyright --pythonplatform Windows
+uv run --locked pyright &
+linux_types=$!
+uv run --locked pyright --pythonplatform Windows &
+windows_types=$!
+typecheck_status=0
+wait "$linux_types" || typecheck_status=$?
+wait "$windows_types" || typecheck_status=$?
+if ((typecheck_status != 0)); then
+  exit "$typecheck_status"
+fi
 uv run --locked python -m pytest -q -m 'not network' \
   tests/test_disabled_features.py \
   tests/test_settings.py \
