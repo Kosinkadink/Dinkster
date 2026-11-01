@@ -216,7 +216,7 @@ def _retry_remote[T](mirror: str, operation: Callable[[float], T], budget: float
                 exc.close()
             delay = 2 ** (attempt - 1)
             if not transient or attempt == _REMOTE_ATTEMPTS or time.monotonic() + delay >= deadline:
-                break
+                raise DownloadError(f"{_mirror_label(mirror)}: {'; '.join(failures)}") from exc
             time.sleep(delay)
     raise DownloadError(f"{_mirror_label(mirror)}: {'; '.join(failures)}")
 
