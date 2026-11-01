@@ -72,7 +72,11 @@ or staged generation content. Manifests without a declaration retain their
 legacy unpublished behavior. Read-only manifest inspection still supports plans
 for incompatible packs.
 
-Build selected official source archives from committed manifests:
+## Official pack publication
+
+Official pack manifests declare their own public `pack.version` and PEP 440
+`pack.engine` range using the shared schema and archive admission contract.
+The engine version is not the pack version. Build selected source archives:
 
 ```sh
 python -m scripts.build_official_packs --pack dinkster-nodes-foundation --output /scratch/packs
@@ -126,8 +130,9 @@ nothing. It uses the newest already-published engine's verified artifacts as
 constraints and wheel inputs, requires the selected packs to admit that engine,
 and resolves locks on each supported base's native host. It never builds or
 publishes an engine. Pull requests run the same preparation and complete-map
-validation without registry submission. Only main or pack-tag pushes receive
-`DINKSTER_REGISTRY_TOKEN` for the final submission step; a missing credential
+validation without registry submission. Only trusted `Kosinkadink/Dinkster`
+main pushes receive `DINKSTER_REGISTRY_TOKEN` for the final submission step;
+PR, fork and tag refs never submit. A missing credential
 refuses rather than reporting publication success. Pack changes need their own
 new manifest version because registry versions are immutable.
 

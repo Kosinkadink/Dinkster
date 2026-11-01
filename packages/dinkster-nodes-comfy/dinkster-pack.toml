@@ -647,6 +647,7 @@ namespaces = [
     "ImageHistogram",
     "TextOverlay",
     "SAM3DBody_Render",
+    "BuildPoseFile",
 ]
 
 [pack.sandbox]

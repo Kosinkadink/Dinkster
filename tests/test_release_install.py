@@ -2069,8 +2069,8 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         step for job in jobs.values() for step in job["steps"] if "secrets." in json.dumps(step)
     ]
     assert submission["if"] == (
-        "github.event_name == 'push' && (github.ref == 'refs/heads/main' || "
-        "startsWith(github.ref, 'refs/tags/pack/'))"
+        "github.repository == 'Kosinkadink/Dinkster' && "
+        "github.event_name == 'push' && github.ref == 'refs/heads/main'"
     )
     assert "--publish" in submission["run"]
     preflight = next(
@@ -2080,6 +2080,50 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     )
     assert "--publish" not in preflight["run"]
     assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize(
+    ("repository", "event", "ref", "allowed"),
+    [
+        ("Kosinkadink/Dinkster", "push", "refs/heads/main", True),
+        ("Kosinkadink/Dinkster", "pull_request", "refs/heads/main", False),
+        ("someone/Dinkster", "push", "refs/heads/main", False),
+        ("Kosinkadink/Dinkster", "push", "refs/tags/pack/demo/v1.0", False),
+        ("Kosinkadink/Dinkster", "push", "refs/heads/feature", False),
+    ],
+)
+def test_official_publication_submits_only_from_trusted_main(
+    repository: str, event: str, ref: str, allowed: bool
+) -> None:
+    from types import SimpleNamespace
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    submission = next(
+        step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
+    )
+    github = SimpleNamespace(repository=repository, event_name=event, ref=ref)
+    assert eval(submission["if"].replace("&&", " and "), {"github": github}) is allowed
+
+
+def test_official_publication_refuses_missing_credential_before_submission(tmp_path: Path) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    submission = next(
+        step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
+    )
+    environment = {**os.environ, "DINKSTER_REGISTRY_TOKEN": ""}
+    result = subprocess.run(
+        ["bash", "-e", "-c", submission["run"]],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == (
+        "Official pack submission refused: DINKSTER_REGISTRY_TOKEN is unavailable"
+    )
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("problem", [None, "range", "tag", "missing", "digest"])

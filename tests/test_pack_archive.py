@@ -423,6 +423,10 @@ def test_official_publication_uses_selected_manifest_versions(
         assert not (output / "official-packs.lock").exists()
         return
     paths = build_official_packs(tmp_path, output, packs=requested)
+    repeated = build_official_packs(tmp_path, tmp_path / "repeated", packs=requested)
+    assert {path.name: path.read_bytes() for path in paths} == {
+        path.name: path.read_bytes() for path in repeated
+    }
     expected = versions if selection == "all" else {"dinkster-nodes-foundation": "2.7.1"}
     assert {path.name for path in paths} == {
         "official-packs.lock",
@@ -588,11 +592,19 @@ def test_official_publication_requires_complete_supported_base_bindings(
         (sources / "second-pack-7.4.0rc1.zip").write_bytes(b"changed")
     bases, supported, locks = [], {}, []
     expected_locks = {}
-    for variant, python in (("linux-cpu", "3.12.9"), ("win-nvidia", "3.14.10")):
+    variants = {
+        "linux-cpu": ("linux", "3.12.9"),
+        "linux-nvidia": ("linux", "3.12.9"),
+        "win-cpu": ("windows", "3.14.10"),
+        "win-nvidia": ("windows", "3.14.10"),
+        "win-nvidia-cu126": ("windows", "3.14.10"),
+        "mac-arm64": ("macos", "3.12.9"),
+    }
+    for variant, (system, python) in variants.items():
         base = {
             "format": "dinkster.base/1",
             "variant": variant,
-            "platform": {"os": "linux" if variant == "linux-cpu" else "windows", "arch": "x86_64"},
+            "platform": {"os": system, "arch": "arm64" if system == "macos" else "x86_64"},
             "python": python,
             "interpreter": {},
             "wheels": [],
@@ -698,7 +710,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 lock_map = row["locks"]
                 assert isinstance(lock_map, str)
                 bindings = json.loads(Path(lock_map).read_bytes())
-                assert set(bindings) == {"linux-cpu", "win-nvidia"}
+                assert set(bindings) == set(variants)
                 for variant, identity in supported.items():
                     assert bindings[variant] == {
                         "baseId": "sha256:" + identity,
@@ -717,6 +729,114 @@ def test_official_publication_requires_complete_supported_base_bindings(
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.parametrize("mode", ["raw", "locks", "missing", "refused"])
+def test_publication_client_preserves_archive_and_lock_bytes(tmp_path: Path, mode: str) -> None:
+    import threading
+    from email import policy
+    from email.parser import BytesParser
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
+
+    archive, locks = tmp_path / "artifact.zip", tmp_path / "locks.json"
+    archive.write_bytes(b"exact archive\x00\xff\r\n")
+    lock_bytes = b'{"win-cpu":{"baseId":"exact binding"}}\n'
+    if mode != "missing":
+        locks.write_bytes(lock_bytes)
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            requests.append(
+                (
+                    self.path,
+                    self.headers["Content-Type"],
+                    self.rfile.read(int(self.headers["Content-Length"])),
+                )
+            )
+            self.send_response(400 if mode == "refused" else 202)
+            self.end_headers()
+            self.wfile.write(
+                b'{"error":{"message":"lock binding refused"}}'
+                if mode == "refused"
+                else b'{"status":"queued","candidateId":"candidate-1"}'
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+    try:
+        if mode in {"missing", "refused"}:
+            with pytest.raises(
+                RegistryPublishError,
+                match=(
+                    "cannot read publication input" if mode == "missing" else "lock binding refused"
+                ),
+            ):
+                publish_release(registry, archive, "demo", "1.2.3", locks=locks)
+        else:
+            result = publish_release(
+                registry, archive, "demo", "1.2.3", locks=locks if mode == "locks" else None
+            )
+            assert result.state == "queued" and result.candidate_id == "candidate-1"
+        if mode == "missing":
+            assert requests == []
+            return
+        assert len(requests) == 1
+        path, content_type, body = requests[0]
+        assert path == "/v1/publish/demo/versions/1.2.3"
+        if mode == "raw":
+            assert content_type == "application/zip" and body == archive.read_bytes()
+        else:
+            message = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {content_type}\r\n\r\n".encode() + body
+            )
+            parts = list(message.iter_parts())
+            assert [part.get_param("name", header="content-disposition") for part in parts] == [
+                "archive",
+                "locks",
+            ]
+            assert parts[0].get_payload(decode=True) == archive.read_bytes()
+            assert parts[1].get_payload(decode=True) == lock_bytes
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_official_publication_declarations_match_archive_admission(tmp_path: Path) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_registry.archive_admission import run_ingest_integrity, run_manifest_admission
+
+    root = Path(__file__).resolve().parents[1]
+    first = build_official_packs(root, tmp_path / "first")
+    second = build_official_packs(root, tmp_path / "second")
+    assert {path.name: path.read_bytes() for path in first} == {
+        path.name: path.read_bytes() for path in second
+    }
+    catalog = Lockfile.from_record_json(first[-1].read_text())
+    assert len(catalog.packs) == 14
+    for pack in catalog.packs:
+        archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
+        data = archive.read_bytes()
+        assert not run_ingest_integrity(data, len(data), pack.artifact_digest).blocked
+        source = unpack_artifact(archive, tmp_path / "sources" / pack.pack, pack.artifact_digest)
+        accepted = run_manifest_admission(
+            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.3.dev123"
+        )
+        assert not accepted.blocked, accepted.findings
+        for engine in ("0.0.1", "0.1"):
+            refused = run_manifest_admission(
+                source, pack.pack, pack.version, publisher="dinkster", engine_version=engine
+            )
+            assert refused.blocked
+            assert refused.findings[0].code == "manifest.invalid"
 
 
 def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:

@@ -26,6 +26,11 @@
   an existing registry artifact lock from committed sources, preserving the
   fourteen pack identities and node entry points without importing node code.
   Generation schemas remain engine-carried rather than separate official packs.
+- Official publication uses each selected pack's declared version and engine
+  range, with complete archive-bound locks for all six supported bases.
+  Engine-only pushes select no pack. PR, fork and tag events build and
+  preflight without submission; only trusted main may submit to the registry.
+  A queued submission is not an admission verdict.
 - Official source artifacts retain their committed manifest dependency
   declarations without adding workspace project requirements at publication.
   Publishing can emit separate per-variant hashed dependency locks against the
@@ -140,6 +145,11 @@
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.
+- Release mirror reads retry transient HTTP 5xx, connection failures and timeouts
+  with bounded backoff. Terminal failures retain each attempt's status and
+  Cloudflare request identifier when supplied. HTTP 4xx and invalid artifact bytes
+  do not gain transient retries; size and SHA256 verification remain mandatory.
+  Contributor setup reads only the selected host platform's published manifests.
 - Windows contributor setup and interpreter preparation require uv 0.13.6 or
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
@@ -221,6 +231,9 @@
 - Engine release assembly records variant-specific dependency wheel identities
   without uploading third-party wheels. Finalization rejects unexpected payloads
   and enforces a 100 MB budget excluding native tools ZIPs.
+- Native tools builds retry transient HTTPS input failures up to three times,
+  preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
+  corrupt payloads fail without retry; exhausted failures retain attempt details.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.
