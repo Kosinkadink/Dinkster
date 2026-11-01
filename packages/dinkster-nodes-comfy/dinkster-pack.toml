@@ -618,6 +618,7 @@ namespaces = [
     "SaveGaussianSplat",
     "SavePointCloud",
     "SplatToFile3D",
+    "File3DToSplat",
     "ImageUpscaleWithModel",
     "ImageHistogram",
     "TextOverlay",
