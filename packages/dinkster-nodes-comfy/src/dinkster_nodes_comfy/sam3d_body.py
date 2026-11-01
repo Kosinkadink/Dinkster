@@ -1,4 +1,4 @@
-"""Temporal smoothing of canonical SAM3D Body pose packets."""
+"""SAM3D Body model loading and temporal pose smoothing."""
 
 from __future__ import annotations
 
@@ -7,19 +7,92 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    ASSET_TYPE,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     MHR_POSE_DATA_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
+    AssetRef,
+    AssetWidget,
     ComboWidget,
     InputSpec,
+    LocalAssetRef,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_vision_packet,
 )
+
+
+class SAM3DBody_Loader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="SAM3DBody_Loader",
+            display_name="Load SAM3D Body Model",
+            category="image/detection",
+            inputs=(
+                InputSpec(
+                    "model_file",
+                    TypeExpr.concrete(ASSET_TYPE),
+                    widget=AssetWidget(
+                        kind="model/detection", accept=("application/octet-stream",)
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("sam3d_body_model", TypeExpr.concrete(SAM3D_BODY_MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model_file: object) -> Mapping[str, object]:
+        if not isinstance(model_file, (AssetRef, LocalAssetRef)):
+            raise TypeError("model_file must be an AssetRef or LocalAssetRef")
+        path = str(model_file.local_path())
+        initialize_inference_process()
+        utils = importlib.import_module("dinkster_inference.utils")
+        management = importlib.import_module("dinkster_inference.model_management")
+        ops = importlib.import_module("dinkster_inference.ops")
+        storage = importlib.import_module("dinkster_inference.storage")
+        patchers = importlib.import_module("dinkster_inference.model_patcher")
+        state = utils.load_torch_file(path, safe_load=True)
+        state = {key.replace(".layers.0.0.", ".layers.0."): value for key, value in state.items()}
+        load_device = management.get_torch_device()
+        dtype = management.unet_dtype(
+            device=load_device, model_params=-1, weight_dtype=utils.weight_dtype(state)
+        )
+        manual_cast = management.unet_manual_cast(dtype, load_device)
+        quantization = utils.detect_layer_quantization(state, "")
+        operations = (
+            ops.mixed_precision_ops(quantization, dtype)
+            if quantization is not None
+            else ops.pick_operations(
+                dtype, manual_cast, load_device=load_device, disable_fast_fp8=True
+            )
+        )
+        model = importlib.import_module("dinkster_inference.ldm.sam3d_body.model.model").SAM3DBody(
+            dtype=dtype, operations=operations
+        )
+        state.pop("hand_cls_embed.weight", None)
+        state.pop("hand_cls_embed.bias", None)
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                f"SAM3D-Body checkpoint key mismatch: missing={sorted(missing)}, "
+                f"unexpected={sorted(unexpected)}"
+            )
+        model.backbone_dtype = dtype
+        patcher = patchers.CoreModelPatcher(
+            model,
+            load_device=load_device,
+            offload_device=management.unet_offload_device(),
+            size=management.module_size(model),
+            fast_disk=storage.state_dict_fast_disk(state),
+        )
+        return cls.outputs(sam3d_body_model=patcher)
 
 
 class SAM3DBody_Smooth(Node):

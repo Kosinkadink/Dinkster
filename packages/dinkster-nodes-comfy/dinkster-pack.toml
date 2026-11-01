@@ -578,6 +578,7 @@ namespaces = [
     "GetVideoComponents",
     "ConditioningLoader",
     "SaveConditioning",
+    "SAM3DBody_Loader",
     "SAM3DBody_Smooth",
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
