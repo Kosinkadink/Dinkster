@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+from dinkster_values import MEBIBYTE
+
 
 def _apply_limits() -> None:
     if sys.platform == "win32":
@@ -13,7 +15,7 @@ def _apply_limits() -> None:
         import resource
 
         limits = (
-            (resource.RLIMIT_AS, 512 * 1024 * 1024),
+            (resource.RLIMIT_AS, 512 * MEBIBYTE),
             (resource.RLIMIT_NPROC, 64),
         )
         for resource_id, requested in limits:
