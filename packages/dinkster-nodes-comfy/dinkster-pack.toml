@@ -626,6 +626,7 @@ namespaces = [
     "SavePointCloud",
     "SplatToFile3D",
     "File3DToSplat",
+    "SplatToMesh",
     "ImageUpscaleWithModel",
     "ImageHistogram",
     "TextOverlay",

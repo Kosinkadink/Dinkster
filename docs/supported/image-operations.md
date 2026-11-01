@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `SplatToMesh` extracts colored, unlit triangle meshes from counted
+  Gaussian splat batches, with density resolution, surface level, component
+  filtering, smoothing, opacity cutoff and color sharpening controls.
 - `DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
   transport depth, source images and cameras, per-frame face and body detections,
   face topology, masks, canonical colors and external rig state without dropping

@@ -18,6 +18,7 @@ from dinkster_nodes_comfy.mesh_decimate import DecimateMesh
 from dinkster_nodes_comfy.mesh_holes import FillHoles
 from dinkster_nodes_comfy.mesh_remesh import RemeshMesh
 from dinkster_nodes_comfy.mesh_weld import WeldVertices
+from dinkster_nodes_comfy.splat_mesh import SplatToMesh
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(WeldVertices) == 1
 schema = WeldVertices.schema()
@@ -52,6 +53,12 @@ assert [option.key for option in schema.combos[0].options] == ['udf', 'sdf', 'so
 assert [slot.default for slot in schema.combos[0].options[0].inputs] == [False, False, False]
 assert [slot.default for slot in schema.combos[0].options[1].inputs] == [True, False]
 assert [slot.default for slot in schema.combos[0].options[2].inputs] == [20., False]
+assert COMFY_NODES.count(SplatToMesh) == 1
+assert manifest.namespaces.count('SplatToMesh') == 1
+schema = SplatToMesh.schema()
+assert schema.inputs[0].type.types == ('SPLAT',)
+assert schema.outputs[0].type.types == ('MESH',)
+assert [slot.default for slot in schema.inputs[1:]] == [384, 5, 0, 0.4, 500, 0.02, 2.0]
 """,
         ],
         capture_output=True,
