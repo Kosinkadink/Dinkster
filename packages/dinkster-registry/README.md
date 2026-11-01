@@ -112,6 +112,15 @@ validation without registry submission. Only main or pack-tag pushes receive
 refuses rather than reporting publication success. Pack changes need their own
 new manifest version because registry versions are immutable.
 
+`python -m scripts.check_default_pack_admission --scanner /path/to/registry-service
+--engine-version VERSION` resolves the complete committed default set and runs
+the registry's scanner in process against the current engine workspace. It uses
+disposable local admission state and the registry's full Linux probe jail;
+rejected, review-required or incomplete scans fail. Pack dependencies are
+admitted before their dependents. The command never publishes to the registry
+or creates a release artifact. The scanner checkout and its dependencies must
+be installed without replacing the engine API being tested.
+
 `dinkster.registries.resolve_compatible_release(registry, pack, minimum,
 engine_version)` follows the service's version-list pages, chooses the newest
 active PEP 440 version at or above the minimum whose declared engine range

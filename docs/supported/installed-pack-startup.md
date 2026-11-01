@@ -62,6 +62,10 @@
   Wrong source/base/lock identities, incompatible Python and nonportable wheel
   origins refuse the entire local preparation without publication requests.
   Prepared maps do not imply scanner acceptance or live default availability.
+- Default-set admission checks resolve registry archives against the engine
+  under test and require every pack to pass the registry scanner, including
+  the isolated executable probe. Missing defaults, rejected packs and security
+  review requirements fail the check without publishing any pack.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified
