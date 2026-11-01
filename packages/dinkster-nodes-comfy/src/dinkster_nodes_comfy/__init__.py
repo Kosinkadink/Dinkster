@@ -162,6 +162,7 @@ from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
 from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
+from .moge_render import MoGeRender
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -170,6 +171,7 @@ from .optical_flow import OpticalFlowLoader
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
+from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -485,6 +487,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
+    MoGeRender,
     MoGePointMapToMesh,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
@@ -534,6 +537,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     CheckpointSave,
     ModelSave,
     SaveImageAdvanced,
+    Pixal3DConditioning,
+    Pixal3DMultiViewConditioning,
     Trellis2Conditioning,
     *MESH_NODES,
     *VOXEL_MESH_NODES,
