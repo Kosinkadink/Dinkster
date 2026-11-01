@@ -101,6 +101,17 @@ set. All local validation completes before the first request; separate release
 submissions are not a registry transaction. A queued receipt is not scanner
 acceptance or proof that the default set is served.
 
+`.github/workflows/official-packs.yml` selects changed committed packs on main
+pushes or one exact `pack/PACK_ID/vVERSION` tag. Engine-only pushes publish
+nothing. It uses the newest already-published engine's verified artifacts as
+constraints and wheel inputs, requires the selected packs to admit that engine,
+and resolves locks on each supported base's native host. It never builds or
+publishes an engine. Pull requests run the same preparation and complete-map
+validation without registry submission. Only main or pack-tag pushes receive
+`DINKSTER_REGISTRY_TOKEN` for the final submission step; a missing credential
+refuses rather than reporting publication success. Pack changes need their own
+new manifest version because registry versions are immutable.
+
 `dinkster.registries.resolve_compatible_release(registry, pack, minimum,
 engine_version)` follows the service's version-list pages, chooses the newest
 active PEP 440 version at or above the minimum whose declared engine range

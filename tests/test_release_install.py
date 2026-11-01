@@ -2012,3 +2012,190 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         assert {name for name in source.namelist() if not name.endswith("/")} == {
             name for name, content in files.items() if content == "released\n"
         }
+
+
+@pytest.mark.parametrize("event", ["initial", "engine-only", "tag"])
+def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: str
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    trigger = workflow[True]
+    assert trigger["push"] == {
+        "branches": ["main"],
+        "tags": ["pack/**"],
+        "paths": ["packages/dinkster-nodes-*/**"],
+    }
+    assert "pull_request_target" not in trigger and "workflow_dispatch" not in trigger
+    jobs = workflow["jobs"]
+    select = next(step for step in jobs["select"]["steps"] if step.get("id") == "select")
+    script = select["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    manifest = tmp_path / "packages/dinkster-nodes-foundation/dinkster-pack.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        'version = "2.7rc1"\nengine = ">=0.2,<1"\n'
+        '[pack.entry]\nnodes = "nodes:NODES"\n'
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
+    (tmp_path / ".git/HEAD").write_text(tree + "\n")
+    manifest.write_text("invalid uncommitted declaration")
+    output = tmp_path / "outputs"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("BEFORE", tree if event == "engine-only" else "0" * 40)
+    monkeypatch.setenv(
+        "PACK_TAG", "pack/dinkster-nodes-foundation/v2.7rc1" if event == "tag" else ""
+    )
+    exec(compile(script, "official-packs.yml", "exec"), {})
+    assert json.loads(output.read_text().removeprefix("packs=")) == (
+        [] if event == "engine-only" else ["dinkster-nodes-foundation"]
+    )
+    assert jobs["sources"]["if"] == "needs.select.outputs.packs != '[]'"
+    assert jobs["locks"]["needs"] == "sources"
+    assert jobs["locks"]["runs-on"] == "${{ matrix.runner }}"
+    native = next(step for step in jobs["locks"]["steps"] if "--sources" in step.get("run", ""))
+    assert "--release .official-publication/engine" in native["run"]
+    assert '--base-manifest ".official-publication/bases/$VARIANT/manifest.json"' in native["run"]
+    assert "scripts.build_release_pack_locks" in native["run"]
+    prepare = next(step for step in jobs["sources"]["steps"] if step.get("id") == "prepare")
+    assert "scripts.build_release import" not in prepare["run"]
+    assert "validate_manifest(" in prepare["run"] and "fetch_artifact(" in prepare["run"]
+    assert "manifest.compatibility.require_engine(" in prepare["run"]
+    assert "version=" not in prepare["run"]
+    assert jobs["publish"]["needs"] == ["sources", "locks"]
+    [submission] = [
+        step for job in jobs.values() for step in job["steps"] if "secrets." in json.dumps(step)
+    ]
+    assert submission["if"] == (
+        "github.event_name == 'push' && (github.ref == 'refs/heads/main' || "
+        "startsWith(github.ref, 'refs/tags/pack/'))"
+    )
+    assert "--publish" in submission["run"]
+    preflight = next(
+        step
+        for step in jobs["publish"]["steps"]
+        if "--output .official-publication/preflight" in step.get("run", "")
+    )
+    assert "--publish" not in preflight["run"]
+    assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize("problem", [None, "range", "tag", "missing", "digest"])
+def test_official_publication_workflow_prepares_verified_published_engine_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
+    from dinkster_registry import Lockfile
+    from dinkster_supervisor import environment_downloads
+    from test_installer import _serve_artifacts
+
+    from scripts import acquire_engine_bases, build_official_packs
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    step = next(
+        step for step in workflow["jobs"]["sources"]["steps"] if step.get("id") == "prepare"
+    )
+    script = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    (tmp_path / "scripts").mkdir()
+    selections = {"linux-cpu": "a" * 64, "win-nvidia": "b" * 64}
+    (tmp_path / "scripts/base_bundles.json").write_text(json.dumps(selections))
+
+    def acquire(root, tags, output):
+        assert set(tags) == {
+            f"base-{variant}-{identity}" for variant, identity in selections.items()
+        }
+        paths = []
+        for variant, system in (("linux-cpu", "linux"), ("win-nvidia", "windows")):
+            path = output / variant / "manifest.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"variant": variant, "platform": {"os": system}}))
+            paths.append(path)
+        return paths
+
+    engine = {
+        "format": "dinkster.engine/1",
+        "repository": "Kosinkadink/Dinkster",
+        "version": "0.1" if problem == "range" else "0.0.3.dev123",
+        "tag": "wrong" if problem == "tag" else "main-published",
+        "commit": "c" * 40,
+        "workerProtocol": 11,
+        "artifacts": [
+            {"name": "constraints.txt", "size": 4, "sha256": hashlib.sha256(b"pins").hexdigest()}
+        ],
+    }
+    old_check_output, old_run = subprocess.check_output, subprocess.run
+
+    def read(command, **kwargs):
+        if command[0] != "gh":
+            return old_check_output(command, **kwargs)
+        return json.dumps(
+            []
+            if problem == "missing"
+            else [
+                {"tag_name": "older", "draft": False, "published_at": "2026-01-01T00:00:00Z"},
+                {"tag_name": "draft", "draft": True, "published_at": "2026-12-01T00:00:00Z"},
+                {
+                    "tag_name": "main-published",
+                    "draft": False,
+                    "published_at": "2026-11-01T00:00:00Z",
+                },
+            ]
+        ).encode()
+
+    def run(command, **kwargs):
+        if command[0] != "gh":
+            return old_run(command, **kwargs)
+        assert command[3] == "main-published"
+        directory = Path(command[-1])
+        directory.mkdir()
+        (directory / "release-manifest.json").write_text(json.dumps(engine))
+        return subprocess.CompletedProcess(command, 0)
+
+    original_fetch = environment_downloads.fetch_artifact
+    server = _serve_artifacts({"/constraints.txt": b"fake" if problem == "digest" else b"pins"}, [])
+
+    def fetch(mirrors, name, destination, digest, size):
+        assert mirrors == (
+            "https://github.com/Kosinkadink/Dinkster/releases/download/main-published",
+        )
+        return original_fetch(
+            (f"http://127.0.0.1:{server.server_port}",), name, destination, digest, size
+        )
+
+    original_build = build_official_packs.build
+    monkeypatch.setattr(acquire_engine_bases, "acquire", acquire)
+    monkeypatch.setattr(subprocess, "check_output", read)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(environment_downloads, "fetch_artifact", fetch)
+    monkeypatch.setattr(
+        build_official_packs,
+        "build",
+        lambda root, output, **kwargs: original_build(ROOT, output, **kwargs),
+    )
+    output = tmp_path / "outputs"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("PACKS", '["dinkster-nodes-foundation"]')
+    try:
+        if problem is not None:
+            with pytest.raises((ValueError, environment_downloads.DownloadError)):
+                exec(compile(script, "official-packs.yml", "exec"), {})
+            assert not output.exists()
+        else:
+            exec(compile(script, "official-packs.yml", "exec"), {})
+            assert json.loads(output.read_text().removeprefix("matrix=")) == {
+                "include": [
+                    {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+                    {"variant": "win-nvidia", "runner": "windows-latest"},
+                ]
+            }
+            work = tmp_path / ".official-publication"
+            assert (work / "engine/constraints.txt").read_bytes() == b"pins"
+            catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
+            assert [(pack.pack, pack.version) for pack in catalog.packs] == [
+                ("dinkster-nodes-foundation", "0.0.2")
+            ]
+    finally:
+        server.shutdown()
+        server.server_close()
