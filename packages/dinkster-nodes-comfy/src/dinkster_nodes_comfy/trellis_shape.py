@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
+    GIBIBYTE,
     LATENT_TYPE,
     MESH_TYPE,
     SHAPE_SUBDIVIDES_TYPE,
@@ -152,7 +153,7 @@ class VaeDecodeShapeTrellis(Node):
         estimate = resolution * resolution * 5 // 4
         vae.prepare_decode(
             values.shape,
-            memory_required=2 * 1024**3
+            memory_required=2 * GIBIBYTE
             + estimate * (896 * management.dtype_size(vae.vae_dtype) + 27 * 4),
         )
         device = management.get_torch_device()
