@@ -1,6 +1,8 @@
 """Animation file hierarchy, channel values and source preservation."""
 
 import copy
+import json
+import struct
 from types import SimpleNamespace
 from typing import Any
 
@@ -8,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 from dinkster_nodes_comfy.sam3d_bvh import build_bvh
+from dinkster_nodes_comfy.sam3d_skeletal import build_glb_skeletal
 from scipy.spatial.transform import Rotation
 
 
@@ -142,3 +145,166 @@ def test_bvh_invalid_units_and_missing_track() -> None:
     pose["frames"] = []
     with pytest.raises(ValueError, match="no valid tracks"):
         build_bvh(pose)
+
+
+def _glb(data: bytes) -> tuple[dict[str, Any], bytes]:
+    magic, version, length = struct.unpack_from("<4sII", data)
+    assert (magic, version, length) == (b"glTF", 2, len(data))
+    size, kind = struct.unpack_from("<II", data, 12)
+    assert kind == 0x4E4F534A
+    metadata = json.loads(data[20 : 20 + size])
+    binary_size, binary_kind = struct.unpack_from("<II", data, 20 + size)
+    assert binary_kind == 0x004E4942
+    binary = data[28 + size :]
+    assert binary_size == len(binary)
+    assert all(view["byteOffset"] % 4 == 0 for view in metadata["bufferViews"])
+    return metadata, binary
+
+
+def _accessor(gltf: dict[str, Any], binary: bytes, index: int) -> Any:
+    accessor = gltf["accessors"][index]
+    view = gltf["bufferViews"][accessor["bufferView"]]
+    dtype = {5126: "<f4", 5125: "<u4", 5123: "<u2"}[accessor["componentType"]]
+    width = {"SCALAR": 1, "VEC3": 3, "VEC4": 4, "MAT4": 16}[accessor["type"]]
+    return np.frombuffer(
+        binary, dtype=dtype, count=accessor["count"] * width, offset=view["byteOffset"]
+    ).reshape(accessor["count"], width)
+
+
+def _mesh_pose() -> dict[str, Any]:
+    pose = _pose()
+    pose["faces"] = np.array([[0, 1, 2]], np.uint32)
+    pose["_skeleton_override"].update(
+        rest_verts_m=np.array([[-0.5, 0, 0], [0.5, 0, 0], [0, 1, 0]], np.float32),
+        lbs_compact_joints=np.zeros((3, 4), np.uint16),
+        lbs_compact_weights=np.tile(np.array([1, 0, 0, 0], np.float32), (3, 1)),
+    )
+    return pose
+
+
+@pytest.mark.parametrize(
+    ("translation", "expected"),
+    [("absolute", [[1, -2, -3], [1.5, -2.25, -4]]), ("centered", [[0, 0, 0], [0.5, -0.25, -1]])],
+)
+def test_skeletal_glb_bind_camera_animation_and_source_preservation(
+    translation: str, expected: list[list[float]]
+) -> None:
+    pose = _mesh_pose()
+    # Local translation must rotate back through the parent's animated frame.
+    turn = Rotation.from_euler("Z", 37, degrees=True)
+    pose["frames"][2][0]["pred_global_rots"][:] = turn.as_matrix()
+    original = copy.deepcopy(pose)
+    gltf, binary = _glb(
+        build_glb_skeletal(pose, camera_translation=translation, fps=20, track_index=0)
+    )
+    animation = gltf["animations"][0]
+    root_channel = next(
+        c for c in animation["channels"] if c["target"] == {"node": 0, "path": "translation"}
+    )
+    sampler = animation["samplers"][root_channel["sampler"]]
+    np.testing.assert_array_equal(
+        _accessor(gltf, binary, sampler["input"]).ravel(), np.array([0, 0.1], np.float32)
+    )
+    np.testing.assert_allclose(_accessor(gltf, binary, sampler["output"]), expected, atol=1e-7)
+    bind = original["_skeleton_override"]["bind_global_m"]
+    matrices = (
+        _accessor(gltf, binary, gltf["skins"][0]["inverseBindMatrices"])
+        .reshape(-1, 4, 4)
+        .transpose(0, 2, 1)
+    )
+    expected_inverse = np.broadcast_to(np.eye(4), (3, 4, 4)).copy()
+    expected_inverse[:, :3, 3] = -bind[:, :3]
+    np.testing.assert_allclose(matrices, expected_inverse, atol=1e-7)
+    bone_channel = next(
+        c for c in animation["channels"] if c["target"] == {"node": 1, "path": "rotation"}
+    )
+    quats = _accessor(gltf, binary, animation["samplers"][bone_channel["sampler"]]["output"])
+    np.testing.assert_allclose(
+        Rotation.from_quat(quats[1]).as_matrix(), turn.as_matrix(), atol=1e-7
+    )
+    for frame, old in zip(pose["frames"], original["frames"], strict=True):
+        for person, old_person in zip(frame, old, strict=True):
+            for key in person:
+                np.testing.assert_array_equal(person[key], old_person[key])
+    for key in pose["_skeleton_override"]:
+        np.testing.assert_array_equal(
+            pose["_skeleton_override"][key], original["_skeleton_override"][key]
+        )
+
+
+def test_skeletal_glb_bones_have_flat_normals_and_dual_skin() -> None:
+    pose = _mesh_pose()
+    gltf, binary = _glb(
+        build_glb_skeletal(pose, track_index=1, include_body_mesh=False, bone_vis="octahedrons")
+    )
+    primitive = gltf["meshes"][0]["primitives"][0]
+    attributes = primitive["attributes"]
+    joints = _accessor(gltf, binary, attributes["JOINTS_0"])
+    weights = _accessor(gltf, binary, attributes["WEIGHTS_0"])
+    normals = _accessor(gltf, binary, attributes["NORMAL"])
+    assert joints.shape == (24, 4)
+    np.testing.assert_array_equal(joints[:, :2], np.tile([1, 2], (24, 1)))
+    np.testing.assert_allclose(weights.sum(axis=1), 1, atol=1e-7)
+    assert any(np.allclose(row, [0.9, 0.1, 0, 0]) for row in weights)
+    np.testing.assert_allclose(np.linalg.norm(normals, axis=1), 1, atol=1e-7)
+    np.testing.assert_array_equal(normals[::3], normals[1::3])
+    assert not np.allclose(normals[0], normals[3])
+    assert len(gltf["skins"]) == 1 and "animations" not in gltf
+
+
+def test_skeletal_glb_native_skin_truncation_morphs_and_model_dtype() -> None:
+    pose = _mesh_pose()
+    override = pose.pop("_skeleton_override")
+    for frame in pose["frames"]:
+        for person in frame:
+            person["pred_joint_coords"][:, 1:3] *= -1
+            person["expr_params"] = np.array([0.25, 0.75], np.float32)
+            person["shape_params"] = np.array([2.0], np.float32)
+    pose["frames"][2][0]["expr_params"] = np.array([0.5, -0.125], np.float32)
+
+    class Rig:
+        NUM_IDENTITY, NUM_EXPR, NUM_VERTS = 1, 2, 3
+        skel_joint_parents = torch.tensor([-1, 0, 1], dtype=torch.int32)
+        skel_joint_translation_offsets = torch.zeros(3, 3)
+        lbs_vert_indices = torch.tensor([0] * 9 + [1])
+        lbs_skin_indices = torch.tensor([i % 3 for i in range(9)] + [2])
+        lbs_skin_weights = torch.tensor(list(range(1, 10)) + [2], dtype=torch.float32)
+        expr_basis = torch.arange(18, dtype=torch.float32).reshape(2, 3, 3)
+
+        def parameters(self) -> Any:
+            yield torch.empty(0, dtype=torch.float64)
+
+        def __call__(self, shape: Any, params: Any, expression: Any, **kwargs: Any) -> Any:
+            assert shape.dtype == params.dtype == expression.dtype == torch.float64
+            assert not params.any() and not expression.any() and not kwargs["apply_correctives"]
+            bind = torch.from_numpy(override["bind_global_m"].copy()).unsqueeze(0)
+            bind[..., :3] *= 100
+            vertices = torch.from_numpy(override["rest_verts_m"].copy()).unsqueeze(0) * 100
+            vertices[..., 0] += shape[0, 0] * 10
+            return vertices, bind
+
+    model = SimpleNamespace(model=SimpleNamespace(head_pose=SimpleNamespace(mhr=Rig())))
+    gltf, binary = _glb(build_glb_skeletal(pose, model, track_index=0))
+    primitive = gltf["meshes"][0]["primitives"][0]
+    a = primitive["attributes"]
+    first = _accessor(gltf, binary, a["WEIGHTS_0"])
+    second = _accessor(gltf, binary, a["WEIGHTS_1"])
+    np.testing.assert_allclose(
+        np.concatenate([first[0], second[0]]), np.arange(9, 1, -1) / 44, atol=1e-7
+    )
+    np.testing.assert_array_equal(_accessor(gltf, binary, a["JOINTS_0"])[0], [2, 1, 0, 2])
+    np.testing.assert_array_equal(first[2], [1, 0, 0, 0])
+    np.testing.assert_allclose(
+        _accessor(gltf, binary, a["POSITION"]), [[-0.3, 0, 0], [0.7, 0, 0], [0.2, 1, 0]], atol=1e-7
+    )
+    np.testing.assert_allclose(
+        _accessor(gltf, binary, primitive["targets"][1]["POSITION"]),
+        np.arange(9, 18).reshape(3, 3) / 100,
+        atol=1e-8,
+    )
+    animation = gltf["animations"][0]
+    channel = next(c for c in animation["channels"] if c["target"]["path"] == "weights")
+    output = animation["samplers"][channel["sampler"]]["output"]
+    np.testing.assert_array_equal(
+        _accessor(gltf, binary, output).ravel(), [0.25, 0.75, 0.5, -0.125]
+    )
