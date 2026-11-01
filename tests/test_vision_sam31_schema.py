@@ -34,12 +34,12 @@ SIDECAR = PACKAGE / "dinkster_vision_sam31_pack"
 MANIFEST = SIDECAR / "dinkster-pack.toml"
 LICENSE = SIDECAR / "SAM_LICENSE"
 CLIP_LICENSE = SIDECAR / "CLIP_LICENSE"
-TOKENIZER = PACKAGE / "src/dinkster_nodes_vision/sam31/data/bpe_simple_vocab_16e6.txt.gz"
+TOKENIZER = PACKAGE / "src/dinkster_nodes_vision/sam31/data/bpe_simple_vocab_16e6.txt"
 LICENSE_SHA256 = "4dea99bfaa016e21bc860d73f344236bd1e5c4977d1a9a8fd32f822b500ae1be"
 SOURCE_LICENSE_SHA256 = "bec48f70bd37bf8280a9d1ebf01642d26086f6122ba735baa08fe03c5a6e7448"
 CLIP_LICENSE_SHA256 = "893951b3bf94db8df1b13e05da5cdeb499400960e4d44a3962a8b33ed0b4f28e"
 SOURCE_CLIP_LICENSE_SHA256 = "987e63b32f6c89ff5160e429458a872ff048e6860b590a3912e938f9da8f14db"
-TOKENIZER_SHA256 = "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a"
+TOKENIZER_TEXT_SHA256 = "67603cfda2e032ad77b5f8808af37789d590db664b26df8705d2bf8b3c553fc8"
 MODEL_DIGEST = "blake3:1c8d5762dbaf238bc9a2f10de07e0c476d1b68e75453566feb8dc9bcf2cb41c5"
 
 
@@ -141,7 +141,8 @@ def test_sam31_wheel_contains_pack_runtime_manifest_and_license() -> None:
     clip_license = CLIP_LICENSE.read_bytes()
     assert hashlib.sha256(clip_license).hexdigest() == CLIP_LICENSE_SHA256
     assert hashlib.sha256(clip_license + b"\n").hexdigest() == SOURCE_CLIP_LICENSE_SHA256
-    assert hashlib.sha256(TOKENIZER.read_bytes()).hexdigest() == TOKENIZER_SHA256
+    assert hashlib.sha256(TOKENIZER.read_bytes()).hexdigest() == TOKENIZER_TEXT_SHA256
+    assert not TOKENIZER.with_suffix(".txt.gz").exists()
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
     assert included["dinkster_vision_sam31_pack"] == "dinkster_vision_sam31_pack"
     assert (

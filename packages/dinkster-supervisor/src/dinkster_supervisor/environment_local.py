@@ -35,11 +35,13 @@ from .environment_state import (
 DEFAULT_VARIANTS = Path(__file__).with_name("local_variants.toml")
 
 
-def _run(command: list[str], *, cwd: Path) -> str:
+def _run(command: list[str], *, cwd: Path, input: str | None = None) -> str:
     environment = os.environ.copy()
     for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"):
         environment.pop(name, None)
-    result = subprocess.run(command, cwd=cwd, env=environment, capture_output=True, text=True)
+    result = subprocess.run(
+        command, cwd=cwd, input=input, env=environment, capture_output=True, text=True
+    )
     if result.returncode:
         raise EnvironmentError(f"local environment command failed: {result.stderr.strip()}")
     return result.stdout.strip()
@@ -428,9 +430,8 @@ def prepare_local_packs(
 
     artifacts = store / "engines" / release[7:] / "artifacts"
     links = [
-        argument
+        str(store / "wheels" / digest)
         for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))
-        for argument in ("--find-links", str(store / "wheels" / digest))
     ]
     _run(
         [
@@ -449,9 +450,10 @@ def prepare_local_packs(
             str(generation / "constraints.txt"),
             "--index",
             "https://pypi.org/simple",
-            *links,
+            "--find-links-stdin",
         ],
         cwd=source,
+        input=json.dumps(links),
     )
     locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
     for archive in artifacts.glob("*.zip"):

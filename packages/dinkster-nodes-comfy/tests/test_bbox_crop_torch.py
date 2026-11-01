@@ -18,7 +18,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    TypeRegistry,
     materialize_image,
+    register_box_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.bbox_crop import CropByBBoxes
@@ -26,12 +28,17 @@ from dinkster_nodes_comfy.bbox_crop import CropByBBoxes
 from dinkster.compose import PackSpec, ServingComposer
 
 
-def test_crop_unions_boxes_broadcasts_last_frame_and_preserves_source() -> None:
+@pytest.mark.parametrize("nested", (False, True))
+def test_crop_unions_boxes_broadcasts_last_frame_and_preserves_source(nested: bool) -> None:
     image = torch.arange(3 * 6 * 8 * 4, dtype=torch.float32).reshape(3, 6, 8, 4)
     original = image.clone()
-    boxes = [[{"x": 1, "y": 2, "width": 2, "height": 2}, {"x": 4, "y": 1, "width": 2, "height": 2}]]
+    boxes = [{"x": 1, "y": 2, "width": 2, "height": 2}, {"x": 4, "y": 1, "width": 2, "height": 2}]
+    registry = TypeRegistry()
+    register_box_types(registry)
+    spec = registry.spec(BOUNDING_BOX_TYPE)
+    restored = spec.decode(spec.encode([boxes] if nested else boxes))
     output = CropByBBoxes.execute(
-        image=image.numpy(), bboxes=boxes, output_width=5, output_height=3, padding=0
+        image=image.numpy(), bboxes=restored, output_width=5, output_height=3, padding=0
     )["IMAGE"]
     torch.testing.assert_close(output, original[:, 1:4, 1:6], rtol=0, atol=0)
     torch.testing.assert_close(image, original, rtol=0, atol=0)

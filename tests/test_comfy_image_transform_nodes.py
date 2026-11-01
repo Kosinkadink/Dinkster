@@ -39,6 +39,8 @@ def test_image_transform_nodes_have_the_exact_core_interfaces() -> None:
             "image/upscaling",
             ("image", "upscale_method", "largest_size"),
         ),
+        # PadImageNode schema from F bc5f880d; padding choices are dynamic, not scalar inputs.
+        ("PadImageNode", "Pad Image", "image/transform", ("image",)),
     )
     assert len(IMAGE_TRANSFORM_NODES) == len(expected)
     for node, (node_type, display_name, category, inputs) in zip(
