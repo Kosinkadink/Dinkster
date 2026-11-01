@@ -392,6 +392,12 @@ including failures. This operation does not acquire inputs, prepare packs or
 write project, journal or generation metadata. Generation construction separately
 retains base provenance, prepares packs and seals the inventory.
 
+Generation construction copies a cached `engines/<release hex>/release-manifest.json`
+byte-for-byte into `engine-manifest.json` before pack preparation and inventory.
+The retained bytes must hash to the selected engine release. A missing legacy
+cache is tolerated; present but unreadable or corrupt content refuses the build
+and removes the incomplete target.
+
 Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
 and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the

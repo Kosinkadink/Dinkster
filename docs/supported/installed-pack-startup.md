@@ -93,6 +93,10 @@
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
   generation or its running engine.
+- Generations retain cached engine release manifests byte-for-byte in their
+  sealed inventory, checked against the selected release identity before pack
+  preparation. Missing legacy caches remain supported; present corrupt or
+  unreadable manifests refuse construction and discard the incomplete target.
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.

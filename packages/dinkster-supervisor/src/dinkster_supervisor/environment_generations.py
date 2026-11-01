@@ -475,6 +475,19 @@ def build_generation(
         )
         if source_kind == "local":
             shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
+        engine_manifest = (
+            store / "engines" / engine_release.removeprefix("sha256:") / "release-manifest.json"
+        )
+        try:
+            engine_manifest.lstat()
+        except FileNotFoundError:
+            # Legacy and direct local callers may have no retained release manifest.
+            pass
+        else:
+            retained = destination / "engine-manifest.json"
+            shutil.copyfile(engine_manifest, retained)
+            if content_digest(retained) != engine_release:
+                raise EnvironmentError("retained engine manifest does not match engine release")
         provisioned: set[str] = set()
         if (
             source_generation is not None

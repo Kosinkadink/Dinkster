@@ -23,6 +23,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_environment_generations.py::test_generation_retains_verified_engine_manifest \
   tests/test_installer.py::test_http_registry_fetcher_uses_verified_download_ticket \
   tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_ticket_size \
   tests/test_installer.py::test_cli_restore_downloads_registry_sources \

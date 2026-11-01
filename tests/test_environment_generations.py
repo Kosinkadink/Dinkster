@@ -73,6 +73,73 @@ def _standalone_tree(root: Path) -> None:
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
 
 
+@pytest.mark.parametrize("cached", ["exact", "absent", "corrupt", "directory", "changed-copy"])
+def test_generation_retains_verified_engine_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: str
+) -> None:
+    root, store = tmp_path / "project", tmp_path / "store"
+    base_id = "sha256:" + "a" * 64
+    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    raw = b'{  "version": "0.5", "unknown": [3, 1] }\r\n'
+    release = hashlib.sha256(raw).hexdigest()
+    cached_manifest = store / "engines" / release / "release-manifest.json"
+    if cached != "absent":
+        cached_manifest.parent.mkdir(parents=True)
+        if cached == "directory":
+            cached_manifest.mkdir()
+        else:
+            cached_manifest.write_bytes(raw if cached != "corrupt" else b"corrupt")
+    if cached == "changed-copy":
+        copyfile = shutil.copyfile
+
+        def change_copy(src, dst, **kwargs):
+            result = copyfile(src, dst, **kwargs)
+            if Path(dst).name == "engine-manifest.json":
+                Path(dst).write_bytes(b"changed after copying")
+            return result
+
+        monkeypatch.setattr(shutil, "copyfile", change_copy)
+    callbacks: list[Path] = []
+
+    def prepare(target: Path) -> None:
+        callbacks.append(target)
+        if cached == "exact":
+            assert (target / "engine-manifest.json").read_bytes() == raw
+
+    def build():
+        return build_generation(
+            root=root,
+            number=1,
+            store=store,
+            base=base_id,
+            engine_version="0.5",
+            engine_release="sha256:" + release,
+            constraints=constraints,
+            variant="win-cpu" if os.name == "nt" else "linux-cpu",
+            worker_protocol=1,
+            prepare_packs=prepare,
+        )
+
+    target = root / "generations" / "1"
+    if cached in {"corrupt", "directory", "changed-copy"}:
+        with pytest.raises((EnvironmentError, OSError)):
+            build()
+        assert not target.exists()
+        assert callbacks == []
+    else:
+        generation = build()
+        assert callbacks == [target]
+        assert generation.drift(target) == ()
+        if cached == "exact":
+            assert (target / "engine-manifest.json").read_bytes() == raw
+            assert dict(generation.files)["engine-manifest.json"] == "sha256:" + release
+        else:
+            assert not (target / "engine-manifest.json").exists()
+    assert read_current(root) is None
+
+
 def _assert_shared(first: Path, second: Path) -> None:
     if first.samefile(second):
         return
