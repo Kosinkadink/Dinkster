@@ -153,7 +153,7 @@ def run_selected_tests(
                         if provider.is_dir():
                             shutil.copytree(provider, namespace / provider.name)
                 elif module.is_dir() and not (src / module.name).exists():
-                    shutil.copytree(module, src / module.name)
+                    shutil.move(module, src / module.name)
             module_roots.append(str(src))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(src / entry.replace(".", "/"))
