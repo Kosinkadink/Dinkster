@@ -273,10 +273,19 @@ def build_custom_base(
         base["archive"]["parts"] = parts
         validate_manifest(json.dumps(base).encode("ascii"), identity, selection["variant"])
         retained = store / "downloads" / identity[7:]
-        retained.mkdir(parents=True, exist_ok=True)
-        for part in parts:
-            shutil.copyfile(work / part["filename"], retained / part["filename"])
-        write_document(retained / "manifest.json", base)
+        existing = store / "bases" / identity[7:] / "manifest.json"
+        if existing.exists():
+            previous = validate_manifest(existing.read_bytes(), identity, selection["variant"])
+            acquire_base(previous, (str(retained),), store)
+            return previous
+        cached = retained / "manifest.json"
+        if cached.exists():
+            base = validate_manifest(cached.read_bytes(), identity, selection["variant"])
+        else:
+            retained.mkdir(parents=True, exist_ok=True)
+            for part in parts:
+                shutil.copyfile(work / part["filename"], retained / part["filename"])
+            write_document(cached, base)
         installed = acquire_base(base, (str(retained),), store)
         existing = installed / "manifest.json"
         if existing.exists():
