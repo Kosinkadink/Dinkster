@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, cast
 
 
 def _msb(x: Any) -> Any:
@@ -48,7 +48,7 @@ def build_bvh(tri: Any) -> dict[str, Any]:
     def delta(i: Any, j: Any) -> Any:
         valid = (j >= 0) & (j < count)
         jj = j.clamp(0, count - 1)
-        x = sorted_codes[i] ^ sorted_codes[jj]
+        x = cast(Any, sorted_codes)[i] ^ cast(Any, sorted_codes)[jj]
         same = x == 0
         prefix = torch.where(same, torch.full_like(x, 63), 62 - _msb(x.clamp_min(1)))
         xi = i ^ jj
