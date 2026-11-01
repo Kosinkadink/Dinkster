@@ -546,28 +546,82 @@ def test_file3d_source_cannot_introduce_filesystem_authority(source: object) -> 
         ("FILE_3D_SPLAT_ANY", "spz"),
         ("FILE_3D_SPLAT_ANY", "ksplat"),
         ("FILE_3D_POINT_CLOUD_ANY", "ply"),
+        ("FILE_3D", ""),
+        ("FILE_3D_SPLAT_ANY", ""),
+        ("FILE_3D_POINT_CLOUD_ANY", ""),
     ),
 )
 def test_file3d_format_families_retain_original_format(type_id: str, format_id: str) -> None:
     registry = TypeRegistry()
     register_file3d_types(registry)
     ref = AssetRef(digest_bytes(b"original"), "source", 8)
-    obj = {"format": format_id, "source": ref}
+    resource = AssetRef(digest_bytes(b"sidecar"), "data.bin", 7)
+    obj = {"format": format_id, "source": ref, "resources": {"mesh/data.bin": resource}}
     spec = registry.spec(type_id)
-    decoded = cast("dict[str, object]", spec.decode(spec.encode(obj)))
-    assert decoded == {**obj, "resources": {}}
-    rendition = registry.render(registry.wrap(type_id, obj), "manifest")
+    encoded = spec.encode(obj)
+    decoded = cast("dict[str, object]", spec.decode(encoded))
+    assert decoded == obj
+    value = registry.wrap(type_id, obj)
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(encoded, value.meta.entries)
+    assert dict(value.meta.entries) == {
+        "format": format_id,
+        "asset_refs": [ref.to_wire(), resource.to_wire()],
+    }
+    rendition = registry.render(value, "manifest")
     assert json.loads(rendition.data) == {
         "format": format_id,
         "source": ref.to_wire(),
-        "resources": {},
+        "resources": {"mesh/data.bin": resource.to_wire()},
     }
     assert spec.fingerprint is not None
     assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
-    wrong = {**obj, "format": "glb" if format_id != "glb" else "gltf"}
+    wrong = {**obj, "format": "gltf" if type_id == FILE_3D_GLB_TYPE else "glb"}
     if type_id != FILE_3D_TYPE:
         with pytest.raises(AssetError, match="does not accept"):
             spec.encode(wrong)
+
+
+@pytest.mark.parametrize("format_id", (None, False, 0, ".ply", "PLY", "../ply"))
+def test_file3d_unspecified_format_does_not_accept_malformed_formats(format_id: object) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"original"), "source", 8)
+    obj = {"format": format_id, "source": ref}
+    spec = registry.spec(FILE_3D_TYPE)
+    with pytest.raises(AssetError, match="format"):
+        spec.encode(obj)
+    payload = json.dumps({**obj, "source": ref.to_wire()}).encode()
+    with pytest.raises(AssetError, match="format"):
+        spec.decode(payload)
+
+
+@pytest.mark.parametrize(
+    "type_id",
+    (
+        "FILE_3D_GLB",
+        "FILE_3D_GLTF",
+        "FILE_3D_FBX",
+        "FILE_3D_OBJ",
+        "FILE_3D_STL",
+        "FILE_3D_USDZ",
+        "FILE_3D_PLY",
+        "FILE_3D_SPLAT",
+        "FILE_3D_SPZ",
+        "FILE_3D_KSPLAT",
+    ),
+)
+def test_file3d_concrete_formats_require_declared_format(type_id: str) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"original"), "source", 8)
+    obj = {"format": "", "source": ref}
+    spec = registry.spec(type_id)
+    with pytest.raises(AssetError, match="does not accept"):
+        spec.encode(obj)
+    payload = json.dumps({**obj, "source": ref.to_wire()}).encode()
+    with pytest.raises(AssetError, match="does not accept"):
+        spec.decode(payload)
 
 
 FILE3D_SOURCE = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
