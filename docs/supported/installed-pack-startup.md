@@ -76,6 +76,11 @@
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.
+- Release mirror reads retry transient HTTP 5xx, connection failures and timeouts
+  with bounded backoff. Terminal failures retain each attempt's status and
+  Cloudflare request identifier when supplied. HTTP 4xx and invalid artifact bytes
+  do not gain transient retries; size and SHA256 verification remain mandatory.
+  Contributor setup reads only the selected host platform's published manifests.
 - Windows contributor setup and interpreter preparation require uv 0.13.6 or
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
