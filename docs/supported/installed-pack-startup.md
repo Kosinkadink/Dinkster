@@ -158,6 +158,9 @@
 - Engine release assembly records variant-specific dependency wheel identities
   without uploading third-party wheels. Finalization rejects unexpected payloads
   and enforces a 100 MB budget excluding native tools ZIPs.
+- Native tools builds retry transient HTTPS input failures up to three times,
+  preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
+  corrupt payloads fail without retry; exhausted failures retain attempt details.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.
