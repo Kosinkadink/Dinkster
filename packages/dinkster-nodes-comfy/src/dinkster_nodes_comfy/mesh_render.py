@@ -141,7 +141,7 @@ class RenderMesh(Node):
             if value is None:
                 return None
             selected = cast(Any, value)[0] if isinstance(value, list) or value.ndim == 3 else value
-            return cast(Any, selected)[:n].to(dev).float()
+            return selected[:n].to(dev).float()
 
         texture: Any = mesh.texture
         uvs: Any = mesh.uvs
