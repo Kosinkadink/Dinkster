@@ -25,7 +25,7 @@ from dinkster_assets.scratch import (
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_protocol import CacheStore
-from dinkster_values import MEBIBYTE
+from dinkster_values import MEBIBYTE, TypeRegistry
 
 from .auth import principal_for
 from .history import HistoryStore
@@ -74,6 +74,7 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
                         library.store,
                         state.history,
                         state.engine.cache,
+                        registry=state.engine.registry,
                         scratch_root=library.scratch_root,
                         collect=True,
                         limit_bytes=limit,
@@ -89,6 +90,7 @@ async def inspect_cleanup(
     history: HistoryStore | None,
     cache: CacheStore,
     *,
+    registry: TypeRegistry | None = None,
     scratch_root: Path | None = None,
     collect: bool = False,
     limit_bytes: int | None = None,
@@ -100,6 +102,8 @@ async def inspect_cleanup(
     known owners only. Collection additionally requires the frontend integration
     gate and every reference/publication barrier to remain held through deletion.
     """
+    if registry is None:
+        registry = TypeRegistry()
     memories: dict[int, MemoryLRUCache] = {}
     disks: dict[Path, DiskCacheStore] = {}
     blocked = [] if FRONTEND_RETENTION_COMPLETE else ["owner_completeness_unknown"]
@@ -121,7 +125,7 @@ async def inspect_cleanup(
         try:
             for key in sorted(memories):
                 roots.update(
-                    await owners.enter_async_context(memories[key].hold_asset_references())
+                    await owners.enter_async_context(memories[key].hold_asset_references(registry))
                 )
         except AssetError:
             blocked.append("cache_reference_state_unavailable")
@@ -526,6 +530,7 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         library.store,
         state.history,
         state.engine.cache,
+        registry=state.engine.registry,
         scratch_root=library.scratch_root,
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)

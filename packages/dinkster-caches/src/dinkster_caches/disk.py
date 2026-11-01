@@ -204,7 +204,7 @@ class DiskCacheStore:
                     manifest = self._read_manifest(path)
                     if manifest is None:
                         raise AssetError("cache reference manifest is unavailable")
-                    referenced.update(manifest_asset_references(manifest))
+                    referenced.update(manifest_asset_references(manifest, self._registry))
             except OSError as exc:
                 raise AssetError("cache reference state is unavailable") from exc
             yield frozenset(referenced)

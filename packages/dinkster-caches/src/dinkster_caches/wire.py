@@ -201,7 +201,9 @@ def iter_manifest_payloads(manifest: Mapping[str, Any]) -> Iterator[Mapping[str,
             yield entry_map
 
 
-def manifest_asset_references(manifest: Mapping[str, object]) -> frozenset[str]:
+def manifest_asset_references(
+    manifest: Mapping[str, object], registry: TypeRegistry
+) -> frozenset[str]:
     """External asset roots in persisted values; malformed state refuses collection.
 
     Payload digests belong to the cache's own CAS, not the asset vault. Read
@@ -222,6 +224,15 @@ def manifest_asset_references(manifest: Mapping[str, object]) -> frozenset[str]:
         type_id, metadata = value.get("typeId"), value.get("metaB64")
         if not isinstance(type_id, str) or not isinstance(metadata, str):
             raise AssetError("cache reference metadata is unavailable")
+        if "elements" not in value:
+            try:
+                complete = registry.spec(type_id).asset_references_complete
+            except KeyError:
+                complete = False
+            if not complete:
+                raise AssetError(f"cache asset references are incomplete for {type_id}")
+        elif parse_list_type_id(type_id) is None and parse_tuple_type_id(type_id) is None:
+            raise AssetError("cache reference container type is invalid")
         try:
             decoded = default_decode(base64.b64decode(metadata, validate=True))
         except Exception as exc:

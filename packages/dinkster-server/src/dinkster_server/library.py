@@ -1818,6 +1818,7 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
             library.store,
             state.history,
             state.engine.cache,
+            registry=state.engine.registry,
             scratch_root=library.scratch_root,
             collect=True,
         )

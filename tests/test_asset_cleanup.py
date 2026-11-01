@@ -18,7 +18,14 @@ from typing import Literal, cast
 import pytest
 from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes, open_verified
+from dinkster_assets import (
+    AssetRef,
+    AssetVault,
+    LibraryStore,
+    digest_bytes,
+    open_verified,
+    register_asset_type,
+)
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
@@ -898,8 +905,11 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
                 writer.commit()
                 if index < 2:
                     inventory.adopted(digest, len(data))
+        registry = TypeRegistry()
+        register_asset_type(registry)
+        registry.register("file", asset_references_complete=True)
         memory = MemoryLRUCache()
-        disk = DiskCacheStore(tmp_path / "cache", TypeRegistry())
+        disk = DiskCacheStore(tmp_path / "cache", registry)
         for cache, digest, data in zip((memory, disk), digests[:2], payloads[:2], strict=True):
             ref = AssetRef(digest, "source", len(data))
             value = Value(
@@ -910,15 +920,13 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             )
             await cache.put("key", {"out": value})
         # A second store sharing the disk root must not acquire the same file lock twice.
-        cache = LayeredCache(
-            memory, disk, DiskCacheStore(disk.root / ".." / "cache", TypeRegistry())
-        )
+        cache = LayeredCache(memory, disk, DiskCacheStore(disk.root / ".." / "cache", registry))
         store.create("private", "kept", digests[2], "application/octet-stream")
         history.put(make_record("run", scope="another", asset_digests=(digests[3],)))
         store.put_dependencies(digests[0], [{"digest": digests[4]}])
         store.put_dependencies(digest_bytes(b"orphan"), [{"digest": digest_bytes(b"not a root")}])
         try:
-            status = await inspect_cleanup(vault, store, history, cache)
+            status = await inspect_cleanup(vault, store, history, cache, registry=registry)
             assert status == {
                 "temporaryBytes": None,
                 "vaultBytes": 33,
@@ -932,11 +940,11 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             held_path = vault.resolve(digests[0])
             assert held_path is not None
             with open_verified(held_path, digests[0]):
-                reading = await inspect_cleanup(vault, store, history, cache)
+                reading = await inspect_cleanup(vault, store, history, cache, registry=registry)
                 assert reading["vaultOwnershipAvailable"] is False
                 assert "vault_in_use" in cast(list[str], reading["blocked"])
             store.retain_assets("unrelated", "preview", "unknown", [], revision=0)
-            blocked = await inspect_cleanup(vault, store, history, cache)
+            blocked = await inspect_cleanup(vault, store, history, cache, registry=registry)
             assert blocked["knownRetainedAssets"] is None
             assert "reference_state_unavailable" in cast(list[str], blocked["blocked"])
             assert not blocked["collectionEnabled"]
@@ -1384,6 +1392,9 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
         store = LibraryStore(tmp_path / "library")
         history = HistoryStore(tmp_path / "history")
         memory = MemoryLRUCache()
+        registry = TypeRegistry()
+        register_asset_type(registry)
+        registry.register("file", asset_references_complete=True)
         inventory = ProducedAssetInventory(vault.root)
         data = [b"old", b"newest bytes", b"kept", b"u"]
         digests = [digest_bytes(value) for value in data]
@@ -1425,7 +1436,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                 if path.name.split(".", 1)[0] in eligible_names
             )
             accounting = await inspect_cleanup(
-                vault, store, history, memory, scratch_root=tmp_path / "scratch"
+                vault, store, history, memory, registry=registry, scratch_root=tmp_path / "scratch"
             )
             assert accounting["collectionEnabled"]
             assert accounting["reclaimableBytes"] == eligible_bytes
@@ -1439,7 +1450,13 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             assert path is not None
             with open_verified(path, digests[0]):
                 busy = await inspect_cleanup(
-                    vault, store, history, memory, scratch_root=tmp_path / "scratch", collect=True
+                    vault,
+                    store,
+                    history,
+                    memory,
+                    registry=registry,
+                    scratch_root=tmp_path / "scratch",
+                    collect=True,
                 )
                 assert busy["reclaimedBytes"] == 0
                 assert busy["reclaimableBytes"] is None
@@ -1450,6 +1467,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                 store,
                 history,
                 memory,
+                registry=registry,
                 scratch_root=tmp_path / "scratch",
                 collect=True,
                 limit_bytes=limit,
@@ -1474,6 +1492,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                 store,
                 history,
                 memory,
+                registry=registry,
                 scratch_root=tmp_path / "scratch",
                 collect=True,
                 limit_bytes=limit,
