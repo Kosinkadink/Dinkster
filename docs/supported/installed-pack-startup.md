@@ -52,6 +52,11 @@
 - Official source archive builds can select exact pack ids and use each pack's
   own manifest version, retaining its declared engine range in the archive.
   Unknown pack ids and missing publication declarations refuse the build.
+- Official publication requires dependency locks for every selected pack and
+  committed supported base before preparing maps or submitting any archive.
+  Wrong source/base/lock identities, incompatible Python and nonportable wheel
+  origins refuse the entire local preparation without publication requests.
+  Prepared maps do not imply scanner acceptance or live default availability.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified

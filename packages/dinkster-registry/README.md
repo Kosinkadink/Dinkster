@@ -68,6 +68,23 @@ override; it is not needed for independently versioned publication. Native
 the same selected sources. Building does not publish an archive or alter a
 generation.
 
+`python -m scripts.publish_official_packs --sources /scratch/packs
+--base-manifest /scratch/linux-cpu.json --base-manifest ...
+--pack-lock /scratch/PACK-VERSION-VARIANT.pack-lock.json --pack-lock ...
+--output /scratch/publication` prepares publication maps. Repeat the manifest
+and lock options for every base in `scripts/base_bundles.json` and every selected
+pack/base pair. The command verifies canonical base identities, archive digests,
+manifest publication declarations, lock identities, Python compatibility and
+credential-free HTTP(S) wheel/index origins before exposing any map. It does not
+produce native locks or resolve dependencies. Invalid input leaves no output maps
+and makes no publication request.
+
+Add `--publish --registry URL` to submit each unchanged archive and its complete
+map through the existing registry client, using `DINKSTER_REGISTRY_TOKEN` when
+set. All local validation completes before the first request; separate release
+submissions are not a registry transaction. A queued receipt is not scanner
+acceptance or proof that the default set is served.
+
 `dinkster.registries.resolve_compatible_release(registry, pack, minimum,
 engine_version)` follows the service's version-list pages, chooses the newest
 active PEP 440 version at or above the minimum whose declared engine range

@@ -441,6 +441,202 @@ def test_official_publication_uses_selected_manifest_versions(
         assert manifest.compatibility.engine == ">=0.0.2,<0.1"
 
 
+@pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "prepare-only",
+        "missing-base",
+        "duplicate-base",
+        "wrong-base",
+        "missing-lock",
+        "duplicate-lock",
+        "extra-lock",
+        "pack",
+        "variant",
+        "python",
+        "wheel-url",
+        "index-url",
+        "credentials",
+        "empty-wheel",
+        "boolean-size",
+        "archive",
+        "source-version",
+        "publisher",
+        "declaration",
+    ],
+)
+def test_official_publication_requires_complete_supported_base_bindings(
+    tmp_path: Path, problem: str | None
+) -> None:
+    import hashlib
+    import json
+
+    from dinkster_registry import ArtifactError, LockedPack, Lockfile, build_artifact
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_installer import _serve_artifacts
+
+    from dinkster.registries import NamedRegistry
+    from scripts.publish_official_packs import publish_official_packs
+
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    packs = []
+    for name, version in (("first-pack", "1.2.3"), ("second-pack", "7.4.0rc1")):
+        tree = tmp_path / name
+        tree.mkdir()
+        observed = "9.9" if name == "second-pack" and problem == "source-version" else version
+        publisher = "other" if name == "second-pack" and problem == "publisher" else "dinkster"
+        declaration = (
+            ""
+            if name == "second-pack" and problem == "declaration"
+            else f'version = "{observed}"\nengine = ">=0.2,<1"\n'
+        )
+        (tree / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
+            + declaration
+            + '[pack.entry]\nnodes = "nodes:NODES"\n'
+        )
+        (tree / "nodes.py").write_text("raise RuntimeError('must not import')\n")
+        archive = sources / f"{name}-{version}.zip"
+        digest = build_artifact(tree, archive)
+        packs.append(LockedPack(name, version, digest, "dinkster", ()))
+    (sources / "official-packs.lock").write_text(Lockfile.of(packs).record_json())
+    if problem == "archive":
+        (sources / "second-pack-7.4.0rc1.zip").write_bytes(b"changed")
+    bases, supported, locks = [], {}, []
+    expected_locks = {}
+    for variant, python in (("linux-cpu", "3.12.9"), ("win-nvidia", "3.14.10")):
+        base = {
+            "format": "dinkster.base/1",
+            "variant": variant,
+            "platform": {"os": "linux" if variant == "linux-cpu" else "windows", "arch": "x86_64"},
+            "python": python,
+            "interpreter": {},
+            "wheels": [],
+            "replaces": [],
+            "workerProtocol": 11,
+            "nvidia": None,
+            "archive": {"format": "tar+zstd"},
+        }
+        identity = hashlib.sha256(
+            json.dumps(base, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+        supported[variant] = identity
+        base["id"] = "sha256:" + identity
+        base["archive"]["parts"] = []
+        path = tmp_path / f"{variant}.json"
+        path.write_text(json.dumps(base))
+        bases.append(path)
+        for pack in packs:
+            corrupt = pack.pack == "second-pack" and variant == "win-nvidia"
+            path = tmp_path / f"{pack.pack}-{pack.version}-{variant}.pack-lock.json"
+            PackLock(
+                "wrong" if corrupt and problem == "pack" else pack.pack,
+                "wrong" if corrupt and problem == "variant" else variant,
+                "<3.14" if corrupt and problem == "python" else ">=3.12",
+                ("fixture-dependency==2.0",),
+                (
+                    "file:///local/index"
+                    if corrupt and problem == "index-url"
+                    else "https://pypi.org/simple",
+                ),
+                (
+                    LockedDistribution(
+                        "fixture-dependency",
+                        "2.0",
+                        (
+                            LockedWheel(
+                                "fixture_dependency-2.0-py3-none-any.whl",
+                                0
+                                if corrupt and problem == "empty-wheel"
+                                else True
+                                if corrupt and problem == "boolean-size"
+                                else 17,
+                                "b" * 64,
+                                "file:///local/wheel.whl"
+                                if corrupt and problem == "wheel-url"
+                                else "https://user:password@example.test/wheel.whl"
+                                if corrupt and problem == "credentials"
+                                else "https://example.test/wheel.whl",
+                            ),
+                        ),
+                    ),
+                ),
+            ).write(path)
+            locks.append(path)
+            expected_locks[pack.pack, variant] = json.loads(path.read_bytes())
+    (tmp_path / "scripts").mkdir()
+    if problem == "wrong-base":
+        supported["win-nvidia"] = "c" * 64
+    (tmp_path / "scripts/base_bundles.json").write_text(json.dumps(supported))
+    if problem == "missing-base":
+        bases.pop()
+    elif problem == "duplicate-base":
+        bases.append(bases[-1])
+    elif problem == "missing-lock":
+        locks.pop()
+    elif problem == "duplicate-lock":
+        locks.append(locks[-1])
+    elif problem == "extra-lock":
+        extra = tmp_path / "unselected-9.0-win-nvidia.pack-lock.json"
+        extra.write_bytes(locks[-1].read_bytes())
+        locks.append(extra)
+    requests = []
+    server = _serve_artifacts(
+        {
+            f"/v1/publish/{pack.pack}/versions/{pack.version}": json.dumps(
+                {"status": "queued", "candidateId": pack.pack}
+            ).encode()
+            for pack in packs
+        },
+        requests,
+    )
+    output = tmp_path / "publication"
+    before = {path: path.read_bytes() for path in [*sources.iterdir(), *locks, *bases]}
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+        if problem not in {None, "prepare-only"}:
+            with pytest.raises((ValueError, ArtifactError)):
+                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+            assert not output.exists()
+            assert requests == []
+        else:
+            result = publish_official_packs(
+                tmp_path,
+                sources,
+                bases,
+                locks,
+                output,
+                registry=registry if problem is None else None,
+            )
+            assert len(result) == 2
+            assert [row["version"] for row in result] == ["1.2.3", "7.4.0rc1"]
+            for pack, row in zip(packs, result, strict=True):
+                lock_map = row["locks"]
+                assert isinstance(lock_map, str)
+                bindings = json.loads(Path(lock_map).read_bytes())
+                assert set(bindings) == {"linux-cpu", "win-nvidia"}
+                for variant, identity in supported.items():
+                    assert bindings[variant] == {
+                        "baseId": "sha256:" + identity,
+                        "artifactDigest": pack.artifact_digest,
+                        "lock": expected_locks[pack.pack, variant],
+                    }
+                if problem is None:
+                    assert row["state"] == "queued" and row["candidateId"] == pack.pack
+            assert [path for path, _ in requests] == (
+                [f"/v1/publish/{pack.pack}/versions/{pack.version}" for pack in packs]
+                if problem is None
+                else []
+            )
+        assert {path: path.read_bytes() for path in before} == before
+        assert not list(tmp_path.glob("official-publication-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
     import asyncio
     import json
