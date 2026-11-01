@@ -20,15 +20,35 @@ for platform artifacts and the unsigned Apple Silicon installation procedure.
 
 Each `vX.Y.Z` release contains:
 
-- one wheel for every Dinkster workspace package;
-- the `dinkster` meta-package wheel with its `default` extra;
-- a `dinkster-frontend` wheel containing the built browser application;
+- the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, with the
+  browser application embedded in the engine;
 - `constraints.txt`, exported from `uv.lock` with hashes;
-- `release-manifest.json` and `SHA256SUMS`; and
-- `dinkster-source-X.Y.Z.zip`, a maintainer source archive.
+- `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
+- `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
+- native tools ZIPs with the installer interpreters; and
+- the existing official pack artifacts and per-variant pack locks.
 
-Download all wheels and `constraints.txt` from the same release. A manual
-installation for inspection can be created without Git credentials:
+No third-party wheels are release assets. Finalization rejects unexpected
+payloads and fails above 100,000,000 bytes excluding native tools ZIPs.
+Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
+locked PyPI artifact URLs into the shared wheel store, checking the exact
+filename, size and SHA256. Base-owned names and exact variant-index wheel pins
+come from the selected Environments manifest. Generation construction uses
+only the store, offline, without resolution or source builds.
+
+`setup --package-index https://packages.example.org/simple` selects a simple
+package mirror instead of those locked artifact origins. The index must offer
+the exact locked filename; index hashes cannot change the required size/hash.
+There is no fallback to PyPI or another version. Confirmed setup saves the
+index for updates; `update --package-index URL` changes it transactionally.
+This option is separate from `--mirror`, which selects channel, base and
+Dinkster release artifact locations. Warm shared-store wheels need no index
+access. Repair and move remain offline.
+
+Download the three Dinkster wheels and `constraints.txt` from the same release.
+A manual installation for inspection can be created without Git credentials;
+the command fetches third-party wheels from the package index using the exported
+hashes, rather than selecting a published base:
 
 ```sh
 uv venv --python 3.12 .venv
@@ -38,6 +58,9 @@ uv pip install --python .venv/bin/python --no-deps --require-hashes --find-links
 
 On Windows, use `.venv\Scripts\python.exe`. Do not combine wheels or constraints
 from different releases. Models and accelerator runtimes are not bundled.
+For a variant-specific managed installation, use the
+[native environment tools](environments-and-updates.md#environment-tools-bootstrap)
+and `dinkster-env setup` instead of this generic inspection environment.
 On Windows, first prepare the runtime below and pass its executable to
 `uv venv --python` instead of the floating `3.12` selector.
 
@@ -67,7 +90,7 @@ to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
 The shared Python setup installs only one runtime in `.venv`: the published
-Linux CPU base, a Windows NVIDIA/CPU base compatible with the detected
+Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
 hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
 Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
@@ -76,6 +99,11 @@ and editable packages are installed on top without resolving torch again.
 Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;
 `--force` rebuilds its `.venv`, retaining the verified bundle store.
+
+`linux-nvidia` supplies the cu132 torch family and its complete Linux CUDA
+closure. It requires Linux x86_64 with glibc 2.28+, NVIDIA driver 580+ and
+compute capability 7.5+. Use `--variant linux-nvidia` to request it explicitly;
+an incompatible machine is refused rather than resolving another CUDA runtime.
 
 The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
 torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
@@ -108,7 +136,7 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 
 | Platform | Execution interpreter |
 | --- | --- |
-| Linux CPU | `$PWD/.venv/bin/python` |
+| Linux NVIDIA or CPU | `$PWD/.venv/bin/python` |
 | Apple Silicon macOS (`mac-arm64`) | `$PWD/.venv/bin/python` |
 | Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
 
@@ -118,7 +146,9 @@ runtime when the native or compatibility worker is provisioned.
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform
-without a suitable bundle, `dinkster-env --root /absolute/new-project setup
+without a suitable bundle, setup refuses and names the supported published
+variants. It does not resolve or choose a local replacement automatically.
+`dinkster-env --root /absolute/new-project setup
 --from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.

@@ -106,11 +106,10 @@ jobs:
           PY
           for payload in .release/official-packs/*; do arguments+=(--artifact "$payload"); done
           for manifest in .release/base-manifests/*/manifest.json; do
-            arguments+=(--base-manifest "$manifest" --target-variant "$(basename "$(dirname "$manifest")")")
+            arguments+=(--base-manifest "$manifest")
           done
           uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release \
             "${arguments[@]}" \
-            --download-external-wheels \
             --frontend-artifact .release/frontend.zip
           uvx twine check dist/*.whl
           (cd dist && sha256sum -c SHA256SUMS)
@@ -311,6 +310,10 @@ jobs:
           for artifact in .release/pack-locks/*.pack-lock.json; do arguments+=(--artifact "$artifact"); done
           uv run --locked --no-sync python -m scripts.build_release --extend "${arguments[@]}"
           (cd dist && sha256sum -c SHA256SUMS)
+      - name: Enforce finalized release contents and size
+        run: |
+          # Engine code, embedded frontend and unchanged official packs fit below 100 MB; tools carry interpreters.
+          uv run --locked --no-sync python -m scripts.build_release --check --max-bytes 100000000
       - uses: actions/upload-artifact@v4
         with:
           name: engine-release

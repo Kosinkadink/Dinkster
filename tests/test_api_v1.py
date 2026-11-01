@@ -63,6 +63,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_shape_subdivides",
     "materialize_splat",
     "materialize_svg",
     "materialize_voxel",
