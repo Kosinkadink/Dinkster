@@ -997,12 +997,14 @@ def test_registry_probe_refuses_degraded_isolation(
 @pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
 @pytest.mark.parametrize("problem", [None, "broken", "missing", "skipped"])
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
-    tmp_path: Path, problem: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
     from scripts.run_selected_pack_tests import run_selected_tests
 
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "inherited-device")
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cuda")
     engine = tmp_path / "engine"
     tests = engine / "tests"
     tests.mkdir(parents=True)
@@ -1015,12 +1017,14 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     checkout_module.mkdir(parents=True)
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
     (tests / "test_image_nodes.py").write_text(
-        "import importlib.metadata\nimport subprocess\nimport sys\nimport pytest\n"
+        "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
         "from pathlib import Path\nimport dinkster_nodes_image\n"
         "from dinkster_nodes_image import VALUE\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + "def test_selected_value():\n"
         "    assert VALUE == 47\n"
+        "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
+        "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
         "    assert Path(dinkster_nodes_image.__file__).resolve()"
         ".is_relative_to(pack_root / 'src')\n"

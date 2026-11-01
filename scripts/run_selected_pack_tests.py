@@ -203,6 +203,8 @@ def run_selected_tests(
             if key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "PYTEST_ADDOPTS"}
         }
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+        child_env["CUDA_VISIBLE_DEVICES"] = ""
+        child_env["DINKSTER_ACCELERATOR"] = "cpu"
         child = work / "test-child.py"
         shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
         for pack in catalog.packs:
