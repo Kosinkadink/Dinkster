@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import re
+import shlex
+import struct
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 from dinkster_values import TypeRegistry, TypeSpec, stable_hash
 from dinkster_values.builtin_types import (
@@ -26,8 +31,10 @@ from dinkster_values.builtin_types import (
     FILE_3D_USDZ_TYPE,
 )
 
+from .declared import MOUNTS_ENV
 from .identity import AssetError
 from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
+from .mounts import MountSnapshotResolver, MountTable
 
 FILE3D_FORMATS = {
     FILE_3D_TYPE: None,
@@ -44,6 +51,189 @@ FILE3D_FORMATS = {
     FILE_3D_SPLAT_ANY_TYPE: frozenset({"", "ply", "splat", "spz", "ksplat"}),
     FILE_3D_POINT_CLOUD_ANY_TYPE: frozenset({"", "ply"}),
 }
+
+
+def _resource_name(name: object) -> str:
+    if (
+        not isinstance(name, str)
+        or not name
+        or name == "."
+        or PurePosixPath(name).is_absolute()
+        or str(PurePosixPath(name)) != name
+        or ".." in PurePosixPath(name).parts
+        or any(char in name for char in "\\:%?#")
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+    ):
+        raise AssetError("FILE_3D resource name must be a canonical contained relative path")
+    return name
+
+
+def _gltf_resource_name(uri: object) -> str:
+    if not isinstance(uri, str) or any(ord(char) < 32 or ord(char) == 127 for char in uri):
+        raise AssetError("FILE_3D resource URI must be a contained relative path")
+    parsed = urlsplit(uri)
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        raise AssetError("FILE_3D resource URI must be a contained relative path")
+    return _resource_name(unquote(parsed.path, errors="strict"))
+
+
+def _mtl_texture_name(declaration: str) -> str:
+    stream = io.StringIO(declaration)
+    lexer = shlex.shlex(stream, posix=True)
+    lexer.whitespace_split = True
+    tokens: list[tuple[str, int]] = []
+    while True:
+        start = stream.tell()
+        token = lexer.get_token()
+        if token is None:
+            break
+        tokens.append((token, start))
+    fixed = {
+        "-blendu": 1,
+        "-blendv": 1,
+        "-boost": 1,
+        "-mm": 2,
+        "-texres": 1,
+        "-clamp": 1,
+        "-bm": 1,
+        "-imfchan": 1,
+        "-type": 1,
+        "-cc": 1,
+    }
+    index = 0
+    while index < len(tokens):
+        option = tokens[index][0]
+        if option in {"-o", "-s", "-t"}:
+            index += 1
+            count = 0
+            while index < len(tokens) and count < 3:
+                try:
+                    float(tokens[index][0])
+                except ValueError:
+                    break
+                index += 1
+                count += 1
+            if count == 0:
+                raise AssetError(f"MTL texture option {option} requires a numeric argument")
+        elif option in fixed:
+            index += 1 + fixed[option]
+        else:
+            break
+    if index >= len(tokens):
+        raise AssetError("MTL texture declaration requires a filename")
+    remainder = declaration[tokens[index][1] :].split("#", 1)[0].strip()
+    if remainder.startswith(("'", '"')):
+        names = shlex.split(remainder)
+        if len(names) != 1:
+            raise AssetError("MTL texture declaration requires one filename")
+        remainder = names[0]
+    return _resource_name(remainder)
+
+
+def load_file3d(
+    source: AssetRef | LocalAssetRef | str | None,
+    *,
+    resources: Mapping[str, AssetRef | LocalAssetRef] | None = None,
+) -> dict[str, object] | None:
+    """Preserve a selected file and bind its declared sidecars within existing grants.
+
+    Explicit resources support uploaded groups and sources outside mounted folders.
+    Otherwise only the selected file's existing input/model3d grant can supply them.
+    Neither resource names nor the source's display name introduce filesystem access.
+    """
+    if source is None or isinstance(source, str) and source in {"", "none"}:
+        if resources:
+            raise AssetError("an empty FILE_3D cannot have resources")
+        return None
+    if not isinstance(source, (AssetRef, LocalAssetRef)):
+        raise AssetError("FILE_3D loading requires a bound asset, not a filename")
+    path = source.local_path()
+    format_id = PurePosixPath(source.name).suffix.lower().removeprefix(".")
+    if re.fullmatch(r"[a-z0-9]*", format_id) is None:
+        raise AssetError("FILE_3D format must be a lowercase file extension or empty")
+    supplied = dict(resources) if resources is not None else None
+    if supplied is not None:
+        for name in supplied:
+            _resource_name(name)
+    bound: dict[str, AssetRef | LocalAssetRef] = {}
+    snapshot = os.environ.get(MOUNTS_ENV)
+    resolver = (
+        source.resolver
+        if isinstance(source.resolver, (MountTable, MountSnapshotResolver))
+        else MountSnapshotResolver(snapshot)
+        if snapshot
+        else None
+    )
+
+    def bind(name: str) -> AssetRef | LocalAssetRef:
+        name = _resource_name(name)
+        if name in bound:
+            return bound[name]
+        ref = supplied.get(name) if supplied is not None else None
+        if ref is None and supplied is None and resolver is not None:
+            for kind in ("media/model3d", "directory/input"):
+                for root in resolver.roots_for_kind(kind):
+                    root = root.resolve()
+                    if path.is_relative_to(root):
+                        relative = path.parent.relative_to(root) / name
+                        if isinstance(resolver, MountTable):
+                            ref = resolver.bind_relative_file(kind, root, relative.as_posix())
+                        else:
+                            ref = resolver.bind_relative_file(
+                                kind, root, relative.as_posix(), require_host_grant=True
+                            )
+                        break
+                if ref is not None:
+                    break
+        if ref is None:
+            raise AssetError(f"FILE_3D resource {name!r} requires an explicit asset or mount grant")
+        with ref.open():
+            pass
+        bound[name] = ref
+        return ref
+
+    if format_id in {"gltf", "glb"}:
+        with source.open() as handle:
+            if format_id == "glb":
+                header = handle.read(20)
+                if len(header) != 20:
+                    raise AssetError("GLB source has an incomplete header")
+                magic, version, _length, chunk_length, chunk_kind = struct.unpack("<4sIIII", header)
+                if magic != b"glTF" or version != 2 or chunk_kind != 0x4E4F534A:
+                    raise AssetError("GLB source requires a version2 JSON chunk")
+                document = json.loads(handle.read(chunk_length))
+            else:
+                document = json.load(handle)
+        for section in ("buffers", "images"):
+            for entry in document.get(section, []):
+                uri = entry.get("uri")
+                if uri is not None and not (isinstance(uri, str) and uri.startswith("data:")):
+                    bind(_gltf_resource_name(uri))
+    elif format_id == "obj":
+        text = source.read_bytes().decode("utf-8-sig").replace("\r\n", "\n").replace("\\\n", "")
+        for line in text.splitlines():
+            words = line.split(maxsplit=1)
+            if len(words) != 2 or words[0] != "mtllib":
+                continue
+            for name in shlex.split(words[1], comments=True):
+                material = bind(name)
+                text = (
+                    material.read_bytes()
+                    .decode("utf-8-sig")
+                    .replace("\r\n", "\n")
+                    .replace("\\\n", "")
+                )
+                for declaration in text.splitlines():
+                    parts = declaration.split(maxsplit=1)
+                    if len(parts) == 2 and (
+                        parts[0].startswith("map_")
+                        or parts[0] in {"bump", "disp", "decal", "norm", "refl"}
+                    ):
+                        texture = _mtl_texture_name(parts[1])
+                        bind((PurePosixPath(name).parent / texture).as_posix())
+    if supplied is not None and supplied.keys() != bound.keys():
+        raise AssetError("FILE_3D resources contain undeclared files")
+    return {"format": format_id, "source": source, "resources": bound}
 
 
 def register_file3d_types(
@@ -96,19 +286,7 @@ def register_file3d_types(
             raise AssetError("FILE_3D resources must map contained relative names to assets")
         bound: dict[str, AssetRef | LocalAssetRef] = {}
         for name, ref in cast("Mapping[object, object]", resources).items():
-            if (
-                not isinstance(name, str)
-                or not name
-                or name == "."
-                or PurePosixPath(name).is_absolute()
-                or str(PurePosixPath(name)) != name
-                or ".." in PurePosixPath(name).parts
-                or any(char in name for char in "\\:%?#\x00")
-            ):
-                raise AssetError(
-                    "FILE_3D resource name must be a canonical contained relative path"
-                )
-            bound[name] = asset(ref)
+            bound[_resource_name(name)] = asset(ref)
         return {"format": format_id, "source": asset(obj.get("source")), "resources": bound}
 
     def wire(value: object) -> dict[str, object] | None:

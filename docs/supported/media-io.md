@@ -24,6 +24,18 @@
   Omitted captures and an empty recording remain distinct authored states.
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
+  The public file loader retains selected source bytes and binds declared glTF,
+  GLB and OBJ sidecars from explicit asset identities or the selected source's
+  input/model3d mount grant. glTF resource URIs may encode spaces in contained
+  filenames. OBJ material and texture declarations support continued lines;
+  texture names retain spaces after material-map options or inside quotes.
+  Declared adjacent files selected through model3d file inputs receive local host
+  grants at submission, without a separate directory scan or indexing step.
+  String-or-FILE_3D inputs bind legacy filename selections through those same
+  grants and preserve canonical file values. Empty, null and `none` source
+  selections normalize before asset validation without opening a file.
+  Missing, undeclared and traversing resources fail;
+  an empty selection produces no file. It never fetches external URLs.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
   Generic and aggregate sockets preserve an empty format for consumers that
   detect the original container from its contents. Concrete format sockets
@@ -34,6 +46,8 @@
 - Local asset bindings support byte reads for callers with local assets:read
   permission. Reads require a live grant and unchanged file revision; they do not
   index files, grant path access or advertise immutable caching.
+  A worker selecting the same unindexed file can return its existing host grant
+  without requiring a separate indexing step.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
