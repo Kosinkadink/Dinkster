@@ -72,10 +72,13 @@ generation.
 engine_version)` follows the service's version-list pages, chooses the newest
 active PEP 440 version at or above the minimum whose declared engine range
 admits the target, and returns the existing `LockedPack` model. Active pack
-prereleases remain eligible inside these bounds. The default declaration is
-not a byte pin; the returned installation identity is digest-pinned so archive
-acquisition can verify it. Resolution asks exactly one selected registry and
-rechecks the chosen release's state and range against its versioned detail.
+prereleases remain eligible inside these bounds. Historical releases with an
+empty engine declaration are ineligible, not a barrier to selecting other
+declared versions. Invalid nonempty ranges and malformed versions still refuse.
+The default declaration is not a byte pin; the returned installation identity
+is digest-pinned so archive acquisition can verify it. Resolution asks exactly
+one selected registry and rechecks the chosen release's state and range against
+its versioned detail.
 
 The committed `src/dinkster/default-packs.toml` declares default pack ids and
 minimum versions only, never exact release versions or archive bytes.

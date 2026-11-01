@@ -3048,6 +3048,7 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
     versions = [
+        ("99.0", "", "active"),
         ("12.0", ">=0.7,<0.9", "active"),
         ("11.0", ">=0.4,<0.7", "yanked"),
         ("10.0", ">=0.5,<0.6", "active"),
@@ -3124,7 +3125,8 @@ def test_registry_selection_rechecks_exact_release_before_install(
         {"items": [42]},
         {"items": [{"version": "1.0", "state": "active"}]},
         {"items": [{"version": "v1.0", "dinkster": ">=0.4", "state": "active"}]},
-        {"items": [{"version": "1.0", "dinkster": "", "state": "active"}]},
+        {"items": [{"version": "1.0", "dinkster": "not-a-range", "state": "active"}]},
+        {"items": [{"version": "v1.0", "dinkster": "", "state": "active"}]},
         {"items": [], "nextCursor": False},
         {"items": [], "nextCursor": "again"},
     ],
@@ -3144,6 +3146,27 @@ def test_registry_compatible_selection_refuses_malformed_pages(page: dict[str, o
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
         with pytest.raises(InstallError, match="registry.*versions of demo"):
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
+    finally:
+        server.shutdown()
+
+
+def test_registry_compatible_selection_refuses_only_undeclared_releases() -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    calls: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(
+        {
+            "/v1/packs/demo/versions?limit=100": json.dumps(
+                {"items": [{"version": "3.0", "dinkster": "", "state": "active"}]}
+            ).encode()
+        },
+        calls,
+    )
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        with pytest.raises(InstallError, match=r"no active demo >= 1.0 compatible with engine 0.5"):
+            resolve_compatible_release(registry, "demo", "1.0", "0.5")
+        assert calls == [("/v1/packs/demo/versions?limit=100", None)]
     finally:
         server.shutdown()
 

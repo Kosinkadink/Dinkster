@@ -589,6 +589,11 @@ def resolve_compatible_release(
                     "without version/engine/state strings"
                 )
             try:
+                if engine == "":
+                    problem = validate_version(version)
+                    if problem is not None:
+                        raise ValueError(f"pack version {problem}")
+                    continue
                 compatibility = PackCompatibility(version, engine)
             except ValueError as exc:
                 raise InstallError(f"registry {registry.label} answered {subject}: {exc}") from exc

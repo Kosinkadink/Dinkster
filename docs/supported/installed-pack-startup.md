@@ -45,7 +45,9 @@
   including development and engine-carried generation packs.
 - The registry client can select the newest active pack version meeting a
   minimum version and target engine range across paginated results. Active
-  prereleases inside those bounds remain eligible. The selected release is
+  prereleases inside those bounds remain eligible. Historical releases without
+  an engine declaration are ineligible without blocking declared versions;
+  malformed versions and nonempty ranges still refuse. The selected release is
   checked again before returning its immutable artifact identity.
 - Official source archive builds can select exact pack ids and use each pack's
   own manifest version, retaining its declared engine range in the archive.
