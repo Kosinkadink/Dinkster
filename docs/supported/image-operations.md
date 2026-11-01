@@ -21,6 +21,9 @@
   outlines and straight-alpha compositing for transparent images.
 - Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
   with optional line and feature-edge quadrics and retained vertex colors.
+- Native `RemeshMesh` re-extracts meshes using unsigned, oriented or graph-cut
+  solid distance fields, with optional sharp-feature placement, component
+  filtering, smoothing and retained vertex colors and per-item batch counts.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
   merging transformed scene geometry and retaining the first material's textures
   and factors. External glTF data must be included in the FILE_3D resource map.
