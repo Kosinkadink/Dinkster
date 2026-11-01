@@ -587,6 +587,61 @@ class LibraryStore:
             ).fetchone()
         return _result_offer_from_row(row) if row is not None else None
 
+    def record_result_rendition(
+        self, scope: str, token: str, cache_key: str, document_digest: str, digests: list[str]
+    ) -> bool:
+        """Bind immutable derived roots without changing the source's own census.
+
+        The caller holds publication ownership until this transaction settles.
+        A retained token alone cannot revive a source whose last owner released it.
+        """
+        scope, token = _clean_scope(scope), _result_offer_token(token)
+        document_digest = require_digest(document_digest)
+        roots = _canonical_digests(digests)
+        if not cache_key:
+            raise AssetError("rendition cache identity is invalid")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_result_offers WHERE scope = ? AND token = ?",
+                (scope, token),
+            ).fetchone()
+            if row is None:
+                return False
+            offer = _result_offer_from_row(row)
+            if row["claimed"]:
+                owners = [
+                    _retention_from_row(owner)
+                    for owner in self._conn.execute(
+                        "SELECT * FROM asset_retentions WHERE scope = ? AND source_token = ?",
+                        (scope, token),
+                    )
+                ]
+                if not any(
+                    owner.digests == offer.digests and owner.complete == offer.complete
+                    for owner in owners
+                ):
+                    return False
+            existing = self._conn.execute(
+                "SELECT document_digest, digests FROM asset_result_renditions "
+                "WHERE scope = ? AND source_token = ? AND cache_key = ?",
+                (scope, token, cache_key),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["document_digest"] != document_digest
+                    or _canonical_digests(json.loads(existing["digests"])) != roots
+                ):
+                    raise StaleRevision("result rendition is already sealed")
+            else:
+                self._conn.execute(
+                    "INSERT INTO asset_result_renditions "
+                    "(scope, source_token, cache_key, document_digest, digests) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (scope, token, cache_key, document_digest, json.dumps(roots)),
+                )
+        return True
+
     def publish_terminal_result(
         self,
         scope: str,
@@ -782,6 +837,11 @@ class LibraryStore:
                 if any(not owner.complete for owner in retained):
                     raise AssetError("retained owner manifest is incomplete")
                 roots = set(digest for owner in retained for digest in owner.digests)
+                active_sources = {
+                    (owner.scope, owner.source_token)
+                    for owner in retained
+                    if owner.source_token is not None
+                }
                 for row in self._conn.execute("SELECT * FROM asset_result_offers"):
                     offer = _result_offer_from_row(row)
                     if row["claimed"]:
@@ -789,6 +849,13 @@ class LibraryStore:
                     if not offer.complete:
                         raise AssetError("result offer manifest is incomplete")
                     roots.update(offer.digests)
+                    active_sources.add((offer.scope, offer.token))
+                for row in self._conn.execute("SELECT * FROM asset_result_renditions"):
+                    if (row["scope"], row["source_token"]) in active_sources:
+                        try:
+                            roots.update(_canonical_digests(json.loads(row["digests"])))
+                        except (TypeError, ValueError) as exc:
+                            raise AssetError("result rendition references are unavailable") from exc
                 roots.update(require_digest(digest) for digest in additional_roots)
                 for table in ("records", "media_grants", "asset_observations"):
                     for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):

@@ -29,6 +29,8 @@ from dinkster_assets.scratch import (
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_engine import Engine, EventListener
+from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE, ImageDocument
+from dinkster_image_document.document import empty_document
 from dinkster_server import (
     STATE_KEY,
     HistoryStore,
@@ -51,6 +53,7 @@ from dinkster_values import (
     ValueMeta,
 )
 from test_history import make_record
+from test_image_document_rendering import _png, _resource
 from test_server import (
     SCHEMAS,
     Sleeper,
@@ -105,6 +108,146 @@ def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Pa
             await asyncio.gather(task, return_exceptions=True)
             async with library.media_ingest_lock:
                 store.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_document_rendition_commits_source_roots_before_response_or_cancellation(
+    tmp_path: Path, cancelled: bool
+) -> None:
+    async def scenario() -> None:
+        entered, release = threading.Event(), threading.Event()
+        data = _png([[(73, 21, 190, 255)]])
+        digest = digest_bytes(data)
+
+        class DelayedStore(LibraryStore):
+            def record_result_rendition(
+                self,
+                scope: str,
+                token: str,
+                cache_key: str,
+                document_digest: str,
+                digests: list[str],
+            ) -> bool:
+                entered.set()
+                assert release.wait(10)
+                return super().record_result_rendition(
+                    scope, token, cache_key, document_digest, digests
+                )
+
+        vault = AssetVault(tmp_path / "vault")
+        store = DelayedStore(tmp_path / "library")
+        library = ServerLibrary(vault, store)
+        record = empty_document(1, 1).to_record()
+        # Unused resources still belong to the returned document.
+        record["allocation"]["nextOrdinal"] = 1
+        record["resources"] = {"r0": _resource("r0", data, 1, 1)}
+        document = ImageDocument.from_record(record).data
+        record["lineage"] = "other rendition parameters"
+        other_document = ImageDocument.from_record(record).data
+        handlers: list[asyncio.Task[None]] = []
+
+        async def mime(_metadata: Mapping[str, object]) -> str:
+            return IMAGE_DOCUMENT_MEDIA_TYPE
+
+        async def resolve(
+            _metadata: Mapping[str, object], parameters: Mapping[str, str]
+        ) -> tuple[str, Mapping[str, str]]:
+            return IMAGE_DOCUMENT_MEDIA_TYPE, parameters
+
+        async def render(_value: Value, parameters: Mapping[str, str]) -> Rendition:
+            inventory = ProducedAssetInventory(vault.root)
+            inventory.pending(digest, len(data))
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            inventory.adopted(digest, len(data))
+            return Rendition(
+                "document",
+                IMAGE_DOCUMENT_MEDIA_TYPE,
+                other_document if parameters["variant"] == "two" else document,
+            )
+
+        def factory(on_event: EventListener) -> Engine:
+            engine = make_engine(on_event)
+            engine.registry.register_relayed_rendition(
+                "STRING",
+                "document",
+                mime=IMAGE_DOCUMENT_MEDIA_TYPE,
+                default=False,
+                version="1",
+                parameters=("variant",),
+                defaults={"variant": "one"},
+                limits=None,
+                owner="worker",
+                resolve_mime=mime,
+                resolve=resolve,
+                render=render,
+            )
+            return engine
+
+        @web.middleware
+        async def observe(
+            request: web.Request,
+            handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+        ) -> web.StreamResponse:
+            if request.path == "/api/values":
+                assert request.task is not None
+                handlers.append(request.task)
+            return await handler(request)
+
+        app = create_app(factory, SCHEMAS, library=library)
+        app.middlewares.append(observe)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        pending: asyncio.Future[ClientResponse] | None = None
+        try:
+            status = await finish_job(client, echo_graph(), ["s"])
+            source = status["resultOffers"]["s"]["out"]
+            assert source["digests"] == [] and source["complete"]
+            pending = asyncio.ensure_future(
+                client.get(values_url("s", rendition="document"), headers={"If-None-Match": "*"})
+            )
+            assert await asyncio.to_thread(entered.wait, 10)
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+            if cancelled:
+                for _ in range(2):
+                    handlers[-1].cancel()
+                    await asyncio.sleep(0)
+                assert not handlers[-1].done()
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
+            release.set()
+            if cancelled:
+                result = await asyncio.gather(handlers[-1], return_exceptions=True)
+                assert isinstance(result[0], asyncio.CancelledError)
+            else:
+                assert (await pending).status == 304
+            with store.hold_asset_references() as roots:
+                assert roots == {digest}
+            original = store.result_asset_offer("local", source["token"])
+            assert original is not None and original.to_wire() == source
+            response = await client.get(values_url("s", rendition="document"))
+            assert response.status == 200 and await response.read() == document
+            response = await client.get(values_url("s", rendition="document", variant="two"))
+            assert response.status == 200 and await response.read() == other_document
+            asset = await client.get(f"/api/assets/{digest}")
+            assert asset.status == 200 and await asset.read() == data
+            assert store.claim_result_assets("local", source["token"], "shown-result", "view")
+            store.release_assets("local", "shown-result", "view", revision=1)
+            response = await client.get(
+                values_url("s", rendition="document"), headers={"If-None-Match": "*"}
+            )
+            assert response.status == 404
+            with store.hold_asset_references() as roots:
+                assert roots == set()
+        finally:
+            release.set()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
+            await client.close()
 
     asyncio.run(scenario())
 

@@ -227,6 +227,7 @@ from dinkster_assets import (
     DeclaredAsset,
     MountsError,
     asset_selection_options,
+    digest_bytes,
     is_digest,
 )
 from dinkster_assets.acquisition_plan import AcquisitionSource
@@ -253,6 +254,7 @@ from dinkster_graph import (
     migrate_pure_node_type_replacements,
     top_level_node_id,
 )
+from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE, InvalidDocument, decode_document
 from dinkster_memory import (
     AcceleratorMemoryPolicy,
     BudgetExceeded,
@@ -3790,6 +3792,7 @@ async def handle_value(request: web.Request) -> web.Response:
     value = outputs[output_id]
     offer = job.result_offers.get(node_id, {}).get(output_id)
 
+    element_path: list[int] = []
     for index_text in [e for e in query.get("element", "").split(",") if e]:
         try:
             index = int(index_text)
@@ -3807,6 +3810,7 @@ async def handle_value(request: web.Request) -> web.Response:
                 f"element {index} out of range (length {len(children)})",
             )
         value = children[index]
+        element_path.append(index)
 
     registry = state.engine.registry
     kind = query.get("rendition")
@@ -3906,13 +3910,15 @@ async def handle_value(request: web.Request) -> web.Response:
         if kind == spec.selector and kind != "default"
         else "private, no-cache"
     )
-    if any(tag.value in (etag_value, "*") for tag in (request.if_none_match or ())):
+    library = request.app.get(LIBRARY_KEY)
+    document_rendition = library is not None and _mime == IMAGE_DOCUMENT_MEDIA_TYPE
+    not_modified = any(tag.value in (etag_value, "*") for tag in (request.if_none_match or ()))
+    if not_modified and not document_rendition:
         return web.Response(
             status=304,
             headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
         )
     try:
-        library = request.app.get(LIBRARY_KEY)
         if library is None:
             rendition = await registry.render_async(value, spec.kind, normalized_parameters or None)
         else:
@@ -3934,11 +3940,29 @@ async def handle_value(request: web.Request) -> web.Response:
                         rendering.exception()
                     raise asyncio.CancelledError
                 rendition = rendering.result()
+                if rendition.mime == IMAGE_DOCUMENT_MEDIA_TYPE:
+                    if offer is None:
+                        raise AssetError("rendition source has no retained publication")
+                    token = cast(str, offer["token"])
+                    cache_identity = json.dumps([element_path, etag_value], separators=(",", ":"))
+
+                    def associate() -> bool:
+                        parsed = decode_document(rendition.data)
+                        return library.store.record_result_rendition(
+                            job.scope,
+                            token,
+                            cache_identity,
+                            digest_bytes(rendition.data),
+                            [cast(str, dependency["digest"]) for dependency in parsed.dependencies],
+                        )
+
+                    if not await run_owned_thread(associate):
+                        raise AssetError("rendition source ownership has ended")
     except InvalidRenditionRequest as error:
         return _rendition_problem(400, "invalid_rendition_request", str(error))
     except RenditionUnavailable as error:
         return _rendition_problem(404, "rendition_unavailable", str(error))
-    except AssetError:
+    except (AssetError, InvalidDocument):
         return _rendition_problem(404, "rendition_unavailable", "rendition source is unavailable")
     except UnresolvablePayload:
         return web.json_response(
@@ -3949,6 +3973,11 @@ async def handle_value(request: web.Request) -> web.Response:
                 "(pack type registered only in an isolated worker)",
             },
             status=406,
+        )
+    if not_modified:
+        return web.Response(
+            status=304,
+            headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
         )
     return web.Response(
         body=rendition.data,

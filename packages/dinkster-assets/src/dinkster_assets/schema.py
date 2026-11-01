@@ -112,6 +112,15 @@ sa.Table(
     sa.Column("job_ref", sa.Text, primary_key=True),
     sa.Column("manifest", sa.Text, nullable=False),
 )
+sa.Table(
+    "asset_result_renditions",
+    metadata,
+    sa.Column("scope", sa.Text, primary_key=True),
+    sa.Column("source_token", sa.Text, primary_key=True),
+    sa.Column("cache_key", sa.Text, primary_key=True),
+    sa.Column("document_digest", sa.Text, nullable=False),
+    sa.Column("digests", sa.Text, nullable=False),
+)
 
 
 def migration_config() -> Config:

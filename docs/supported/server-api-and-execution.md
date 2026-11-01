@@ -42,6 +42,13 @@
   rendering settles, including after request cancellation and before a source
   descriptor opens. Independent readers keep their own lifetime. This does not
   certify legacy migration references or enable cleanup.
+- Completed image-document responses retain all declared external resources
+  under their exact original result source before returning, including cache
+  revalidation. Associations survive library restart and remain protected while
+  the source is unclaimed or any source-bound consumer survives. Final release
+  or replacement ends that protection; stale requests cannot revive it.
+  Original offers and completeness remain unchanged. Durable document copies
+  still require their own resource declarations; cleanup remains disabled.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.

@@ -162,7 +162,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0009_artifact_offers (head)" in current.stdout
+    assert "0010_result_renditions (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -1205,6 +1205,45 @@ def test_terminal_result_seals_exact_tokens_and_rejects_newer_substitution(tmp_p
         store.close()
 
 
+def test_result_renditions_follow_exact_source_owners_across_restart(tmp_path: Path) -> None:
+    path = tmp_path / "library.sqlite"
+    store = LibraryStore(path)
+    source = store.offer_result_assets("one", "run", 1, "node", "out", 1, [], complete=True)
+    newer = store.offer_result_assets("one", "run", 1, "node", "out", 2, [], complete=True)
+    try:
+        assert not store.record_result_rendition("two", source.token, "element:0", DIGEST_A, [])
+        assert store.record_result_rendition("one", source.token, "element:0", DIGEST_A, [DIGEST_B])
+        assert store.record_result_rendition("one", source.token, "element:0", DIGEST_A, [DIGEST_B])
+        with pytest.raises(StaleRevision):
+            store.record_result_rendition("one", source.token, "element:0", DIGEST_B, [DIGEST_A])
+        assert store.record_result_rendition("one", source.token, "element:1", DIGEST_B, [DIGEST_A])
+        assert store.claim_result_assets("one", source.token, "shown-result", "view") is not None
+        assert store.claim_result_assets("one", source.token, "preview", "frozen") is not None
+        assert store.result_asset_offer("one", source.token) == source
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+    finally:
+        store.close()
+    store = LibraryStore(path)
+    try:
+        store.release_assets("one", "shown-result", "view", revision=1)
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+        # An explicit replacement drops the old source binding, even with a newer publication.
+        store.retain_assets("one", "preview", "frozen", [], revision=1, complete=True)
+        assert store.claim_result_assets("one", newer.token, "shown-result", "new") is not None
+        with store.hold_asset_references() as roots:
+            assert roots == set()
+        assert not store.record_result_rendition(
+            "one", source.token, "element:0", DIGEST_A, [DIGEST_B]
+        )
+        assert not store.record_result_rendition("one", source.token, "late", DIGEST_A, [DIGEST_B])
+        assert store.claim_result_assets("one", source.token, "preview", "late") is None
+        assert store.result_asset_offer("one", source.token) == source
+    finally:
+        store.close()
+
+
 def test_result_offers_keep_exact_roots_across_claims_and_restart(tmp_path: Path) -> None:
     path = tmp_path / "library.sqlite"
     store = LibraryStore(path)
@@ -1282,6 +1321,8 @@ def test_result_offers_never_certify_unknown_or_truncated_roots(
         )
         assert not offered.complete
         assert set(offered.digests) == set(digests)
+        assert store.record_result_rendition("one", offered.token, "document", DIGEST_A, [DIGEST_B])
+        assert store.result_asset_offer("one", offered.token) == offered
         with pytest.raises(AssetError, match="incomplete"):
             with store.hold_asset_references():
                 pytest.fail("unknown or oversized offer was treated as complete")
