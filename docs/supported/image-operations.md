@@ -46,6 +46,8 @@
   converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
+- Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
+  occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
   extracts basic or surface-net meshes, retaining variable per-item lengths
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
@@ -250,6 +252,8 @@
   prompts can be interpreted as comma-separated phrases or one literal phrase,
   producing scored boxes with source-sized binary masks. The model weights use
   the SAM License
+- SAM 3.1 prompt tokenization works offline with a digest-verified plain-text
+  vocabulary that is readable during pack admission.
 - Detect Objects offers Automatic, SAM 3.1, DETR ResNet-50, and RT-DETR v4
   x-HGNet model choices.
 - Text-prompted segmentation (`Segment Objects by Text`) through the same SAM
