@@ -11,6 +11,28 @@ up to 4096 bytes can use base64 `inline`; larger resources are published through
 `DINKSTER_ASSET_VAULT`. Value metadata advertises external `asset_refs` for worker
 staging. A bound asset resolver is retained when a document is edited.
 
+## Produced document ownership
+
+1. The host acquires `dinkster_assets.scratch.hold_produced_vault(vault.root)`
+   before the first lazy decode, edit or render of a produced document. It
+   releases the lease only after all document operations and spawned work have
+   settled, including on exception and cancellation. Short-lived SDK/tools may
+   use `contextlib.closing()` around the existing lease.
+2. To keep a document beyond that context, serialize or wrap it with exhaustive
+   external roots and acknowledge its real fresh result or document owner
+   before releasing the transient lease. Preserve original legacy envelope
+   bytes, fingerprint and incomplete offer; equal derived documents do not
+   authorize restamping the original envelope.
+3. Bare decoded documents, including an `ImageDocument` with a retained
+   resolver, have no vault ownership or automatic retention. Scalar and
+   read-only decoding without a lease remains possible. Maintained callers
+   that depend on produced bytes later must own their lease explicitly.
+
+See [retained asset registration](../dinkster-server/README.md#retained-asset-registration)
+for durable acknowledgment. Resolver binding controls lookup, not lifetime.
+
+## Renditions and editing
+
 Both `dinkster.layers` and `comfy.LAYERS` expose a `document` rendition through
 `GET /api/values?...&rendition=document`, with MIME
 `application/vnd.dinkster.image-document+json`. It returns canonical document

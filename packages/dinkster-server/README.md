@@ -193,6 +193,29 @@ There is no request that enables destructive cleanup by setting this flag.
 Unknown global ownership keeps cleanup disabled, independently of individual
 complete manifests. Disconnect, restart and elapsed time never release roots.
 
+### Decoded document handoff
+
+1. A host acquires `dinkster_assets.scratch.hold_produced_vault(vault.root)`
+   before lazily decoding, editing or rendering a produced document. Retain it
+   until the last document operation and any spawned task or thread settle,
+   including on exception and cancellation. Short-lived SDK/tools may wrap the
+   existing lease in `contextlib.closing()`.
+2. A document that outlives that context must first be serialized or wrapped
+   with exhaustive external roots and acknowledged by its real fresh result or
+   document owner. Release the transient lease after acknowledgment, not after
+   merely sending a request. Preserve the original legacy envelope's bytes,
+   fingerprint and incomplete offer; an equal derived document does not
+   authorize restamping it.
+3. Bare `Value.resolve()`, `EncodedPayload.load()` and resolver-bound
+   `ImageDocument` objects hold no vault ownership and acquire no automatic
+   retention. Scalar and read-only callers can still decode without a lease.
+   A maintained path that decodes a produced document and depends on its bytes
+   later must fix ownership at that caller, not add implicit retention.
+
+The lease excludes concurrent reclamation; it does not certify exhaustive
+roots or authorize collection. Durable registration follows the acknowledgment
+rules below. Neither decoding nor this handoff enables global cleanup.
+
 ### Identity and ownership
 
 `digests` contains canonical `blake3:<64 lowercase hex>` external asset
