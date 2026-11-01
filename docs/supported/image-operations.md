@@ -91,8 +91,14 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `Pixal3DConditioning` and `Pixal3DMultiViewConditioning` combine DINO
+  vision tokens, optional NAF features, and per-view camera projection features
+  for single images or a fixed front/left/back/right orbit rig.
 - Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
   or an explicit quaternion, with roll, field of view, zoom, and projection.
+- Native `RenderSplat` renders gaussian splats as images and coverage masks,
+  with camera-controlled turntables, background plates, and color, clay,
+  depth, or normal shading.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
@@ -103,12 +109,20 @@
   with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored
+  depth, OpenGL or DirectX normals, or an RGB mask.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
 - Native `MoGePanoramaInference` estimates spherical geometry for a single
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- Native `LoadDA3Model` loads one bound Depth Anything 3 model file with optional
+  weight dtype selection. `DA3Inference` predicts monocular or multi-view depth,
+  optional confidence and sky, and multi-view cameras at the source image size.
+- Native `DA3Render` visualizes raw or normalized depth, confidence and sky.
+  `DA3GeometryToMesh` unprojects one frame with confidence/sky filtering,
+  stride and discontinuity selection, UVs and optional source-image texture.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
 - Structural tensor values preserve unsigned 16-bit joint indices and unsigned
