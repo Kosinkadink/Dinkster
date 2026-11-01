@@ -52,6 +52,8 @@
   and recorded in-process or isolated hosting. Retained generations keep their
   own pack selection for rollback. Missing interpreters or changed source
   artifacts fail startup rather than falling back to installed distributions.
+  User-defined portable variant names do not require a published channel row
+  to start; an explicit engine variant must still match the generation.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
 - Stopped engine bindings retain their assigned ports across update and rollback;
