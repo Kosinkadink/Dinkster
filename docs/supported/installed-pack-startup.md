@@ -63,6 +63,9 @@
   archive's exact base binding, lock size and BLAKE3, and pack/variant identity.
   It exposes the complete set only after every lock verifies, without resolving
   dependencies, modifying the source selection or activating a generation.
+- Registry preparation can accept a caller-owned lock producer for an unpublished
+  base using the same selected sources, target interpreter and effective constraints.
+  Empty custom lock results do not fall back to published base bindings.
 - Installed-source preparation re-resolves official registry packs against the
   target engine without adding defaults, dropping installed packs or downgrading
   them. Recorded registries remain authoritative; third-party, local and git

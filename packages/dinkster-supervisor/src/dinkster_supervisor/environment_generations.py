@@ -438,12 +438,18 @@ def prepare_registry_inputs(
     project: Path,
     installed_lock: Path | None = None,
     pack_locks: tuple[Path, ...] = (),
+    prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
 ) -> Generator[tuple[Path, Path, tuple[Path, ...], dict[str, str]]]:
     """Keep target-owned registry inputs alive through candidate construction.
 
     The caller holds the store lock and has acquired engine/base inputs. No
     candidate generation or activation journal has been created. Inputs are removed
     on refusal, failed construction and successful activation alike.
+
+    ``prepare_locks`` receives the scratch engine directory (with effective
+    constraints), selected catalog, archive cache and new lock output directory.
+    It replaces published lock retrieval, including when it returns no locks.
+    Explicit ``pack_locks`` take precedence over either automatic producer.
     """
     with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
         scratch = Path(directory)
@@ -507,21 +513,26 @@ def prepare_registry_inputs(
         if pack_locks:
             yield catalog, artifacts, pack_locks, cast("dict[str, str]", unavailable)
             return
-        prepared = run(
-            [
-                "prepare-registry-locks",
-                "--catalog-lock",
-                str(catalog),
-                "--output",
-                str(output),
-                "--variant",
-                variant,
-                "--base-id",
-                base,
-                "--registry-only",
+        if prepare_locks is not None:
+            raw_locks: object = [
+                str(path) for path in prepare_locks(scratch / "engine", catalog, artifacts, output)
             ]
-        )
-        raw_locks = prepared.get("locks")
+        else:
+            prepared = run(
+                [
+                    "prepare-registry-locks",
+                    "--catalog-lock",
+                    str(catalog),
+                    "--output",
+                    str(output),
+                    "--variant",
+                    variant,
+                    "--base-id",
+                    base,
+                    "--registry-only",
+                ]
+            )
+            raw_locks = prepared.get("locks")
         if not isinstance(raw_locks, list) or not output.is_dir() or output.is_symlink():
             raise EnvironmentError("target registry preparation returned invalid lock paths")
         paths: list[Path] = []

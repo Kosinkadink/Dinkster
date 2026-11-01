@@ -417,6 +417,16 @@ source provenance and verifies reconstructed non-registry source bytes.
 Explicit dependency locks replace automatic registry lock acquisition. With an
 explicit source catalog but no dependency locks, legacy release-carried locks
 remain usable. No supervisor dependency parser or resolver is involved.
+
+`prepare_registry_inputs` accepts an optional `prepare_locks` callback after
+source selection, before published lock retrieval. It receives the acquired
+scratch engine directory with effective constraints, selected catalog lock,
+exact archive cache and new output directory. A custom-base caller can resolve
+standard locks from those inputs without a published base binding or a second
+source selector. Returning an empty tuple still replaces published retrieval;
+raising refuses preparation and removes the scratch tree. Returned files must
+belong to the output directory. Explicit `pack_locks` take precedence.
+
 Update plans with registered workflows or explicit additions call the active generation's
 `dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
 inputs take precedence; otherwise selected-release sources must already exist in

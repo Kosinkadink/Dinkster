@@ -22,6 +22,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
+  tests/test_environment_generations.py::test_registry_preparation_allows_custom_locks_from_selected_inputs \
   tests/test_run_scripts.py \
   tests/test_launch.py \
   tests/test_environment_tools.py \

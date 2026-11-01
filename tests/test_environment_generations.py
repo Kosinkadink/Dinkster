@@ -19,6 +19,7 @@ from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
     prepare_engine_interpreter,
+    prepare_registry_inputs,
     stage_pack_sources,
 )
 from dinkster_supervisor.environment_state import (
@@ -44,6 +45,90 @@ def _wheel(directory: Path, name: str, version: str, value: int) -> tuple[Path, 
         )
         wheel.writestr(f"{metadata}/RECORD", "")
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("mode", ["locks", "empty", "refuse", "escape", "explicit"])
+def test_registry_preparation_allows_custom_locks_from_selected_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from tests.fixtures.environments.build import wheel
+
+    store = tmp_path / "store"
+    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    wheels = store / "wheels"
+    wheels.mkdir()
+    archive = wheel(wheels, "fixture_engine", "1.0", 73, engine=True)
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(
+        f"fixture-engine==1.0 --hash=sha256:{hashlib.sha256(archive.read_bytes()).hexdigest()}\n"
+    )
+    monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "path")
+    explicit = tmp_path / "provided.pack-lock.json"
+    explicit.write_text("explicit input bytes")
+    captured: list[Path] = []
+
+    def custom(engine: Path, catalog: Path, artifacts: Path, output: Path) -> tuple[Path, ...]:
+        captured.append(engine.parent)
+        assert (engine / "constraints.txt").read_bytes() == constraints.read_bytes()
+        assert json.loads(catalog.read_text())["packs"] == []
+        assert artifacts.is_dir()
+        result = subprocess.check_output(
+            [
+                str(interpreter(engine)),
+                "-I",
+                "-B",
+                "-c",
+                "import fixture_engine; print(fixture_engine.VALUE)",
+            ]
+        )
+        assert result.strip() == b"73"
+        if mode in {"refuse", "explicit"}:
+            raise EnvironmentError("custom lock preparation refused")
+        output.mkdir()
+        if mode == "empty":
+            return ()
+        if mode == "escape":
+            return (explicit,)
+        path = output / "custom.pack-lock.json"
+        path.write_text(
+            '{"format":"dinkster.pack-lock/1","pack":"custom","variant":"unpublished-custom","requiresPython":">=3.12","requirements":[],"indexes":[],"packages":[]}'
+        )
+        return (path,)
+
+    def prepare() -> None:
+        with prepare_registry_inputs(
+            store=store,
+            base="sha256:" + "a" * 64,
+            constraints=constraints,
+            variant="unpublished-custom",
+            engine_version="1.0",
+            project=tmp_path / "project",
+            prepare_locks=custom,
+            pack_locks=(explicit,) if mode == "explicit" else (),
+        ) as (catalog, artifacts, locks, unavailable):
+            assert catalog.is_file() and artifacts.is_dir()
+            assert unavailable == {"fixture-pack": "registry offline"}
+            if mode == "explicit":
+                assert locks == (explicit,)
+            elif mode == "empty":
+                assert locks == ()
+            else:
+                assert len(locks) == 1
+                assert json.loads(locks[0].read_text())["variant"] == "unpublished-custom"
+                assert locks[0].parent.parent == catalog.parent == artifacts.parent
+
+    if mode in {"refuse", "escape"}:
+        with pytest.raises(
+            EnvironmentError,
+            match="custom lock preparation refused" if mode == "refuse" else "invalid lock paths",
+        ):
+            prepare()
+    else:
+        prepare()
+    assert all(not path.exists() for path in captured)
+    assert not list(store.glob(".registry-*"))
+    assert not (tmp_path / "project").exists()
+    assert explicit.read_text() == "explicit input bytes"
 
 
 def _standalone_tree(root: Path) -> None:
