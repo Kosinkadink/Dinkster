@@ -157,6 +157,10 @@ explains how to rebuild the custom base. Editing `variants.toml` alone does
 not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
+For a new or rebuilt custom target, the read-only update plan lists workflow
+requirements from the installed generation and states that target compatibility
+is pending. Apply checks those unchanged requirements against the built target
+before activation; an incompatible target never becomes current.
 
 ### Explicit from-scratch development setup
 

@@ -657,6 +657,23 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
         assert json.loads(actions[0].split(": ", 1)[1]) == {**asset, "sources": []}
         assert snapshot() == before
 
+    definitions = tmp_path / "variants.toml"
+    definitions.write_text(
+        '[variants.studio-cuda]\ntorch = "2.14.1"\n'
+        'torch-index = "https://download.pytorch.org/whl/cu130"\n'
+    )
+    custom_before = snapshot()
+    code, custom_plan = _run(
+        root, "update", "--variant", "studio-cuda", "--variants", str(definitions), "--plan"
+    )
+    assert code == 0 and custom_plan["status"] == "planned", custom_plan
+    assert (
+        "check workflow compatibility against the built custom target before activation"
+        in (custom_plan["plan"])
+    )
+    assert snapshot() == custom_before
+    definitions.unlink()
+
     workflow_asset = AssetRef(digest_bytes(b"workflow bytes"), "workflow.bin", 14).to_wire()
     document = {
         "format": "dinkster-workflow",

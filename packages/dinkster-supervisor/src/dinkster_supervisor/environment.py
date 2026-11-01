@@ -386,6 +386,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     workflow_catalog_digest = None
     workflow_artifacts = None
     workflow_applied = False
+    workflow_target = None
+    custom_workflow = custom is not None or custom_base is not None
+    planning_variant = cast("str", settings["variant"]) if custom_workflow and settings else variant
     if has_requirements:
         if catalog is None:
             raise EnvironmentError("local setup requires a fresh project without workflow settings")
@@ -399,7 +402,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow = project_operation(
             root,
             generation=previous_root,
-            variant=variant,
+            variant=planning_variant,
             catalog_lock=catalog_lock,
             artifacts=source_artifacts,
         )
@@ -410,7 +413,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if (root / "project.json").read_bytes() != snapshot:
             raise EnvironmentError("project changed during planning; request a new plan")
         errors = cast("list[str]", actions["errors"])
-        if errors:
+        if custom_workflow:
+            plan.append(
+                "check workflow compatibility against the built custom target before activation"
+            )
+        elif errors:
             raise EnvironmentError(f"workflow planning refused: {'; '.join(errors)}")
         workflow_catalog, workflow_artifacts = catalog_lock, source_artifacts
         workflow_catalog_digest = content_digest(catalog_lock) if catalog_lock is not None else None
@@ -433,14 +440,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 generation=root / "generations" / str(target)
                 if workflow_applied
                 else previous_root,
-                variant=variant,
+                variant=variant if workflow_target is not None else planning_variant,
                 catalog_lock=workflow_catalog,
                 artifacts=workflow_artifacts,
+                target_generation=workflow_target,
             )
             if any(observed[key] != workflow[key] for key in ("requirements", "inputs")):
                 raise EnvironmentError("workflow inputs changed after planning; request a new plan")
             observed_actions = cast("dict[str, object]", observed["plan"])
-            if observed_actions["errors"] or (workflow_applied and any(observed_actions.values())):
+            if (
+                observed_actions["errors"] and (not custom_workflow or workflow_target is not None)
+            ) or (workflow_applied and any(observed_actions.values())):
                 raise EnvironmentError(
                     "workflow requirements failed revalidation; request a new plan"
                 )
@@ -605,6 +615,23 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     acquire_pack_wheels=local is None,
                 )
                 if workflow is not None and previous_root is not None:
+                    if custom_workflow:
+                        workflow_target = root / "generations" / str(target)
+                        observed = project_operation(
+                            root,
+                            generation=previous_root,
+                            variant=variant,
+                            catalog_lock=workflow_catalog,
+                            artifacts=workflow_artifacts,
+                            target_generation=workflow_target,
+                        )
+                        if any(
+                            observed[key] != workflow[key] for key in ("requirements", "inputs")
+                        ):
+                            raise EnvironmentError(
+                                "workflow inputs changed after planning; request a new plan"
+                            )
+                        workflow = observed
                     revalidate()
                     applied = project_operation(
                         root,
