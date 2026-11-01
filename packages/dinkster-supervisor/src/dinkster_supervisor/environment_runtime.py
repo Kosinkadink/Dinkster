@@ -97,6 +97,8 @@ def start_engine(
         str(port),
         "--",
         str(python),
+        "-I",
+        "-B",
         "-m",
         "dinkster.serve",
         "--generation",
