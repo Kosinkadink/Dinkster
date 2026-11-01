@@ -44,6 +44,7 @@ from dinkster_assets.declared import produced_output_scratch
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_nodes_comfy import register_inference_types
 from dinkster_nodes_comfy.preview3d import (
     Preview3DAdvanced,
     PreviewGaussianSplat,
@@ -127,6 +128,7 @@ class Preview3DFileSource(Node):
                     "position": {"x": 1.0, "y": 2.0, "z": -3.0},
                     "target": {"x": 0.0, "y": 1.0, "z": 0.0},
                     "zoom": 2.5,
+                    "cameraType": "perspective",
                 },
                 "model_3d_info": [],
             },
@@ -153,13 +155,17 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
     )
 
     async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_inference_types(registry)
         composer = ServingComposer(
+            registry=registry,
             worker_env={
                 "DINKSTER_ASSET_VAULT": str(tmp_path / "vault"),
                 "PYTHONPATH": os.pathsep.join(
                     (str(tmp_path), str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
                 ),
-            }
+            },
         )
         try:
             for path in (
@@ -196,6 +202,7 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
                         "position": {"x": 1.0, "y": 2.0, "z": -3.0},
                         "target": {"x": 0.0, "y": 1.0, "z": 0.0},
                         "zoom": 2.5,
+                        "cameraType": "perspective",
                     }
                     assert out["model_3d_info"].resolve() == []
                     assert (out["width"].resolve(), out["height"].resolve()) == (371, 209)
