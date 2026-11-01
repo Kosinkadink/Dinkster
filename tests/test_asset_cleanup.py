@@ -119,6 +119,87 @@ def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Pa
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failure", ["", "missing", "corrupt", "size"])
+def test_native_saved_document_retains_all_resources_before_catalog_acknowledgment(
+    tmp_path: Path, failure: str
+) -> None:
+    from dinkster_assets import AssetError, AssetWriter, MountDef, MountTable
+    from dinkster_engine import RunResult
+    from dinkster_graph import Graph
+    from dinkster_protocol import AssetFolderContext, SavedArtifact
+    from dinkster_server.library import recover_asset_observations
+    from dinkster_server.queue import JobKey
+
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = MountTable()
+    mounts.add(MountDef("out", output, "readwrite"))
+    mounts.scan("out")
+    vault = AssetVault(tmp_path / "vault")
+    data = _png([[(73, 21, 190, 255)]])
+    unused = _png([[(21, 73, 190, 255)]])
+    for body in (data, unused):
+        with vault.writer(digest_bytes(body)) as writer:
+            writer.write(body)
+            writer.commit()
+    record = empty_document(1, 1).to_record()
+    record["allocation"]["nextOrdinal"] = 2
+    record["resources"] = {
+        "r0": _resource("r0", data, 1, 1),
+        "r1": _resource("r1", unused, 1, 1),
+    }
+    if failure == "size":
+        record["resources"]["r1"]["byteSize"] = len(unused) + 1
+    document = ImageDocument.from_record(record)
+    saved = AssetWriter(mounts).save_bytes(
+        {"mount": "out", "prefix": "kept"},
+        document.data,
+        suffix=".json",
+        media_type=IMAGE_DOCUMENT_MEDIA_TYPE,
+    )
+    resource = vault.resolve(digest_bytes(unused))
+    assert resource is not None
+    if failure == "missing":
+        resource.unlink()
+    elif failure == "corrupt":
+        resource.write_bytes(b"corrupt")
+    database = tmp_path / "library.sqlite"
+    store = LibraryStore(database)
+    library = ServerLibrary(
+        vault,
+        store,
+        upload_writer=AssetWriter(mounts),
+        local_resolver=mounts,
+        project_folders_for=lambda _project: AssetFolderContext(("out",), "out"),
+    )
+    job = Job(JobKey("client", "save"), Graph(nodes={}), (), 0, "saved", "fingerprint")
+    artifact = SavedArtifact(
+        "save", saved.digest, saved.name, saved.size, saved.media_type, saved.virtual_path
+    )
+    result = RunResult("saved", {}, (), (), (), artifacts=(artifact,))
+    try:
+        if failure:
+            with pytest.raises(AssetError):
+                library.record_saved_outputs(job, result)
+            assert store.query_assets("local") == []
+            assert store.get_dependencies(saved.digest) is None
+            assert list(vault.root.glob(".upload-observations/*.json"))
+            if failure == "size":
+                return
+            resource.write_bytes(unused)
+            recover_asset_observations(library)
+        else:
+            assert library.record_saved_outputs(job, result) == result
+        assert store.query_assets("local")[0][0].asset.digest == saved.digest
+        assert not list(vault.root.glob(".upload-observations/*.json"))
+    finally:
+        store.close()
+    with closing(LibraryStore(database)) as restarted:
+        with restarted.hold_asset_references() as roots:
+            assert roots == {saved.digest, digest_bytes(data), digest_bytes(unused)}
+        assert restarted.media_grant("local", digest_bytes(data), "media/image") is None
+
+
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_document_rendition_commits_source_roots_before_response_or_cancellation(
     tmp_path: Path, cancelled: bool

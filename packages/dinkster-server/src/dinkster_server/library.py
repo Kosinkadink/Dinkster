@@ -112,6 +112,7 @@ from dinkster_assets import (
     valid_vae_hint,
 )
 from dinkster_assets.model import LocalAssetResolver
+from dinkster_image_document import decode_document
 from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
@@ -1091,6 +1092,25 @@ def recover_asset_observations(
                 isinstance(origin, dict)
                 and cast("dict[str, object]", origin).get("kind") == "produced"
             ):
+                if _base_media_type(ref.media_type) == IMAGE_DOCUMENT_MEDIA_TYPE:
+                    from dinkster_image_document.format import MAX_DOCUMENT_BYTES
+
+                    with open_verified(path, ref.digest) as handle:
+                        data = handle.read(MAX_DOCUMENT_BYTES + 1)
+                        if len(data) != ref.size:
+                            raise AssetError("saved document byte size changed")
+                    dependencies = list(decode_document(data).dependencies)
+                    for dependency in dependencies:
+                        digest = cast(str, dependency["digest"])
+                        resource = library.vault.resolve(digest)
+                        if resource is None and library.local_resolver is not None:
+                            resource = library.local_resolver.resolve(digest)
+                        if resource is None:
+                            raise AssetError("saved document resource is unavailable")
+                        with open_verified(resource, digest) as source:
+                            if os.fstat(source.fileno()).st_size != dependency["byteSize"]:
+                                raise AssetError("saved document resource byte size changed")
+                    library.store.put_dependencies(ref.digest, dependencies)
                 try:
                     classification = classify_media_file(path)
                 except AssetError:

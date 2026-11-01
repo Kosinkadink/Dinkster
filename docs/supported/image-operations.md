@@ -173,6 +173,10 @@
   serving host vault before returning, without changing the original layer
   value or treating caller-owned inputs as newly produced assets. Missing,
   truncated, or corrupt external resources refuse retrieval.
+- Native document saves retain every external resource through their catalog
+  dependency manifest, including unused resources. Missing, corrupt, or
+  size-mismatched resources refuse catalog acknowledgment and remain recoverable
+  when the declared bytes become available; retention does not grant media access.
 - Isolated GLSL ES 3.00 image rendering through ANGLE with up to five image
   inputs, typed scalar and curve uniforms, four render targets, custom output
   dimensions, and 1-32 passes; Linux and Windows x86-64/ARM64 and macOS ARM64
