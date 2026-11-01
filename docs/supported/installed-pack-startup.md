@@ -81,6 +81,10 @@
   Cloudflare request identifier when supplied. HTTP 4xx and invalid artifact bytes
   do not gain transient retries; size and SHA256 verification remain mandatory.
   Contributor setup reads only the selected host platform's published manifests.
+- Windows contributor setup and interpreter preparation require uv 0.13.6 or
+  newer for pinned CPython 3.14.10. An older uv is refused before those scripts
+  download inputs or create environments; the error names both versions and
+  the interpreter. Setup never upgrades uv automatically.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU

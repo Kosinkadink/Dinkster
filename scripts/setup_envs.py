@@ -271,6 +271,11 @@ def main() -> int:
     args = parser.parse_args()
     if not shutil.which("uv"):
         parser.error("uv is required: https://docs.astral.sh/uv/")
+    sys.path.insert(0, str(ROOT))
+    if platform.system() == "Windows":
+        from scripts.prepare_windows_python import require_uv_version
+
+        require_uv_version()
     if not os.environ.get("DINKSTER_SETUP_BOOTSTRAPPED"):
         python = bootstrap(ROOT)
         command(
@@ -280,7 +285,6 @@ def main() -> int:
             env={"DINKSTER_SETUP_BOOTSTRAPPED": "1"},
         )
         return 0
-    sys.path.insert(0, str(ROOT))
     python = setup(
         ROOT,
         variant=args.variant,
