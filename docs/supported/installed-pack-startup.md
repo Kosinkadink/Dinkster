@@ -12,6 +12,8 @@
   SAM 3.1 and upscale packs declare base-carried dependencies without exact pins.
   The generation's effective constraints select those versions; incompatible
   requirements still fail rather than shadowing the engine's packages.
+  Depth Anything v3 keeps its Pillow 12 minimum without rejecting a newer
+  Pillow selected by a user-defined base.
 - In-process pack dependencies stage only into a fresh, inactive generation;
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
