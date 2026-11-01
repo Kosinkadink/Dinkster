@@ -34,6 +34,15 @@ def main() -> int:
         ],
         check=True,
     )
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.compose import default_pack_spec
+
+    for name in config["packs"]:
+        spec = default_pack_spec(name)
+        report = prepare_catalog(spec.manifest, interpreter=sys.executable, environment=spec.env)
+        if not report.ok:
+            raise RuntimeError(f"selected {name} runtime catalog refused: {report.to_json()}")
     import pytest
 
     class RequireExecutedTests:

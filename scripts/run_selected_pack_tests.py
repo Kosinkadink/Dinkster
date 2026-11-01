@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -25,6 +26,12 @@ _SUITES = {
         "tests/test_lists.py",
         "tests/test_regions.py",
         "tests/test_foundation_guide.py",
+        "tests/test_combo_nodes.py",
+        "tests/test_string_comfy_aliases.py",
+        "tests/test_comfy_loops.py",
+        "tests/test_output_descriptors.py",
+        "tests/test_composed_schema.py",
+        "tests/test_editor_roles.py",
     ),
     "dinkster-nodes-image": (
         "tests/test_image_*.py",
@@ -33,6 +40,11 @@ _SUITES = {
         "tests/test_detection_value.py",
         "tests/test_pose_nodes.py",
         "tests/test_glsl_shader.py",
+        "tests/test_alpha_mask_operations.py",
+        "tests/test_box_codec.py",
+        "tests/test_tracked_crop.py",
+        "tests/test_storage_inputs.py",
+        "tests/test_vision_line_edge_schema.py",
     ),
     "dinkster-nodes-media-io": (
         "tests/test_video_*.py",
@@ -43,6 +55,9 @@ _SUITES = {
         "tests/test_model3d_*.py",
         "tests/test_splat_*.py",
         "tests/test_layer_documents.py",
+        "tests/test_capture_io.py",
+        "tests/test_workflow_library.py",
+        "tests/test_text_comfy_goldens.py",
     ),
     "dinkster-nodes-comfy": ("packages/dinkster-nodes-comfy/tests/test_*.py",),
     "dinkster-nodes-remote": ("packages/dinkster-nodes-remote/tests/test_*.py",),
@@ -65,7 +80,9 @@ _SUITES = {
 }
 
 
-def run_selected_tests(root: Path, catalog: Lockfile, artifacts: Path) -> None:
+def run_selected_tests(
+    root: Path, catalog: Lockfile, artifacts: Path, *, test_packs: tuple[str, ...] = ()
+) -> None:
     """Use the scanner's exact selection, never resolve or build a second archive."""
     if sys.platform != "linux":
         raise RuntimeError("selected pack admission tests require the Linux CI environment")
@@ -74,6 +91,8 @@ def run_selected_tests(root: Path, catalog: Lockfile, artifacts: Path) -> None:
         raise ValueError(f"selected packs have no engine test suite: {sorted(unknown)}")
     if not catalog.packs:
         raise ValueError("selected pack tests require a nonempty catalog")
+    if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
+        raise ValueError(f"requested test packs are not in the selected catalog: {sorted(missing)}")
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
         work = Path(directory)
         checkout = work / "engine"
@@ -154,7 +173,7 @@ def run_selected_tests(root: Path, catalog: Lockfile, artifacts: Path) -> None:
             ).strip()
         )
         inherited = Path(sysconfig.get_path("purelib"))
-        paths = [str(checkout), *module_roots]
+        paths = [str(checkout), str(checkout / "src"), *module_roots]
         for source in inherited.iterdir():
             if source.suffix == ".pth":
                 for line in source.read_text(encoding="utf-8").splitlines():
@@ -180,7 +199,11 @@ def run_selected_tests(root: Path, catalog: Lockfile, artifacts: Path) -> None:
             if key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "PYTEST_ADDOPTS"}
         }
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+        child = work / "test-child.py"
+        shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
         for pack in catalog.packs:
+            if test_packs and pack.pack not in test_packs:
+                continue
             tests = sorted(
                 {
                     str(path.relative_to(checkout))
@@ -192,13 +215,18 @@ def run_selected_tests(root: Path, catalog: Lockfile, artifacts: Path) -> None:
                 raise ValueError(f"selected {pack.pack} has no engine behavioral tests")
             print(f"Testing {pack.pack}@{pack.version} {pack.artifact_digest}", flush=True)
             config = work / "test-selection.json"
-            config.write_text(json.dumps({"modules": modules, "tests": tests}), encoding="utf-8")
+            config.write_text(
+                json.dumps(
+                    {"modules": modules, "tests": tests, "packs": [p.pack for p in catalog.packs]}
+                ),
+                encoding="utf-8",
+            )
             subprocess.run(
                 [
                     str(python),
                     "-I",
                     "-B",
-                    str(Path(__file__).with_name("_selected_pack_test_child.py")),
+                    str(child),
                     str(config),
                 ],
                 cwd=checkout,
@@ -208,9 +236,17 @@ def run_selected_tests(root: Path, catalog: Lockfile, artifacts: Path) -> None:
 
 
 if __name__ == "__main__":
-    # This entry point consumes a prepared selection for local validation too.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    parser.add_argument("catalog", type=Path)
+    parser.add_argument("artifacts", type=Path)
+    parser.add_argument(
+        "--pack", action="append", default=[], help="Diagnose only this pack's suite"
+    )
+    args = parser.parse_args()
     run_selected_tests(
-        Path(sys.argv[1]).resolve(),
-        Lockfile.from_record_json(Path(sys.argv[2]).read_text(encoding="utf-8")),
-        Path(sys.argv[3]).resolve(),
+        args.root.resolve(),
+        Lockfile.from_record_json(args.catalog.read_text(encoding="utf-8")),
+        args.artifacts.resolve(),
+        test_packs=tuple(args.pack),
     )

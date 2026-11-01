@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -1001,6 +1002,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     engine = tmp_path / "engine"
     tests = engine / "tests"
     tests.mkdir(parents=True)
+    shutil.copytree(
+        Path(__file__).resolve().parents[1] / "src/dinkster",
+        engine / "src/dinkster",
+        ignore=shutil.ignore_patterns("__pycache__", "official_packs"),
+    )
     checkout_module = engine / "packages/dinkster-nodes-image/src/dinkster_nodes_image"
     checkout_module.mkdir(parents=True)
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
@@ -1021,6 +1027,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     source.mkdir()
     (source / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
+        'namespaces = ["image-fixture"]\n'
         '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
     )
     if problem != "missing":
@@ -1041,7 +1048,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
                 version="1.2.3",
                 artifact_digest=digest,
                 publisher="dinkster",
-                claims=(),
+                claims=("image-fixture",),
                 source="registry:https://registry.invalid",
             )
         ]
