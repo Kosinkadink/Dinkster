@@ -91,6 +91,8 @@
   masks, and normals from image batches with configurable chunking and camera hints.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
+- Structural tensor values preserve unsigned 16-bit joint indices and unsigned
+  32-bit mesh faces without narrowing their values to a signed integer range.
 - Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
   optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional

@@ -33,6 +33,10 @@ governed holding-process identity path. Complete model wrappers and their
 patchers stay in the holding process, and prior registration authority is
 preserved. Their constants are exported through `dinkster_api.v1`.
 
+Structural tensor payloads retain unsigned 16-bit joint indices and unsigned
+32-bit mesh faces without converting values above the corresponding signed
+range. Existing tensor framing and fingerprints are unchanged.
+
 `MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
 uses the structural latent codec without requiring a `samples` entry. Geometry
 tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
