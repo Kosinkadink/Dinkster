@@ -22,6 +22,8 @@ from dinkster_workers import load_manifest
 from dinkster_workers.doctor import DoctorReport, diagnose_static
 from dinkster_workers.pack_lock import resolve_pack_lock
 
+OFFICIAL_PACK_FAMILIES = ("comfy", "foundation", "image", "media-io", "remote")
+
 
 def build(
     root: Path,
@@ -74,10 +76,7 @@ def build(
         with tarfile.open(fileobj=io.BytesIO(tracked)) as archive:
             archive.extractall(staged, filter="data")
         packages = staged / "packages"
-        roots = [
-            packages / f"dinkster-nodes-{family}"
-            for family in ("comfy", "foundation", "image", "media-io", "remote")
-        ]
+        roots = [packages / f"dinkster-nodes-{family}" for family in OFFICIAL_PACK_FAMILIES]
         vision = packages / "dinkster-nodes-vision"
         for manifest in sorted(vision.glob("*_pack/dinkster-pack.toml")):
             pack_root = manifest.parent

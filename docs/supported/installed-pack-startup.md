@@ -52,6 +52,11 @@
 - Official source archive builds can select exact pack ids and use each pack's
   own manifest version, retaining its declared engine range in the archive.
   Unknown pack ids and missing publication declarations refuse the build.
+- Publication selection can identify changed official packs from committed Git
+  ranges, or one exact manifest-versioned pack tag, without reading working-tree
+  manifests. Engine-only changes select none; shared vision changes select all
+  affected vision packs. Native dependency locking can consume that independent
+  selected catalog without replacing its versions with the engine version.
 - Official publication requires dependency locks for every selected pack and
   committed supported base before preparing maps or submitting any archive.
   Wrong source/base/lock identities, incompatible Python and nonportable wheel

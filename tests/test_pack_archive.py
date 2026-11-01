@@ -442,6 +442,87 @@ def test_official_publication_uses_selected_manifest_versions(
 
 
 @pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        (("src/dinkster/serve.py", "pyproject.toml"), ()),
+        (("packages/dinkster-nodes-foundation/src/nodes.py",), ("foundation",)),
+        (("packages/dinkster-nodes-image/deleted.py",), ("image",)),
+        (("packages/dinkster-nodes-dev/src/nodes.py",), ()),
+        (("packages/dinkster-nodes-generation/dinkster-pack.toml",), ()),
+        (("packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",), ("first",)),
+        (("packages/dinkster-nodes-vision/src/vision/first/nodes.py",), ("first",)),
+        (("packages/dinkster-nodes-vision/src/vision/second/nodes.py",), ("second",)),
+        (("packages/dinkster-nodes-vision/src/vision/shared.py",), ("first", "second")),
+        (("packages/dinkster-nodes-vision/pyproject.toml",), ("first", "second")),
+        (
+            ("packages/dinkster-nodes-foundation/old.py", "packages/dinkster-nodes-image/new.py"),
+            ("foundation", "image"),
+        ),
+    ],
+)
+def test_official_publication_selects_only_changed_committed_packs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: tuple[str, ...],
+    expected: tuple[str, ...],
+) -> None:
+    from scripts.select_official_packs import select_packs
+
+    paths = {
+        "foundation": "packages/dinkster-nodes-foundation/dinkster-pack.toml",
+        "image": "packages/dinkster-nodes-image/dinkster-pack.toml",
+        "first": "packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",
+        "second": "packages/dinkster-nodes-vision/second_pack/dinkster-pack.toml",
+    }
+    committed = {
+        path: (
+            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+            f'version = "{version}"\nengine = ">=0.2,<1"\n'
+            f'[pack.entry]\nnodes = "vision.{name}:NODES"\n'
+        ).encode()
+        for (name, path), version in zip(
+            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5"), strict=True
+        )
+    }
+
+    def git(command, **kwargs):
+        if "rev-parse" in command:
+            return "a" * 40 + "\n"
+        if "ls-tree" in command:
+            return "\0".join(
+                [*committed, "packages/dinkster-nodes-dev/dinkster-pack.toml", ""]
+            ).encode()
+        if "show" in command:
+            return committed[command[-1].split(":", 1)[1]]
+        if "diff" in command:
+            return ("\0".join(changed) + "\0").encode()
+        raise AssertionError(command)
+
+    monkeypatch.setattr("scripts.select_official_packs.subprocess.check_output", git)
+    (tmp_path / "dinkster-pack.toml").write_text("invalid uncommitted data")
+    assert select_packs(tmp_path, before="b" * 40) == expected
+    assert select_packs(tmp_path, before="0" * 40) == ("first", "foundation", "image", "second")
+    assert select_packs(tmp_path, tag="pack/first/v3.4rc1") == ("first",)
+    for tag in ("v3.4rc1", "pack/first/v3.4", "pack/unknown/v3.4rc1", "pack/first/v3.4rc1/extra"):
+        with pytest.raises(ValueError, match="pack tag"):
+            select_packs(tmp_path, tag=tag)
+    for before in ("main", "--all", "a" * 39, "z" * 40):
+        with pytest.raises(ValueError, match="full Git commit"):
+            select_packs(tmp_path, before=before)
+    with pytest.raises(ValueError, match="select one"):
+        select_packs(tmp_path)
+    with pytest.raises(ValueError, match="select one"):
+        select_packs(tmp_path, before="b" * 40, tag="pack/first/v3.4rc1")
+    first = paths["first"]
+    committed[first] = committed[first].replace(b'version = "3.4rc1"', b'version = "2.0"')
+    with pytest.raises(ValueError, match="pack tag"):
+        select_packs(tmp_path, tag="pack/first/v3.4rc1")
+    committed[first] = committed[first].replace(b'engine = ">=0.2,<1"', b'engine = ""')
+    with pytest.raises(ManifestError, match="engine"):
+        select_packs(tmp_path, tag="pack/first/v2.0")
+
+
+@pytest.mark.parametrize(
     "problem",
     [
         None,

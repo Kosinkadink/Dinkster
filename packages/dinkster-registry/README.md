@@ -68,6 +68,22 @@ override; it is not needed for independently versioned publication. Native
 the same selected sources. Building does not publish an archive or alter a
 generation.
 
+`python -m scripts.select_official_packs --before FULL_COMMIT` selects official
+ids changed between that committed push base and the checked-out commit.
+An engine-only range returns an empty list. A zero base (the first push) selects
+all official packs. Nested vision source changes select their owning pack;
+shared vision files select all vision packs. Selection reads Git objects rather
+than mutable working-tree manifests. `--tag pack/PACK_ID/vVERSION` selects one
+official id only when VERSION exactly equals its declared public version.
+
+The native `scripts.build_release_pack_locks` command accepts `--sources
+/scratch/packs` to lock just that independent source catalog using each pack's
+own version. `--release` still supplies verified engine artifacts and effective
+constraints, not pack identities or versions in this mode. Regenerated source
+archives and catalog must match the supplied bytes. Without `--sources`, the
+legacy engine-release caller is unchanged. Both modes use the same native base
+extraction, resolver and portable wheel-origin mapping.
+
 `python -m scripts.publish_official_packs --sources /scratch/packs
 --base-manifest /scratch/linux-cpu.json --base-manifest ...
 --pack-lock /scratch/PACK-VERSION-VARIANT.pack-lock.json --pack-lock ...

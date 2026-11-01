@@ -1417,6 +1417,132 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
 
 
 @pytest.mark.parametrize(
+    "mode", ["independent", "legacy", "archive", "catalog", "empty", "engine", "protocol", "host"]
+)
+def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    import platform
+
+    from blake3 import blake3
+    from dinkster_registry import LockedPack, Lockfile
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts import build_release_pack_locks as native
+
+    release, sources = tmp_path / "release", tmp_path / "sources"
+    release.mkdir()
+    sources.mkdir()
+    versions = {"first-pack": "1.2.3", "second-pack": "7.0rc1"}
+
+    def artifacts(directory, selected):
+        directory.mkdir(exist_ok=True)
+        paths, entries = [], []
+        for name, version in selected.items():
+            path = directory / f"{name}-{version}.zip"
+            data = f"{name}@{version}".encode()
+            path.write_bytes(data)
+            paths.append(path)
+            entries.append(
+                LockedPack(name, version, "blake3:" + blake3(data).hexdigest(), "dinkster", ())
+            )
+        catalog = directory / "official-packs.lock"
+        catalog.write_text(Lockfile.of(entries).record_json() + "\n")
+        return (*paths, catalog)
+
+    artifacts(sources, versions)
+    artifacts(release, {**dict.fromkeys(versions, "9.0"), "unselected-pack": "9.0"})
+    if mode == "archive":
+        (sources / "second-pack-7.0rc1.zip").write_bytes(b"changed")
+    elif mode == "catalog":
+        catalog = sources / "official-packs.lock"
+        catalog.write_text(catalog.read_text().replace("7.0rc1", "6.0"))
+    elif mode == "empty":
+        (sources / "official-packs.lock").write_text(Lockfile.of([]).record_json())
+    engine = {
+        "version": "9.0+engine",
+        "tag": "v9.0",
+        "workerProtocol": 11,
+        "artifacts": [
+            {"name": "constraints.txt", "size": 0, "sha256": hashlib.sha256(b"").hexdigest()}
+        ],
+    }
+    (release / "constraints.txt").write_bytes(b"changed" if mode == "engine" else b"")
+    (release / "release-manifest.json").write_text(json.dumps(engine))
+    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
+    wheel = "fixture_dependency-2.0-py3-none-any.whl"
+    base = {
+        "variant": "fixture-base",
+        "id": "sha256:" + "a" * 64,
+        "platform": {"os": "other" if mode == "host" else system},
+        "workerProtocol": 12 if mode == "protocol" else 11,
+        "archive": {"parts": []},
+        "interpreter": {"executable": "python"},
+        "wheels": [{"filename": wheel, "url": "https://example.test/fixture.whl"}],
+        "nvidia": None,
+    }
+    manifest = tmp_path / "base.json"
+    manifest.write_text(json.dumps(base))
+    monkeypatch.setattr(native, "qualify", lambda *args: base)
+    monkeypatch.setattr(native, "extract_base", lambda *args, **kwargs: None)
+    monkeypatch.setattr(native, "engine_constraints", lambda *args: "constraints")
+    monkeypatch.setattr(native, "effective_constraints", lambda *args, **kwargs: "constraints")
+
+    def build(root, output, *, version, packs, variant, **kwargs):
+        selected = {
+            name: version or versions[name] for name in packs or (*versions, "unselected-pack")
+        }
+        payloads = artifacts(output, selected)
+        locks = []
+        for name, own_version in selected.items():
+            path = output / f"{name}-{own_version}-{variant}.pack-lock.json"
+            PackLock(
+                name,
+                variant,
+                ">=3.12",
+                (),
+                ("https://pypi.org/simple",),
+                (
+                    LockedDistribution(
+                        "fixture-dependency",
+                        "2.0",
+                        (LockedWheel(wheel, 17, "b" * 64, "file:///native/" + wheel),),
+                    ),
+                ),
+            ).write(path)
+            locks.append(path)
+        return (*payloads, *locks)
+
+    monkeypatch.setattr(native, "build", build)
+    before = {
+        path: path.read_bytes() for directory in (release, sources) for path in directory.iterdir()
+    }
+    output = tmp_path / "locks"
+    if mode not in {"independent", "legacy"}:
+        with pytest.raises(ValueError):
+            native.build_locks(tmp_path, release, manifest, output, sources=sources)
+        assert not output.exists()
+    else:
+        paths = native.build_locks(
+            tmp_path, release, manifest, output, sources=None if mode == "legacy" else sources
+        )
+        expected = (
+            {**dict.fromkeys(versions, "9.0"), "unselected-pack": "9.0"}
+            if mode == "legacy"
+            else versions
+        )
+        assert {path.name for path in paths} == {
+            f"{name}-{version}-fixture-base.pack-lock.json" for name, version in expected.items()
+        }
+        for path in paths:
+            lock = PackLock.read(path)
+            assert lock.pack in expected and lock.variant == "fixture-base"
+            assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
+    assert {path: path.read_bytes() for path in before} == before
+    assert not list(tmp_path.glob("release-pack-locks-*"))
+
+
+@pytest.mark.parametrize(
     "corruption", [None, "missing", "extra", "pack", "variant", "wheel-url", "index-url"]
 )
 def test_finalization_requires_complete_portable_official_dependency_locks(
