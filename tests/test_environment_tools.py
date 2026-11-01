@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sysconfig
 import tarfile
+import time
 import zipfile
+from http.client import HTTPMessage
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError, URLError
 
 import pytest
 from test_environment_generations import _standalone_tree, _wheel
 
-from scripts import build_native_tools
+from scripts import build_environment_tools, build_native_tools
 from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
@@ -69,6 +74,83 @@ def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) 
     with pytest.raises(ValueError, match="size or SHA256 mismatch"):
         acquire(str(source), target, 7, "a" * 64)
     assert not target.exists()
+
+
+@pytest.mark.parametrize("failure", ["handshake", "body", "timeout", "http"])
+def test_tools_acquisition_recovers_verified_bytes_after_transient_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"complete verified wheel")
+    destination = tmp_path / "wheel"
+    attempts = 0
+
+    class Response(io.BytesIO):
+        url = "https://files.pythonhosted.org/fixture.whl"
+
+        def read(self, size: int | None = -1) -> bytes:
+            if failure == "body" and attempts == 1:
+                if self.tell() == 0:
+                    return super().read(5)
+                raise ssl.SSLEOFError("injected body EOF")
+            return super().read(size)
+
+    def open_url(*args: object, **kwargs: object) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            if failure == "handshake":
+                raise URLError(ssl.SSLEOFError("injected handshake EOF"))
+            if failure == "timeout":
+                raise TimeoutError("injected timeout")
+            if failure == "http":
+                raise HTTPError(Response.url, 503, "unavailable", HTTPMessage(), None)
+        return Response(source.read_bytes())
+
+    monkeypatch.setattr(build_environment_tools, "urlopen", open_url)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    acquire(Response.url, destination, source.stat().st_size, sha256(source))
+    assert destination.read_bytes() == source.read_bytes()
+    assert attempts == 2
+
+
+@pytest.mark.parametrize(
+    "failure", ["exhausted", "body-exhausted", "not-found", "certificate", "corrupt"]
+)
+def test_tools_acquisition_refuses_terminal_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    destination = tmp_path / "wheel"
+    attempts = 0
+    url = "https://files.pythonhosted.org/fixture.whl"
+
+    class Response(io.BytesIO):
+        url = "https://files.pythonhosted.org/fixture.whl"
+
+        def read(self, size: int | None = -1) -> bytes:
+            if failure == "body-exhausted":
+                if self.tell() == 0:
+                    return super().read(5)
+                raise ssl.SSLEOFError("injected body EOF")
+            return super().read(size)
+
+    def open_url(*args: object, **kwargs: object) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if failure == "exhausted":
+            raise URLError(ssl.SSLEOFError("injected handshake EOF"))
+        if failure == "not-found":
+            raise HTTPError(url, 404, "missing", HTTPMessage(), None)
+        if failure == "certificate":
+            raise URLError(ssl.SSLCertVerificationError("untrusted certificate"))
+        return Response(b"corrupt")
+
+    monkeypatch.setattr(build_environment_tools, "urlopen", open_url)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    with pytest.raises((URLError, ValueError, ssl.SSLEOFError)):
+        acquire(url, destination, 7, "a" * 64)
+    assert not destination.exists()
+    assert attempts == (3 if failure.endswith("exhausted") else 1)
 
 
 @pytest.mark.parametrize("corruption", [None, "size", "hash", "unadmitted"])
