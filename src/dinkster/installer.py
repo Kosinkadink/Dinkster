@@ -925,6 +925,21 @@ class Installer:
             unpack_artifact(archive, Path(scratch), entry.artifact_digest)
             return load_manifest(Path(scratch) / MANIFEST_FILENAME)
 
+    def check_engine_compatibility(
+        self, target: Lockfile, artifacts: Mapping[str, Path] | None = None
+    ) -> None:
+        """Check available target sources without provisioning or activation."""
+        for entry in target.packs:
+            manifest = self.manifest_of(
+                entry,
+                artifact=artifacts.get(entry.artifact_digest) if artifacts is not None else None,
+            )
+            if manifest is not None and manifest.compatibility is not None:
+                try:
+                    manifest.compatibility.require_engine(entry.pack, dinkster_version)
+                except ValueError as exc:
+                    raise InstallError(str(exc)) from exc
+
     def venv_python(self, entry: LockedPack) -> Path | None:
         """The staged venv's interpreter for this entry, or None when no
         venv is materialized. Needs the store manifest (the venv is named
@@ -1244,18 +1259,7 @@ class Installer:
         with self._locked():
             current = self.current_lockfile()
             current_number = self.current_number()
-            for entry in target.packs:
-                manifest = self.manifest_of(
-                    entry,
-                    artifact=artifacts.get(entry.artifact_digest)
-                    if artifacts is not None
-                    else None,
-                )
-                if manifest is not None and manifest.compatibility is not None:
-                    try:
-                        manifest.compatibility.require_engine(entry.pack, dinkster_version)
-                    except ValueError as exc:
-                        raise InstallError(str(exc)) from exc
+            self.check_engine_compatibility(target, artifacts)
             explicit_topology = (
                 hosting_groups is not None
                 or hosting_in_process is not None

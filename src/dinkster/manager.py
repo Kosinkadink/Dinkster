@@ -307,6 +307,7 @@ def _finish(
         or runtime_pins != installer.current_runtime_pins()
     )
     if steps.empty and not topology_change:
+        installer.check_engine_compatibility(target)
         print("nothing to do; the installation already matches")
         return
     missing = [entry for entry in target.packs if not installer.artifact_available(entry)]

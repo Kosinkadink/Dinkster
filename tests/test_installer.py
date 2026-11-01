@@ -467,7 +467,11 @@ def test_archived_manifest_inspection_keeps_declared_template(tmp_path: Path) ->
 @pytest.mark.parametrize("engine", ["0.4", "0.5", "0.6"])
 @pytest.mark.parametrize("source", ["external", "cached", "staged", "grouped"])
 def test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: str, source: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    engine: str,
+    source: str,
 ) -> None:
     installer = make_installer(tmp_path)
     baseline = local_lockfile(installer, write_pack(tmp_path / "safe", "safe"))
@@ -509,6 +513,10 @@ def test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return(
             f"pack demo@2.3.1 declares engine >=0.5,<0.6; engine {engine} is incompatible"
             in str(refusal.value)
         )
+        if source == "staged":
+            with pytest.raises(SystemExit):
+                run_cli("--root", str(installer.root), "install", str(pack), "--no-venv", "--yes")
+            assert f"engine {engine} is incompatible" in capsys.readouterr().err
         assert installer.current_number() == number
         assert installer.current_lockfile() == current
         assert (installer.root / "current").read_bytes() == pointer
