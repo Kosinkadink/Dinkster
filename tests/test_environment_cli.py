@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.request import ProxyHandler, build_opener, urlopen
 
 import pytest
@@ -104,6 +105,64 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
     assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    ("host", "architecture", "override", "expected"),
+    [
+        ("darwin", "arm64", None, "mac-arm64"),
+        ("darwin", "arm64", "custom-base", "custom-base"),
+        ("darwin", "x86_64", None, None),
+        ("linux", "x86_64", None, None),
+        ("win32", "AMD64", None, None),
+    ],
+)
+def test_setup_defaults_only_apple_silicon_without_mutating_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    host: str,
+    architecture: str,
+    override: str | None,
+    expected: str | None,
+):
+    from dinkster_supervisor import environment
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _mirror(mirror, variant=override or "mac-arm64", target=("macos", "arm64"))
+    arguments = [
+        "dinkster-env",
+        "--root",
+        str(root),
+        "setup",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--data",
+        str(store),
+        "--plan",
+        "--json",
+    ]
+    if override:
+        arguments.extend(("--variant", override))
+    monkeypatch.setattr(sys, "argv", arguments)
+    monkeypatch.setattr(environment, "sys", SimpleNamespace(platform=host))
+    monkeypatch.setattr(environment, "machine", lambda: architecture, raising=False)
+    with pytest.raises(SystemExit) as exit_info:
+        environment.main()
+    result = json.loads(capsys.readouterr().out)
+    if expected:
+        assert exit_info.value.code == 0, result
+        assert result["status"] == "planned"
+        assert any(f"with {expected} base" in line for line in result["plan"])
+    else:
+        assert exit_info.value.code == 1
+        assert result["error"] == "setup requires an explicit --variant"
+    assert not root.exists()
+    assert not store.exists()
 
 
 def test_setup_names_published_variants_without_resolving_or_creating_project(

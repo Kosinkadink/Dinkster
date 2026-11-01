@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `RenderMesh` produces a single image and coverage mask from the first
+  counted mesh, with texture, vertex-color, clay, normal and depth modes,
+  authored model transforms, supplied cameras and automatic framing.
 - Native `SAM3DBody_Render` renders MHR and external rig pose frames as meshes,
   silhouettes, 2D or 3D OpenPose skeletons, or SCAIL capsules with hand/face
   overlays, optional backgrounds, aspect-derived sizing and camera overrides.
@@ -134,6 +137,9 @@
   face regions into one binary mask per frame, including empty frames.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
+- Native `SAM3DBody_Smooth` reduces temporal pose jitter with Gaussian or
+  Savitzky-Golay filtering, wrapped-angle handling and fast-spin geometry
+  protection while camera motion remains smoothed.
 - Structural tensor values preserve unsigned 16-bit joint indices and unsigned
   32-bit mesh faces without narrowing their values to a signed integer range.
 - Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
