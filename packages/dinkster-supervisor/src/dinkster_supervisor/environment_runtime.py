@@ -51,6 +51,15 @@ def start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    for path in sorted((root / "runtime").glob("*/*.json")):
+        if path == _runtime_path(root, name, generation):
+            continue
+        occupied = _inspect(_parse_record(path))
+        if occupied["state"] == "ready" and occupied["port"] == port:
+            raise EnvironmentError(
+                f"engine {name} failed before becoming ready: port {port} is already assigned"
+            )
+
     previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
