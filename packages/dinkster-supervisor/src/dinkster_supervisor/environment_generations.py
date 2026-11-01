@@ -222,6 +222,7 @@ def project_operation(
     if requirements_only:
         command = [
             str(interpreter(generation)),
+            "-I",
             "-B",
             "-c",
             "import json, sys\n"

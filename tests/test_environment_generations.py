@@ -451,6 +451,29 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             assert json.loads((target / "dinkster.lock").read_text()) == json.loads(
                 catalog.read_text()
             )
+            from dinkster_supervisor.environment_generations import project_operation
+
+            write_document(
+                root / "project.json",
+                {
+                    "format": "dinkster.project/1",
+                    "additions": {"packs": [{"pack": "healthy", "version": "1.0.0"}]},
+                },
+            )
+            with monkeypatch.context() as context:
+                context.chdir(scratch)
+                snapshot = project_operation(
+                    root, generation=target, variant=variant, requirements_only=True
+                )
+            assert snapshot == {
+                "requirements": {
+                    "packs": [{"pack": "healthy", "version": "1.0.0"}],
+                    "assets": [],
+                    "unattributedNodes": [],
+                },
+                "inputs": [],
+                "plan": {"packs": [], "assets": [], "errors": []},
+            }
             set_current(root, 1)
             next(artifacts.glob("*.zip")).write_bytes(b"damaged selected archive")
             with pytest.raises(EnvironmentError, match="pack source staging refused"):
