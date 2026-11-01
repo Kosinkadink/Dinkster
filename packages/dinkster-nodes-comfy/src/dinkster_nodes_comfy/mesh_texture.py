@@ -87,7 +87,7 @@ def normalize_uvs(uvs: Any) -> Any:
     return values
 
 
-def _normals_and_tangents(vertices: Any, faces: Any, uvs: Any, normals: Any) -> tuple[Any, Any]:
+def normals_and_tangents(vertices: Any, faces: Any, uvs: Any, normals: Any) -> tuple[Any, Any]:
     torch = importlib.import_module("torch")
     i0, i1, i2 = faces[:, 0].long(), faces[:, 1].long(), faces[:, 2].long()
     if normals is None:
@@ -214,7 +214,7 @@ class ApplyTextureToMesh(Node):
                     if source.normals is not None
                     else None
                 )
-                normals, tangents = _normals_and_tangents(
+                normals, tangents = normals_and_tangents(
                     vertices.to(device).float(),
                     faces.to(device).long(),
                     uv.to(device).float(),

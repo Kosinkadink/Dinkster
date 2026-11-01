@@ -624,6 +624,7 @@ namespaces = [
     "UnwrapMesh",
     "ApplyTextureToMesh",
     "BakeAmbientOcclusion",
+    "BakeNormalMapFromMesh",
     "FillHoles",
     "Get3DComponents",
     "DecimateMesh",
