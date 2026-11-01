@@ -211,6 +211,7 @@ from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .splat_files import File3DToSplat, SplatToFile3D
+from .splat_render import RenderSplat
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -482,6 +483,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetSplatCount,
     TransformSplat,
     MergeSplat,
+    RenderSplat,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,

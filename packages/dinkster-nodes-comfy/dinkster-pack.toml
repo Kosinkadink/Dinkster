@@ -538,6 +538,7 @@ namespaces = [
     "GetSplatCount",
     "TransformSplat",
     "MergeSplat",
+    "RenderSplat",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
