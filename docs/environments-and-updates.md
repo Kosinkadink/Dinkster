@@ -61,6 +61,29 @@ are materialized, requiring no Windows symlink privilege. It invokes
 that child's PATH for bundled uv. Desktop performs no package installation,
 resolution or fallback to a host Python/package manager.
 
+Desktop installers bundle their platform's tools ZIP and its hash-pinned engine
+manifest. The tools pin is independent of the engine being installed: the
+supervisor is engine-independent, and a newer engine alone does not require new
+tools. Desktop extracts into its own user-data directory keyed by the tools
+archive SHA256, reuses that completed tree across launches, and retains it on
+shutdown. A changed tools digest is verified and extracted before the old tree
+is removed. Starting an installed engine, status, doctor and stop do not need
+channel metadata or a runtime tools download; first setup and engine update
+still need their engine/base payloads unless the configured mirror is local.
+
+Development may select `DINKSTER_TOOLS_PYTHON` or `DINKSTER_ENV`, or supply
+`DINKSTER_TOOLS_MANIFEST`, `DINKSTER_TOOLS_MANIFEST_SHA256` (alias
+`DINKSTER_TOOLS_SHA256`) and `DINKSTER_TOOLS_RELEASE` for verified runtime
+acquisition. These explicit overrides take precedence over bundled tools.
+Before setup, update or catalog starts an environment command, packaged Desktop
+checks the selected channel's `minimumDesktopVersion` and refuses with
+`DesktopVersionTooOld` if the shell must update. A trusted channel can explicitly
+select newer tools using an optional `tools` object containing the immutable
+engine `manifest` location, its `sha256`, and the `release` directory. Locations
+are absolute paths or credential-free HTTPS, and the selected tools ZIP must
+match its engine manifest's size and hash. Without that object, bundled tools
+remain the default. This does not change engine artifact selection or updates.
+
 The native build/acquisition command and input pinning are documented in
 [the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
 The shared [lifecycle fixture builder](../tests/fixtures/environments/README.md)
