@@ -27,7 +27,7 @@ from dinkster_api.v1 import (
     materialize_vision_packet,
 )
 from dinkster_assets import MountDef, MountTable
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
 from dinkster_nodes_comfy.depth_anything_3 import (
     DA3GeometryToMesh,
     DA3Inference,
@@ -37,6 +37,15 @@ from dinkster_nodes_comfy.depth_anything_3 import (
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def _extrinsics() -> Any:
+    return torch.tensor(
+        [
+            [[1.0, 0, 0, 7], [0, 1, 0, 11], [0, 0, 1, 13]],
+            [[0.0, -1, 0, 3], [1, 0, 0, -5], [0, 0, 1, 2]],
+        ]
+    )[None]
 
 
 class ControlledDiffusion(torch.nn.Module):
@@ -55,14 +64,19 @@ class ControlledDiffusion(torch.nn.Module):
         # ImageNet normalization to distinguish images and scene dimensions.
         ids = torch.round((flat[:, 0, 0, 0].float() * 0.229 + 0.485) / 0.5)
         depth = (self.marker.float() + 2 * ids)[:, None, None].expand(-1, 2, 3)
-        result = {"depth": depth, "depth_conf": depth + 1, "sky": depth * 0}
         if image.ndim == 5:
-            assert options["ref_view_strategy"] == "middle"
-            assert options["use_ray_pose"] is True
+            assert (options["use_ray_pose"], options["ref_view_strategy"]) in (
+                (True, "middle"),
+                (False, "saddle_balanced"),
+            )
+            if not options["use_ray_pose"]:
+                depth = depth + 8
+        result = {"depth": depth, "depth_conf": torch.zeros_like(depth), "sky": depth * 0}
+        if image.ndim == 5:
             result["intrinsics"] = torch.tensor([[2.0, 0, 1], [0, 4, 1], [0, 0, 1]])[
                 None, None
             ].repeat(1, len(ids), 1, 1)
-            result["extrinsics"] = torch.eye(4)[None, None, :3].repeat(1, len(ids), 1, 1)
+            result["extrinsics"] = _extrinsics()
         return result
 
 
@@ -125,21 +139,31 @@ def test_bound_loader_and_prediction(
         image=pixels,
         resolution=140,
         mode=mode,
-        **{"mode.pose_method": "ray_pose", "mode.ref_view_strategy": "middle"},
+        **(
+            {"mode.pose_method": "ray_pose", "mode.ref_view_strategy": "middle"}
+            if mode == "multiview"
+            else {}
+        ),
     )["da3_geometry"]
     assert result["mode"] == mode and result["depth"].shape == (2, 3, 5)
     torch.testing.assert_close(
         result["depth"], torch.tensor([2.0, 4.0])[:, None, None].expand(2, 3, 5)
     )
     assert ("intrinsics" in result) == (mode == "multiview")
+    assert ("extrinsics" in result) == (mode == "multiview")
+    if mode == "multiview":
+        torch.testing.assert_close(result["extrinsics"], _extrinsics(), rtol=0, atol=0)
     torch.testing.assert_close(result["image"], before, rtol=0, atol=0)
     torch.testing.assert_close(pixels, before, rtol=0, atol=0)
     with pytest.raises(TypeError, match="AssetRef"):
         LoadDA3Model.execute(model_name=str(tmp_path / "model.safetensors"), weight_dtype=dtype)
 
 
-def test_render_and_mesh_values_preserve_source() -> None:
+@pytest.mark.parametrize("camera", (False, True))
+def test_render_and_mesh_values_preserve_source(camera: bool) -> None:
     packet = _packet()
+    if camera:
+        packet["extrinsics"] = _extrinsics()
     before = {
         key: value.clone() for key, value in packet.items() if isinstance(value, torch.Tensor)
     }
@@ -171,13 +195,22 @@ def test_render_and_mesh_values_preserve_source() -> None:
         torch.tensor(
             [
                 [
+                    [4.0, -5.0, -2.0],
+                    [4.0, -1.0, -2.0],
+                    [4.0, 3.0, -2.0],
+                    [6.0, -5.0, -2.0],
+                    [6.0, -1.0, -2.0],
+                    [6.0, 3.0, -2.0],
+                ]
+                if camera
+                else [
                     [-2.0, 1.0, -4.0],
                     [2.0, 1.0, -4.0],
                     [6.0, 1.0, -4.0],
                     [-2.0, -1.0, -4.0],
                     [2.0, -1.0, -4.0],
                     [6.0, -1.0, -4.0],
-                ],
+                ]
             ]
         ),
         rtol=0,
@@ -215,22 +248,38 @@ class Inspect(Node):
                 InputSpec("geometry", TypeExpr.concrete(DA3_GEOMETRY_TYPE)),
                 InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
                 InputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),
+                InputSpec("mode", TypeExpr.concrete(CORE_STRING)),
             ),
             outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
-    def execute(cls, *, model: Any, geometry: Any, image: Any, mesh: Any) -> dict[str, object]:
+    def execute(
+        cls, *, model: Any, geometry: Any, image: Any, mesh: Any, mode: str
+    ) -> dict[str, object]:
         packet = materialize_vision_packet(geometry)
         assert model.model.diffusion_model.marker.item() == 2.0
+        assert packet["mode"] == ("mono" if mode == "mono" else "multiview")
         torch.testing.assert_close(
-            packet["depth"], torch.tensor([2.0, 4.0])[:, None, None].expand(2, 3, 5)
+            packet["depth"],
+            torch.tensor([10.0, 12.0] if mode == "cam_dec" else [2.0, 4.0])[:, None, None].expand(
+                2, 3, 5
+            ),
         )
+        if mode == "mono":
+            assert "extrinsics" not in packet and "intrinsics" not in packet
+        else:
+            torch.testing.assert_close(packet["extrinsics"], _extrinsics(), rtol=0, atol=0)
         torch.testing.assert_close(packet["image"], _pixels(), rtol=0, atol=0)
         torch.testing.assert_close(materialize_image(image), torch.ones(2, 3, 5, 3), rtol=0, atol=0)
         value = materialize_mesh(mesh)
+        expected = {
+            "mono": [-16 / 7, 8 / 7, -4.0],
+            "ray_pose": [4.0, -5.0, -2.0],
+            "cam_dec": [2.0, -9.0, -10.0],
+        }[mode]
         torch.testing.assert_close(
-            value.vertices[0, 0], torch.tensor([-2.0, 1.0, -4.0]), rtol=0, atol=0
+            value.vertices[0, 0], torch.tensor(expected), rtol=0, atol=1e-6 if mode == "mono" else 0
         )
         assert value.faces.shape == (1, 16, 3)
         torch.testing.assert_close(value.texture, _pixels()[1:2], rtol=0, atol=0)
@@ -238,8 +287,9 @@ class Inspect(Node):
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("mode", ("mono", "cam_dec", "ray_pose"))
 def test_da3_ordinary_hosts_twice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, mode: str
 ) -> None:
     initialize_inference_process()
     sd = importlib.import_module("dinkster_inference.sd")
@@ -252,7 +302,8 @@ def test_da3_ordinary_hosts_twice(
     asset = table.bind_name("model.safetensors", "model/geometry-estimation")
     assert asset is not None
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
-    (tmp_path / "da3_fixture.py").write_text(
+    module_name = f"da3_fixture_{mode}_{int(in_process)}"
+    (tmp_path / f"{module_name}.py").write_text(
         "from test_da3_torch import Source, Inspect, _controlled_load\n"
         "from dinkster_api.v1 import initialize_inference_process, register_inference_types\n"
         "initialize_inference_process()\n"
@@ -264,7 +315,8 @@ def test_da3_ordinary_hosts_twice(
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="da3-fixture"\npublisher="dinkster"\nnamespaces=["da3-fixture"]\n'
-        '[pack.entry]\nnodes="da3_fixture:NODES"\ntypes="da3_fixture:register_inference_types"\n',
+        f'[pack.entry]\nnodes="{module_name}:NODES"\n'
+        f'types="{module_name}:register_inference_types"\n',
         encoding="ascii",
     )
 
@@ -300,10 +352,16 @@ def test_da3_ordinary_hosts_twice(
                             "image": Link("source", "image"),
                             "resolution": 140,
                             "resize_method": "lower_bound_resize",
-                            "mode.pose_method": "ray_pose",
-                            "mode.ref_view_strategy": "middle",
+                            **(
+                                {
+                                    "mode.pose_method": "ray_pose",
+                                    "mode.ref_view_strategy": "middle",
+                                }
+                                if mode == "ray_pose"
+                                else {}
+                            ),
                         },
-                        slot_variants={"mode": "multiview"},
+                        slot_variants={"mode": "mono" if mode == "mono" else "multiview"},
                     ),
                     "render": GraphNode(
                         "DA3Render",
@@ -328,10 +386,12 @@ def test_da3_ordinary_hosts_twice(
                             "geometry": Link("infer", "da3_geometry"),
                             "image": Link("render", "IMAGE"),
                             "mesh": Link("mesh", "MESH"),
+                            "mode": mode,
                         },
                     ),
                 }
             )
+            graph = graph_from_wire(graph_to_wire(graph))
             engine = composer.composition.make_engine(lambda _event: None)
             for attempt in range(2):
                 result = await engine.run(graph, ["inspect"])
