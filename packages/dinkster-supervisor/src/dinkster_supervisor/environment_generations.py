@@ -8,7 +8,9 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -423,6 +425,120 @@ def prepare_engine_interpreter(
     if result.returncode:
         raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
     return python
+
+
+@contextmanager
+def prepare_registry_inputs(
+    *,
+    store: Path,
+    base: str,
+    constraints: Path,
+    variant: str,
+    engine_version: str,
+    project: Path,
+    installed_lock: Path | None = None,
+    pack_locks: tuple[Path, ...] = (),
+) -> Generator[tuple[Path, Path, tuple[Path, ...], dict[str, str]]]:
+    """Keep target-owned registry inputs alive through candidate construction.
+
+    The caller holds the store lock and has acquired engine/base inputs. No
+    candidate generation or activation journal has been created. Inputs are removed
+    on refusal, failed construction and successful activation alike.
+    """
+    with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
+        scratch = Path(directory)
+        python = prepare_engine_interpreter(
+            scratch / "engine", store=store, base=base, constraints=constraints
+        )
+        catalog = scratch / "dinkster.lock"
+        artifacts = scratch / "artifacts"
+        output = scratch / "locks"
+        command = [str(python), "-I", "-B", "-m", "dinkster.manager", "--root", str(project)]
+
+        def run(arguments: list[str]) -> dict[str, object]:
+            completed = subprocess.run([*command, *arguments], capture_output=True, text=True)
+            if completed.returncode:
+                raise EnvironmentError(
+                    "target registry preparation refused: "
+                    + (completed.stderr.strip() or completed.stdout.strip())
+                )
+            try:
+                raw: object = json.loads(completed.stdout)
+                if not isinstance(raw, dict):
+                    raise ValueError("expected an object")
+            except ValueError as exc:
+                raise EnvironmentError(
+                    f"target registry preparation: invalid result: {exc}"
+                ) from exc
+            return cast("dict[str, object]", raw)
+
+        selection = (
+            ["--installed-lock", str(installed_lock), "--retain-sources"]
+            if installed_lock is not None
+            else ["--allow-missing"]
+        )
+        sources = run(
+            [
+                "prepare-registry-sources",
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(artifacts),
+                *selection,
+            ]
+        )
+        unavailable = sources.get("unavailable")
+        if (
+            sources.get("engineVersion") != engine_version
+            or sources.get("catalogLock") != str(catalog)
+            or sources.get("artifacts") != str(artifacts)
+            or not catalog.is_file()
+            or not artifacts.is_dir()
+            or not isinstance(unavailable, dict)
+            or any(
+                not isinstance(k, str) or not isinstance(v, str)
+                for k, v in cast("dict[object, object]", unavailable).items()
+            )
+            or (installed_lock is not None and unavailable)
+        ):
+            raise EnvironmentError(
+                "target registry preparation returned inconsistent source inputs"
+            )
+        if pack_locks:
+            yield catalog, artifacts, pack_locks, cast("dict[str, str]", unavailable)
+            return
+        prepared = run(
+            [
+                "prepare-registry-locks",
+                "--catalog-lock",
+                str(catalog),
+                "--output",
+                str(output),
+                "--variant",
+                variant,
+                "--base-id",
+                base,
+                "--registry-only",
+            ]
+        )
+        raw_locks = prepared.get("locks")
+        if not isinstance(raw_locks, list) or not output.is_dir() or output.is_symlink():
+            raise EnvironmentError("target registry preparation returned invalid lock paths")
+        paths: list[Path] = []
+        for value in cast("list[object]", raw_locks):
+            if not isinstance(value, str):
+                raise EnvironmentError("target registry preparation returned invalid lock paths")
+            path = Path(value)
+            if (
+                not path.is_absolute()
+                or path.parent != output
+                or path.is_symlink()
+                or not path.is_file()
+                or path in paths
+            ):
+                raise EnvironmentError("target registry preparation returned invalid lock paths")
+            paths.append(path)
+        yield catalog, artifacts, tuple(paths), cast("dict[str, str]", unavailable)
 
 
 def build_generation(

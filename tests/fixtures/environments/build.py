@@ -44,6 +44,23 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
         if engine:
             archive.writestr("dinkster/__init__.py", "")
             archive.writestr("dinkster/serve.py", Path(__file__).with_name("serve.py").read_bytes())
+            archive.writestr(
+                "dinkster/manager.py", Path(__file__).with_name("manager.py").read_bytes()
+            )
+            archive.writestr(
+                "dinkster/generation_packs.py",
+                "import argparse,json,shutil\n"
+                "from pathlib import Path\n"
+                "p=argparse.ArgumentParser()\n"
+                "p.add_argument('--generation',type=Path)\n"
+                "p.add_argument('--catalog-lock',type=Path)\n"
+                "p.add_argument('--artifacts',type=Path)\n"
+                "p.add_argument('--json',action='store_true')\n"
+                "a=p.parse_args()\n"
+                "assert json.loads(a.catalog_lock.read_text())['packs']==[]\n"
+                "shutil.copyfile(a.catalog_lock,a.generation/'dinkster.lock')\n"
+                "print(json.dumps({'packs':[],'errors':[]}))\n",
+            )
     return path
 
 

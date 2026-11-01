@@ -3158,7 +3158,19 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
 
 @pytest.mark.parametrize(
     "problem",
-    [None, "base", "archive", "release", "digest", "size", "url", "pack", "variant", "missing"],
+    [
+        None,
+        "base",
+        "archive",
+        "release",
+        "digest",
+        "size",
+        "url",
+        "pack",
+        "variant",
+        "missing",
+        "local",
+    ],
 )
 def test_cli_acquires_published_locks_for_exact_sources_and_base(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
@@ -3210,6 +3222,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     root.mkdir()
     (root / "current").write_text("7\n")
     source = tmp_path / "dinkster.lock"
+    if problem == "local":
+        entries.append(replace(entries[0], pack="local-only", source="local:/retained"))
     source.write_text(Lockfile.of(entries).record_json())
     original = source.read_bytes()
     output = tmp_path / "published-locks"
@@ -3228,8 +3242,10 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         "--base-id",
         base,
     )
+    if problem == "local":
+        args += ("--registry-only",)
     try:
-        if problem:
+        if problem and problem != "local":
             with pytest.raises(SystemExit):
                 run_cli(*args)
             assert "z-other" in capsys.readouterr().err
@@ -3247,6 +3263,59 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         assert sorted(path.name for path in root.iterdir()) == ["current"]
     finally:
         server.shutdown()
+
+
+@pytest.mark.parametrize("problem", [None, "changed", "excluded"])
+def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
+) -> None:
+    from dinkster import __version__
+
+    generation = tmp_path / "generation"
+    source = write_pack(generation / "pack-sources" / "local-pack", "local-pack")
+    manifest = source / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="local-pack"\nversion="1.2"\n'
+        f'engine="{">=9" if problem == "excluded" else ">=0"}"\n'
+        '[pack.entry]\nnodes="local_pack:NODES"\n'
+    )
+    archive = tmp_path / "original.zip"
+    identity = build_artifact(source, archive)
+    lock = Lockfile.of(
+        [LockedPack("local-pack", "1.2", identity, "local", ("local-pack",), "git:retained")]
+    )
+    installed = generation / "dinkster.lock"
+    installed.write_text(lock.record_json())
+    if problem == "changed":
+        manifest.write_text(manifest.read_text() + "\n# changed bytes\n")
+    before = {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()}
+    candidate = tmp_path / "candidate.lock"
+    artifacts = tmp_path / "artifacts"
+    args = (
+        "--root",
+        "",
+        "prepare-registry-sources",
+        "--installed-lock",
+        str(installed),
+        "--retain-sources",
+        "--catalog-lock",
+        str(candidate),
+        "--artifacts",
+        str(artifacts),
+    )
+    if problem:
+        with pytest.raises(SystemExit):
+            run_cli(*args)
+        error = capsys.readouterr().err
+        assert "local-pack" in error
+        assert ("digest differs" if problem == "changed" else __version__) in error
+        assert not candidate.exists()
+    else:
+        run_cli(*args)
+        assert json.loads(capsys.readouterr().out)["packs"] == ["local-pack"]
+        assert Lockfile.from_record_json(candidate.read_text()) == lock
+        assert (artifacts / f"{identity[7:]}.zip").read_bytes() == archive.read_bytes()
+    assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
 
 
 @pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])

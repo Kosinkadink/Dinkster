@@ -23,6 +23,7 @@ from .environment_collection import (
 from .environment_generations import (
     build_generation,
     pack_operation,
+    prepare_registry_inputs,
     project_operation,
     verify_base_inputs,
 )
@@ -395,15 +396,39 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if select_store(root, requested) != store:
             raise EnvironmentError("store changed after planning; request a new plan")
         store.mkdir(parents=True, exist_ok=True)
-        with writer_lock(store), writer_lock(root):
+        with writer_lock(store), writer_lock(root), ExitStack() as preparation:
             _recover_pending(root, locked_store=store)
             revalidate()
             published_constraints = None
+            catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
+            pack_locks = tuple(args.pack_lock)
             if local is None:
                 assert catalog is not None
                 published_constraints = acquire(
                     catalog, variant, store, package_index=cast("str | None", package_index)
                 )
+                if catalog_lock is None:
+                    catalog_lock, source_artifacts, pack_locks, unavailable = (
+                        preparation.enter_context(
+                            prepare_registry_inputs(
+                                store=store,
+                                base=catalog.channel.base_for(variant),
+                                constraints=published_constraints,
+                                variant=variant,
+                                engine_version=cast("str", catalog.engine["version"]),
+                                installed_lock=previous_root / "dinkster.lock"
+                                if previous_root is not None
+                                else None,
+                                project=root,
+                                pack_locks=pack_locks,
+                            )
+                        )
+                    )
+                    result["unavailablePacks"] = unavailable
+                    for pack, reason in unavailable.items():
+                        print(f"default pack {pack} unavailable: {reason}", file=sys.stderr)
+                elif not pack_locks:
+                    pack_locks = acquire_pack_locks(catalog, variant, store)
             target = next_generation(root)
             journal = (
                 begin_setup(
@@ -435,7 +460,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 atomic_write(pointer, str(store) + "\n")
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
-                catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
                 prepare_packs = None
                 if local is not None:
                     from .environment_local import prepare_local, prepare_local_packs
@@ -465,13 +489,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
                     worker_protocol = cast("int", base["workerProtocol"])
-                    if catalog_lock is None:
-                        acquired_sources = acquire_sources(catalog, store)
-                        if acquired_sources is not None:
-                            catalog_lock, source_artifacts = acquired_sources
-                    pack_locks = tuple(args.pack_lock) or acquire_pack_locks(
-                        catalog, variant, store
-                    )
                 measured = sum(
                     path.stat().st_size
                     for path in (store / "bases" / base_id[7:] / "python").rglob("*")

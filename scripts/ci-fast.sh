@@ -38,6 +38,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \
   tests/test_installer.py::test_cli_prepares_compatible_registry_sources_without_generation_mutation \
   tests/test_installer.py::test_cli_acquires_published_locks_for_exact_sources_and_base \
+  tests/test_installer.py::test_cli_retains_nonregistry_generation_sources_before_writing_candidate \
   tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
   tests/test_installer.py::test_generation_source_staging_cli \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \

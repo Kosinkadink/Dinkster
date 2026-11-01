@@ -109,8 +109,24 @@ For a source lock containing registry packs, `prepare-registry-locks` accepts
 for those exact source archives and base, verifies their size, BLAKE3 and
 pack/variant identities, and reports their paths as JSON. It never resolves
 dependencies. Any missing or mismatched lock refuses the whole set without
-creating the output directory or changing an installed generation. This is
-preparation only, not automatic setup/update integration.
+creating the output directory or changing an installed generation.
+
+Confirmed published `dinkster-env setup` and `update` run these commands with
+the acquired target engine, in isolated temporary storage before opening an
+activation journal. Fresh setup reports unavailable defaults in
+`unavailablePacks` and on stderr, and can activate an empty generation when
+the registry is offline. Updates re-resolve the installed official selection;
+an unavailable compatible release refuses without changing project settings,
+the current generation or its journal. Non-registry sources are retained and
+checked against their recorded digests and the target engine; their dependency
+locks remain generation-owned. Explicit catalog/artifact and dependency-lock
+inputs override automatic preparation. `--from-scratch` remains a separate
+checkout-only path.
+
+The preparation commands can also be run separately. Source preparation's
+`--retain-sources` requires `--installed-lock` and caches unchanged sources
+from that generation's `pack-sources` tree. Lock preparation's `--registry-only`
+leaves non-registry dependency locks to the retained generation.
 
 Pack versions are independent of engine versions. A pack's `[pack] version`
 and `engine` fields declare its version and PEP 440 engine range; excluded

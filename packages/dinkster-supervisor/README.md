@@ -401,19 +401,22 @@ and removes the incomplete target.
 Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
 and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the
-target interpreter. Without those overrides, a selected release carrying
-`official-packs.lock` supplies its source inputs automatically. The client downloads
-that lock and the release's ZIP payloads with the manifest's SHA256/size checks,
-then caches each ZIP as `engines/<release-id>/artifacts/<blake3-hex>.zip`.
-It does not parse the registry lock or unpack sources; target-interpreter admission
-still verifies identity and claims before sealing. A missing admission command
-refuses the generation rather than omitting sources. Without explicit `--pack-lock`
-inputs, the client acquires release artifacts named
-`<pack>-<public-version>-<variant>.pack-lock.json` for its selected variant with
-manifest SHA256/size verification. It stores original bytes under
-`engines/<release-id>/` and passes their paths to the existing provisioner.
-Explicit lock inputs replace this bundled selection; no supervisor dependency
-parser or resolver is involved.
+target interpreter. Without source overrides, confirmed published operations
+prepare a temporary target interpreter from the acquired constraints under the
+store lock, before allocating a generation or opening its journal. Isolated
+`-I -B -m dinkster.manager` commands resolve fresh registry defaults or re-resolve
+the installed official source set, and acquire exact-base published dependency
+locks. The supervisor checks the target version, returned paths and diagnostics;
+the target engine owns source/lock parsing and verification. Temporary inputs
+survive candidate construction and are removed on success or failure.
+
+Fresh setup reports unavailable defaults as `unavailablePacks` and on stderr;
+an offline registry can produce a healthy empty generation. Update refuses a
+missing compatible selection before journal/project mutation, retains other
+source provenance and verifies reconstructed non-registry source bytes.
+Explicit dependency locks replace automatic registry lock acquisition. With an
+explicit source catalog but no dependency locks, legacy release-carried locks
+remain usable. No supervisor dependency parser or resolver is involved.
 Update plans with registered workflows or explicit additions call the active generation's
 `dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
 inputs take precedence; otherwise selected-release sources must already exist in

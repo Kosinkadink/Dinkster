@@ -1079,6 +1079,8 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     if args.installed_lock and args.allow_missing:
         raise InstallError("--allow-missing is only valid for fresh pack selection")
+    if args.retain_sources and not args.installed_lock:
+        raise InstallError("--retain-sources requires an installed generation source lock")
     if args.installed_lock and args.installed_lock.resolve() == args.catalog_lock.resolve():
         raise InstallError("candidate source lock must differ from --installed-lock")
     minimums: dict[str, str] = {}
@@ -1100,6 +1102,35 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 engine_version=dinkster_version,
                 selected=select_registry(config, args.registry) if args.registry else None,
             )
+            if args.retain_sources:
+                args.artifacts.mkdir(parents=True, exist_ok=True)
+                fetch = routing_registry_fetcher(
+                    config, select_registry(config, args.registry) if args.registry else None
+                )
+                for entry in lock.packs:
+                    cached = args.artifacts / f"{entry.artifact_digest[7:]}.zip"
+                    if not cached.exists():
+                        if entry.source == "registry" or entry.source.startswith("registry:"):
+                            cached.write_bytes(fetch(entry))
+                        else:
+                            actual = build_artifact(
+                                args.installed_lock.parent / "pack-sources" / entry.pack, cached
+                            )
+                            if actual != entry.artifact_digest:
+                                raise InstallError(f"{entry.pack}: retained source digest differs")
+                from .generation_packs import stage_generation_packs
+
+                with tempfile.TemporaryDirectory(
+                    prefix="dinkster-retained-admission-"
+                ) as directory:
+                    stage_generation_packs(
+                        Path(directory),
+                        lock,
+                        {
+                            entry.pack: args.artifacts / f"{entry.artifact_digest[7:]}.zip"
+                            for entry in lock.packs
+                        },
+                    )
             unavailable: dict[str, str] = {}
         else:
             selector = args.registry or (
@@ -1134,6 +1165,14 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     try:
         sources = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        if args.registry_only:
+            sources = Lockfile.of(
+                [
+                    entry
+                    for entry in sources.packs
+                    if entry.source == "registry" or entry.source.startswith("registry:")
+                ]
+            )
         paths = prepare_registry_pack_locks(
             config,
             sources,
@@ -1299,6 +1338,11 @@ def main() -> None:
     sources.add_argument(
         "--allow-missing", action="store_true", help="report unavailable fresh defaults"
     )
+    sources.add_argument(
+        "--retain-sources",
+        action="store_true",
+        help="cache unchanged sources from the installed generation's pack-sources tree",
+    )
     sources.set_defaults(handler=_cmd_prepare_registry_sources)
 
     locks = commands.add_parser(
@@ -1309,6 +1353,11 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--registry-only",
+        action="store_true",
+        help="leave non-registry dependency locks to the retained generation",
+    )
     locks.set_defaults(handler=_cmd_prepare_registry_locks)
 
     for name, help_text, handler in (

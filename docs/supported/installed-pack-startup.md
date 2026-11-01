@@ -115,10 +115,14 @@
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
-  assignment before confirmation. Releases carrying an official source lock feed
-  their verified source ZIPs into target-interpreter admission automatically;
-  missing admission support refuses activation. Selected-variant dependency locks
-  are acquired from release artifacts unless explicitly overridden. Every selected
+  assignment before confirmation. Confirmed published setup selects registry
+  defaults against the acquired target engine before creating an activation
+  journal. Unavailable defaults are reported, and offline setup can start an
+  explicitly empty generation. Update re-resolves installed official selections
+  and refuses unavailable compatible versions before journal/project mutation.
+  Exact-base dependency locks come from the registry; retained non-registry
+  sources keep their recorded bytes/provenance and generation-owned locks.
+  Explicit source/dependency inputs remain supported. Every selected
   source pack needs a dependency lock, including empty closures. Confirmed setup
   and updates acquire missing pack wheels from their locked URLs and verify size
   and SHA256 before offline construction, including wheels absent from release

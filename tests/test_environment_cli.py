@@ -683,10 +683,26 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     assert any(path.is_file() for path in (failed_store / "bases").rglob("*"))
     assert not list((root / "journal").glob("*.json"))
     engine_wheel.write_bytes(original_wheel)
+    for problem, expected in (
+        ("refuse", "fixture-pack@1.0 declares >=9"),
+        ("version", "inconsistent source inputs"),
+        ("path", "invalid lock paths"),
+    ):
+        monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", problem)
+        code, refused = _run(root, *arguments, "--yes")
+        assert code == 1 and expected in refused["error"], refused
+        assert not (root / "project.json").exists() and not (root / "store").exists()
+        assert not (store / "projects.json").exists()
+        assert not list((root / "journal").glob("*.json"))
+        assert not list(store.glob(".registry-*"))
+    monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
     code, installed = _run(root, *arguments, "--yes")
     assert code == 0, installed
     try:
         assert installed["current"] == 1 and installed["status"] == "applied"
+        assert installed["unavailablePacks"] == {"fixture-pack": "registry offline"}
+        assert json.loads((root / "generations/1/dinkster.lock").read_text())["packs"] == []
+        assert not list(store.glob(".registry-*"))
         assert installed["url"] == f"http://127.0.0.1:{port}"
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "project.json").read_bytes()
@@ -745,6 +761,18 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert sorted(path.name for path in (root / "journal").iterdir()) == before
         assert (root / "current").read_text() == "1\n"
         (root / "queue.json").write_text('{"running": [], "queued": []}')
+        before_registry = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
+        monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "refuse")
+        code, refused = _run(root, "update", "--yes")
+        monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
+        assert code == 1 and "fixture-pack@1.0 declares >=9" in refused["error"]
+        assert (root / "current").read_text() == "1\n"
+        assert (root / "project.json").read_bytes() == initial_settings
+        assert {
+            path: path.read_bytes() for path in (root / "journal").glob("*.json")
+        } == before_registry
+        assert not (root / "generations/2").exists()
+        assert not list(store.glob(".registry-*"))
         script = """
 import os
 import sys
@@ -793,11 +821,21 @@ environment.main()
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
         source_release, payloads = _release_sources(mirror)
-        code, source_refused = _run(root, "update", "--yes")
+        supplied = acquire_sources(discover((str(mirror),), "main"), store)
+        assert supplied is not None
+        code, source_refused = _run(
+            root,
+            "update",
+            "--yes",
+            "--catalog-lock",
+            str(supplied[0]),
+            "--artifacts",
+            str(supplied[1]),
+        )
         assert (
             code == 1 and "pack source staging: invalid admission result" in source_refused["error"]
         )
-        # This fixture engine has no source-admission CLI; it must not silently omit sources.
+        # The empty-pack fixture must refuse nonempty explicit sources, not omit them.
         assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
         cached_release = store / "engines" / source_release.name
         assert (cached_release / "official-packs.lock").read_bytes() == payloads[
