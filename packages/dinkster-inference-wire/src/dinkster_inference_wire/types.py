@@ -84,6 +84,7 @@ from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
 from .splat_wire import materialize_splat
+from .vision_packet_wire import materialize_vision_packet, register_vision_packet_types
 from .vision_wire import (
     clip_vision_output_fingerprint,
     decode_clip_vision_output,
@@ -164,6 +165,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             else register_sampling_type(registry, type_id)
         )
     registered.extend(register_box_types(registry))
+    registered.extend(register_vision_packet_types(registry))
     for type_id in (
         BOUNDING_BOXES_TYPE,
         CAMERA_INFO_STATE_TYPE,
@@ -262,6 +264,7 @@ __all__ = [
     "materialize_latent",
     "materialize_mesh",
     "materialize_splat",
+    "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
 ]

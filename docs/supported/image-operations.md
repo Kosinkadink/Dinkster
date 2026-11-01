@@ -1,5 +1,10 @@
 ## Image operations
 
+- `DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
+  transport depth, source images and cameras, per-frame face and body detections,
+  face topology, masks, canonical colors and external rig state without dropping
+  optional fields or converting NumPy arrays to tensors. Numeric dtypes, scalar
+  arrays, frame order and unsigned rig indices survive transport.
 - `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
   transports flat or per-frame pixel boxes and normalized prompt elements.
   Both accept JSON only, retaining frame order, integer/float coordinates,

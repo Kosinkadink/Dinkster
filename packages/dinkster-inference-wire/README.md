@@ -37,6 +37,17 @@ Structural tensor payloads retain unsigned 16-bit joint indices and unsigned
 32-bit mesh faces without converting values above the corresponding signed
 range. Existing tensor framing and fingerprints are unchanged.
 
+`DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
+use structural packets over that envelope. Each array carries its NumPy or
+Torch kind; NumPy scalars and scalar arrays remain distinct. Ordered frames,
+optional-key absence, camera/source-image fields, frozenset face topology and
+external `_skeleton_override` rig buffers are retained. Decode and validation
+remain NumPy/Torch/inference-free; they produce inspectable tensor records.
+`materialize_vision_packet`, exported through `dinkster_api.v1`, reconstructs
+NumPy arrays/scalars and Torch tensors only at the consumer. Live objects keep
+their storage, dtype and device. Unsupported objects and malformed structural
+records are refused; no pickle or resident fallback exists for these packets.
+
 `MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
 uses the structural latent codec without requiring a `samples` entry. Geometry
 tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
