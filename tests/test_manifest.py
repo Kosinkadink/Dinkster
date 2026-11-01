@@ -142,6 +142,27 @@ def test_pack_rejects_invalid_version_or_engine_declaration(
         load_manifest(path)
 
 
+@pytest.mark.parametrize("source", (None, '"remote-gateway-catalog"'))
+def test_catalog_driven_node_source_loads_without_importing_pack(
+    tmp_path: Path, source: str | None
+) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    if source is not None:
+        path.write_text(path.read_text().replace("[pack]\n", f"[pack]\nnode-source = {source}\n"))
+    manifest = load_manifest(path)
+    assert manifest.node_source == (None if source is None else "remote-gateway-catalog")
+
+
+@pytest.mark.parametrize("source", ('""', '"static"', '"unknown-catalog"', "true", "[]", "{}", "1"))
+def test_catalog_driven_node_source_rejects_unknown_kinds_and_types(
+    tmp_path: Path, source: str
+) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    path.write_text(path.read_text().replace("[pack]\n", f"[pack]\nnode-source = {source}\n"))
+    with pytest.raises(ManifestError, match="node-source"):
+        load_manifest(path)
+
+
 @pytest.mark.parametrize("field", ["namespaces", "type-namespaces"])
 def test_registration_requires_pack_prefix_for_non_dinkster_publishers(
     tmp_path: Path, field: str

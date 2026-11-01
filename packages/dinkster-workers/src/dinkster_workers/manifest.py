@@ -2126,6 +2126,8 @@ class PackManifest:
     """Pack-owned publication version and engine range; absent for unpublished sources."""
     contracts: PackContracts | None = None
     """Explicit host/API/inference contracts. None marks a legacy manifest."""
+    node_source: str | None = None
+    """Optional catalog-driven node source; None means static entry schemas."""
     dependencies: tuple[PackDependency, ...] = ()
     """Pack ordering dependencies, sorted by canonical pack id."""
     publisher: str = ""
@@ -2762,6 +2764,12 @@ def load_manifest(path: Path | str) -> PackManifest:
     if not isinstance(publisher, str) or (publisher and validate_name(publisher) is not None):
         raise ManifestError(f"{manifest_path}: [pack] publisher must be a valid publisher id")
 
+    node_source = pack.get("node-source")
+    if "node-source" in pack and node_source != "remote-gateway-catalog":
+        raise ManifestError(
+            f'{manifest_path}: [pack] node-source must be "remote-gateway-catalog" when declared'
+        )
+
     entry = pack.get("entry")
     if not isinstance(entry, dict):
         raise ManifestError(f"{manifest_path}: missing [pack.entry] table")
@@ -2901,6 +2909,7 @@ def load_manifest(path: Path | str) -> PackManifest:
         path=manifest_path,
         compatibility=compatibility,
         contracts=_parse_contracts(pack.get("contracts"), manifest_path),
+        node_source=cast("str | None", node_source),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
         publisher=publisher,
         type_namespaces=_parse_type_namespaces(pack.get("type-namespaces"), name, manifest_path),
