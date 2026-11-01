@@ -142,7 +142,7 @@ def run_selected_tests(
                     else:
                         shutil.copy2(source, target)
                 destination = package
-            # Existing member tests explicitly add checkout-relative src paths.
+            # Keep manifest-relative assets and src imports on the same selected bytes.
             src = package / "src"
             src.mkdir(exist_ok=True)
             for module in destination.glob("dinkster_*"):
@@ -151,9 +151,11 @@ def run_selected_tests(
                     namespace.mkdir(exist_ok=True)
                     for provider in module.iterdir():
                         if provider.is_dir():
-                            shutil.copytree(provider, namespace / provider.name)
+                            (namespace / provider.name).symlink_to(
+                                provider, target_is_directory=True
+                            )
                 elif module.is_dir() and not (src / module.name).exists():
-                    shutil.move(module, src / module.name)
+                    (src / module.name).symlink_to(module, target_is_directory=True)
             module_roots.append(str(src))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(src / entry.replace(".", "/"))

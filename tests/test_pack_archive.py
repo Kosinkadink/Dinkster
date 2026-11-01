@@ -1016,10 +1016,14 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
     (tests / "test_image_nodes.py").write_text(
         "import importlib.metadata\nimport subprocess\nimport sys\nimport pytest\n"
+        "from pathlib import Path\nimport dinkster_nodes_image\n"
         "from dinkster_nodes_image import VALUE\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + "def test_selected_value():\n"
         "    assert VALUE == 47\n"
+        "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
+        "    assert (pack_root / 'dinkster_nodes_image/__init__.py').resolve(strict=True) "
+        "== Path(dinkster_nodes_image.__file__).resolve()\n"
         "    subprocess.run([sys.executable, '-I', '-c', "
         '"from pathlib import Path; import sys; import dinkster_nodes_image as pack; '
         "expected = Path(pack.__file__).resolve(); "
