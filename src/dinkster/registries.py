@@ -79,6 +79,7 @@ from dinkster_registry import (
     validate_version,
 )
 from dinkster_schema import PackCompatibility, canonical_claim, canonical_name, validate_name
+from dinkster_schema.units import MEBIBYTE
 from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.pack_lock import PackLock
 from dinkster_workers.provision import ProvisionError
@@ -822,7 +823,7 @@ def prepare_registry_pack_locks(
                     or not isinstance(digest, str)
                     or validate_artifact_digest(digest)
                     or type(size) is not int
-                    or not 1 <= cast("int", size) <= 1024 * 1024
+                    or not 1 <= cast("int", size) <= MEBIBYTE
                 ):
                     raise InstallError(f"{subject}: invalid archive/base/lock binding")
                 headers = {"User-Agent": "dinkster-pack"}
