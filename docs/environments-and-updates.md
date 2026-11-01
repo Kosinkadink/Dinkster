@@ -3,19 +3,28 @@
 How Dinkster ships Python environments, updates engine code without rebuilding
 them, keeps packs with extra dependencies from breaking the engine, and lets a
 user roll back. Dinkster owns all of it; Dinkster Desktop is a client that
-adds a Windows installer, code signing, the Electron shell updater, and window
+adds platform installers, the Electron shell updater, and window
 management. Nothing described here is Desktop-only: `dinkster-env` gives a
 user without Desktop the same generations, channels, and rollback from the
 command line. Developers who change Dinkster itself work from a checkout
 ([install.md](install.md)) and use none of this.
 
+Apple Silicon macOS 14+ is supported with the `mac-arm64` base and MPS.
+The native tools ZIP supplies Python and uv independently of the host.
+The arm64 Desktop app is unsigned; Gatekeeper may require right-click Open
+or removal of `com.apple.quarantine` from the verified app. Apple signing and
+notarization are separate work in
+[Apple signing](https://github.com/Kosinkadink/comfy-vibe-station/issues/501),
+not a dependency of engine setup or updates. Intel Macs and CUDA on macOS
+are not supported. See [installation](install.md#apple-silicon-macos).
+
 ## Vocabulary
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
-| Lock | Dinkster's `uv.lock` at that commit, the single resolution every wheel hash comes from; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
-| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive, native tools and official pack artifacts; no third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
+| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu`, `mac-arm64` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
@@ -31,8 +40,17 @@ command line. Developers who change Dinkster itself work from a checkout
 
 The base bundle and the engine release change at very different rates. A bug
 fix produces a new engine release of a few tens of megabytes; the base bundle
-changes when torch or another heavy pin moves. That split is the whole reason
-updates are cheap.
+changes when Python, torch's variant index/family or another base-owned pin
+moves, not for each engine release. `comfy-kitchen` and `comfy-aimdo` are
+engine-side dependencies and never trigger a base publication. The producer's
+per-variant manifest `replaces` list defines distribution-name ownership;
+engine builders and installers do not maintain another list. That split is
+the whole reason updates are cheap.
+
+A platform without a published base is not an engine release target. Published
+setup refuses an absent variant and names the variants the selected channel
+actually provides. It never resolves a replacement environment automatically;
+the development `--from-scratch` path remains explicitly opt-in.
 
 ## Environment tools bootstrap
 
@@ -51,6 +69,29 @@ are materialized, requiring no Windows symlink privilege. It invokes
 `python/python.exe`) and prepends `python/bin` (Windows `python/Scripts`) to
 that child's PATH for bundled uv. Desktop performs no package installation,
 resolution or fallback to a host Python/package manager.
+
+Desktop installers bundle their platform's tools ZIP and its hash-pinned engine
+manifest. The tools pin is independent of the engine being installed: the
+supervisor is engine-independent, and a newer engine alone does not require new
+tools. Desktop extracts into its own user-data directory keyed by the tools
+archive SHA256, reuses that completed tree across launches, and retains it on
+shutdown. A changed tools digest is verified and extracted before the old tree
+is removed. Starting an installed engine, status, doctor and stop do not need
+channel metadata or a runtime tools download; first setup and engine update
+still need their engine/base payloads unless the configured mirror is local.
+
+Development may select `DINKSTER_TOOLS_PYTHON` or `DINKSTER_ENV`, or supply
+`DINKSTER_TOOLS_MANIFEST`, `DINKSTER_TOOLS_MANIFEST_SHA256` (alias
+`DINKSTER_TOOLS_SHA256`) and `DINKSTER_TOOLS_RELEASE` for verified runtime
+acquisition. These explicit overrides take precedence over bundled tools.
+Before setup, update or catalog starts an environment command, packaged Desktop
+checks the selected channel's `minimumDesktopVersion` and refuses with
+`DesktopVersionTooOld` if the shell must update. A trusted channel can explicitly
+select newer tools using an optional `tools` object containing the immutable
+engine `manifest` location, its `sha256`, and the `release` directory. Locations
+are absolute paths or credential-free HTTPS, and the selected tools ZIP must
+match its engine manifest's size and hash. Without that object, bundled tools
+remain the default. This does not change engine artifact selection or updates.
 
 The native build/acquisition command and input pinning are documented in
 [the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
@@ -209,9 +250,9 @@ is written when a push to `main` finishes the same workflow without a
 version: the engine release it names is a prerelease of the next version
 identified by commit. Both channels are served by the same client code path
 and differ only in the channel file. Neither resolves on the user's machine:
-every wheel an engine install needs is in the base bundle or the engine
-release, and when a commit adds a dependency the base does not carry, that
-commit's engine release includes the wheel until the next base picks it up.
+base wheels come from the base bundle, Dinkster wheels from the engine
+release, and non-base third-party wheels from their locked package origins
+or a configured package mirror. Every download checks its locked size and hash.
 The base is shared between the channels because it rebuilds only when its
 part of the lock changes.
 
@@ -246,12 +287,20 @@ such a mirror refuses an unsigned or wrongly signed document.
 
 `Dinkster-Environments` holds one definition per variant: the python
 version, the python-build-standalone release, the torch index and CUDA tag,
-and the list of lock entries that belong to the base rather than the engine.
+and the base root pins. The published manifest's `replaces` list is the sole
+ownership-by-distribution-name contract: selected wheels plus the source lock's
+base-root closure, including remove-only names for other platforms.
 Its build workflow:
 
-1. Reads the lock from the Dinkster commit it is building for.
-2. Downloads the base wheels for the variant from their indexes into a
-   staging directory and verifies them against the lock hashes.
+1. Reads the lock from the named Dinkster source commit and computes interface
+   names: base-owned distributions that non-base engine packages depend on for
+   the target, including applicable normal and optional dependency edges.
+2. Resolves binary base wheels at the producer's root pins and variant index,
+   constraining only interface names to the engine lock's versions. Base-only
+   CUDA closure names follow the variant index, not the development lock's
+   incompatible CUDA versions. Every artifact records its exact URL, size and
+   SHA-256; downloads verify those bytes. An exact engine-lock artifact match
+   is lock-verified, otherwise provenance is explicitly index-verified.
 3. Writes the base manifest: `format: dinkster.base/1`, variant, python
    version, every wheel with its filename, size, sha256 and source index,
    the `workerProtocol` the engine wheels in this lock declare, the minimum
@@ -271,10 +320,14 @@ and safe permission bits are preserved; traversal, absolute paths, hardlinks,
 devices and duplicate paths are refused. The manifest interpreter must run in
 isolation before promotion. A missing execute bit is repaired with a warning.
 
-The base is rebuilt only when its part of the lock changes. The workflow
-compares the base-relevant lock entries with the newest published base
-manifest and skips the build when they match, so a tag that only touches
-Dinkster code produces no new base.
+The workflow compares Python, interpreter, root pins, torch index, interface
+versions and compatibility metadata with the newest published base manifest,
+and skips rebuilding and publication when they match. A generic development-lock
+change to a base-only CUDA dependency does not override the published base.
+Engine releases never trigger base publication; changes to engine-side
+comfy-kitchen, comfy-aimdo or other non-base dependencies do not produce a base.
+Protocol, archive, hardware or replacement-membership changes still require
+compatible content identity.
 
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
@@ -286,21 +339,24 @@ the matching torchvision, numpy 2.5, `opencv-contrib-python-headless` 5.0.
 Python 3.14 receives bug fixes until late 2027 and security fixes until
 2030; every dependency of the engine and of the popular ComfyUI packs
 ships a cp314 or abi3 Windows wheel; `comfy-kitchen` and `triton-windows`
-are abi3 against 3.12 and run unchanged. The pins move together, by one
-change to the lock, and a change that moves them produces a new base. The
+are abi3 against 3.12 and run unchanged. Root pin changes belong to the producer
+definition and produce a new base; engine consumers use that base's exact
+variant selection, not the generic workspace CUDA closure. The
 one exception is `win-nvidia-cu126`: torch 2.14.1 is the last release with
 cu126 wheels, so that variant keeps torch 2.14.1 and the matching
 torchvision when the others move, and receives only the pins that still
 build against it.
 
-Supported variants: `win-nvidia` (cu132), `win-nvidia-cu126`, `win-cpu` and
-`linux-cpu`. The CPU variants run everything, an order of magnitude slower
+Published variants: `win-nvidia` and `linux-nvidia` (cu132),
+`win-nvidia-cu126`, `win-cpu`, `linux-cpu` and `mac-arm64` (Apple Silicon MPS).
+The Linux NVIDIA base carries the complete CUDA closure, including toolkit,
+NVIDIA libraries and triton; these are base-owned, not engine release payloads.
+The CPU variants run everything, an order of magnitude slower
 than the slowest GPU; they serve users who run the engine locally with
 remote workers, and CI and development machines without a GPU. Adding a
-variant is a new row, not new machinery: `linux-nvidia` is the same two
-rows on Linux wheels, `win-rocm` is torch from AMD's
+variant is a new row, not new machinery: a prospective `win-rocm` uses AMD's
 `stable.repo.amd.com/rocm/whl-next/` index with a per-architecture extra,
-and `win-xpu` is torch from the `xpu` index.
+and a prospective `win-xpu` uses torch from the `xpu` index.
 
 ### Choosing the NVIDIA variant
 
@@ -420,7 +476,11 @@ cancel the job.
 
 ### Journal and failure handling
 
-Every update writes `journal/<timestamp>.json` before it changes anything:
+Confirmed published setup/update acquires and verifies engine/base inputs before
+candidate journal publication or project registration/settings changes. A
+dependency incompatibility leaves project/current/serving-generation state and
+existing journals unchanged; verified cache population and lock files may remain.
+Every admitted update writes `journal/<timestamp>.json` before project mutation:
 the operation, the previous and target generation, and the stage reached.
 If sync fails, the previous generation keeps serving and the target is
 deleted. If the target starts but never reports health, the client stops it,
@@ -621,7 +681,7 @@ directory is the build artifact used by installation checks and publication:
 | `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
-| `dinkster-tools-<os>-x86_64.zip` | Extraction-only environment client for Linux and Windows; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
+| `dinkster-tools-<os>-<arch>.zip` | Extraction-only environment client for Linux/Windows x86_64 and macOS arm64; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
 
 The workflow also builds the official pack source ZIPs and `official-packs.lock`
 with `scripts/build_official_packs.py` and admits them through repeated
@@ -651,27 +711,46 @@ not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
 basenames relative to the release directory. Clients verify the manifest
 against the channel id before trusting its artifact hashes.
 
-The builder accepts repeated `--external-wheel PATH` candidates and checks
-each filename, size and SHA-256 against `uv.lock` before staging it. External
-wheels are release payloads, not entries in `workspaceWheels` for PyPI upload.
-The workflow uses `--download-external-wheels` to select the locked compatible
-Windows/Linux x86_64 CPython 3.14.10 wheels, evaluating target requirement
-markers and preferring native interpreter tags over older stable ABI tags.
-Every download must match the lock size and SHA-256 and an exported requirement
-hash. Direct requirements, missing compatible wheels and corrupted downloads
-fail the build; acquisition never resolves dependencies or falls back to source.
-Target markers are evaluated before source admission. OpenTimelineIO uses the
-`dinkster-opentimelineio==0.19.0` PyPI distribution through the same registry
-wheel path as other dependencies; the import namespace remains `opentimelineio`.
-Acquisition uses the unchanged native lock and export; offline consumers use
-exact version/hash requirements and supplied wheel files.
-Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
-manifest, including its canonical id, and `--target-variant NAME` identifies
-the selected targets. Only an exact filename/size/SHA-256 member present in
-every selected base can be omitted from a shared release. An unexpected or
-duplicate variant fails; incomplete or absent base coverage retains all
-candidates. The base's full transitive `wheels` list is authoritative, not a
-union of package names or a list of closure seeds.
+The builder uploads no third-party wheels. Repeated `--base-manifest PATH`
+inputs select verified `dinkster.base/1` manifests. Their producer-owned
+normalized `replaces` names are the sole ownership list, generated in
+Dinkster-Environments from variant roots and dependency closure. Ownership is
+not inferred from matching bytes across bases. Duplicate variants fail.
+
+The engine manifest's `dependencies` object records one install lock per
+variant: its exact `base` id and `wheels` rows containing normalized name,
+version, filename, size, SHA256, source index and artifact URL. Base-owned pins
+come directly from that variant's base manifest, including backend-local torch
+versions and variant-index hashes. Non-base pins come from `uv.lock` and its
+hashed export, evaluating target markers and preferring native interpreter
+tags over older stable ABI tags. Missing compatible binaries or direct URL
+requirements fail assembly; the builder does not fetch wheel payloads.
+
+Confirmed setup/update verifies the selected base against the variant install
+lock and fetches missing non-base wheels from their locked PyPI artifact URLs
+into `wheels/<sha256>/<filename>`, using exact size/hash checks. It materializes
+hashed variant requirements and constructs generations offline from the store.
+No dependency resolution, source build or alternate-hash fallback occurs.
+Before generation construction, non-base wheel dependency specifiers must be
+satisfied by base-owned versions, including target Python markers and requested
+transitive extras. Failure names the requiring distribution and base version.
+Older releases without dependency metadata retain their original acquisition
+contract. OpenTimelineIO uses `dinkster-opentimelineio==0.19.0`; its import
+namespace remains `opentimelineio`.
+
+`--package-index URL` on setup/update selects a simple package mirror instead
+of the recorded third-party origins. Only the exact locked filename is admitted;
+the lock's size and SHA256 remain authoritative, not index-provided hashes.
+The choice is saved in project `packageIndex` for updates and changes through
+the existing activation transaction. It is separate from repeatable `--mirror`,
+which selects channel/base/Dinkster artifact hosts. Intact store wheels require
+no index access. Repair, rollback and move remain offline.
+
+Finalization checks the complete release directory, rejecting third-party
+wheel entries and unlisted payloads. `release.yml` enforces 100,000,000 bytes
+including manifest/checksums and unchanged official pack artifacts/locks,
+excluding only native tools ZIPs, whose interpreters dominate their size.
+An over-budget release fails before upload.
 
 `python -m scripts.acquire_engine_bases --tag base-<variant>-<id-hex>`
 accepts repeated exact tags from `Kosinkadink/Dinkster-Environments` and
@@ -679,9 +758,15 @@ writes the original documents to `engine-base-manifests/<variant>/manifest.json`
 The output directory must be new; a failed selection leaves no partial set.
 Acquisition requires a published release, complete archive parts with verified
 sizes/hashes, canonical manifest identity and compatibility with the engine's
-Python, platform, worker protocol and locked pins. Torch variant wheels match
-the lock's public version and the variant index; other same-name wheels must
-match locked artifact hashes. GitHub asset digests verify parts when available;
+Python, platform, worker protocol and root pins. Only target-applicable non-base
+dependency edges constrain base-owned versions to the generic lock, including
+optional groups and markers. Interface versions match by public version, and
+same-filename interface artifacts retain lock hash checks; base-only closure
+versions come from their verified producer index records. `lockedVersion` records
+provenance, not an additional requirement. Contributor setup applies the same
+interface rule to its generic export. Modern channel construction and client
+acquisition instead enforce the exact variant metadata/base id and wheel identities.
+GitHub asset digests verify parts when available;
 otherwise acquisition streams and hashes the part bytes. The adjacent extras
 index must match the selected base and variant; its downloaded size and any
 GitHub asset digest are checked, without inventing an extras hash field in the
@@ -693,10 +778,10 @@ channel locations. The channel writer consumes these qualified documents, not
 a second base-id list. A compatible published base set is still required before
 channel publication.
 
-The non-default `engine-base` dependency group carries torch 2.14.1,
-torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
-`uv.lock`. The release export explicitly includes the group; mandatory
-inference dependencies can also bring torch into ordinary workspace sync.
+The non-default `engine-base` dependency group carries numpy 2.5.1 and
+contrib-headless OpenCV 5.0.0.93 in `uv.lock`. The release export explicitly
+includes the group; mandatory inference dependencies bring torch and torchvision
+into ordinary workspace sync.
 These requirements do not embed an index URL. A torch/torchvision bump must have cp314 wheels
 for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.
@@ -749,13 +834,10 @@ boundaries but are not separate PyPI publications.
 
 ## What Desktop adds
 
-- The NSIS installer and Windows code signing; the macOS app bundle, Developer
-  ID signing and notarization. The signing workflows run on `vX.Y.Z` tag
-  push and their signing jobs target a GitHub environment that holds the
-  signing credentials and requires the repository owner's approval, so an
-  agent can tag, build and test, and only the owner's approval produces a
-  signed installer. A run dispatched by hand targets the same environment
-  and waits for the same approval.
+- The NSIS installer and Windows code signing; an unsigned Apple Silicon
+  macOS app ZIP. The hosted macOS build requires neither an Apple signing
+  identity nor notarization. Apple signing remains separate from the native
+  tools and engine. Windows signing uses its existing signing environment.
 - The Electron shell updater: checks on startup only, installs on the next
   startup rather than at quit, records each attempt in a sidecar marker and
   stops retrying the same version after three failures, and keeps the previous
@@ -782,14 +864,14 @@ or the supervisor station, and the same commands work without Desktop.
 
 ## Hosting
 
-GitHub releases host every artifact first. R2 under `releases.dinkster.org`
-mirrors them with no egress cost, and clients try mirrors in a configured
-order. Base bundles are the only large objects and are kept for the ten
+GitHub releases host Dinkster artifacts first. R2 under `releases.dinkster.org`
+mirrors them with no egress cost, and clients try artifact mirrors in a configured
+order. Third-party engine wheels come from their locked package origins or an
+explicit package mirror, not the Dinkster artifact mirror. Base bundles are kept for the ten
 newest ids per variant; every base manifest is kept forever. A client that
 needs a base whose archive is gone rebuilds it locally from the base
 manifest: it fetches each listed wheel by hash from the source index the
-manifest names and the interpreter from python-build-standalone, which is
-the one case where an engine install reads a package index. Stable engine
+manifest names and the interpreter from python-build-standalone. Stable engine
 releases are kept indefinitely. The workflow retains the newest 50
 commit-named main prereleases; stable releases, drafts and other prerelease
 tags are never removed by this cleanup. A region-specific mirror is one more
@@ -818,8 +900,8 @@ Settled:
   Packs over a local base resolve against that generation's constraints rather
   than selecting a published variant pack lock.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
-  `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
-  for wheels compiled against one torch triple.
+  `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu` and `mac-arm64`;
+  a per-variant extras index for wheels compiled against one torch triple.
 - NVIDIA variant chosen by driver, then by the lowest compute capability
   among the engine's assigned GPUs, detected with `nvidia-smi` and a WMI
   fallback, with an override; CPU is offered explicitly when no NVIDIA

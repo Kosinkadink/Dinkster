@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -39,15 +38,12 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_generations import _standalone_tree
 from test_environment_runtime import free_port, make_generation
 
 
 def _target(root: Path, number: int) -> Path:
     make_generation(root, number)
     target = root / "generations" / str(number)
-    shutil.rmtree(target / "python")
-    _standalone_tree(target / "python")
     generation = Generation.read(target / "generation.json")
     hashes = tuple(
         sorted(
@@ -336,7 +332,6 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
 
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
@@ -465,7 +460,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         code = exited.value.code
         result = json.loads(capsys.readouterr().out)
         journals = list((root / "journal").glob("*.json"))
-        assert len(journals) == 1
+        assert len(journals) == 1, result
         if interruption == "none":
             assert code == 0, result
             assert result["status"] == "applied" and read_current(root) == 2
@@ -479,6 +474,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
                     **settings,
                     "channel": "stable",
                     "variant": "win-cpu",
+                    "packageIndex": None,
                 }
                 index = LibraryStore(root / "library/library.sqlite")
                 try:

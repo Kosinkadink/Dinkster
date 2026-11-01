@@ -214,8 +214,10 @@ def test_channel_selects_an_exact_base_and_never_falls_back_to_cpu(tmp_path: Pat
     assert dict(channel.base_locations)["linux-cpu"][0].path == (
         "base/linux-cpu/" + "c" * 64 + "/manifest.json"
     )
-    with pytest.raises(EnvironmentError, match="does not provide variant win-nvidia"):
+    with pytest.raises(EnvironmentError, match="does not provide variant win-nvidia") as error:
         channel.base_for("win-nvidia")
+    assert "supported published variants: linux-cpu, win-cpu" in str(error.value)
+    assert "--from-scratch" in str(error.value)
 
 
 @pytest.mark.parametrize(

@@ -99,6 +99,7 @@ def pack_operation(
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster_workers.pack_environment",
@@ -195,6 +196,7 @@ def project_operation(
     """Plan or apply workflow requirements through the generation's core adapter."""
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster.workflow_requirements",
@@ -259,6 +261,7 @@ def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path)
     result = subprocess.run(
         [
             str(interpreter(generation)),
+            "-I",
             "-B",
             "-m",
             "dinkster.generation_packs",
@@ -303,6 +306,7 @@ def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -
     """Prepare admitted pack catalogs in the target before sealing its file inventory."""
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster.manager",
@@ -421,10 +425,11 @@ def build_generation(
             ":all:",
             "--link-mode",
             link_mode,
+            "-",
         ]
-        for directory in links:
-            command.extend(["--find-links", str(directory)])
-        command.append(str(destination / "constraints.txt"))
+        # Wheel sources can exceed Windows' command-line limit in large stores.
+        requirements = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in links)
+        requirements += constraints.read_text(encoding="utf-8")
         environment = {
             **os.environ,
             "UV_CACHE_DIR": str(store / "uv-cache"),
@@ -440,7 +445,9 @@ def build_generation(
             )
             if cleaned.returncode:
                 raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
-        result = subprocess.run(command, env=environment, capture_output=True, text=True)
+        result = subprocess.run(
+            command, input=requirements, env=environment, capture_output=True, text=True
+        )
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
         provisioned: set[str] = set()

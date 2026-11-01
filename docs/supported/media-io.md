@@ -10,6 +10,8 @@
 - Create 3D File (from Splat) exports the first valid-count-trimmed batch item
   as PLY with full spherical harmonics, or KSPLAT/SPZ with base color only.
   Empty splats are rejected and the input tensors remain unchanged.
+- Get Splat reads PLY, SPLAT, KSPLAT and SPZ file assets into a single Gaussian
+  batch. PLY retains spherical harmonics; the other formats retain base color.
 - Save 3D Model saves each nonempty mesh batch item as GLB with submission
   metadata, or copies a 3D file's primary bytes without changing its format.
   Filename prefixes target the output mount unless an adjacent mount is selected.
@@ -23,6 +25,9 @@
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
+  Generic and aggregate sockets preserve an empty format for consumers that
+  detect the original container from its contents. Concrete format sockets
+  require their declared format; conflicting explicit formats remain rejected.
   A JSON manifest rendition preserves the source and named resource identities
   when reading completed job outputs; local bindings remain host-granted rather
   than becoming content digests.

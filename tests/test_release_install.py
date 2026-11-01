@@ -20,12 +20,12 @@ from test_frontend_artifact import artifact
 from scripts.build_release import (
     build,
     build_source_archive,
+    check_release,
     development_version,
-    download_external_wheels,
     extend_release,
     read_base_manifest,
     release_version,
-    stage_external_wheels,
+    select_dependency_wheels,
     versioned_sources,
     workspace_projects,
     write_constraints,
@@ -177,6 +177,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
         {"os": "linux", "runner": "ubuntu-latest"},
         {"os": "windows", "runner": "windows-latest"},
+        {"os": "macos", "runner": "macos-latest"},
     ]
     locks = workflow["jobs"]["pack-locks"]
     assert locks["runs-on"] == "${{ matrix.runner }}"
@@ -281,6 +282,7 @@ def test_release_lock_matrix_uses_each_selected_base_native_host(
     paths = []
     for variant, system in (
         ("linux-cpu", "linux"),
+        ("linux-nvidia", "linux"),
         ("mac-arm64", "macos"),
         ("win-cpu", "windows"),
         ("win-nvidia", "windows"),
@@ -300,6 +302,7 @@ def test_release_lock_matrix_uses_each_selected_base_native_host(
     assert json.loads(output.read_text().removeprefix("lock-matrix=")) == {
         "include": [
             {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+            {"variant": "linux-nvidia", "runner": "ubuntu-latest"},
             {"variant": "mac-arm64", "runner": "macos-latest"},
             {"variant": "win-cpu", "runner": "windows-latest"},
             {"variant": "win-nvidia", "runner": "windows-latest"},
@@ -370,7 +373,10 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     assert build["permissions"] == {"actions": "read", "contents": "read"}
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "-m scripts.build_release" in commands
-    assert "--download-external-wheels" in commands
+    assert "--download-external-wheels" not in commands
+    assert 'arguments+=(--base-manifest "$manifest")' in commands
+    final_checks = "\n".join(step.get("run", "") for step in workflow["jobs"]["finalize"]["steps"])
+    assert "--check --max-bytes 100000000" in final_checks
     assert '--tag "$RELEASE_TAG"' in commands
     assert "sha256sum -c SHA256SUMS" in commands
     assert "--identity-root" not in commands
@@ -790,7 +796,7 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
 
 
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
-def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
+def test_dependency_metadata_selects_target_wheels_and_enforces_exported_hashes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str
 ) -> None:
     source = tmp_path / "source"
@@ -826,7 +832,10 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     lock = ""
     requirements = []
     for package, wheels in records.items():
-        lock += f'[[package]]\nname = "{package}"\nversion = "1.0"\nwheels = [\n'
+        lock += (
+            f'[[package]]\nname = "{package}"\nversion = "1.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\nwheels = [\n'
+        )
         for row in wheels:
             lock += (
                 "{"
@@ -910,9 +919,8 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     mac_base_manifest = tmp_path / "mac-base-manifest.json"
     mac_base_manifest.write_text(json.dumps(mac_manifest))
     base_manifests = [base_manifest, linux_base_manifest, mac_base_manifest]
-    output = tmp_path / "downloads"
-    result = download_external_wheels(tmp_path, output, "uv", base_manifests)
-    assert {path.name for path in result} == {
+    result = select_dependency_wheels(tmp_path, "uv", base_manifests)
+    assert {row["filename"] for selection in result.values() for row in selection["wheels"]} == {
         shared.name,
         win.name,
         linux.name,
@@ -922,21 +930,24 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         win_only.name,
         mac_only.name,
     }
-    assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
+    for selection in result.values():
+        for row in selection["wheels"]:
+            assert row["size"] == (source / row["filename"]).stat().st_size
+            assert (
+                row["sha256"] == hashlib.sha256((source / row["filename"]).read_bytes()).hexdigest()
+            )
+            assert row["index"] == "https://pypi.org/simple"
+    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
+    linux.unlink()
+    assert select_dependency_wheels(tmp_path, "uv", base_manifests) == result
+    assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before - {
+        linux.relative_to(tmp_path)
+    }
     original = requirements[0]
     requirements[0] = "shared==1.0 --hash=sha256:" + "0" * 64
     with pytest.raises(ValueError, match=f"no locked {tag} wheel for shared"):
-        download_external_wheels(tmp_path, tmp_path / "unauthorized", "uv", base_manifests)
+        select_dependency_wheels(tmp_path, "uv", base_manifests)
     requirements[0] = original
-    linux.unlink()
-    with pytest.raises(OSError):
-        download_external_wheels(tmp_path, tmp_path / "unavailable", "uv", base_manifests)
-    assert not (tmp_path / "unavailable" / linux.name).exists()
-    linux.write_bytes(linux.name.encode())
-    shared.write_bytes(b"x" * shared.stat().st_size)
-    with pytest.raises(ValueError, match="does not match lock"):
-        download_external_wheels(tmp_path, tmp_path / "corrupt", "uv", base_manifests)
-    assert not (tmp_path / "corrupt" / shared.name).exists()
     (tmp_path / "uv.lock").write_text(
         lock.replace(
             linux.as_uri(),
@@ -944,10 +955,10 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         )
     )
     with pytest.raises(ValueError, match=f"no locked {tag} wheel for native on manylinux"):
-        download_external_wheels(tmp_path, tmp_path / "missing-target", "uv", base_manifests)
+        select_dependency_wheels(tmp_path, "uv", base_manifests)
     requirements[:] = ["shared @ https://example.invalid/shared.whl"]
     with pytest.raises(ValueError, match="unsupported direct wheel requirement"):
-        download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv", base_manifests)
+        select_dependency_wheels(tmp_path, "uv", base_manifests)
 
 
 @pytest.mark.parametrize(
@@ -1043,8 +1054,9 @@ def test_base_archive_contract_and_canonical_identity(tmp_path: Path, change: st
             read_base_manifest(path)
 
 
-def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
+def test_dependency_metadata_uses_producer_ownership_names_per_variant(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = tmp_path / "candidates"
     source.mkdir()
@@ -1083,6 +1095,10 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
             members = [row for row in members if row["name"] != "cpu_only"]
             next(row for row in members if row["name"] == "changed_hash")["sha256"] = "0" * 64
             next(row for row in members if row["name"] == "changed_size")["size"] += 1
+            transitive = next(row for row in members if row["name"] == "transitive")
+            transitive["version"] = "1.2"
+            transitive["filename"] = transitive["filename"].replace("-1.0-", "-1.2-")
+            transitive["url"] = transitive["url"].replace("-1.0-", "-1.2-")
         manifest = {
             "format": "dinkster.base/1",
             "variant": variant,
@@ -1090,7 +1106,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
             "python": "3.14.0",
             "interpreter": {},
             "wheels": members,
-            "replaces": [row["name"] for row in members],
+            "replaces": [row["name"].replace("_", "-") for row in records],
             "workerProtocol": 1,
             "nvidia": None,
             "archive": {"format": "tar+zstd"},
@@ -1109,48 +1125,67 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
         path.write_text(json.dumps(manifest))
         manifests.append(path)
 
-    for label, bases, targets, expected in (
-        ("shared", manifests, {"cpu", "cuda"}, {wheel.name for wheel in wheels[2:]}),
-        ("none", [], {"cpu", "cuda"}, {wheel.name for wheel in wheels}),
-        ("partial", manifests[:1], {"cpu", "cuda"}, {wheel.name for wheel in wheels}),
-    ):
-        output = tmp_path / label
-        output.mkdir()
-        staged = stage_external_wheels(tmp_path, output, wheels, bases, targets)
-        assert {wheel.name for wheel in staged} == expected
-        assert {wheel.name for wheel in output.iterdir()} == expected
-        assert all(wheel.read_bytes() == (source / wheel.name).read_bytes() for wheel in staged)
+    def export(root: Path, output: Path, wheels: list[Path], uv: str) -> Path:
+        path = output / "constraints.txt"
+        path.write_text(
+            "\n".join(f"{row['name']}==1.0 --hash=sha256:{row['sha256']}" for row in records)
+        )
+        return path
 
-    plans = []
+    monkeypatch.setattr("scripts.build_release.write_constraints", export)
+    # The two bases deliberately disagree on bytes and membership; ownership is by name.
     for path in manifests:
         manifest = json.loads(path.read_text())
-        manifest["archive"]["parts"] = []
-        plan = tmp_path / f"plan-{path.name}"
-        plan.write_text(json.dumps(manifest))
-        plans.append(plan)
-    output = tmp_path / "plans"
-    output.mkdir()
-    assert {
-        path.name
-        for path in stage_external_wheels(tmp_path, output, wheels, plans, {"cpu", "cuda"})
-    } == {wheel.name for wheel in wheels}
-
-    with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests, {"cpu"})
-    with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1] * 2, {"cpu"})
+        for row in manifest["wheels"]:
+            row["name"] = row["name"].replace("_", "-")
+        identity = {key: value for key, value in manifest.items() if key not in {"id", "signature"}}
+        identity["archive"] = {"format": "tar+zstd"}
+        manifest["id"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
+        )
+        path.write_text(json.dumps(manifest))
+    result = select_dependency_wheels(tmp_path, "uv", manifests)
+    assert (
+        next(row for row in result["cuda"]["wheels"] if row["name"] == "transitive")["version"]
+        == "1.2"
+    )
+    assert {row["name"] for row in result["cpu"]["wheels"]} == {
+        "common",
+        "transitive",
+        "cpu-only",
+        "changed-hash",
+        "changed-size",
+    }
+    assert {row["name"] for row in result["cuda"]["wheels"]} == {
+        "common",
+        "transitive",
+        "changed-hash",
+        "changed-size",
+    }
+    assert (
+        next(row for row in result["cuda"]["wheels"] if row["name"] == "changed-hash")["sha256"]
+        == "0" * 64
+    )
+    assert (
+        next(row for row in result["cuda"]["wheels"] if row["name"] == "changed-size")["size"]
+        == records[-1]["size"] + 1
+    )
+    with pytest.raises(ValueError, match="select at least one"):
+        select_dependency_wheels(tmp_path, "uv", [])
+    with pytest.raises(ValueError, match="duplicate base variant"):
+        select_dependency_wheels(tmp_path, "uv", manifests[:1] * 2)
     damaged = json.loads(manifests[0].read_text())
     damaged["python"] = "3.14.1"
     manifests[0].write_text(json.dumps(damaged))
     with pytest.raises(ValueError, match="id does not match"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1], {"cpu"})
+        select_dependency_wheels(tmp_path, "uv", manifests[:1])
     damaged["format"] = "another.base/1"
     manifests[0].write_text(json.dumps(damaged))
     with pytest.raises(ValueError, match="unsupported base manifest format"):
-        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1], {"cpu"})
-    wheels[0].write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="does not match a locked artifact"):
-        stage_external_wheels(tmp_path, tmp_path, wheels[:1], [], set())
+        select_dependency_wheels(tmp_path, "uv", manifests[:1])
 
 
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
@@ -1266,9 +1301,46 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
             )
 
 
+def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budget(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_release import write_manifest
+
+    names = [
+        "dinkster-1.0-py3-none-any.whl",
+        "dinkster_api-1.0-py3-none-any.whl",
+        "dinkster_supervisor-1.0-py3-none-any.whl",
+        "constraints.txt",
+        "dinkster-tools-windows-x86_64.zip",
+    ]
+    for size, name in enumerate(names, 1):
+        (tmp_path / name).write_bytes(b"x" * size)
+    workspace_wheels = names[:3]
+    manifest: dict[str, object] = {"workspaceWheels": workspace_wheels}
+    write_manifest(tmp_path, manifest, [tmp_path / name for name in names])
+    expected = 1 + 2 + 3 + 4
+    expected += len((tmp_path / "release-manifest.json").read_bytes())
+    expected += len((tmp_path / "SHA256SUMS").read_bytes())
+    assert check_release(tmp_path, expected) == expected
+    with pytest.raises(ValueError, match="exceeds budget"):
+        check_release(tmp_path, expected - 1)
+    (tmp_path / names[-1]).write_bytes(b"large interpreter" * 1000)
+    assert check_release(tmp_path, expected) == expected
+    external = "numpy-1.0-py3-none-any.whl"
+    (tmp_path / external).write_bytes(b"external")
+    write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
+    with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
+        check_release(tmp_path, 100_000_000)
+    workspace_wheels.append(external)
+    write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
+    with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
+        check_release(tmp_path, 100_000_000)
+
+
+@pytest.mark.parametrize("platform", ["windows-x86_64", "linux-x86_64", "macos-arm64"])
 @pytest.mark.parametrize("corruption", [None, "payload", "sums", "extra", "duplicate"])
 def test_native_payload_finalization_preserves_and_verifies_existing_release(
-    tmp_path: Path, corruption: str | None
+    tmp_path: Path, corruption: str | None, platform: str
 ) -> None:
     output = tmp_path / "release"
     output.mkdir()
@@ -1302,7 +1374,7 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
             for path in [*original, metadata]
         )
     )
-    candidate = tmp_path / "dinkster-tools-windows-x86_64.zip"
+    candidate = tmp_path / f"dinkster-tools-{platform}.zip"
     candidate.write_bytes(b"native archive")
     if corruption == "payload":
         wheel.write_bytes(b"wrong supervisor wheel")
@@ -1504,7 +1576,7 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     assert releases[1]["prerelease"] is False
 
 
-@pytest.mark.parametrize("system", ["windows", "macos"])
+@pytest.mark.parametrize("system", ["windows", "macos", "linux"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
@@ -1516,48 +1588,80 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     boundary = tmp_path / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
     boundary.parent.mkdir(parents=True)
     boundary.write_text("PROTOCOL_VERSION = 11\n")
-    pins = {"torch": "2.14.1", "torchvision": "0.29.1", "numpy": "2.5.1"}
+    pins = {
+        "torch": "2.14.1",
+        "torchvision": "0.29.1",
+        "numpy": "2.5.1",
+        "cuda-toolkit": "13.0.3.0",
+        "sympy": "1.14",
+    }
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "dinkster"\nrequires-python = ">=3.12"\n'
         "[dependency-groups]\nengine-base = " + json.dumps(["numpy==2.5.1"])
     )
     tag = f"cp{python.split('.')[0]}{python.split('.')[1]}"
     windows = system == "windows"
-    variant = "win-cpu" if windows else "mac-arm64"
-    target = "win_amd64" if windows else "macosx_14_0_arm64"
-    triple = "x86_64-pc-windows-msvc" if windows else "aarch64-apple-darwin"
+    variant = {"windows": "win-cpu", "macos": "mac-arm64", "linux": "linux-nvidia"}[system]
+    target = {
+        "windows": "win_amd64",
+        "macos": "macosx_14_0_arm64",
+        "linux": "manylinux1_x86_64.manylinux_2_5_x86_64",
+    }[system]
+    triple = {
+        "windows": "x86_64-pc-windows-msvc",
+        "macos": "aarch64-apple-darwin",
+        "linux": "x86_64-unknown-linux-gnu",
+    }[system]
     executable = "python/python.exe" if windows else "python/bin/python3"
     lock = []
     wheels = []
     for name, version in pins.items():
-        torch = windows and name in {"torch", "torchvision"}
-        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-{target}.whl"
+        torch = system != "macos" and name in {"torch", "torchvision"}
+        backend = "+cpu" if windows else "+cu132"
+        actual = "13.2.2" if name == "cuda-toolkit" else version + (backend if torch else "")
+        filename = f"{name.replace('-', '_')}-{actual}-{tag}-{tag}-{target}.whl"
         digest = hashlib.sha256(name.encode()).hexdigest()
         url = f"https://example.invalid/{filename}"
         wheels.append(
             dict(
                 name=name,
-                version=version + ("+cpu" if torch else ""),
+                version=actual,
                 filename=filename,
                 size=17,
                 sha256=digest,
                 url=url,
-                index="https://download.pytorch.org/whl/cpu"
+                index=f"https://download.pytorch.org/whl/{backend[1:]}"
                 if torch
                 else "https://pypi.org/simple",
-                verification="index" if torch else "lock",
+                verification="index" if torch or name == "cuda-toolkit" else "lock",
                 lockedVersion=version,
             )
         )
+        locked_url = (
+            f"https://example.invalid/cuda_toolkit-{version}-{tag}-{tag}-{target}.whl"
+            if name == "cuda-toolkit"
+            else url
+        )
         lock.append(
             f"[[package]]\nname = '{name}'\nversion = '{version}'\n"
-            f"wheels = [{{url = '{url}', size = 17, hash = 'sha256:{digest}'}}]\n"
+            f"wheels = [{{url = '{locked_url}', size = 17, hash = 'sha256:{digest}'}}]\n"
         )
+    lock.append(
+        "[[package]]\nname = 'consumer'\nversion = '1.0'\n"
+        "dependencies = [{name = 'torch'}, {name = 'torchvision'}, {name = 'numpy'}]\n"
+        "[package.optional-dependencies]\n"
+        "images = [{name = 'sympy', marker = \"extra == 'images' and python_version >= '3.13'\"},"
+        "{name = 'cuda-toolkit', marker = \"sys_platform == 'win32' "
+        "and python_version < '3.13'\"}]\n"
+        "[[package]]\nname = 'inactive-consumer'\nversion = '1.0'\n"
+        "resolution-markers = [\"python_version < '3.13'\"]\n"
+        "dependencies = [{name = 'cuda-toolkit'}]\n"
+    )
     (tmp_path / "uv.lock").write_text("\n".join(lock))
     original: dict = dict(
         format="dinkster.base/1",
         variant=variant,
-        platform=dict(os=system, arch="x86_64" if windows else "arm64"),
+        platform=dict(os=system, arch="arm64" if system == "macos" else "x86_64"),
         python=python,
         interpreter=dict(
             filename=f"cpython-{python}+20261026-{triple}-install_only_stripped.tar.gz",
@@ -1584,13 +1688,25 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         nonlocal payload, extras_payload, mutation, requested
         mutation = change
         manifest = deepcopy(original)
+        numpy = next(row for row in manifest["wheels"] if row["name"] == "numpy")
         if change == "version":
-            manifest["wheels"][-1]["version"] = "2.5.0"
-            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
+            numpy["version"] = "2.5.0"
+            numpy["filename"] = f"numpy-2.5.0-{tag}-{tag}-{target}.whl"
         elif change == "wheel-hash":
-            manifest["wheels"][-1]["sha256"] = "0" * 64
+            numpy["sha256"] = "0" * 64
+        elif change in {"historical-index", "historical-lock"}:
+            toolkit = next(row for row in manifest["wheels"] if row["name"] == "cuda-toolkit")
+            toolkit["lockedVersion"] = "12.9.0" if change == "historical-index" else "13.2.2"
+            toolkit["verification"] = "index" if change == "historical-index" else "lock"
+        elif change == "optional-interface-version":
+            sympy = next(row for row in manifest["wheels"] if row["name"] == "sympy")
+            sympy.update(
+                version="1.15",
+                filename=f"sympy-1.15-{tag}-{tag}-{target}.whl",
+                verification="index",
+            )
         elif change == "torch-index":
-            manifest["wheels"][0]["index"] = "https://download.pytorch.org/whl/cu132"
+            manifest["wheels"][0]["index"] = "https://download.pytorch.org/whl/cu126"
         elif change == "protocol":
             manifest["workerProtocol"] = 10
         elif change == "python":
@@ -1604,7 +1720,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
                 f"torch-2.14.1+cpu-{tag}-{tag}-manylinux_2_28_x86_64.whl"
             )
         elif change == "missing-pin":
-            manifest["wheels"] = manifest["wheels"][:-1]
+            manifest["wheels"] = [row for row in manifest["wheels"] if row["name"] != "numpy"]
         identity = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
         ).hexdigest()
@@ -1696,9 +1812,13 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     assert paths[0].read_bytes() == payload
     streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
     assert streamed[0].read_bytes() == payload
+    for change in ("historical-index", "historical-lock"):
+        historical = acquire(tmp_path, [prepare(change)], tmp_path / change)
+        assert historical[0].read_bytes() == payload
     for change in (
         "version",
         "wheel-hash",
+        "optional-interface-version",
         "torch-index",
         "protocol",
         "python",
