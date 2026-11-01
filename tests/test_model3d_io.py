@@ -44,6 +44,12 @@ from dinkster_assets.declared import produced_output_scratch
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_nodes_comfy import register_inference_types
+from dinkster_nodes_comfy.preview3d import (
+    Preview3DAdvanced,
+    PreviewGaussianSplat,
+    PreviewPointCloud,
+)
 from dinkster_nodes_comfy.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from dinkster_nodes_media_io import LoadModel3D, PreviewModel3D, SaveModel3D, register_media_types
 from dinkster_schema import build_node_types, build_schemas
@@ -53,6 +59,157 @@ from dinkster_workers import InProcessWorker
 from dinkster.compose import PackSpec, ServingComposer
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
+
+@pytest.mark.parametrize("node", [Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud])
+def test_file3d_preview_metadata_precedence_and_original_identity(
+    node: type[Preview3DAdvanced | PreviewGaussianSplat | PreviewPointCloud],
+) -> None:
+    source = {"format": "gltf", "source": object(), "resources": {"mesh.bin": object()}}
+    camera = {"zoom": 2.5}
+    placement = [{"position": {"x": 3.0}}]
+    state = {"camera_info": camera, "model_3d_info": placement}
+    for viewport, explicit_camera, explicit_placement, expected_camera, expected_placement in (
+        (state, None, None, camera, placement),
+        (state, {}, [], {}, []),
+        ({"model_3d_info": None}, None, None, None, None),
+        (None, None, None, None, []),
+    ):
+        result = node.execute(
+            model_3d=source,
+            viewport_state=viewport,
+            width=371,
+            height=209,
+            camera_info=explicit_camera,
+            model_3d_info=explicit_placement,
+        )
+        assert result["model_3d"] is source
+        assert result["camera_info"] == expected_camera
+        assert result["model_3d_info"] == expected_placement
+        assert (result["width"], result["height"]) == (371, 209)
+
+
+class Preview3DFileSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "preview-3d-source.make",
+            outputs=tuple(
+                OutputSpec(node.__name__, TypeExpr.concrete(node.output_type))
+                for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud)
+            )
+            + (OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        vault = produced_output_scratch()
+        assert vault is not None
+        refs = []
+        for name, data in (
+            ("original.ply", b"original point bytes"),
+            ("sidecar.bin", b"sidecar bytes"),
+        ):
+            digest = digest_bytes(data)
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            refs.append(
+                AssetRef(digest, name, len(data), "application/octet-stream", resolver=vault)
+            )
+        value = {"format": "ply", "source": refs[0], "resources": {"sidecar.bin": refs[1]}}
+        return cls.outputs(
+            **{
+                node.__name__: value
+                for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud)
+            },
+            viewport={
+                "camera_info": {
+                    "position": {"x": 1.0, "y": 2.0, "z": -3.0},
+                    "target": {"x": 0.0, "y": 1.0, "z": 0.0},
+                    "zoom": 2.5,
+                    "cameraType": "perspective",
+                },
+                "model_3d_info": [],
+            },
+        )
+
+
+@pytest.mark.parametrize("in_process", [True, False])
+def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    module = f"preview_3d_source_{in_process}"
+    (tmp_path / f"{module}.py").write_text(
+        "from test_model3d_io import Preview3DFileSource\n"
+        "from dinkster_nodes_comfy import register_inference_types\nNODES=(Preview3DFileSource,)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "source.toml"
+    manifest.write_text(
+        '[pack]\nname="preview-3d-source"\npublisher="dinkster"\n'
+        'namespaces=["preview-3d-source"]\n[pack.entry]\n'
+        f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_inference_types(registry)
+        composer = ServingComposer(
+            registry=registry,
+            worker_env={
+                "DINKSTER_ASSET_VAULT": str(tmp_path / "vault"),
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                ),
+            },
+        )
+        try:
+            for path in (
+                Path(__file__).resolve().parents[1]
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml",
+                manifest,
+            ):
+                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
+            nodes = {"source": GraphNode("preview-3d-source.make")}
+            for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud):
+                nodes[node.__name__] = GraphNode(
+                    node.__name__,
+                    {
+                        "model_3d": Link("source", node.__name__),
+                        "viewport_state": Link("source", "viewport"),
+                        "width": 371,
+                        "height": 209,
+                    },
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(Graph(nodes), list(nodes)[1:])
+                assert not result.artifacts
+                for name in list(nodes)[1:]:
+                    out = result.outputs[name]
+                    value = cast("dict[str, object]", out["model_3d"].resolve())
+                    assert value["format"] == "ply"
+                    with cast("AssetRef", value["source"]).open() as stream:
+                        assert stream.read() == b"original point bytes"
+                    resources = cast("dict[str, AssetRef]", value["resources"])
+                    with resources["sidecar.bin"].open() as stream:
+                        assert stream.read() == b"sidecar bytes"
+                    assert out["camera_info"].resolve() == {
+                        "position": {"x": 1.0, "y": 2.0, "z": -3.0},
+                        "target": {"x": 0.0, "y": 1.0, "z": 0.0},
+                        "zoom": 2.5,
+                        "cameraType": "perspective",
+                    }
+                    assert out["model_3d_info"].resolve() == []
+                    assert (out["width"].resolve(), out["height"].resolve()) == (371, 209)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def glb_bytes(document: bytes = b'{"asset":{"version":"2.0"}}') -> bytes:
