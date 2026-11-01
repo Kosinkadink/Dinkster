@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 from dinkster_assets import AssetRef, AssetSource, PackagedSource, RemoteSource
 from dinkster_workers import PackManifest
+from packaging.version import Version
+
+VARIANT_DEVICES = {
+    "linux-cpu": "cpu",
+    "win-cpu": "cpu",
+    "win-nvidia": "cuda",
+    "win-nvidia-cu126": "cuda",
+}
 
 
 class RequirementError(ValueError):
@@ -171,19 +181,63 @@ class WorkflowPlan:
         }
 
 
+def generation_device(generation: Path, variant: str) -> str:
+    """Read a custom target's device family from its verified base, not its name or host."""
+    from dinkster_supervisor.environment_artifacts import validate_manifest
+    from dinkster_supervisor.environment_state import Generation, content_digest
+
+    record = Generation.read(generation / "generation.json")
+    if record.variant != variant:
+        raise RequirementError("generation variant differs from workflow target")
+    base = validate_manifest((generation / "base-manifest.json").read_bytes(), record.base, variant)
+    wheels = cast("list[dict[str, object]]", base["wheels"])
+    torch = next((wheel for wheel in wheels if wheel["name"] == "torch"), None)
+    if torch is None:
+        raise RequirementError("generation base has no torch device declaration")
+    system = cast("dict[str, object]", base["platform"])["os"]
+    python = Version(cast("str", base["python"]))
+    library = (
+        "Lib/site-packages"
+        if system == "windows"
+        else f"lib/python{python.major}.{python.minor}/site-packages"
+    )
+    name = f"python/{library}/torch/version.py"
+    path = generation / name
+    if path.is_symlink() or content_digest(path) != dict(record.files).get(name):
+        raise RequirementError("generation torch build metadata differs from its inventory")
+    metadata: dict[str, object] = {}
+    for statement in ast.parse(path.read_bytes()).body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            target, value = statement.target, statement.value
+        elif (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            target, value = statement.targets[0], statement.value
+        else:
+            continue
+        if isinstance(value, ast.Constant):
+            metadata[target.id] = value.value
+    if metadata.get("__version__") != torch["version"]:
+        raise RequirementError("generation torch version differs from its base")
+    for field, device in (("hip", "rocm"), ("rocm", "rocm"), ("cuda", "cuda"), ("xpu", "xpu")):
+        if metadata.get(field):
+            return device
+    if system == "macos":
+        return "mps"
+    if "cuda" in metadata and "hip" in metadata:
+        return "cpu"
+    raise RequirementError("generation torch build has no declared device family")
+
+
 def manifest_unavailability(
-    requirement: PackRequirement, manifest: PackManifest, variant: str
+    requirement: PackRequirement, manifest: PackManifest, variant: str, *, device: str | None = None
 ) -> str | None:
     """Only manifest-declared resource needs can make portable packs hardware-specific."""
-    devices = {
-        "linux-cpu": "cpu",
-        "win-cpu": "cpu",
-        "win-nvidia": "cuda",
-        "win-nvidia-cu126": "cuda",
-    }
-    if variant not in devices:
+    if device is None and variant not in VARIANT_DEVICES:
         raise RequirementError(f"unknown engine variant: {variant}")
-    device = devices[variant]
+    device = VARIANT_DEVICES[variant] if device is None else device
     if manifest.sandbox.gpu and device == "cpu":
         return "pack.sandbox.gpu requires a GPU"
     for provider in manifest.vision_providers:

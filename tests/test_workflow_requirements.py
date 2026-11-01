@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -230,10 +231,90 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
     assert json.dumps(document) == before
 
 
-@pytest.mark.parametrize("engine_variant", [None, "linux-cpu", "win-nvidia"])
+def custom_generation(root: Path, device: str) -> Path:
+    from dinkster_supervisor.environment_state import Generation, content_digest
+
+    generation = root / "generation"
+    generation.mkdir()
+    version_file = generation / "python/lib/python3.14/site-packages/torch/version.py"
+    version_file.parent.mkdir(parents=True)
+    version_file.write_text(
+        "__version__ = '2.5.0'\n"
+        + f"cuda: str | None = {'None' if device == 'cpu' else repr('12.4')}\n"
+        + "hip = None\n"
+    )
+    base = {
+        "format": "dinkster.base/1",
+        "variant": "user-target",
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "python": "3.14.10",
+        "interpreter": {"executable": "python/bin/python3"},
+        "wheels": [
+            {
+                "name": "torch",
+                "version": "2.5.0",
+                "lockedVersion": None,
+                "filename": "torch-2.5.0-py3-none-any.whl",
+                "size": 1,
+                "sha256": "a" * 64,
+                "index": "https://example.test/simple",
+                "url": "https://example.test/torch.whl",
+                "verification": "index",
+            }
+        ],
+        "replaces": ["torch"],
+        "workerProtocol": 1,
+        "nvidia": None,
+        "archive": {"format": "tar+zstd"},
+    }
+    base_id = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(base, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+                "ascii"
+            )
+        ).hexdigest()
+    )
+    base["id"] = base_id
+    base["archive"]["parts"] = [{"filename": "base.tar.zst.001", "size": 1, "sha256": "b" * 64}]
+    (generation / "base-manifest.json").write_text(json.dumps(base))
+    (generation / "constraints.txt").write_text("torch==2.5.0\n")
+    constraints = content_digest(generation / "constraints.txt")
+    Generation(
+        1,
+        base_id,
+        "0.0.2",
+        "sha256:" + "c" * 64,
+        constraints,
+        "user-target",
+        1,
+        (
+            ("constraints.txt", constraints),
+            (version_file.relative_to(generation).as_posix(), content_digest(version_file)),
+        ),
+    ).write(generation / "generation.json")
+    (generation / "dinkster.lock").write_text(Lockfile().record_json())
+    return generation
+
+
+@pytest.mark.parametrize(
+    ("engine_variant", "device"),
+    [
+        (None, None),
+        ("linux-cpu", "cpu"),
+        ("win-nvidia", "cuda"),
+        ("user-target", "cpu"),
+        ("user-target", "cuda"),
+    ],
+)
 def test_public_plan_is_read_only_project_filtered_and_verified(
-    tmp_path: Path, engine_variant: str | None
+    tmp_path: Path, engine_variant: str | None, device: str | None
 ) -> None:
+    generation = (
+        custom_generation(tmp_path, cast("str", device))
+        if engine_variant == "user-target"
+        else None
+    )
     store = LibraryStore(tmp_path / "library.sqlite")
     vault = AssetVault(tmp_path / "vault")
     provenance = ProvenanceStore(tmp_path / "provenance.json")
@@ -285,6 +366,7 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
             app,
             manifests=lambda: declared,
             engine_variant=engine_variant,
+            generation=generation,
         )
         async with TestClient(TestServer(app)) as client:
             body = {"workflows": [workflow()], "variant": "linux-cpu", "project": "excluded"}
@@ -358,14 +440,25 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
             response = await client.post("/api/workflows/plan", json={"workflows": [workflow()]})
             if engine_variant is not None:
                 assert (await response.json())["errors"] == (
-                    ["pack tools-a: pack.sandbox.gpu requires a GPU"]
-                    if engine_variant == "linux-cpu"
-                    else []
+                    ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
                 )
             response = await client.post(
                 "/api/workflows/plan", json={**body, "variant": "win-nvidia"}
             )
             assert (await response.json())["errors"] == []
+            if generation is not None:
+                response = await client.post(
+                    "/api/workflows/plan",
+                    json={**body, "variant": "another-custom"},
+                )
+                assert response.status == 400
+                metadata = generation / "python/lib/python3.14/site-packages/torch/version.py"
+                metadata.write_text("cuda = '99.0'\n")
+                response = await client.post(
+                    "/api/workflows/plan", json={"workflows": [workflow()]}
+                )
+                assert response.status == 400
+                assert "differs from its inventory" in (await response.json())["error"]
 
     try:
         asyncio.run(scenario())
@@ -463,7 +556,9 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
         ).record_json()
     )
 
-    def run_plan(variant: str, *extra: str) -> subprocess.CompletedProcess[str]:
+    def run_plan(
+        variant: str, *extra: str, source_generation: Path = source
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
@@ -473,7 +568,7 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
                 "--project-root",
                 str(tmp_path),
                 "--source-generation",
-                str(source),
+                str(source_generation),
                 "--catalog-lock",
                 str(catalog),
                 "--artifacts",
@@ -555,6 +650,16 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     ]
     assert "blocking errors" in refused.stderr
     assert run_plan("win-nvidia").returncode == 0
+    for device in ("cpu", "cuda"):
+        custom_root = tmp_path / device
+        custom_root.mkdir()
+        selected = custom_generation(custom_root, device)
+        (selected / "dinkster.lock").write_text(Lockfile.of(target_packs).record_json())
+        custom = run_plan("user-target", source_generation=selected)
+        assert custom.returncode == (1 if device == "cpu" else 0), custom.stderr
+        assert json.loads(custom.stdout)["plan"]["errors"] == (
+            ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
+        )
     absent_target = tmp_path / "not-created"
     absent = run_plan("win-nvidia", "--generation", str(absent_target))
     assert absent.returncode == 0 and absent.stdout == run_plan("win-nvidia").stdout

@@ -204,6 +204,10 @@
 - A server launched with `--engine-variant` supplies that declared target to
   workflow-open plans that omit `variant`. Explicit request variants remain
   available for read-only comparisons; no target is inferred from hardware.
+  A selected custom generation uses its validated base and inventoried torch
+  build metadata for device compatibility, without importing torch or probing
+  host hardware. GPU-only packs still refuse a CPU custom base. Unknown custom
+  comparison targets require their own generation rather than a guessed device.
   Plans support packs supplied with either a directory or an explicit manifest
   path through `--pack`.
 - Local environment operators can run `python -m dinkster.workflow_requirements
