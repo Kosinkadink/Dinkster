@@ -22,12 +22,15 @@ from dinkster_workers import load_manifest
 from dinkster_workers.doctor import DoctorReport, diagnose_static
 from dinkster_workers.pack_lock import resolve_pack_lock
 
+OFFICIAL_PACK_FAMILIES = ("comfy", "foundation", "image", "media-io", "remote")
+
 
 def build(
     root: Path,
     output: Path,
     *,
-    version: str,
+    version: str | None = None,
+    packs: Sequence[str] = (),
     variant: str | None = None,
     python: Path | None = None,
     constraints: Path | None = None,
@@ -37,9 +40,10 @@ def build(
     uv: str = "uv",
 ) -> tuple[Path, ...]:
     """Build only committed pack sources, without importing node implementations."""
-    problem = validate_version(version)
-    if problem is not None:
-        raise ValueError(f"pack version {version!r} {problem}")
+    if version is not None:
+        problem = validate_version(version)
+        if problem is not None:
+            raise ValueError(f"pack version {version!r} {problem}")
     if variant is not None:
         if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None:
             raise ValueError("variant must be a portable variant name")
@@ -65,7 +69,6 @@ def build(
             commit,
         ]
     )
-    output.mkdir(parents=True, exist_ok=True)
     payloads: list[Path] = []
     locked: list[LockedPack] = []
     with tempfile.TemporaryDirectory(prefix="dinkster-official-packs-") as directory:
@@ -73,10 +76,7 @@ def build(
         with tarfile.open(fileobj=io.BytesIO(tracked)) as archive:
             archive.extractall(staged, filter="data")
         packages = staged / "packages"
-        roots = [
-            packages / f"dinkster-nodes-{family}"
-            for family in ("comfy", "foundation", "image", "media-io", "remote")
-        ]
+        roots = [packages / f"dinkster-nodes-{family}" for family in OFFICIAL_PACK_FAMILIES]
         vision = packages / "dinkster-nodes-vision"
         for manifest in sorted(vision.glob("*_pack/dinkster-pack.toml")):
             pack_root = manifest.parent
@@ -85,9 +85,24 @@ def build(
             destination = pack_root / namespace / module.replace(".", "/")
             shutil.copytree(vision / "src" / namespace / module.replace(".", "/"), destination)
             roots.append(pack_root)
-        for pack_root in roots:
+        manifests = [(path, load_manifest(path / "dinkster-pack.toml")) for path in roots]
+        selected = set(packs)
+        unknown = selected - {manifest.name for _, manifest in manifests}
+        if unknown:
+            raise ValueError(f"unknown official packs: {', '.join(sorted(unknown))}")
+        output.mkdir(parents=True, exist_ok=True)
+        for pack_root, manifest in manifests:
+            if selected and manifest.name not in selected:
+                continue
+            if version is None and manifest.compatibility is None:
+                raise ValueError(
+                    f"official pack {manifest.name!r} must declare its version and engine range"
+                )
+            pack_version = version
+            if pack_version is None:
+                assert manifest.compatibility is not None
+                pack_version = manifest.compatibility.version
             manifest_path = pack_root / "dinkster-pack.toml"
-            manifest = load_manifest(manifest_path)
             project_path = (
                 vision / "pyproject.toml"
                 if pack_root.parent == vision
@@ -115,7 +130,7 @@ def build(
             tests = pack_root / "tests"
             if tests.is_dir():
                 shutil.rmtree(tests)
-            payload = output / f"{manifest.name}-{version}.zip"
+            payload = output / f"{manifest.name}-{pack_version}.zip"
             digest = build_artifact(pack_root, payload)
             with tempfile.TemporaryDirectory(prefix="dinkster-official-doctor-") as extracted:
                 artifact_root = unpack_artifact(payload, Path(extracted), digest)
@@ -132,7 +147,7 @@ def build(
             locked.append(
                 LockedPack(
                     pack=manifest.name,
-                    version=version,
+                    version=pack_version,
                     artifact_digest=digest,
                     publisher=manifest.publisher,
                     claims=tuple(canonical_claim(claim) for claim in manifest.namespaces),
@@ -155,7 +170,9 @@ def build(
                     requires_python=project.get("requires-python", ">=3.12"),
                     uv=uv,
                 )
-                dependency_payload = output / f"{manifest.name}-{version}-{variant}.pack-lock.json"
+                dependency_payload = (
+                    output / f"{manifest.name}-{pack_version}-{variant}.pack-lock.json"
+                )
                 dependency_lock.write(dependency_payload)
                 payloads.append(dependency_payload)
     lock = output / "official-packs.lock"
@@ -165,7 +182,8 @@ def build(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True, help="Normalized public PEP 440 pack version")
+    parser.add_argument("--version", help="Override manifest versions for legacy release builds")
+    parser.add_argument("--pack", action="append", default=[], help="Exact official pack id")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--variant")
     parser.add_argument("--generation-python", type=Path)
@@ -187,6 +205,7 @@ if __name__ == "__main__":
         Path(__file__).resolve().parents[1],
         args.output.resolve(),
         version=args.version,
+        packs=args.pack,
         variant=args.variant,
         python=args.generation_python,
         constraints=args.constraints,
