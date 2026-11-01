@@ -639,6 +639,7 @@ namespaces = [
     "ImageUpscaleWithModel",
     "ImageHistogram",
     "TextOverlay",
+    "SAM3DBody_Render",
 ]
 
 [pack.sandbox]

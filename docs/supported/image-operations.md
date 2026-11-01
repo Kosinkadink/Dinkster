@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `SAM3DBody_Render` renders MHR and external rig pose frames as meshes,
+  silhouettes, 2D or 3D OpenPose skeletons, or SCAIL capsules with hand/face
+  overlays, optional backgrounds, aspect-derived sizing and camera overrides.
 - Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
   preserve original-file assets and sidecars while returning viewport camera,
   model placement and dimensions, with explicit metadata inputs taking priority.
