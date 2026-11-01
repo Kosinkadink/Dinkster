@@ -397,10 +397,11 @@ def prepare_engine_interpreter(
         ":all:",
         "--link-mode",
         link_mode,
+        "-",
     ]
-    for directory in links:
-        command.extend(["--find-links", str(directory)])
-    command.append(str(destination / "constraints.txt"))
+    # Wheel sources can exceed Windows' command-line limit in large stores.
+    requirements = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in links)
+    requirements += constraints.read_text(encoding="utf-8")
     environment = {
         **os.environ,
         "UV_CACHE_DIR": str(store / "uv-cache"),
@@ -416,7 +417,9 @@ def prepare_engine_interpreter(
         )
         if cleaned.returncode:
             raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
-    result = subprocess.run(command, env=environment, capture_output=True, text=True)
+    result = subprocess.run(
+        command, input=requirements, env=environment, capture_output=True, text=True
+    )
     if result.returncode:
         raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
     return python

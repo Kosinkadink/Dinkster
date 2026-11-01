@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
@@ -189,9 +191,17 @@ if __name__ == "__main__":
     parser.add_argument("--constraints", type=Path)
     parser.add_argument("--index", action="append", default=[])
     parser.add_argument("--find-links", type=Path, action="append", default=[])
+    parser.add_argument(
+        "--find-links-stdin", action="store_true", help="Read JSON wheel directories from stdin"
+    )
     parser.add_argument("--accelerator")
     parser.add_argument("--uv", default="uv")
     args = parser.parse_args()
+    if args.find_links_stdin:
+        links = json.load(sys.stdin)
+        if not isinstance(links, list) or any(not isinstance(path, str) for path in links):
+            parser.error("stdin must contain a JSON array of wheel directories")
+        args.find_links.extend(Path(path) for path in links)
     for payload in build(
         Path(__file__).resolve().parents[1],
         args.output.resolve(),

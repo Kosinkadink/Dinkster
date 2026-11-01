@@ -12,7 +12,7 @@ import sys
 import sysconfig
 import zipfile
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 from dinkster_supervisor.environment_generations import (
@@ -160,6 +160,126 @@ def _assert_shared(first: Path, second: Path) -> None:
         assert extents[0] == extents[1]
     else:
         pytest.fail("expected shared inode or Linux CoW extents")
+
+
+@pytest.mark.parametrize("directories,root_length", [(154, 117), (500, 200)])
+def test_generation_sync_command_does_not_expand_wheel_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directories: int, root_length: int
+) -> None:
+    deep = tmp_path / ("x" * max(1, root_length - len(str(tmp_path)) - 1))
+    root, store = deep / "project", deep / "store"
+    root.mkdir(parents=True)
+    base = store / "bases" / ("a" * 64) / "python"
+    python = base / ("python.exe" if os.name == "nt" else "bin/python3")
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"interpreter fixture")
+    constraints = deep / "constraints.txt"
+    rows = []
+    for number in range(directories):
+        digest = f"{number:064x}"
+        wheel = store / "wheels" / digest / f"fixture_{number}-1.0-py3-none-any.whl"
+        wheel.parent.mkdir(parents=True)
+        wheel.write_bytes(b"wheel fixture")
+        rows.append(f"fixture-{number}==1.0 --hash=sha256:{digest}")
+    constraints.write_text("\n".join(rows) + "\n")
+
+    windows_root = PureWindowsPath("C:/") / ("r" * (root_length - 3))
+    previous = [
+        "uv",
+        "pip",
+        "sync",
+        "--python",
+        str(windows_root / "project/generations/1/python/python.exe"),
+        "--break-system-packages",
+        "--offline",
+        "--no-index",
+        "--require-hashes",
+        "--only-binary",
+        ":all:",
+        "--link-mode",
+        "hardlink",
+    ]
+    for directory in [
+        windows_root / "store/wheels",
+        *(windows_root / "store/wheels" / f"{number:064x}" for number in range(directories)),
+    ]:
+        previous.extend(["--find-links", str(directory)])
+    previous.append(str(windows_root / "project/generations/1/constraints.txt"))
+    previous_units = len(subprocess.list2cmdline(previous).encode("utf-16-le")) // 2 + 1
+    assert previous_units > 32767
+    if directories == 154:
+        assert previous_units == 32768
+
+    def sync(command, **kwargs):
+        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
+        assert command[1:3] == ["pip", "sync"]
+        assert "--offline" in command and "--no-index" in command
+        assert "--require-hashes" in command and "--only-binary" in command
+        assert command[command.index("--link-mode") + 1] in {"hardlink", "clone"}
+        assert kwargs["input"].count("--find-links ") == directories + 1
+        assert kwargs["input"].endswith(constraints.read_text())
+        raise RuntimeError("sync inspected")
+
+    monkeypatch.setattr(subprocess, "run", sync)
+    with pytest.raises(RuntimeError, match="sync inspected"):
+        build_generation(
+            root=root,
+            number=1,
+            store=store,
+            base="sha256:" + "a" * 64,
+            engine_version="1.0",
+            engine_release="sha256:" + "b" * 64,
+            constraints=constraints,
+            variant="win-cpu" if os.name == "nt" else "linux-cpu",
+            worker_protocol=1,
+        )
+    assert not (root / "generations" / "1").exists()
+
+
+def test_checkout_pack_commands_do_not_expand_wheel_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_local import prepare_local_packs
+    from dinkster_workers.pack_lock import resolve_pack_lock
+
+    store = tmp_path / ("x" * max(1, 200 - len(str(tmp_path)) - 1))
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    constraints = generation / "constraints.txt"
+    constraints.write_text(
+        "\n".join(f"fixture-{number}==1.0 --hash=sha256:{number:064x}" for number in range(500))
+        + "\n"
+    )
+    links = [store / "wheels" / f"{number:064x}" for number in range(500)]
+
+    def captured(command, **kwargs):
+        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
+        if "--find-links-stdin" in command:
+            assert json.loads(kwargs["input"]) == [str(path) for path in links]
+        else:
+            source = Path(command[3]).read_text()
+            assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
+            assert "--no-index" in command
+        raise RuntimeError("command inspected")
+
+    monkeypatch.setattr(subprocess, "run", captured)
+    with pytest.raises(RuntimeError, match="command inspected"):
+        prepare_local_packs(
+            generation,
+            source=tmp_path / "source",
+            store=store,
+            release="sha256:" + "a" * 64,
+            selection={"version": "1.0", "variant": "win-cpu", "workerProtocol": 1},
+        )
+    with pytest.raises(RuntimeError, match="command inspected"):
+        resolve_pack_lock(
+            pack="fixture",
+            variant="win-cpu",
+            requirements=["fixture-0==1.0"],
+            python=interpreter(generation),
+            constraints=constraints,
+            find_links=links,
+        )
 
 
 @pytest.mark.parametrize("provisioner", ["current", "cached-without-acquire", "without-acquire"])
@@ -816,7 +936,7 @@ environment.main()
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, store = tmp_path / "project", tmp_path / "data"
+    root, store = tmp_path / "project", tmp_path / "data with space # %"
     root.mkdir()
     base = store / "bases" / ("a" * 64) / "python"
     _standalone_tree(base)
@@ -835,6 +955,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     stale, stale_hash = _wheel(other_build, "changed_fixture", "2.0", 999)
     (wheels / stale_hash).mkdir()
     stale.rename(wheels / stale_hash / stale.name)
+    decoy, decoy_hash = _wheel(other_build, "changed_fixture", "3.0", 101)
+    (wheels / ("d" * 64)).mkdir()
+    shutil.copyfile(decoy, wheels / ("d" * 64) / decoy.name)
+    (wheels / ("f" * 64)).mkdir()
+    decoy.rename(wheels / ("f" * 64) / decoy.name)
     constraints = tmp_path / "constraints.txt"
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
@@ -954,8 +1079,9 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     set_current(root, 1)
     assert read_current(root) == 1
 
-    with pytest.raises(EnvironmentError, match="offline generation sync failed"):
-        build(3, "3.0", "f" * 64)
+    for digest in (decoy_hash, "f" * 64):
+        with pytest.raises(EnvironmentError, match="offline generation sync failed"):
+            build(3, "3.0", digest)
     assert read_current(root) == 1
     assert not (root / "generations" / "3").exists()
     with pytest.raises(EnvironmentError, match="later pack refused after interpreter staging"):
