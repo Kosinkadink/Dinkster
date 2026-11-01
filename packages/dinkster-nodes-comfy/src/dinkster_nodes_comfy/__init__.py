@@ -162,6 +162,7 @@ from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
 from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
+from .moge_render import MoGeRender
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -484,6 +485,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
+    MoGeRender,
     MoGePointMapToMesh,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,

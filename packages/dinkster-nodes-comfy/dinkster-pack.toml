@@ -541,6 +541,7 @@ namespaces = [
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
+    "MoGeRender",
     "MoGePointMapToMesh",
     "TripoSplatPreprocessImage",
     "TripoSplatSamplingPreview",

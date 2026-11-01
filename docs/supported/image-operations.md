@@ -103,6 +103,8 @@
   with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored
+  depth, OpenGL or DirectX normals, or an RGB mask.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
 - Native `MoGePanoramaInference` estimates spherical geometry for a single
