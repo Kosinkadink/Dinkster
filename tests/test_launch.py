@@ -343,6 +343,8 @@ def test_no_browser_and_vite_proxy_are_the_only_alternate_launch_controls(
 
 
 def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, monkeypatch) -> None:
+    from dinkster_server.app import install_browser_request_security, install_cors
+
     system_guess_type = frontend.mimetypes.guess_type
 
     def windows_guess_type(name: str) -> tuple[str | None, str | None]:
@@ -358,6 +360,9 @@ def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, m
         (bundle / "index.html").write_text("<main>editor</main>")
         (bundle / "assets" / "app.js").write_text("console.log('app')")
         app = web.Application()
+        origin = "https://editor.example"
+        install_browser_request_security(app, allow_hosts=(), allow_origins=(origin,))
+        install_cors(app, (origin,))
 
         async def health(_request: web.Request) -> web.Response:
             return web.json_response({"ok": True})
@@ -368,10 +373,25 @@ def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, m
         await client.start_server()
         try:
             assert await (await client.get("/api/health")).json() == {"ok": True}
-            assert await (await client.get("/workflow/one")).text() == "<main>editor</main>"
-            asset = await client.get("/assets/app.js")
+            assert (await client.head("/api/health")).status == 200
+            for path in ("/workflow/one", "/project/one", "/apiary"):
+                page = await client.get(path)
+                assert page.status == 200
+                assert await page.text() == "<main>editor</main>"
+            for path in ("/api", "/api/", "/api/compat/comfy/schemas?version=1"):
+                for method in ("GET", "HEAD", "POST"):
+                    response = await client.request(method, path)
+                    assert response.status == 404
+                    assert response.content_type != "text/html"
+                    if method == "HEAD":
+                        assert await response.read() == b""
+            asset = await client.get("/assets/app.js", headers={"Origin": origin})
             assert asset.content_type == "text/javascript"
             assert await asset.text() == "console.log('app')"
+            assert asset.headers["Access-Control-Allow-Origin"] == origin
+            assert (await client.head("/assets/app.js")).content_type == "text/javascript"
+            refused = await client.get("/assets/app.js", headers={"Host": "untrusted.example"})
+            assert refused.status == 421
             assert (await client.post("/unknown")).status == 404
         finally:
             await client.close()
@@ -398,10 +418,27 @@ def test_frontend_dev_proxies_http_and_websockets() -> None:
         vite_server = TestServer(vite)
         await vite_server.start_server()
         app = web.Application()
+
+        async def health(_request: web.Request) -> web.Response:
+            return web.json_response({"ok": True})
+
+        app.router.add_get("/api/health", health)
         install_frontend(app, development_url=str(vite_server.make_url("/")))
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
+            assert await (await client.get("/api/health")).json() == {"ok": True}
+            assert (await client.head("/api/health")).status == 200
+            for path in ("/api", "/api/", "/api/compat/comfy/schemas"):
+                for method in ("GET", "HEAD", "POST"):
+                    response = await client.request(method, path)
+                    assert response.status == 404
+                    if method == "HEAD":
+                        assert await response.read() == b""
+            for path in ("/project/one", "/apiary"):
+                response = await client.get(path)
+                assert response.status == 200
+                assert await response.text() == f"GET {path} "
             response = await client.post("/asset?version=2", data="body")
             assert await response.text() == "POST /asset?version=2 body"
             socket = await client.ws_connect("/hmr")

@@ -141,6 +141,7 @@ from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
+from .mesh_unwrap import UnwrapMesh
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -206,7 +207,7 @@ from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
-from .splat_files import SplatToFile3D
+from .splat_files import File3DToSplat, SplatToFile3D
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -542,6 +543,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     MeshTextureToImage,
     MeshSmoothNormals,
     RenderUVAtlas,
+    UnwrapMesh,
     ApplyTextureToMesh,
     FillHoles,
     Get3DComponents,
@@ -552,6 +554,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveGaussianSplat,
     SavePointCloud,
     SplatToFile3D,
+    File3DToSplat,
     ImageUpscaleWithModel,
     ImageHistogram,
     TextOverlay,

@@ -19,6 +19,9 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
   tests/test_pack_environment.py \
+  tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
+  tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
+  tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
   tests/test_run_scripts.py \
   tests/test_launch.py \
   tests/test_environment_tools.py \
@@ -40,8 +43,13 @@ uv run --locked python -m pytest -q -m 'not network' \
   packages/dinkster-nodes-vision/tests/test_sam31.py::test_offline_tokenizer_matches_pinned_clip_tokens \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
+  tests/test_manifest.py::test_catalog_driven_node_source_loads_without_importing_pack \
+  tests/test_manifest.py::test_catalog_driven_node_source_rejects_unknown_kinds_and_types \
+  tests/test_doctor.py::test_catalog_driven_node_source_is_reported_without_hiding_entry_errors \
+  tests/test_doctor.py::test_empty_pack_warns \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_preserves_first_authority \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_is_torch_free \
+  tests/test_compose.py::test_default_pack_prefers_loaded_source_tree_over_bundled_copy \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
   tests/test_compose.py::test_exact_node_claims_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
