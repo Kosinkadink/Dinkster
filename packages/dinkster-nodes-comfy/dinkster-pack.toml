@@ -605,6 +605,7 @@ namespaces = [
     "VaeDecodeStructureTrellis2",
     "VaeDecodeShapeTrellis",
     "Trellis2TextureStage",
+    "VaeDecodeTextureTrellis",
     "PaintMesh",
     "WeldVertices",
     "MeshTextureToImage",

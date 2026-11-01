@@ -66,6 +66,9 @@
   targets from the batch-grouped shape latents emitted by native Trellis stages.
   Nonstandard custom latents with interleaved coordinate rows retain the source
   limitation: padded features flatten in batch order without reordering coordinates.
+- Native `VaeDecodeTextureTrellis` decodes sparse texture latents with portable
+  shape subdivisions, retaining all six material channels and batch IDs in
+  sparse voxels, with resolution-aware Z-up to Y-up coordinate conversion.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints

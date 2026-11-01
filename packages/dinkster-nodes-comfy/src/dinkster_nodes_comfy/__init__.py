@@ -220,7 +220,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .text_overlay import TextOverlay
-from .trellis import Trellis2TextureStage
+from .trellis import Trellis2TextureStage, VaeDecodeTextureTrellis
 from .trellis_conditioning import Trellis2Conditioning
 from .trellis_shape import Trellis2ShapeStage, VaeDecodeShapeTrellis
 from .trellis_structure import VaeDecodeStructureTrellis2
@@ -542,6 +542,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     VaeDecodeStructureTrellis2,
     VaeDecodeShapeTrellis,
     Trellis2TextureStage,
+    VaeDecodeTextureTrellis,
     PaintMesh,
     WeldVertices,
     MeshTextureToImage,
