@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -39,15 +38,15 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_generations import _standalone_tree
+from test_environment_generations import _standalone_tree, _workspace_tree
 from test_environment_runtime import free_port, make_generation
 
 
-def _target(root: Path, number: int) -> Path:
+def _target(root: Path, number: int, *, workspace: bool = False) -> Path:
     make_generation(root, number)
     target = root / "generations" / str(number)
     shutil.rmtree(target / "python")
-    _standalone_tree(target / "python")
+    (_workspace_tree if workspace else _standalone_tree)(target / "python")
     generation = Generation.read(target / "generation.json")
     hashes = tuple(
         sorted(
@@ -336,12 +335,11 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
 
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
         shutil.copyfile(mirror / "channels/main.json", mirror / "channels/stable.json")
-    old = _target(root, 1)
+    old = _target(root, 1, workspace=True)
     (old / "dinkster.lock").write_text(Lockfile().record_json())
     (root / "store").write_text(str(store) + "\n")
     payload = b"verified model from selected pack"
@@ -400,7 +398,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
 
     def fixture_build(**kwargs: object) -> None:
         # Admission, acquisition and activation use the real paths over fixture generations.
-        target = _target(root, int(str(kwargs["number"])))
+        target = _target(root, int(str(kwargs["number"])), workspace=True)
         generation = Generation.read(target / "generation.json")
         (target / "generation.json").unlink()
         stage_generation_packs(target, lock, {"example": archive})
@@ -465,7 +463,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         code = exited.value.code
         result = json.loads(capsys.readouterr().out)
         journals = list((root / "journal").glob("*.json"))
-        assert len(journals) == 1
+        assert len(journals) == 1, result
         if interruption == "none":
             assert code == 0, result
             assert result["status"] == "applied" and read_current(root) == 2

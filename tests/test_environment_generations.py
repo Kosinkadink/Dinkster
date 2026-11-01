@@ -72,6 +72,26 @@ def _standalone_tree(root: Path) -> None:
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
 
 
+def _workspace_tree(root: Path) -> None:
+    _standalone_tree(root)
+    site = Path(
+        subprocess.check_output(
+            [
+                str(interpreter(root.parent)),
+                "-I",
+                "-B",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+    )
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "fixture.pth").write_text(
+        "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+    )
+
+
 def _assert_shared(first: Path, second: Path) -> None:
     if first.samefile(second):
         return
