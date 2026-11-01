@@ -6,12 +6,26 @@ installation plans, and supports the umbrella package's client for the
 registry service. It contains no server, database, or registry command.
 
 `dinkster_registry.archive_admission` provides deterministic archive ingest,
-safe extraction and fast security checks. Its stage results distinguish
+safe extraction, manifest admission, static doctor, a bounded isolated executable
+probe and fast security checks. Its stage results distinguish
 blocking findings, required review and informational signals. Ingest verifies
 declared length and BLAKE3, portable bounded paths, canonical ZIP metadata and
 serialization through the existing artifact builder. Security checks preserve
 block versus review outcomes; a review is not an accepted archive. These checks
 do not consult or mutate registry ownership, catalog or publication state.
+Manifest admission validates canonical ids, normalized public versions, license,
+repository, contracts and reserved claims; declared publication versions must
+match the submission. Its optional `engine_version` gates the pack's shared
+compatibility declaration, which is retained in the returned registry metadata.
+The service remains responsible for catalog version collisions, namespace grants
+and active dependency observations.
+
+`ProbeSettings` retains bounded time, output and operator-tail limits. The probe
+provisions declared CPU dependencies as wheels with a stripped environment,
+refuses direct URLs, and requires the full Linux jail by default. Missing or
+degraded isolation blocks rather than falling back. `require_isolation=False`
+is for controlled tests only; engine CI never uses it. Public findings do not
+expose arbitrary probe diagnostics; bounded tails remain separate operator data.
 
 ## Setup
 
@@ -120,14 +134,13 @@ validation without registry submission. Only main or pack-tag pushes receive
 refuses rather than reporting publication success. Pack changes need their own
 new manifest version because registry versions are immutable.
 
-`python -m scripts.check_default_pack_admission --scanner /path/to/registry-service
---engine-version VERSION` resolves the complete committed default set and runs
-the registry's scanner in process against the current engine workspace. It uses
-disposable local admission state and the registry's full Linux probe jail;
-rejected, review-required or incomplete scans fail. Pack dependencies are
-admitted before their dependents. The command never publishes to the registry
-or creates a release artifact. The scanner checkout and its dependencies must
-be installed without replacing the engine API being tested.
+`python -m scripts.check_default_pack_admission --engine-version VERSION`
+resolves the complete committed default set and runs these public archive stages
+in process against the current engine workspace, with the registry's full Linux
+probe jail. Rejected or review-required scans fail. Pack dependencies must be
+present at satisfying versions and are checked before their dependents. The
+command needs no private checkout, database or publication credentials, never
+publishes to the registry and creates no release artifact.
 
 `dinkster.registries.resolve_compatible_release(registry, pack, minimum,
 engine_version)` follows the service's version-list pages, chooses the newest

@@ -67,8 +67,11 @@
   the isolated executable probe. Missing defaults, rejected packs and security
   review requirements fail the check without publishing any pack.
 - Public archive admission verifies deterministic source ZIPs with bounded
-  portable paths and distinguishes security blocks from files requiring review,
-  without a registry database or publication credentials.
+  portable paths, validates manifest publication metadata, runs static doctor
+  and a bounded isolated executable probe, and distinguishes security blocks
+  from files requiring review. These checks need no private checkout, registry
+  database or publication credentials. Missing or degraded probe isolation
+  refuses rather than skipping executable checks.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified

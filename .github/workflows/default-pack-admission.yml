@@ -21,12 +21,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: Kosinkadink/dinkster-registry-service
-          ref: 84a62ae10c257f00f1c5b737a130a41ee227b54b
-          path: .registry-admission
-          persist-credentials: false
       - name: Configure the same full Linux jail used by registry admission
         run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
@@ -34,13 +28,8 @@ jobs:
           python-version: "3.12"
       - name: Install the engine under test on its published CPU base
         run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-      - name: Install scanner dependencies without replacing the engine API under test
-        run: |
-          uv pip freeze --python .venv/bin/python --exclude-editable > "$RUNNER_TEMP/engine-constraints.txt"
-          uv pip install --python .venv/bin/python \
-            --constraint "$RUNNER_TEMP/engine-constraints.txt" 'sqlalchemy>=2.0,<3'
       - name: Resolve defaults and run the registry scanner in process
         run: |
           version=$(uv run --no-sync python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
           uv run --no-sync python -m scripts.check_default_pack_admission \
-            --scanner .registry-admission --engine-version "$version"
+            --engine-version "$version"

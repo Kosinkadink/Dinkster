@@ -885,3 +885,105 @@ def test_registry_archive_security_preserves_block_and_review(
         "status": "failed" if effect == "block" else "warning" if effect else "passed",
         "policyVersion": "registry-scan/1",
     }
+
+
+@pytest.mark.parametrize("engine", ["0.8.9", "0.9.0", "0.9.7", "1.0.0"])
+def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engine: str) -> None:
+    from dinkster_registry.archive_admission import run_manifest_admission
+
+    root = write_pack(tmp_path / "pack")
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        MANIFEST.replace("[pack]\n", '[pack]\nversion = "2.3.0"\nengine = ">=0.9,<1"\n')
+        + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+    )
+    result = run_manifest_admission(root, "archive-test", "2.3.0", engine_version=engine)
+    assert result.blocked is (engine in {"0.8.9", "1.0.0"})
+    if result.blocked:
+        message = result.findings[0].message
+        assert "archive-test@2.3.0" in message and ">=0.9,<1" in message and engine in message
+    else:
+        assert result.data is not None and result.data["dinkster"] == ">=0.9,<1"
+    mismatch = run_manifest_admission(root, "archive-test", "2.3.1")
+    assert mismatch.blocked and "does not match submission" in mismatch.findings[0].message
+
+
+@pytest.mark.parametrize(
+    ("declaration", "message"),
+    [
+        ('license = "LicenseRef-Private"', "requires a root LICENSE"),
+        ('license = "not-a-license"', "Unknown license"),
+        ('repository = "http://example.org/pack"', "must be an HTTPS URL"),
+        ('dinkster = "nonsense"', "Invalid specifier"),
+    ],
+)
+def test_registry_manifest_admission_refuses_invalid_metadata(
+    tmp_path: Path, declaration: str, message: str
+) -> None:
+    from dinkster_registry.archive_admission import run_manifest_admission
+
+    root = write_pack(tmp_path / "pack")
+    (root / "dinkster-pack.toml").write_text(
+        MANIFEST.replace("[pack]\n", f"[pack]\n{declaration}\n")
+        + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+    )
+    result = run_manifest_admission(root, "archive-test", "1.0.0")
+    assert result.blocked and result.findings[0].code == "manifest.invalid"
+    assert message in result.findings[0].message
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("problem", ["empty", "remote", "exception", "output", "timeout"])
+def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem: str) -> None:
+    from dinkster_registry.archive_admission import ProbeSettings, run_executable_probe
+
+    root = write_pack(tmp_path / "pack")
+    if problem == "remote":
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(
+            MANIFEST.replace("[pack]\n", '[pack]\nnode-source = "remote-gateway-catalog"\n')
+        )
+    elif problem == "exception":
+        (root / "nodes.py").write_text('raise ValueError("private operator detail")\n')
+    elif problem == "output":
+        (root / "nodes.py").write_text('import os\nos.write(1, b"x" * 100000)\nNODES = []\n')
+    elif problem == "timeout":
+        (root / "nodes.py").write_text("import time\ntime.sleep(2)\nNODES = []\n")
+    result = run_executable_probe(
+        root,
+        settings=ProbeSettings(
+            probe_timeout_seconds=1, probe_output_limit_bytes=4096, probe_operator_tail_bytes=512
+        ),
+        require_isolation=False,
+    )
+    codes = {finding.code for finding in result.findings}
+    if problem == "remote":
+        assert not result.blocked and result.data == {"schemas": []}
+    else:
+        assert result.blocked
+        expected = {
+            "empty": "probe.no-schemas",
+            "exception": "entry.unresolvable",
+            "output": "probe.output-limit",
+            "timeout": "probe.timeout",
+        }[problem]
+        assert expected in codes
+    assert all("private operator detail" not in finding.message for finding in result.findings)
+    assert result.operator_details is not None
+    assert len(str(result.operator_details["stdoutTail"]).encode()) <= 512
+
+
+def test_registry_probe_refuses_degraded_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry.archive_admission import run_executable_probe
+    from dinkster_workers.sandbox import ProbeJail
+
+    root = write_pack(tmp_path / "pack")
+    monkeypatch.setattr(
+        "dinkster_registry.archive_admission.detect_probe_jail",
+        lambda: ProbeJail(bwrap="/usr/bin/true", user_namespaces=False),
+    )
+    result = run_executable_probe(root)
+    assert result.blocked and result.findings[0].code == "probe.isolation-unavailable"
+    assert result.operator_details == {"jail": "degraded"}

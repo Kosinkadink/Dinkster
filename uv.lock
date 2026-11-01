@@ -1401,6 +1401,7 @@ source = { editable = "packages/dinkster-registry" }
 dependencies = [
     { name = "blake3" },
     { name = "dinkster-schema" },
+    { name = "dinkster-workers" },
     { name = "packaging" },
 ]
 
@@ -1408,6 +1409,7 @@ dependencies = [
 requires-dist = [
     { name = "blake3", specifier = ">=0.4" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
+    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
     { name = "packaging", specifier = ">=24" },
 ]
 

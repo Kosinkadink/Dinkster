@@ -54,6 +54,10 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_canonical_bytes \
   tests/test_pack_archive.py::test_registry_archive_security_preserves_block_and_review \
+  tests/test_pack_archive.py::test_registry_manifest_admission_preserves_engine_range \
+  tests/test_pack_archive.py::test_registry_manifest_admission_refuses_invalid_metadata \
+  tests/test_pack_archive.py::test_registry_executable_probe_bounds_and_sanitizes \
+  tests/test_pack_archive.py::test_registry_probe_refuses_degraded_isolation \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \

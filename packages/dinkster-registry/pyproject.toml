@@ -3,7 +3,7 @@ name = "dinkster-registry"
 version = "0.0.2"
 description = "Dinkster registry client, artifact, lockfile, and install models"
 requires-python = ">=3.12"
-dependencies = ["blake3>=0.4", "dinkster-schema", "packaging>=24"]
+dependencies = ["blake3>=0.4", "dinkster-schema", "dinkster-workers", "packaging>=24"]
 
 [build-system]
 requires = ["hatchling"]
@@ -14,3 +14,4 @@ packages = ["src/dinkster_registry"]
 
 [tool.uv.sources]
 dinkster-schema = { workspace = true }
+dinkster-workers = { workspace = true }
