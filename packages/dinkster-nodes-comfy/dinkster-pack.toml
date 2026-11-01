@@ -323,6 +323,7 @@ namespaces = [
     "ImageRotate",
     "ImageFlip",
     "ImageScaleToMaxDimension",
+    "PadImageNode",
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
@@ -600,12 +601,14 @@ namespaces = [
     "VoxelToMesh",
     "VAEDecodeHunyuan3D",
     "Trellis2ShapeStage",
+    "VaeDecodeStructureTrellis2",
     "Trellis2TextureStage",
     "PaintMesh",
     "WeldVertices",
     "MeshTextureToImage",
     "MeshSmoothNormals",
     "RenderUVAtlas",
+    "UnwrapMesh",
     "ApplyTextureToMesh",
     "FillHoles",
     "Get3DComponents",
@@ -616,6 +619,10 @@ namespaces = [
     "SaveGaussianSplat",
     "SavePointCloud",
     "SplatToFile3D",
+    "File3DToSplat",
+    "ImageUpscaleWithModel",
+    "ImageHistogram",
+    "TextOverlay",
 ]
 
 [pack.sandbox]

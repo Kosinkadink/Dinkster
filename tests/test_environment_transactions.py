@@ -479,6 +479,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
                     **settings,
                     "channel": "stable",
                     "variant": "win-cpu",
+                    "packageIndex": None,
                 }
                 index = LibraryStore(root / "library/library.sqlite")
                 try:

@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -174,7 +175,16 @@ def setup(
             str(requirements),
             root=root,
         )
-        requirements.write_text(effective_constraints(requirements.read_text(), base))
+        from scripts.build_release import engine_base_interfaces
+
+        interfaces = (
+            set(engine_base_interfaces(tomllib.loads((root / "uv.lock").read_text()), base))
+            if local is None
+            else None
+        )
+        requirements.write_text(
+            effective_constraints(requirements.read_text(), base, interfaces=interfaces)
+        )
         receipt = root / ".run/environment-base.json"
         if environment.exists() and (
             force or not receipt.is_file() or json.loads(receipt.read_text())["id"] != base["id"]

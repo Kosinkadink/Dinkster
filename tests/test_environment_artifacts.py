@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import zipfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,6 +44,17 @@ def _artifact(name: str, data: bytes, *, key: str = "name") -> dict:
     return {key: name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
+def _wheel_payload(name: str, version: str, requirement: str) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(
+            f"{name}-{version}.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            f"Requires-Dist: {requirement}\n",
+        )
+    return output.getvalue()
+
+
 def _mirror(
     root: Path,
     *,
@@ -64,7 +76,7 @@ def _mirror(
         "version": "1.0",
         "lockedVersion": "1.0",
         "index": "https://pypi.org/simple",
-        "url": "https://example.org/fixture.whl",
+        "url": "https://example.org/fixture_base-1.0-py3-none-any.whl",
         "verification": "lock",
     }
     interpreter = {
@@ -308,6 +320,259 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     )
     for path in acquired:
         assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("source", ["origin", "index"])
+@pytest.mark.parametrize("failure", [None, "hash", "size", "missing", "base-hash", "dependency"])
+def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
+    tmp_path: Path, source: str, failure: str | None
+):
+    mirror, store, packages = tmp_path / "release", tmp_path / "store", tmp_path / "packages"
+    base, _, channel = _mirror(mirror)
+    packages.mkdir()
+    filename = "third_party-7.2-py3-none-any.whl"
+    payload = _wheel_payload(
+        "third_party", "7.2", "fixture-base>=2" if failure == "dependency" else "fixture-base<2"
+    )
+    (packages / filename).write_bytes(payload)
+    index = packages / "simple/third-party"
+    index.mkdir(parents=True)
+    (index / "index.html").write_text(
+        f'<a href="../../{filename}#sha256=untrusted-index-hash">locked</a>'
+        '<a href="../../third_party-9.0.tar.gz">source must not be used</a>'
+    )
+    requests = []
+
+    class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            super().do_GET()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Handler, directory=str(packages)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        origin = f"http://127.0.0.1:{server.server_port}"
+        catalog = discover((str(mirror),), "main")
+        engine_filename = "fixture_engine-2.0-py3-none-any.whl"
+        engine_payload = _wheel_payload("fixture_engine", "2.0", "fixture-base>=1")
+        (mirror / "engine" / channel["engine"]["release"][7:] / engine_filename).write_bytes(
+            engine_payload
+        )
+        environment_artifacts.artifact_rows(catalog.engine["artifacts"], "name")[1].update(
+            _artifact(engine_filename, engine_payload)
+        )
+        fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+        base_row = {key: base["wheels"][0][key] for key in fields}
+        dependency = {
+            **_artifact(filename, payload, key="filename"),
+            "name": "third-party",
+            "version": "7.2",
+            "index": origin + "/simple",
+            "url": (origin if source == "origin" else "https://unreachable.invalid")
+            + "/"
+            + filename,
+        }
+        catalog.engine["dependencies"] = {
+            "fixture-cpu": {"base": base["id"], "wheels": [base_row, dependency]}
+        }
+        data = _json(catalog.engine)
+        environment_artifacts.validate_manifest(
+            data, "sha256:" + hashlib.sha256(data).hexdigest(), None
+        )
+        package_index = origin + "/simple" if source == "index" else None
+        if failure == "hash":
+            (packages / filename).write_bytes(b"X" * len(payload))
+        elif failure == "size":
+            (packages / filename).write_bytes(payload + b"extra")
+        elif failure == "missing":
+            (packages / filename).unlink()
+        elif failure == "base-hash":
+            base_row["sha256"] = "a" * 64
+        if failure is not None:
+            with pytest.raises(
+                (DownloadError, EnvironmentError),
+                match="third-party requires fixture-base>=2; base provides fixture-base 1.0"
+                if failure == "dependency"
+                else None,
+            ):
+                acquire(catalog, "fixture-cpu", store, package_index=package_index)
+            assert (store / "wheels" / dependency["sha256"] / filename).exists() == (
+                failure == "dependency"
+            )
+            assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
+            assert not any(".tar.gz" in path for path in requests)
+            if failure == "base-hash":
+                assert not store.exists()
+            return
+        constraints = acquire(catalog, "fixture-cpu", store, package_index=package_index)
+        assert (store / "wheels" / dependency["sha256"] / filename).read_bytes() == payload
+        assert set(constraints.read_text().splitlines()) == {
+            "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(engine_payload).hexdigest(),
+            "third-party==7.2 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
+            "fixture-base==1.0 --hash=sha256:" + base_row["sha256"],
+        }
+        requested = list(requests)
+        (packages / filename).unlink()
+        (index / "index.html").unlink()
+        assert acquire(catalog, "fixture-cpu", store, package_index=package_index) == constraints
+        assert requests == requested
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("failure", [None, "missing-base-dependency", "published-hash"])
+def test_custom_acquisition_uses_published_target_and_actual_base_ownership(
+    tmp_path: Path, failure: str | None
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    published, _, channel = _mirror(mirror)
+    catalog = discover((str(mirror),), "main")
+    filename = "fixture_engine-2.0-py3-none-any.whl"
+    payload = _wheel_payload(
+        "fixture_engine",
+        "2.0",
+        "nvidia-cublas>=13" if failure == "missing-base-dependency" else "fixture-base>=2",
+    )
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    (release / filename).write_bytes(payload)
+    environment_artifacts.artifact_rows(catalog.engine["artifacts"], "name")[1].update(
+        _artifact(filename, payload)
+    )
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    published_row = {key: published["wheels"][0][key] for key in fields}
+    if failure == "published-hash":
+        published_row["sha256"] = "a" * 64
+    catalog.engine["dependencies"] = {
+        "fixture-cpu": {
+            "base": published["id"],
+            "wheels": [
+                published_row,
+                {
+                    **_artifact("torch-2.14.1+cpu-py3-none-any.whl", b"unused", key="filename"),
+                    "name": "torch",
+                    "version": "2.14.1+cpu",
+                    "index": "https://unreachable.invalid/simple",
+                    "url": "https://unreachable.invalid/torch-2.14.1+cpu-py3-none-any.whl",
+                },
+            ],
+        }
+    }
+    custom = json.loads(_json(published))
+    custom.update(variant="my-custom-base", replaces=["fixture-base", "torch"])
+    custom["wheels"] = [
+        {
+            **published["wheels"][0],
+            **_artifact(name, data, key="filename"),
+            "name": distribution,
+            "version": version,
+            "lockedVersion": None,
+        }
+        for distribution, version, name, data in (
+            ("fixture-base", "2.0", "fixture_base-2.0-py3-none-any.whl", b"custom dependency"),
+            ("torch", "2.15.0+vendor", "torch-2.15.0+vendor-py3-none-any.whl", b"custom torch"),
+        )
+    ]
+    identity = {key: custom[key] for key in environment_artifacts._BASE_IDENTITY}
+    identity["archive"] = {"format": "tar+zstd"}
+    custom.update(id="sha256:" + hashlib.sha256(_json(identity)).hexdigest(), source="user-defined")
+    cached = store / "bases" / custom["id"][7:] / "wheels"
+    cached.mkdir(parents=True)
+    for row, data in zip(custom["wheels"], (b"custom dependency", b"custom torch"), strict=True):
+        (cached / row["filename"]).write_bytes(data)
+    before = _json(catalog.engine), _json(published), _json(custom)
+    if failure:
+        with pytest.raises(
+            EnvironmentError,
+            match="nvidia-cublas absent" if failure == "missing-base-dependency" else "differs",
+        ):
+            acquire(catalog, "fixture-cpu", store, base=custom, base_sources=())
+        assert not list(store.glob("engines/*/constraints-fixture-cpu-*.txt"))
+    else:
+        constraints = acquire(catalog, "fixture-cpu", store, base=custom, base_sources=())
+        assert constraints.name == f"constraints-fixture-cpu-{custom['id'][7:]}.txt"
+        assert set(constraints.read_text().splitlines()) == {
+            "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
+            *(
+                f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
+                for row in custom["wheels"]
+            ),
+        }
+        assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
+        with pytest.raises(EnvironmentError, match="paired"):
+            acquire(catalog, "fixture-cpu", store, base=custom)
+        with pytest.raises(EnvironmentError, match="paired"):
+            acquire(catalog, "fixture-cpu", store, base_sources=())
+    assert (_json(catalog.engine), _json(published), _json(custom)) == before
+
+
+@pytest.mark.parametrize("damage", [None, "base", "hash", "removed"])
+def test_modern_channel_uses_exact_variant_metadata_not_generic_provenance(
+    tmp_path: Path, damage: str | None
+):
+    mirror = tmp_path / "mirror"
+    base, engine, channel = _mirror(mirror)
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    base["wheels"][0]["lockedVersion"] = "9.0"
+    identity = {key: base[key] for key in environment_artifacts._BASE_IDENTITY}
+    identity["archive"] = {"format": "tar+zstd"}
+    base["id"] = "sha256:" + hashlib.sha256(_json(identity)).hexdigest()
+    base_path = tmp_path / "base.json"
+    base_path.write_bytes(_json(base))
+    constraints = (
+        (release / "constraints.txt")
+        .read_bytes()
+        .replace(b"fixture-base==1.0", b"fixture-base==9.0")
+    )
+    (release / "constraints.txt").write_bytes(constraints)
+    engine["artifacts"][0] = _artifact("constraints.txt", constraints)
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    row = {key: base["wheels"][0][key] for key in fields}
+    selected = {"base": base["id"], "wheels": [row]}
+    if damage == "base":
+        selected["base"] = "sha256:" + "0" * 64
+    elif damage == "hash":
+        row["sha256"] = "0" * 64
+    elif damage == "removed":
+        selected["wheels"].append(
+            {
+                **row,
+                "name": "nvidia-cublas",
+                "version": "13.0",
+                "filename": "nvidia_cublas-13.0-py3-none-any.whl",
+                "url": "https://example.org/nvidia_cublas-13.0-py3-none-any.whl",
+            }
+        )
+    engine["dependencies"] = {"fixture-cpu": selected}
+    (release / "release-manifest.json").write_bytes(_json(engine))
+    before = (mirror / "channels/main.json").read_bytes()
+    if damage:
+        with pytest.raises(EnvironmentError, match="different base|differs|removed"):
+            write_channel(
+                release,
+                [base_path],
+                channel="main",
+                output_root=mirror,
+                minimum_desktop_version="0.2.0",
+            )
+        assert (mirror / "channels/main.json").read_bytes() == before
+    else:
+        write_channel(
+            release,
+            [base_path],
+            channel="main",
+            output_root=mirror,
+            minimum_desktop_version="0.2.0",
+        )
+        assert (
+            json.loads((mirror / "channels/main.json").read_bytes())["base"]["fixture-cpu"]["id"]
+            == base["id"]
+        )
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,24 @@
 ## Image operations
 
+- `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
+  transports flat or per-frame pixel boxes and normalized prompt elements.
+  Both accept JSON only, retaining frame order, integer/float coordinates,
+  negative origins, zero dimensions, labels, scores and declared metadata.
+  Normalized elements retain thousandths in ymin/xmin/ymax/xmax order, text
+  and palettes. Unknown fields, embedded references, nonfinite coordinates
+  and pickle payloads are refused before reconstruction. Global `ARRAY`
+  remains unrestricted by the placement contract. Layer placement retains
+  first-frame selection, source-size zero fallback and canvas-based conversion.
+  `CropByBBoxes` broadcasts a single box or flat box list across image frames;
+  per-frame lists retain last-frame repetition and per-frame union cropping.
+- Native `PadImageNode` pads image batches by explicit dimensions, a multiplier,
+  or a size multiple, using solid-color feathering or repeated mirrored edges.
+- Native `ImageUpscaleWithModel` runs tiled single-image model upscaling with
+  smaller-tile memory retries and separately resized alpha channels.
+- Native `ImageHistogram` reports first-frame RGB and luminance histograms,
+  retaining independent red, green, and blue bin counts.
+- Native `TextOverlay` draws wrapped, aligned text on image batches with optional
+  outlines and straight-alpha compositing for transparent images.
 - Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
   with optional line and feature-edge quadrics and retained vertex colors.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
@@ -11,6 +30,8 @@
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
+- Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
+  seam vertex colors, source textures and variable batch lengths.
 - Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
   coincident positions or splitting hard creases while retaining mesh attributes.
 - Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
@@ -27,6 +48,10 @@
   converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
+- Portable shape-subdivision values retain ordered sparse stages, feature and
+  coordinate tensors, explicit shapes and exact rational scales, without caches.
+- Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
+  occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
   extracts basic or surface-net meshes, retaining variable per-item lengths
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
@@ -231,6 +256,8 @@
   prompts can be interpreted as comma-separated phrases or one literal phrase,
   producing scored boxes with source-sized binary masks. The model weights use
   the SAM License
+- SAM 3.1 prompt tokenization works offline with a digest-verified plain-text
+  vocabulary that is readable during pack admission.
 - Detect Objects offers Automatic, SAM 3.1, DETR ResNet-50, and RT-DETR v4
   x-HGNet model choices.
 - Text-prompted segmentation (`Segment Objects by Text`) through the same SAM
