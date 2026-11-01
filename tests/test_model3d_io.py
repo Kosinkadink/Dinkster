@@ -125,6 +125,17 @@ def test_load_file3d_adjacent_bindings_require_indexed_contained_bytes(
     (root / "surface.mtl").write_bytes(b"newmtl material\nKd 0.1 0.3 0.7\n")
     with pytest.raises(AssetError, match="must be indexed"):
         load_file3d(source)
+    granted = table.bind_name("surface.mtl", "media/model3d")
+    assert isinstance(granted, LocalAssetRef)
+    packet = load_file3d(source)
+    assert packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    spec = registry.spec(FILE_3D_TYPE)
+    received = cast("dict[str, object]", spec.decode(spec.encode(packet)))
+    local_material = cast("dict[str, LocalAssetRef]", received["resources"])["surface.mtl"]
+    assert local_material.binding == granted.binding
+    assert local_material.read_bytes() == b"newmtl material\nKd 0.1 0.3 0.7\n"
     table.scan("models")
     packet = load_file3d(source)
     assert packet is not None

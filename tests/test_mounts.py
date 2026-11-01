@@ -43,7 +43,7 @@ from dinkster_assets import (
     parse_mounts,
 )
 from dinkster_assets.integrity import digest_file_with_record as real_digest_file_with_record
-from dinkster_assets.model import AssetRef
+from dinkster_assets.model import AssetRef, LocalAssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
@@ -67,6 +67,39 @@ from dinkster.mounts_api import MountService, add_mount_routes
 from tests.platform_support import symlink_or_skip
 
 STRING = TypeExpr.concrete("STRING")
+
+
+def test_relative_selection_reuses_engine_grant_without_indexing(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    table.scan("models")
+    (root / "sidecar.bin").write_bytes(b"first unindexed resource")
+    granted = table.bind_name("sidecar.bin", "media/model3d")
+    assert isinstance(granted, LocalAssetRef)
+    worker = MountSnapshotResolver(snapshot)
+    selected = worker.bind_relative_file("media/model3d", root, "sidecar.bin")
+    assert isinstance(selected, LocalAssetRef)
+    received = LocalAssetRef.from_wire(selected.to_wire(), table)
+    assert received.read_bytes() == b"first unindexed resource"
+    assert selected.binding == granted.binding
+    (root / "sidecar.bin").write_bytes(b"a changed resource revision")
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        received.read_bytes()
+    replacement = table.bind_name("sidecar.bin", "media/model3d")
+    assert isinstance(replacement, LocalAssetRef)
+    selected = worker.bind_relative_file("media/model3d", root, "sidecar.bin")
+    assert isinstance(selected, LocalAssetRef)
+    received = LocalAssetRef.from_wire(selected.to_wire(), table)
+    assert received.read_bytes() == b"a changed resource revision"
+    assert selected.binding != granted.binding
+    table.remove("models")
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        received.read_bytes()
+    with pytest.raises(AssetError, match="not granted"):
+        worker.bind_relative_file("media/model3d", root, "sidecar.bin")
 
 
 class Echo(Node):

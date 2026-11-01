@@ -170,12 +170,9 @@ def load_file3d(
                     root = root.resolve()
                     if path.is_relative_to(root):
                         relative = path.parent.relative_to(root) / name
-                        ref = resolver.bind_relative_file(kind, root, relative.as_posix())
-                        if isinstance(ref, LocalAssetRef):
-                            # Worker-local bindings cannot be redeemed by the receiving host.
-                            ref = ref.verified()
-                            if ref is None:
-                                raise AssetError("FILE_3D adjacent resources must be indexed")
+                        ref = resolver.bind_relative_file(
+                            kind, root, relative.as_posix(), require_host_grant=True
+                        )
                         break
                 if ref is not None:
                     break

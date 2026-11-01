@@ -1124,11 +1124,13 @@ class MountSnapshotResolver:
             by_id = dict(roots)
             return tuple(by_id[mount_id] for mount_id in context.mounts if mount_id in by_id)
 
-    def bind_relative_file(self, kind: str, root: Path, relative: str) -> AssetRef | LocalAssetRef:
-        """Bind a selected indexed file, or an invocation-local unindexed member.
+    def bind_relative_file(
+        self, kind: str, root: Path, relative: str, *, require_host_grant: bool = False
+    ) -> AssetRef | LocalAssetRef:
+        """Bind an indexed file, an engine grant, or an invocation-local member.
 
-        Only engine-indexed content has a portable identity. Unindexed local
-        bindings remain invocation-scoped and do not publish a host binding.
+        Reusing an engine-issued revision grant lets unindexed files return to
+        that engine. Newly selected files without such a grant stay invocation-local.
         """
         if (
             not relative
@@ -1171,6 +1173,26 @@ class MountSnapshotResolver:
                 progress,
             )
             raise
+        with self._lock:
+            bindings = tuple(self._local_bindings.items())
+        for binding, raw in bindings:
+            if not isinstance(raw, dict):
+                continue
+            entry = cast("dict[str, object]", raw)
+            if (
+                entry.get("root") == str(root)
+                and entry.get("relative") == relative
+                and self.resolve_local(binding) == (path, signature)
+            ):
+                return LocalAssetRef(
+                    binding,
+                    path.name,
+                    signature[0],
+                    f"mounts/{status['id']}/{relative}",
+                    resolver=self,
+                )
+        if require_host_grant:
+            raise AssetError("selected adjacent resource must be indexed or have a host grant")
         binding = uuid.uuid4().hex
         with self._lock:
             self._selected_files[binding] = (kind, root, relative, signature)

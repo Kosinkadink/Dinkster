@@ -8,8 +8,11 @@ migrations. Caches, workers, and the server build on it.
 
 Selected indexed files use ordinary `AssetRef` values from the engine-written
 index. The live mounts snapshot remains their resolver, so revoked grants stop
-resolving without a worker restart. Unindexed selections retain invocation-local
-`LocalAssetRef` bindings and cannot be admitted as portable VIDEO until scanned.
+resolving without a worker restart. Unindexed relative selections reuse an existing
+engine-issued `LocalAssetRef` for the same root, relative name and file revision;
+the receiving engine can redeem that binding without indexing. Without an engine
+grant they retain invocation-local bindings. Neither kind can be admitted as
+portable VIDEO until scanned.
 Admission never copies selected input files into the vault or worker scratch.
 `load_file3d(source, resources=...)` preserves a bound source as a canonical
 FILE_3D packet. glTF/GLB buffers and images, OBJ material libraries and their

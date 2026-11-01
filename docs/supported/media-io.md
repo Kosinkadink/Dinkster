@@ -41,6 +41,8 @@
 - Local asset bindings support byte reads for callers with local assets:read
   permission. Reads require a live grant and unchanged file revision; they do not
   index files, grant path access or advertise immutable caching.
+  A worker selecting the same unindexed file can return its existing host grant
+  without requiring a separate indexing step.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
