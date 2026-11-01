@@ -368,8 +368,8 @@ verification or extraction removes staging trees.
 generation; `update` plans the configured channel's next generation. Both require
 `--yes` or terminal confirmation before creating project/store state or acquiring
 payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
-write a journal before registration/acquisition, sync offline, check the candidate
-engine's health, publish `current`, then stop the old engine. Update preserves
+acquire and preflight target inputs before journaling and registration, sync
+offline, check the candidate engine's health, publish `current`, then stop the old engine. Update preserves
 existing engine bindings; setup accepts `--engine`, `--port` and repeatable `--gpu`.
 The setup confirmation plan includes that binding name, loopback port and ordered
 `CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
@@ -425,17 +425,23 @@ exact archive cache and new output directory. A custom-base caller can resolve
 standard locks from those inputs without a published base binding or a second
 source selector. Returning an empty tuple still replaces published retrieval;
 raising refuses preparation and removes the scratch tree. Returned files must
-belong to the output directory. Explicit `pack_locks` take precedence.
+belong to the output directory. Explicit `pack_locks` take precedence. The optional
+`preflight(engine, catalog, artifacts)` runs after source selection and before
+either automatic or explicit dependency locks are used.
 
-Update plans with registered workflows or explicit additions call the active generation's
-`dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
-inputs take precedence; otherwise selected-release sources must already exist in
-the cache with verified SHA256/size and BLAKE3 archive names. Planning never
-downloads or repairs source payloads. Pack and asset actions appear in the existing
-plan strings; unavailable saved versions refuse planning. The core adapter retains
-ownership of requirement derivation. SQLite read-only planning can touch WAL
-coordination files without changing logical records or project content.
-On confirmation, the target interpreter consumes the approved plan, checks its
+Update plans with registered workflows or explicit additions use the active
+generation's requirements reader to snapshot requirements and input revisions.
+Unconfirmed plans explicitly report source feasibility as pending; they never
+download payloads or install a planning interpreter. SQLite read-only planning can
+touch WAL coordination files without changing logical records or project content.
+After confirmation, the acquired target interpreter runs
+`dinkster.workflow_requirements project-plan` against the sole selected registry
+catalog and archive cache, before a generation or journal exists. Explicit
+catalog/cache inputs take precedence and use the same target preparation. Changed
+requirements/revisions and unavailable saved versions refuse admission. Pack and
+asset actions appear in the existing plan strings. Catalog digests and input
+revisions are checked again before journaling and application.
+The sealed target interpreter then consumes the approved plan, checks its
 admitted pack identities and acquires only approved assets. Workflow input
 revisions are checked before publication and after candidate health checks;
 activation also requires an empty target requirement plan. Failure retains the

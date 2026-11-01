@@ -47,6 +47,10 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
             archive.writestr(
                 "dinkster/manager.py", Path(__file__).with_name("manager.py").read_bytes()
             )
+            for module in ("project_requirements", "workflow_requirements"):
+                archive.writestr(
+                    f"dinkster/{module}.py", Path(__file__).with_name(f"{module}.py").read_bytes()
+                )
             archive.writestr(
                 "dinkster/generation_packs.py",
                 "import argparse,json,shutil\n"

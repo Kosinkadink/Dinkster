@@ -193,10 +193,14 @@ def project_operation(
     artifacts: Path | None = None,
     approved: dict[str, object] | None = None,
     target_generation: Path | None = None,
+    requirements_only: bool = False,
 ) -> dict[str, object]:
     """Plan or apply workflow requirements through the generation's core adapter."""
+    if requirements_only and approved is not None:
+        raise EnvironmentError("requirements snapshot cannot apply a workflow plan")
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster.workflow_requirements",
@@ -213,11 +217,27 @@ def project_operation(
         command.extend(["--catalog-lock", str(catalog_lock)])
     if artifacts is not None:
         command.extend(["--artifacts", str(artifacts)])
+    if target_generation is not None:
+        command[0] = str(interpreter(target_generation))
+        command.extend(["--generation", str(target_generation)])
     if approved is not None:
         if target_generation is None:
             raise EnvironmentError("workflow execution requires a target generation")
-        command[0] = str(interpreter(target_generation))
-        command.extend(["--yes", "--generation", str(target_generation)])
+        command.append("--yes")
+    if requirements_only:
+        command = [
+            str(interpreter(generation)),
+            "-I",
+            "-B",
+            "-c",
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "from dinkster.project_requirements import load_project_requirements\n"
+            "requirements, inputs = load_project_requirements(Path(sys.argv[1]))\n"
+            "print(json.dumps({'requirements': requirements.to_wire(), 'inputs': list(inputs), "
+            "'plan': {'packs': [], 'assets': [], 'errors': []}}))\n",
+            str(root),
+        ]
     result = subprocess.run(
         command,
         input=json.dumps(approved) if approved is not None else None,
@@ -439,6 +459,7 @@ def prepare_registry_inputs(
     installed_lock: Path | None = None,
     pack_locks: tuple[Path, ...] = (),
     prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
+    preflight: Callable[[Path, Path, Path], None] | None = None,
 ) -> Generator[tuple[Path, Path, tuple[Path, ...], dict[str, str]]]:
     """Keep target-owned registry inputs alive through candidate construction.
 
@@ -450,6 +471,8 @@ def prepare_registry_inputs(
     constraints), selected catalog, archive cache and new lock output directory.
     It replaces published lock retrieval, including when it returns no locks.
     Explicit ``pack_locks`` take precedence over either automatic producer.
+    ``preflight`` checks the scratch engine, catalog and archives before locks
+    are prepared; it also runs when explicit locks override automatic preparation.
     """
     with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
         scratch = Path(directory)
@@ -510,6 +533,8 @@ def prepare_registry_inputs(
             raise EnvironmentError(
                 "target registry preparation returned inconsistent source inputs"
             )
+        if preflight is not None:
+            preflight(scratch / "engine", catalog, artifacts)
         if pack_locks:
             yield catalog, artifacts, pack_locks, cast("dict[str, str]", unavailable)
             return

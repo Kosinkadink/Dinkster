@@ -260,6 +260,13 @@
   selected target; workflow records and other project fields are preserved.
   Rollback restores the retained selection without rebuilding, refusing when
   settings were edited after selection rather than discarding user changes.
+- Unconfirmed `dinkster-env update` and `update --plan` report saved workflow
+  requirements without acquiring target payloads or claiming source feasibility.
+  Confirmed updates check those requirements against the same registry-selected
+  sources used for construction, using the acquired target engine before creating
+  the activation journal. Unavailable saved versions and changed workflow inputs
+  refuse before construction. Catalog identities and input revisions are checked
+  again before application and activation; sealed target checks remain mandatory.
 - A local channel builder accepts completed engine release files and selected
   base manifests, verifies engine payload hashes and base/engine compatibility,
   and atomically writes the existing stable/main channel format. It preserves
