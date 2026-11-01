@@ -29,6 +29,8 @@
   input/model3d mount grant. glTF resource URIs may encode spaces in contained
   filenames. OBJ material and texture declarations support continued lines;
   texture names retain spaces after material-map options or inside quotes.
+  Declared adjacent files selected through model3d file inputs receive local host
+  grants at submission, without a separate directory scan or indexing step.
   Missing, undeclared and traversing resources fail;
   an empty selection produces no file. It never fetches external URLs.
   Format-specific sockets distinguish mesh, splat and point-cloud files.

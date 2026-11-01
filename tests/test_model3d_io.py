@@ -30,6 +30,7 @@ from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetVault,
+    LibraryStore,
     LocalAssetRef,
     MountDef,
     MountSnapshotResolver,
@@ -107,7 +108,121 @@ def test_load_file3d_binds_only_declared_adjacent_files_and_roundtrips(
         load_file3d(source)
 
 
-def test_load_file3d_adjacent_bindings_require_indexed_contained_bytes(
+@pytest.mark.parametrize("format_id", ["gltf", "glb", "obj"])
+@pytest.mark.parametrize("scanned", [False, True])
+def test_load_file3d_engine_grants_unindexed_companions_to_worker(
+    tmp_path: Path, format_id: str, scanned: bool
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    if scanned:
+        table.scan("models")
+    (root / "nested").mkdir()
+    if format_id == "obj":
+        primary = b"mtllib nested/material.mtl\nv 3 5 7\n"
+        dependencies = {
+            "nested/material.mtl": b"newmtl surface\nmap_Kd color map.png\n",
+            "nested/color map.png": b"distinct texture bytes",
+        }
+    else:
+        document = (
+            b'{"asset":{"version":"2.0"},"buffers":[{"uri":"nested/mesh.bin"}],'
+            b'"images":[{"uri":"nested/color%20map.png"}]}'
+        )
+        if format_id == "glb":
+            document += b" " * (-len(document) % 4)
+            primary = struct.pack(
+                "<4sIIII", b"glTF", 2, 20 + len(document), len(document), 0x4E4F534A
+            )
+            primary += document
+        else:
+            primary = document
+        dependencies = {
+            "nested/mesh.bin": b"different buffer bytes",
+            "nested/color map.png": b"distinct texture bytes",
+        }
+    (root / f"scene.{format_id}").write_bytes(primary)
+    for name, data in dependencies.items():
+        (root / name).write_bytes(data)
+    (root / "unrelated.bin").write_bytes(b"never granted")
+    source = table.bind_name(f"scene.{format_id}", "media/model3d")
+    assert isinstance(source, LocalAssetRef)
+    packet = load_file3d(source)
+    assert packet is not None
+    worker = MountSnapshotResolver(snapshot)
+    worker_source = LocalAssetRef.from_wire(source.to_wire(), worker)
+    worker_packet = load_file3d(worker_source)
+    assert worker_packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    spec = registry.spec(FILE_3D_TYPE)
+    returned = cast("dict[str, object]", spec.decode(spec.encode(worker_packet)))
+    assert cast(LocalAssetRef, returned["source"]).read_bytes() == primary
+    resources = cast("dict[str, LocalAssetRef]", returned["resources"])
+    assert {name: ref.read_bytes() for name, ref in resources.items()} == dependencies
+    assert all(isinstance(ref, LocalAssetRef) for ref in resources.values())
+    snapshot_data = json.loads(snapshot.read_text())
+    assert {entry["relative"] for entry in snapshot_data["localBindings"].values()} == {
+        f"scene.{format_id}",
+        *dependencies,
+    }
+    table.remove("models")
+    for ref in (cast(LocalAssetRef, returned["source"]), *resources.values()):
+        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+            ref.read_bytes()
+
+
+@pytest.mark.parametrize("bound_identity", [False, True])
+def test_file3d_source_preflight_grants_declared_unindexed_resources(
+    tmp_path: Path, bound_identity: bool
+) -> None:
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names
+
+    root = tmp_path / "input"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "scene.gltf").write_bytes(
+        b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin"}]}'
+    )
+    (nested / "mesh.bin").write_bytes(b"declared buffer bytes")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef("models", root, kind="media/model3d"))
+    source = table.bind_name("nested/scene.gltf", "media/model3d")
+    assert isinstance(source, LocalAssetRef)
+    schema = LoadModel3D.define_schema()
+    graph = Graph(
+        {
+            "load": GraphNode(
+                schema.node_type,
+                {"model": source.to_wire() if bound_identity else "nested/scene.gltf"},
+            )
+        }
+    )
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+    prepared, missing = bind_model_names(graph, {schema.node_type: schema}, library)
+    assert missing == []
+    wire = cast("Mapping[str, object]", prepared.nodes["load"].inputs["model"])
+    worker = MountSnapshotResolver(snapshot)
+    selected = LocalAssetRef.from_wire(wire, worker)
+    packet = load_file3d(selected)
+    assert packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    spec = registry.spec(FILE_3D_TYPE)
+    returned = cast("dict[str, object]", spec.decode(spec.encode(packet)))
+    refs = cast("dict[str, LocalAssetRef]", returned["resources"])
+    assert refs["mesh.bin"].read_bytes() == b"declared buffer bytes"
+
+
+def test_load_file3d_worker_requires_indexed_or_host_granted_contained_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "models"
@@ -119,7 +234,8 @@ def test_load_file3d_adjacent_bindings_require_indexed_contained_bytes(
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
     source = table.bind_name("scene.obj", "media/model3d")
     assert isinstance(source, LocalAssetRef)
-    with pytest.raises(AssetError, match="requires an explicit"):
+    source = LocalAssetRef.from_wire(source.to_wire(), MountSnapshotResolver(snapshot))
+    with pytest.raises(AssetError, match="outside its grant or unavailable"):
         load_file3d(source)
     table.scan("models")
     (root / "surface.mtl").write_bytes(b"newmtl material\nKd 0.1 0.3 0.7\n")

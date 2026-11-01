@@ -34,7 +34,7 @@ from dinkster_values.builtin_types import (
 from .declared import MOUNTS_ENV
 from .identity import AssetError
 from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
-from .mounts import MountSnapshotResolver
+from .mounts import MountSnapshotResolver, MountTable
 
 FILE3D_FORMATS = {
     FILE_3D_TYPE: None,
@@ -157,7 +157,13 @@ def load_file3d(
             _resource_name(name)
     bound: dict[str, AssetRef | LocalAssetRef] = {}
     snapshot = os.environ.get(MOUNTS_ENV)
-    resolver = MountSnapshotResolver(snapshot) if snapshot else None
+    resolver = (
+        source.resolver
+        if isinstance(source.resolver, (MountTable, MountSnapshotResolver))
+        else MountSnapshotResolver(snapshot)
+        if snapshot
+        else None
+    )
 
     def bind(name: str) -> AssetRef | LocalAssetRef:
         name = _resource_name(name)
@@ -170,9 +176,12 @@ def load_file3d(
                     root = root.resolve()
                     if path.is_relative_to(root):
                         relative = path.parent.relative_to(root) / name
-                        ref = resolver.bind_relative_file(
-                            kind, root, relative.as_posix(), require_host_grant=True
-                        )
+                        if isinstance(resolver, MountTable):
+                            ref = resolver.bind_relative_file(kind, root, relative.as_posix())
+                        else:
+                            ref = resolver.bind_relative_file(
+                                kind, root, relative.as_posix(), require_host_grant=True
+                            )
                         break
                 if ref is not None:
                     break

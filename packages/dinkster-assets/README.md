@@ -19,6 +19,11 @@ FILE_3D packet. glTF/GLB buffers and images, OBJ material libraries and their
 textures must have explicit supplied asset identities or belong to the source's
 existing input/model3d mount grant. Supplied resources must match the file's
 declared dependencies. Relative names cannot traverse directories or name URLs.
+Engine-side loading issues ordinary local revision grants for declared companions,
+including files in an unscanned mount. Media/model3d source-filename inputs prepare
+these grants during server admission for both named and already-bound selections;
+workers reuse them and the receiving engine checks them on return. No directory
+scan or separate companion index is required.
 None, an empty string and the source's `none` choice produce canonical None;
 other strings must be bound before loading. No input bytes are copied or rewritten.
 `produced_output_scratch` is only the writable publication store for produced

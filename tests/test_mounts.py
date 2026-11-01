@@ -69,6 +69,33 @@ from tests.platform_support import symlink_or_skip
 STRING = TypeExpr.concrete("STRING")
 
 
+def test_engine_relative_selection_keeps_exact_root_and_project_authority(tmp_path: Path) -> None:
+    from dinkster_values.asset_folders import use_asset_folders
+
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "indexes")
+    for name, data in (("first", b"first bytes"), ("second", b"different second bytes")):
+        root = tmp_path / name
+        root.mkdir()
+        (root / "shared.bin").write_bytes(data)
+        table.add(MountDef(name, root, kind="media/model3d"))
+    root = tmp_path / "second"
+    selected = table.bind_relative_file("media/model3d", root, "shared.bin")
+    assert selected.read_bytes() == b"different second bytes"
+    named = table.bind_name("shared.bin", "media/model3d")
+    assert named is not None and named.read_bytes() == b"first bytes"
+    for relative in ("../first/shared.bin", "/shared.bin", "./shared.bin", "C:/shared.bin"):
+        with pytest.raises(AssetError, match="safe relative"):
+            table.bind_relative_file("media/model3d", root, relative)
+    with pytest.raises(AssetError, match="not granted"):
+        table.bind_relative_file("media/image", root, "shared.bin")
+    with use_asset_folders(AssetFolderContext(("first",))):
+        with pytest.raises(AssetError, match="not granted"):
+            table.bind_relative_file("media/model3d", root, "shared.bin")
+    table.remove("second")
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        selected.read_bytes()
+
+
 def test_relative_selection_reuses_engine_grant_without_indexing(tmp_path: Path) -> None:
     root = tmp_path / "models"
     root.mkdir()

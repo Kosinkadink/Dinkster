@@ -33,13 +33,16 @@ from typing import Any, cast
 from dinkster_assets import (
     AssetError,
     AssetNeed,
+    AssetRef,
     AssetSource,
+    LocalAssetRef,
     PackagedSource,
     RemoteSource,
     asset_selection_names,
     is_digest,
+    load_file3d,
 )
-from dinkster_assets.model import NamedAssetResolver
+from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver
 from dinkster_assets.vault import AssetPublicationError
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
@@ -79,10 +82,23 @@ def bind_model_names(
             widget = spec.widget
             if isinstance(widget, WidgetRepresentations):
                 widget = widget.representations[0].widget
+            file3d = (
+                spec.source_filename is not None and spec.source_filename.kind == "media/model3d"
+            )
+            if file3d and isinstance(value, Mapping) and resolver is not None:
+                wire = cast("Mapping[str, object]", value)
+                source = (
+                    LocalAssetRef.from_wire(wire, resolver)
+                    if wire.get("verification") == "unverified"
+                    and isinstance(resolver, LocalAssetResolver)
+                    else AssetRef.from_wire(wire, resolver)
+                )
+                load_file3d(source)
+                continue
             if (
                 not isinstance(value, str)
                 or not isinstance(widget, AssetWidget)
-                or not (widget.selection or widget.kind.startswith("model/"))
+                or not (widget.selection or widget.kind.startswith("model/") or file3d)
             ):
                 continue
             if widget.selection and value in asset_selection_names(widget.kind):
@@ -108,6 +124,8 @@ def bind_model_names(
                     }
                 )
             else:
+                if file3d:
+                    load_file3d(ref)
                 wire = ref.to_wire()
                 inputs[spec.id] = (
                     replace(raw, value=wire) if isinstance(raw, TypedLiteral) else wire

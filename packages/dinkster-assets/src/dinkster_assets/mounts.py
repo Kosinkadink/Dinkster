@@ -149,6 +149,8 @@ class EmbeddingNameIndex:
             mount_id = raw.get("id")
             root = raw.get("root")
             index = raw.get("index")
+            if index == "" and raw.get("scanProgress") == "pending":
+                continue
             if not all(isinstance(value, str) and value for value in (mount_id, root, index)):
                 raise MountsError(f"malformed embedding mount row in {path}")
             root_path, index_path = Path(cast("str", root)), Path(cast("str", index))
@@ -800,19 +802,8 @@ class MountTable:
                 return path
         return None
 
-    def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
-        """Bind a basename or text-encoder relative file in ranked exact-kind roots."""
+    def _rows_for_kind(self, kind: str) -> list[_MountRow]:
         require_asset_kind(kind)
-        relative_name = "/" in name
-        if (
-            not name
-            or "\\" in name
-            or re.match(r"^[A-Za-z]:", name)
-            or any(ord(char) < 32 or ord(char) == 127 for char in name)
-            or any(part in {"", ".", ".."} for part in name.split("/"))
-            or (relative_name and kind != "model/text-encoder")
-        ):
-            return None
         with self._lock:
             rows = sorted(
                 (row for row in self._rows.values() if row.kind == kind),
@@ -822,7 +813,45 @@ class MountTable:
             if context is not None:
                 by_id = {row.mount.id: row for row in rows}
                 rows = [by_id[mount_id] for mount_id in context.mounts if mount_id in by_id]
-        for row in rows:
+            return rows
+
+    def roots_for_kind(self, kind: str) -> tuple[Path, ...]:
+        """Exact-kind granted roots in the current project's selection order."""
+        return tuple(row.mount.path for row in self._rows_for_kind(kind))
+
+    def bind_relative_file(self, kind: str, root: Path, relative: str) -> AssetRef | LocalAssetRef:
+        """Issue a revision-bound grant for one contained file in an exact root."""
+        if (
+            not relative
+            or "\\" in relative
+            or re.match(r"^[A-Za-z]:", relative)
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in relative)
+        ):
+            raise AssetError("selected file requires a safe relative name")
+        root = root.resolve()
+        for row in self._rows_for_kind(kind):
+            if row.mount.path.resolve() == root:
+                ref = self._bind_file(row, root / relative, relative)
+                if ref is None:
+                    raise AssetError("selected file is outside its grant or unavailable")
+                return ref
+        raise AssetError("selected file root is not granted for this kind")
+
+    def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
+        """Bind a basename or text-encoder/model3d relative file in exact-kind roots."""
+        require_asset_kind(kind)
+        relative_name = "/" in name
+        if (
+            not name
+            or "\\" in name
+            or re.match(r"^[A-Za-z]:", name)
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+            or (relative_name and kind not in {"model/text-encoder", "media/model3d"})
+        ):
+            return None
+        for row in self._rows_for_kind(kind):
             try:
                 root = row.mount.path.resolve()
                 candidates = (root / name,) if relative_name else root.rglob(glob.escape(name))
@@ -838,62 +867,71 @@ class MountTable:
                 if len(paths) != 1:
                     return None
                 path = paths[0]
-                relative = path.relative_to(root).as_posix()
             except (OSError, RuntimeError):
                 continue
-            if row.library is not None:
-                try:
-                    ref = row.library.ref(f"mounts/{row.mount.id}/{relative}")
-                    resolution = row.library.resolve_asset(ref.digest)
-                    if (
-                        resolution
-                        and resolution.verification
-                        and resolution.verification.matches(path.stat())
-                    ):
-                        with self._lock:
-                            if self._rows.get(row.mount.id) is not row:
-                                return None
-                        return replace(ref, resolver=self)
-                except (AssetError, OSError):
-                    pass
+            return self._bind_file(row, path, name)
+        return None
+
+    def _bind_file(self, row: _MountRow, path: Path, name: str) -> AssetRef | LocalAssetRef | None:
+        try:
+            root = row.mount.path.resolve()
+            if not path.is_file() or not path.resolve(strict=True).is_relative_to(root):
+                return None
+            relative = path.relative_to(root).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if row.library is not None:
+            try:
+                ref = row.library.ref(f"mounts/{row.mount.id}/{relative}")
+                resolution = row.library.resolve_asset(ref.digest)
+                if (
+                    resolution
+                    and resolution.verification
+                    and resolution.verification.matches(path.stat())
+                ):
+                    with self._lock:
+                        if self._rows.get(row.mount.id) is not row:
+                            return None
+                    return replace(ref, resolver=self)
+            except (AssetError, OSError):
+                pass
+        require_local_revision(
+            row.mount.id,
+            row.local_binding_capability,
+            self._current_progress(row)
+            or f"missingEntryCount={row.missing_entry_count}, state={row.state}",
+        )
+        try:
+            signature = local_file_signature(path.stat(), path)
+        except OSError as error:
             require_local_revision(
                 row.mount.id,
-                row.local_binding_capability,
-                self._current_progress(row)
-                or f"missingEntryCount={row.missing_entry_count}, state={row.state}",
+                {
+                    **row.local_binding_capability,
+                    "supported": False,
+                    "reason": error.strerror or str(error),
+                },
+                self._current_progress(row) or f"missingEntryCount={row.missing_entry_count}",
             )
-            try:
-                signature = local_file_signature(path.stat(), path)
-            except OSError as error:
-                require_local_revision(
-                    row.mount.id,
-                    {
-                        **row.local_binding_capability,
-                        "supported": False,
-                        "reason": error.strerror or str(error),
-                    },
-                    self._current_progress(row) or f"missingEntryCount={row.missing_entry_count}",
-                )
-                raise
-            with self._lock:
-                if self._rows.get(row.mount.id) is not row:
-                    return None
-                binding = None
-                for candidate, registered in self._local_bindings.items():
-                    if registered == (row.mount, relative, signature):
-                        binding = candidate
-                        break
-                if binding is None:
-                    binding = uuid.uuid4().hex
-                    self._local_bindings[binding] = (row.mount, relative, signature)
-            verified = self.reconcile_local(binding)
-            if verified is not None:
-                return verified
-            self.write_snapshot()
-            return LocalAssetRef(
-                binding, name, signature[0], f"mounts/{row.mount.id}/{relative}", resolver=self
-            )
-        return None
+            raise
+        with self._lock:
+            if self._rows.get(row.mount.id) is not row:
+                return None
+            binding = None
+            for candidate, registered in self._local_bindings.items():
+                if registered == (row.mount, relative, signature):
+                    binding = candidate
+                    break
+            if binding is None:
+                binding = uuid.uuid4().hex
+                self._local_bindings[binding] = (row.mount, relative, signature)
+        verified = self.reconcile_local(binding)
+        if verified is not None:
+            return verified
+        self.write_snapshot()
+        return LocalAssetRef(
+            binding, name, signature[0], f"mounts/{row.mount.id}/{relative}", resolver=self
+        )
 
     def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
         with self._lock:
@@ -1030,9 +1068,9 @@ class MountTable:
         return None
 
     def write_snapshot(self) -> None:
-        """Publish each indexed mount's root and current index path.
+        """Publish granted roots, indexed paths and engine-issued local revisions.
 
-        Scanning mounts participate once their first entries are available.
+        Unscanned mounts participate only when they carry engine-bound local files.
         Atomic replacement keeps workers from observing a torn snapshot.
         """
         if self._snapshot_path is None:
@@ -1042,7 +1080,7 @@ class MountTable:
                 {
                     "id": row.mount.id,
                     "root": str(row.mount.path),
-                    "index": str(row.library.index_path),
+                    "index": str(row.library.index_path) if row.library is not None else "",
                     "mode": row.mount.mode,
                     "kind": row.kind,
                     "priority": row.mount.priority,
@@ -1055,6 +1093,10 @@ class MountTable:
                     key=lambda row: (row.mount.priority, row.mount.id),
                 )
                 if row.library is not None
+                or any(
+                    mount is row.mount
+                    for mount, _relative, _signature in self._local_bindings.values()
+                )
             ]
             local_bindings: dict[str, object] = {}
             for binding, (mount, relative, signature) in self._local_bindings.items():
@@ -1144,8 +1186,11 @@ class MountSnapshotResolver:
         if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
             raise AssetError("selected file root is not granted for this kind")
         path = root / relative
-        if not path.resolve(strict=True).is_relative_to(root) or not path.is_file():
-            raise AssetError("selected file is outside its grant or unavailable")
+        try:
+            if not path.resolve(strict=True).is_relative_to(root) or not path.is_file():
+                raise AssetError("selected file is outside its grant or unavailable")
+        except (OSError, RuntimeError) as error:
+            raise AssetError("selected file is outside its grant or unavailable") from error
         for mount_id, row_kind, row_root, resolver in self._refresh():
             if row_kind == kind and row_root.resolve() == root:
                 try:
@@ -1383,6 +1428,8 @@ class MountSnapshotResolver:
             (mount_id, kind, Path(root)) for _, mount_id, kind, root, _ in ordered if root
         )
         for _priority, mount_id, kind, root, index in ordered:
+            if not index:
+                continue
             try:
                 self._resolvers.append(
                     (mount_id, kind, Path(root), IndexedAssetResolver(root, index_path=index))
