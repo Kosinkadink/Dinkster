@@ -76,6 +76,10 @@
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.
+- Windows contributor setup and interpreter preparation require uv 0.13.6 or
+  newer for pinned CPython 3.14.10. An older uv is refused before those scripts
+  download inputs or create environments; the error names both versions and
+  the interpreter. Setup never upgrades uv automatically.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -149,6 +153,9 @@
 - Engine release assembly records variant-specific dependency wheel identities
   without uploading third-party wheels. Finalization rejects unexpected payloads
   and enforces a 100 MB budget excluding native tools ZIPs.
+- Native tools builds retry transient HTTPS input failures up to three times,
+  preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
+  corrupt payloads fail without retry; exhausted failures retain attempt details.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.
