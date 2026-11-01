@@ -51,6 +51,9 @@
 - Native `BakeNormalMapFromMesh` bakes high-poly surface normals into existing
   low-poly UVs as OpenGL +Y tangent-space images, with cage projection,
   closest-surface fallback and filled UV gutters.
+- Native `BakeTextureFromVoxel` bakes sparse voxel colors and metallic/roughness
+  into existing mesh UVs, with normalized occupied-corner interpolation,
+  nearest-voxel fallback, optional reference-surface projection and filled gutters.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
 - Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
