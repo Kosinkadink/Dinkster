@@ -607,6 +607,7 @@ namespaces = [
     "MeshTextureToImage",
     "MeshSmoothNormals",
     "RenderUVAtlas",
+    "UnwrapMesh",
     "ApplyTextureToMesh",
     "FillHoles",
     "Get3DComponents",

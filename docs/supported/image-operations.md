@@ -30,6 +30,8 @@
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
+- Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
+  seam vertex colors, source textures and variable batch lengths.
 - Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
   coincident positions or splitting hard creases while retaining mesh attributes.
 - Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
