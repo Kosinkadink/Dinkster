@@ -59,6 +59,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .curve_editor import CurveEditor
 from .custom_sampling import CUSTOM_SAMPLING_NODES
+from .depth_anything_3 import DA3GeometryToMesh, DA3Inference, DA3Render, LoadDA3Model
 from .device_routing import DEVICE_ROUTING_NODES
 from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
@@ -489,6 +490,10 @@ COMFY_NODES: tuple[type[Node], ...] = (
     MoGeInference,
     MoGeRender,
     MoGePointMapToMesh,
+    LoadDA3Model,
+    DA3Inference,
+    DA3Render,
+    DA3GeometryToMesh,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
     TripoSplatConditioning,
