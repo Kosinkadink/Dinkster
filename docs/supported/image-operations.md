@@ -33,6 +33,8 @@
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
+- Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
+  seam vertex colors, source textures and variable batch lengths.
 - Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
   coincident positions or splitting hard creases while retaining mesh attributes.
 - Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
@@ -49,6 +51,8 @@
   converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
+- Portable shape-subdivision values retain ordered sparse stages, feature and
+  coordinate tensors, explicit shapes and exact rational scales, without caches.
 - Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
   occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`

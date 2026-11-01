@@ -142,6 +142,7 @@ from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
 from .mesh_remesh import RemeshMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
+from .mesh_unwrap import UnwrapMesh
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -543,6 +544,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     MeshTextureToImage,
     MeshSmoothNormals,
     RenderUVAtlas,
+    UnwrapMesh,
     ApplyTextureToMesh,
     FillHoles,
     Get3DComponents,
