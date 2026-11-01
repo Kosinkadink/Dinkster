@@ -2336,7 +2336,10 @@ def test_cli_publishes_exact_archive_with_optional_published_locks(
                 run_cli(*arguments)
             assert error.value.code == 2
             detail = capsys.readouterr().err
-            assert "lock binding refused" in detail if mode == "refused" else "locks.json" in detail
+            if mode == "refused":
+                assert "lock binding refused" in detail
+            else:
+                assert "cannot read publication input" in detail and "locks.json" in detail
         else:
             run_cli(*arguments)
             assert "as candidate candidate-1" in capsys.readouterr().out
