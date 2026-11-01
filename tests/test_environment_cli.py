@@ -106,6 +106,104 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert not root.exists()
 
 
+@pytest.mark.parametrize("location", ["explicit", "project", "store", "retained"])
+def test_custom_selection_plan_is_read_only_and_retains_installed_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, location: str
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root, store = tmp_path / "project", tmp_path / "store"
+    mirror = tmp_path / "mirror"
+    base, _, _ = _mirror(mirror)
+    arguments = [
+        "setup",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--variant",
+        "studio-cuda",
+        "--data",
+        str(store),
+        "--plan",
+    ]
+    definition = (
+        '[variants.studio-cuda]\ntorch = "2.14.1+cu130"\n'
+        'torch-index = "https://download.pytorch.org/whl/cu130"\n'
+        'extras-index = "https://extras.example.org/simple"\n'
+    )
+    if location == "retained":
+        _generation(root, 1)
+        generation = root / "generations/1"
+        base["variant"] = "studio-cuda"
+        identity = {
+            key: base[key]
+            for key in (
+                "format",
+                "variant",
+                "platform",
+                "python",
+                "interpreter",
+                "wheels",
+                "replaces",
+                "workerProtocol",
+                "nvidia",
+            )
+        }
+        identity["archive"] = {"format": "tar+zstd"}
+        base["id"] = "sha256:" + hashlib.sha256(_json(identity)).hexdigest()
+        base["source"] = "user-defined"
+        (generation / "base-manifest.json").write_bytes(_json(base))
+        recorded = json.loads((generation / "generation.json").read_bytes())
+        recorded.update(base=base["id"], variant="studio-cuda")
+        (generation / "generation.json").write_bytes(_json(recorded))
+        (root / "current").write_text("1\n")
+        (root / "project.json").write_bytes(
+            _json(
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "main",
+                    "variant": "studio-cuda",
+                    "mirrors": [str(mirror)],
+                    "port": 3639,
+                }
+            )
+        )
+        (root / "store").write_text(str(store) + "\n")
+        (root / "variants.toml").write_text("invalid replacement definition\n")
+        arguments[0] = "update"
+    else:
+        path = {"explicit": tmp_path, "project": root, "store": store}[location]
+        path.mkdir(exist_ok=True)
+        definitions = path / "variants.toml"
+        definitions.write_text(definition)
+        if location == "explicit":
+            arguments.extend(["--variants", str(definitions)])
+    before = {
+        path: path.read_bytes()
+        for tree in (root, store)
+        for path in tree.rglob("*")
+        if path.is_file()
+    }
+    code, result = _run(root, *arguments)
+    assert code == 0 and result["status"] == "planned", result
+    plan = "\n".join(result["plan"])
+    if location == "retained":
+        assert f"retain user-defined base {base['id']} without rebuilding" in plan
+        assert "build user-defined" not in plan
+    else:
+        assert "build user-defined studio-cuda base" in plan
+        assert "2.14.1+cu130" in plan
+        assert "https://extras.example.org/simple" in plan
+    assert before == {
+        path: path.read_bytes()
+        for tree in (root, store)
+        for path in tree.rglob("*")
+        if path.is_file()
+    }
+    assert not (root / "journal").exists()
+
+
 @pytest.mark.parametrize("operation", ["setup", "update"])
 def test_incompatible_published_dependency_refuses_before_project_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str

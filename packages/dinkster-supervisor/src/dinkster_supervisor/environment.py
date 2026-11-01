@@ -5,13 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from contextlib import ExitStack
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import cast
 
-from .environment_artifacts import acquire, acquire_pack_locks, acquire_sources, discover
+from .environment_artifacts import (
+    acquire,
+    acquire_pack_locks,
+    acquire_sources,
+    discover,
+    validate_manifest,
+)
 from .environment_collection import (
     cleanup_collection,
     collect_generations,
@@ -20,10 +27,18 @@ from .environment_collection import (
     recover_store_collection,
     store_collection_plan,
 )
-from .environment_custom import base_details
+from .environment_custom import (
+    base_details,
+    build_custom_base,
+    custom_selection,
+    native_template,
+    prepare_custom_pack_locks,
+    variant_file,
+)
 from .environment_generations import (
     build_generation,
     pack_operation,
+    prepare_engine_interpreter,
     project_operation,
     verify_base_inputs,
 )
@@ -289,15 +304,23 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     store = select_store(root, requested)
     local = None
     catalog = None
+    custom = None
+    custom_base = None
+    dependency_variant = variant
+    base: dict[str, object] | None = None
+    base_id: str | None = None
+    template = None
     if args.operation == "setup" and args.from_scratch:
         if args.pack_lock or args.catalog_lock is not None or args.artifacts is not None:
             raise EnvironmentError(
                 "--from-scratch resolves checkout packs; "
                 "--pack-lock, --catalog-lock and --artifacts cannot be combined with it"
             )
-        from .environment_local import local_selection
+        from .environment_local import DEFAULT_VARIANTS, local_selection
 
-        local = local_selection(args.source.resolve(), variant, args.variants, args.python)
+        local = local_selection(
+            args.source.resolve(), variant, args.variants or DEFAULT_VARIANTS, args.python
+        )
         size = 0
         plan = [
             f"resolve {args.source.resolve() / 'uv.lock'} locally for {variant}",
@@ -307,8 +330,26 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         ]
     else:
         catalog = discover(mirrors, channel)
-        base_id = catalog.channel.base_for(variant)
-        base = catalog.bases[variant]
+        if previous_root is not None and args.variants is None:
+            retained = previous_root / "base-manifest.json"
+            active = Generation.read(previous_root / "generation.json")
+            if active.variant == variant and retained.is_file():
+                manifest = validate_manifest(retained.read_bytes(), active.base, variant)
+                if manifest.get("source") == "user-defined":
+                    custom_base = manifest
+        definitions = variant_file(root, store, args.variants) if custom_base is None else None
+        if custom_base is not None or definitions is not None:
+            template = native_template(catalog.bases)
+            if definitions is not None:
+                custom = custom_selection(definitions, variant, template)
+        if custom is not None or custom_base is not None:
+            assert template is not None
+            dependency_variant = template["variant"]
+            base = custom_base or template
+            base_id = cast("str", base["id"])
+        else:
+            base_id = catalog.channel.base_for(variant)
+            base = catalog.bases[variant]
         parts = cast("list[dict[str, object]]", cast("dict[str, object]", base["archive"])["parts"])
         artifacts = cast("list[dict[str, object]]", catalog.engine["artifacts"])
         size = sum(cast("int", row["size"]) for row in (*parts, *artifacts))
@@ -317,6 +358,15 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
+        if custom is not None:
+            plan[:2] = [
+                f"build user-defined {variant} base from {custom['sourceFile']}",
+                f"torch {custom['torch']} from {custom['torch-index']}; "
+                f"extras {custom['extras-index']}; "
+                "custom download size is not known until resolution",
+            ]
+        elif custom_base is not None:
+            plan.insert(1, f"retain user-defined base {custom_base['id']} without rebuilding")
     if project_settings is not None and settings is not None:
         plan.append(
             f"change project selection from {settings['channel']}/{settings['variant']} "
@@ -402,15 +452,59 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if select_store(root, requested) != store:
             raise EnvironmentError("store changed after planning; request a new plan")
         store.mkdir(parents=True, exist_ok=True)
-        with writer_lock(store), writer_lock(root):
+        with writer_lock(store), writer_lock(root), ExitStack() as temporary:
             _recover_pending(root, locked_store=store)
             revalidate()
             published_constraints = None
+            catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
+            custom_locks = None
             if local is None:
                 assert catalog is not None
+                assert base is not None and base_id is not None
+                if custom is not None:
+                    assert template is not None
+                    custom_base = build_custom_base(
+                        custom, template, catalog.base_sources[dependency_variant], store
+                    )
+                if custom_base is not None:
+                    base = custom_base
+                    base_id = cast("str", base["id"])
                 published_constraints = acquire(
-                    catalog, variant, store, package_index=cast("str | None", package_index)
+                    catalog,
+                    dependency_variant,
+                    store,
+                    package_index=cast("str | None", package_index),
+                    base=custom_base,
+                    base_sources=(str(store / "downloads" / base_id[7:]),)
+                    if custom_base is not None
+                    else None,
                 )
+                if custom_base is not None:
+                    if catalog_lock is None:
+                        acquired_sources = acquire_sources(catalog, store)
+                        if acquired_sources is not None:
+                            catalog_lock, source_artifacts = acquired_sources
+                    if catalog_lock is None or source_artifacts is None:
+                        raise EnvironmentError("custom base requires selected pack archives")
+                    scratch = Path(
+                        temporary.enter_context(
+                            tempfile.TemporaryDirectory(prefix="dinkster-custom-packs-", dir=store)
+                        )
+                    )
+                    prepare_engine_interpreter(
+                        scratch / "engine",
+                        store=store,
+                        base=base_id,
+                        constraints=published_constraints,
+                    )
+                    custom_locks = tuple(args.pack_lock) or prepare_custom_pack_locks(
+                        scratch / "engine",
+                        store=store,
+                        base=custom_base,
+                        catalog_lock=catalog_lock,
+                        artifacts=source_artifacts,
+                        output=scratch / "locks",
+                    )
             target = next_generation(root)
             journal = (
                 begin_setup(
@@ -442,7 +536,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 atomic_write(pointer, str(store) + "\n")
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
-                catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
                 prepare_packs = None
                 if local is not None:
                     from .environment_local import prepare_local, prepare_local_packs
@@ -466,8 +559,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 else:
                     assert catalog is not None
                     assert published_constraints is not None
-                    base_id = catalog.channel.base_for(variant)
-                    base = catalog.bases[variant]
+                    assert base is not None
                     constraints = published_constraints
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
@@ -476,9 +568,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         acquired_sources = acquire_sources(catalog, store)
                         if acquired_sources is not None:
                             catalog_lock, source_artifacts = acquired_sources
-                    pack_locks = tuple(args.pack_lock) or acquire_pack_locks(
-                        catalog, variant, store
+                    pack_locks = (
+                        custom_locks
+                        if custom_locks is not None
+                        else tuple(args.pack_lock) or acquire_pack_locks(catalog, variant, store)
                     )
+                assert base_id is not None
                 measured = sum(
                     path.stat().st_size
                     for path in (store / "bases" / base_id[7:] / "python").rglob("*")
@@ -827,18 +922,16 @@ def main() -> None:
         "--repair", action="store_true", help="rebuild offline from the local store"
     )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
-    from .environment_local import DEFAULT_VARIANTS
-
     setup.add_argument(
         "--from-scratch", action="store_true", help="resolve locally; development only"
     )
     setup.add_argument(
         "--source", type=Path, default=Path.cwd(), help="Dinkster checkout with uv.lock"
     )
-    setup.add_argument("--variants", type=Path, default=DEFAULT_VARIANTS)
     setup.add_argument("--python", type=Path, help="explicit host interpreter override")
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
+        command.add_argument("--variants", type=Path, help="user-defined variants TOML file")
         command.add_argument("--mirror", action="append", default=[])
         command.add_argument(
             "--package-index", help="simple package index for exact locked third-party wheels"
