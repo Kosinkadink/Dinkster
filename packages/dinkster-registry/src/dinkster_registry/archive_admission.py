@@ -34,7 +34,7 @@ from dinkster_schema import (
     validate_claim,
     validate_name,
 )
-from dinkster_values import MEBIBYTE
+from dinkster_workers import MEBIBYTE
 from dinkster_workers import doctor as dinkster_doctor
 from dinkster_workers.doctor import (
     _check_assets,  # pyright: ignore[reportPrivateUsage]
