@@ -138,7 +138,7 @@ def build_bvh(tri: Any) -> dict[str, Any]:
     )
 
 
-def _ray_triangle(o: Any, d: Any, tri: Any, tmin: float, tmax: float) -> tuple[Any, Any]:
+def ray_triangle(o: Any, d: Any, tri: Any, tmin: float, tmax: Any) -> tuple[Any, Any]:
     import torch
 
     a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
@@ -183,7 +183,7 @@ def _closest_hit(
         if bool(leaves.any()):
             ga = a[leaves]
             face = bvh["order"][node[leaves] - leaf]
-            hit, t = _ray_triangle(orig[ga], dirs[ga], tri[face], tmin, tmax)
+            hit, t = ray_triangle(orig[ga], dirs[ga], tri[face], tmin, tmax)
             update = hit & (t < best_t[ga])
             gu = ga[update]
             best_t[gu], best_f[gu] = t[update], face[update].long()

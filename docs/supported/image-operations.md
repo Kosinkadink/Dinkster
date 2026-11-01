@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `BakeAmbientOcclusion` bakes high-poly occlusion into a low-poly UV
+  layout, with counted mesh batches, surface projection, distance, bias and
+  strength controls, cosine-weighted rays and filled UV gutters.
 - Native `RenderMesh` produces a single image and coverage mask from the first
   counted mesh, with texture, vertex-color, clay, normal and depth modes,
   authored model transforms, supplied cameras and automatic framing.

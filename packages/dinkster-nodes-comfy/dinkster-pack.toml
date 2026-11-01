@@ -623,6 +623,7 @@ namespaces = [
     "RenderUVAtlas",
     "UnwrapMesh",
     "ApplyTextureToMesh",
+    "BakeAmbientOcclusion",
     "FillHoles",
     "Get3DComponents",
     "DecimateMesh",
