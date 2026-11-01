@@ -146,6 +146,10 @@
   face regions into one binary mask per frame, including empty frames.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
+- Native `SAM3DBody_FaceExpression` maps detected face blendshapes to body
+  expressions, removes clip bias, smooths detection signals and regenerates
+  pose geometry. It requires a loaded SAM3D Body model; unmocked loading
+  remains unavailable in the current pinned inference release.
 - Native `SAM3DBody_Smooth` reduces temporal pose jitter with Gaussian or
   Savitzky-Golay filtering, wrapped-angle handling and fast-spin geometry
   protection while camera motion remains smoothed.
