@@ -163,6 +163,7 @@ from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
 from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
+from .moge_render import MoGeRender
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -171,6 +172,7 @@ from .optical_flow import OpticalFlowLoader
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
+from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -210,6 +212,7 @@ from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .splat_files import File3DToSplat, SplatToFile3D
+from .splat_render import RenderSplat
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -481,9 +484,11 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetSplatCount,
     TransformSplat,
     MergeSplat,
+    RenderSplat,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
+    MoGeRender,
     MoGePointMapToMesh,
     LoadDA3Model,
     DA3Inference,
@@ -537,6 +542,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     CheckpointSave,
     ModelSave,
     SaveImageAdvanced,
+    Pixal3DConditioning,
+    Pixal3DMultiViewConditioning,
     Trellis2Conditioning,
     *MESH_NODES,
     *VOXEL_MESH_NODES,

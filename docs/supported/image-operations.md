@@ -88,8 +88,14 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `Pixal3DConditioning` and `Pixal3DMultiViewConditioning` combine DINO
+  vision tokens, optional NAF features, and per-view camera projection features
+  for single images or a fixed front/left/back/right orbit rig.
 - Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
   or an explicit quaternion, with roll, field of view, zoom, and projection.
+- Native `RenderSplat` renders gaussian splats as images and coverage masks,
+  with camera-controlled turntables, background plates, and color, clay,
+  depth, or normal shading.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
@@ -100,6 +106,8 @@
   with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored
+  depth, OpenGL or DirectX normals, or an RGB mask.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
 - Native `MoGePanoramaInference` estimates spherical geometry for a single
