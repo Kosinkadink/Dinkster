@@ -355,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.project_root,
                     variant=args.variant,
                     source_generation=args.source_generation,
+                    target_generation=args.generation,
                     catalog_lock=args.catalog_lock,
                     artifacts=args.artifacts,
                 )
