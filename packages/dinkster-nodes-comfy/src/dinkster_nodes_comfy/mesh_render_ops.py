@@ -98,7 +98,8 @@ def build_bvh(tri: Any) -> dict[str, Any]:
     del center, lo, hi, quantized, morton
     del indices, plus, minus, direction, minimum, maximum, condition, length, probe, end
     del first, last, node_prefix, split, divisor, span, step, gamma
-    del delta, sorted_codes
+    del delta
+    sorted_codes = None
     nmin = torch.empty((2 * count, 3), device=tri.device)
     nmax = torch.empty((2 * count, 3), device=tri.device)
     nmin[count:], nmax[count:] = amin[order], amax[order]
