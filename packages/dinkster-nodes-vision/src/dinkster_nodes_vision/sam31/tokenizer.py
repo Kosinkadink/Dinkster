@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import unicodedata
 from functools import lru_cache
@@ -12,7 +11,6 @@ CLIP_BOS = 49406
 CLIP_EOS = 49407
 CLIP_VOCAB_SIZE = 49408
 TOKEN_COUNT = 32
-TOKENIZER_SHA256 = "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a"
 TOKENIZER_TEXT_SHA256 = "67603cfda2e032ad77b5f8808af37789d590db664b26df8705d2bf8b3c553fc8"
 
 _SOT = "<|startoftext|>"
@@ -21,15 +19,11 @@ _CONTRACTIONS = ("'s", "'t", "'re", "'ve", "'m", "'ll", "'d")
 
 
 def _tokenizer_data() -> bytes:
-    compressed = (
+    data = (
         resources.files("dinkster_nodes_vision.sam31")
-        .joinpath("data/bpe_simple_vocab_16e6.txt.gz")
+        .joinpath("data/bpe_simple_vocab_16e6.txt")
         .read_bytes()
     )
-    digest = hashlib.sha256(compressed).hexdigest()
-    if digest != TOKENIZER_SHA256:
-        raise ValueError(f"SAM 3.1 tokenizer hash mismatch: {digest}")
-    data = gzip.decompress(compressed)
     digest = hashlib.sha256(data).hexdigest()
     if digest != TOKENIZER_TEXT_SHA256:
         raise ValueError(f"SAM 3.1 tokenizer content hash mismatch: {digest}")
@@ -182,7 +176,6 @@ __all__ = [
     "CLIP_BOS",
     "CLIP_EOS",
     "CLIP_VOCAB_SIZE",
-    "TOKENIZER_SHA256",
     "TOKENIZER_TEXT_SHA256",
     "ClipBpe",
     "load_tokenizer",
