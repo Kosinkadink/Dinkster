@@ -594,6 +594,8 @@ namespaces = [
     "CheckpointSave",
     "ModelSave",
     "SaveImageAdvanced",
+    "Pixal3DConditioning",
+    "Pixal3DMultiViewConditioning",
     "Trellis2Conditioning",
     "RotateMesh",
     "GetMeshInfo",
