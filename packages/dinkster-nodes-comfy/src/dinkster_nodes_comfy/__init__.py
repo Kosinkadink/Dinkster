@@ -199,6 +199,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sam3d_body import SAM3DBody_Smooth
+from .sam3d_prediction import SAM3DBody_Predict
 from .sam3d_render import SAM3DBody_Render
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
@@ -529,6 +530,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetVideoComponents,
     ConditioningLoader,
     SaveConditioning,
+    SAM3DBody_Predict,
     SAM3DBody_Smooth,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
