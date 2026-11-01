@@ -7,6 +7,7 @@ import json
 import os
 import zipfile
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -1994,6 +1995,168 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
     after, _ = codec.encode(source, after_blobs, after_segments)
     assert (after, after_blobs) == (before, before_blobs)
     assert source.fingerprint == fingerprint
+    assert not registry.spec("dinkster.layers").asset_references_complete
+
+
+@pytest.mark.parametrize("case", ["legacy", "unused", "host-missing"])
+def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    import time
+
+    from dinkster_assets import AssetVault, LibraryStore, digest_bytes
+    from dinkster_assets.writer import AssetWriter, MountSnapshotWriter
+    from dinkster_engine import RunResult
+    from dinkster_nodes_image.compositor_types import (
+        CompositorSourceLayer,
+        LayerStack,
+        decode_layer_stack,
+        encode_layer_stack,
+        layer_stack_meta,
+    )
+    from dinkster_protocol import Invocation
+    from dinkster_server import ServerLibrary
+    from dinkster_server.queue import Job, JobKey
+    from dinkster_values import SAVE_TARGET_TYPE
+    from dinkster_values.asset_folders import AssetFolderContext
+
+    producer, host = AssetVault(tmp_path / "producer"), AssetVault(tmp_path / "host")
+    output = tmp_path / "output"
+    output.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps({"mounts": [{"id": "out", "root": str(output), "mode": "readwrite"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(host.root))
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_media_types(registry)
+    register_image_types(registry)
+    pixels = np.random.default_rng(545).random((1, 64, 64, 3), dtype=np.float32)
+    expected = raster_png(pixels[0])
+    digest = digest_bytes(expected)
+    old = TypeRegistry()
+    old.register(
+        "dinkster.layers",
+        encode=encode_layer_stack,
+        decode=decode_layer_stack,
+        meta=layer_stack_meta,
+    )
+    original = old.wrap(
+        "dinkster.layers",
+        LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
+    )
+    blobs, segments = [], []
+    wire, _ = ValueCodec(old, use_shm=False).encode(original, blobs, segments)
+    codec = ValueCodec(registry, use_shm=False)
+    source, _ = codec.decode(wire, blobs, [])
+    if case != "legacy":
+        for vault in (producer,) if case == "host-missing" else (producer, host):
+            with vault.writer(digest) as writer:
+                writer.write(expected)
+                writer.commit()
+        record = empty_document(64, 64).to_record()
+        record["allocation"]["nextOrdinal"] = 1
+        record["resources"]["r0"] = {
+            "id": "r0",
+            "kind": "raster",
+            "digest": digest,
+            "byteSize": len(expected),
+            "mediaType": "image/png",
+            "width": 64,
+            "height": 64,
+            "colorSpace": "srgb",
+            "channelDepth": 8,
+            "alphaMode": "opaque",
+        }
+        source = registry.wrap("dinkster.layers", ImageDocument.from_record(record))
+    before_blobs, before_segments = [], []
+    before, _ = codec.encode(source, before_blobs, before_segments)
+
+    async def run() -> None:
+        packages = Path(__file__).parents[1] / "packages"
+        group = GroupIsolatedWorker(
+            "native-save-test",
+            [
+                packages / name / "dinkster-pack.toml"
+                for name in (
+                    "dinkster-nodes-foundation",
+                    "dinkster-nodes-media-io",
+                    "dinkster-nodes-image",
+                )
+            ],
+            registry,
+            extra_env={
+                "DINKSTER_ASSET_VAULT": str(producer.root),
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+            },
+            aimdo_arm="off",
+        )
+        await group.start()
+        try:
+            schema = SaveLayers.define_schema()
+            started = time.time_ns()
+            result = await group.members["dinkster-nodes-image"].invoke(
+                Invocation(
+                    "native-save",
+                    "save",
+                    schema.node_type,
+                    {
+                        "layers": source,
+                        "target": registry.wrap(
+                            SAVE_TARGET_TYPE, {"mount": "out", "prefix": "kept"}
+                        ),
+                        "format": registry.wrap("COMBO", "native"),
+                    },
+                    schema,
+                )
+            )
+            if case == "host-missing":
+                assert result.error is not None
+                assert host.resolve(digest) is None
+                return
+            assert result.error is None
+            assert result.outputs is not None
+            artifacts = SavedArtifactAuthority(snapshot).capture_mounted(
+                result.saved_artifact_claims, "save", started
+            )
+            assert len(artifacts) == 1
+            assert result.outputs["document"].fingerprint == artifacts[0].digest
+            with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
+                library = ServerLibrary(
+                    host,
+                    store,
+                    upload_writer=AssetWriter(MountSnapshotWriter(snapshot)),
+                    project_folders_for=lambda _: AssetFolderContext(("out",), "out"),
+                )
+                library.record_saved_outputs(
+                    Job(JobKey("audit", "save"), Graph(nodes={}), (), 0, "native-save", "audit"),
+                    RunResult(
+                        "native-save", {"save": result.outputs}, (), (), (), artifacts=artifacts
+                    ),
+                )
+            with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
+                dependencies = store.get_dependencies(artifacts[0].digest)
+                assert dependencies is not None
+                assert [(item["digest"], item["byteSize"]) for item in dependencies] == [
+                    (digest, len(expected))
+                ]
+                with store.hold_asset_references() as roots:
+                    assert {digest, artifacts[0].digest} <= roots
+        finally:
+            await group.close()
+        held = host.resolve(digest)
+        assert held is not None
+        assert held.read_bytes() == expected
+        if case == "unused":
+            assert not (host.root / ".produced-assets.sqlite").exists()
+
+    asyncio.run(run())
+    after_blobs, after_segments = [], []
+    after, _ = codec.encode(source, after_blobs, after_segments)
+    assert (after, after_blobs) == (before, before_blobs)
     assert not registry.spec("dinkster.layers").asset_references_complete
 
 

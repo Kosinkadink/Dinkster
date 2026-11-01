@@ -1007,6 +1007,7 @@ async def serve_connection(
     # a stub it has not decoded yet, so this side must hold the resident until
     # the parent vouches for it (DESIGN 3.10: the in-flight half of the gate).
     inflight_result_refs: dict[str, frozenset[str]] = {}
+    result_receipts: dict[str, asyncio.Future[None]] = {}
     inflight_control_refs: dict[str, set[str]] = {}
     full_release_operations: set[str] = set()
     full_release_commits: set[str] = set()
@@ -1400,6 +1401,11 @@ async def serve_connection(
 
         result_send_locked = False
         try:
+            vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+            if vault_root:
+                produced_context.enter_context(
+                    contextlib.closing(hold_produced_vault(Path(vault_root)))
+                )
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
             produced_context.enter_context(
@@ -1669,7 +1675,22 @@ async def serve_connection(
                 codec.take_pending_store_blobs()
                 inflight_result_refs.pop(invocation_id, None)
             attribute_moved_wire(out_header, moved, out_blobs)
+            if result.outputs and any(
+                value.meta.get("asset_refs") for value in result.outputs.values()
+            ):
+                result_receipts[invocation_id] = asyncio.get_running_loop().create_future()
             await send(out_header, out_blobs, out_segments)
+            if result_send_locked:
+                result_transfer_lock.release()
+                result_send_locked = False
+            receipt = result_receipts.get(invocation_id)
+            if receipt is not None:
+                # The parent waits for this reservation before decoding/adopting.
+                # Execution is over, but produced-byte ownership lasts until its ack.
+                if reserve_sent:
+                    await send({"type": "memoryRelease", "requestId": invocation_id})
+                    reserve_sent = False
+                await receipt
         except asyncio.CancelledError:
             raise  # engine gave up; nothing to report
         except Exception as exc:  # noqa: BLE001 - host must survive any invocation
@@ -1703,6 +1724,7 @@ async def serve_connection(
                     }
                 )
         finally:
+            result_receipts.pop(invocation_id, None)
             produced_context.close()
             context = run_contexts.pop(invocation_id, None)
             if context is not None:
@@ -3026,6 +3048,9 @@ async def serve_connection(
                     await send({"type": "resultAcked", **key.to_wire()})
                 else:
                     inflight_result_refs.pop(invocation_id, None)
+                receipt = result_receipts.get(invocation_id)
+                if receipt is not None and not receipt.done():
+                    receipt.set_result(None)
             elif kind == "shmAck":
                 for name in header.get("segments", ()):
                     segment = sent_segments.pop(str(name), None)

@@ -111,6 +111,7 @@ from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, 
 from .preview_artifacts import capture_saved_file_previews
 from .produced_assets import ProducedAssetAuthority
 from .run_control import PreparedRunContext
+from .saved_artifacts import SavedArtifactAuthority
 
 
 async def _run_sync(call: Callable[..., object], /, *args: object, **kwargs: object) -> object:
@@ -403,6 +404,7 @@ class InProcessWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
         """Invoke with the pack context active across all worker-side work."""
+        started_at_ns = time.time_ns()
         with (
             self._pack_context(),
             use_produced_output_job(
@@ -431,6 +433,17 @@ class InProcessWorker:
                         control = PreparedRunContext(invocation.run_control, prepare_values)
                         invocation = replace(invocation, run_control=control)
                 result = await self._invoke_in_context(invocation, on_event)
+                if result.outputs is not None and result.saved_artifact_claims:
+                    outputs = await _run_sync(
+                        SavedArtifactAuthority(
+                            os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
+                        ).document_outputs,
+                        self.registry,
+                        result.outputs,
+                        result.saved_artifact_claims,
+                        started_at_ns,
+                    )
+                    result = replace(result, outputs=cast("dict[str, Value]", outputs))
                 if authority is not None and result.outputs is not None:
                     await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
                 return result

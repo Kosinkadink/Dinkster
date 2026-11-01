@@ -174,7 +174,10 @@
   value or treating caller-owned inputs as newly produced assets. Missing,
   truncated, or corrupt external resources refuse retrieval.
 - Native document saves retain every external resource through their catalog
-  dependency manifest, including unused resources. Missing, corrupt, or
+  dependency manifest, including unused resources. Isolated saves transfer
+  newly derived resources into the host vault before producer acknowledgment,
+  without changing the saved file's identity or copying caller-owned inputs.
+  Missing, corrupt, or
   size-mismatched resources refuse catalog acknowledgment and remain recoverable
   when the declared bytes become available; retention does not grant media access.
 - Isolated GLSL ES 3.00 image rendering through ANGLE with up to five image

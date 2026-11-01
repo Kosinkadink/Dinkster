@@ -1655,16 +1655,21 @@ class BoundarySession:
 
             def adopt() -> None:
                 nonlocal saved_file_previews
-                self._produced_assets.capture(outputs, self._blob_store, invocation.inputs)
-                saved_file_previews = self._produced_assets.capture_previews(
-                    saved_file_previews, self._blob_store
-                )
-
-            try:
                 with use_produced_output_job(
                     invocation.job_ref or invocation.invocation_id, invocation.attempt_id
                 ):
-                    adoption = asyncio.create_task(asyncio.to_thread(adopt))
+                    self._produced_assets.capture(outputs, self._blob_store, invocation.inputs)
+                    if any(
+                        claim.get("mediaType") == DOCUMENT_RENDITION_MIME
+                        for claim in decoded.saved_artifact_claims
+                    ):
+                        source_asset_files(outputs, resolver_from_env())
+                    saved_file_previews = self._produced_assets.capture_previews(
+                        saved_file_previews, self._blob_store
+                    )
+
+            try:
+                adoption = asyncio.create_task(asyncio.to_thread(adopt))
                 self._asset_adoptions.add(adoption)
                 adoption.add_done_callback(self._asset_adoptions.discard)
                 await await_file_operation(adoption)
@@ -1685,19 +1690,13 @@ class BoundarySession:
             if consumed:
                 with contextlib.suppress(WorkerDied):
                     await self.send({"type": "shmAck", "segments": consumed}, [])
-            if not self._resumable:
-                with contextlib.suppress(WorkerDied):
-                    await self.send({"type": "resultAck", **key.to_wire()}, [])
             await self._cancel_invocation(key)
             raise
         except (AssetError, BoundaryError, OSError, WorkerDied) as exc:
             with contextlib.suppress(BoundaryError, WorkerDied):
                 if consumed:
                     await self.send({"type": "shmAck", "segments": consumed}, [])
-                if self._resumable:
-                    await self._confirm_result_acknowledgement(key)
-                else:
-                    await self.send({"type": "resultAck", **key.to_wire()}, [])
+                await self._cancel_invocation(key)
             self._forget_invocation(invocation.invocation_id)
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, str(exc))
