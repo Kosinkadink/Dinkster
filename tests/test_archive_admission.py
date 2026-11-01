@@ -90,7 +90,7 @@ def test_service_fixture_probe_contract(name: str) -> None:
 @pytest.mark.parametrize(
     ("replacement", "message"),
     [
-        ('name = "Example_Pack"', "canonical hyphen spelling"),
+        ('name = "example_pack"', "canonical hyphen spelling"),
         ('name = "other-pack"', "does not match submission"),
     ],
 )
