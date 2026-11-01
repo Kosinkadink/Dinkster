@@ -28,6 +28,7 @@ from dinkster_schema import canonical_name
 from dinkster_workers import PackManifest, load_manifest
 
 from .workflow_requirements import (
+    VARIANTS,
     PackRequirement,
     RequirementError,
     WorkflowRequirements,
@@ -142,7 +143,7 @@ def plan_project_requirements(
     This boundary verifies cached archives, never downloads or trusts workflow leads.
     Only this project's verified vault bytes count as locally materialized.
     """
-    if variant not in ("linux-cpu", "win-cpu", "win-nvidia", "win-nvidia-cu126"):
+    if variant not in VARIANTS:
         raise RequirementError(f"unknown engine variant: {variant}")
     requirements, inputs = load_project_requirements(root)
     installed = (
