@@ -75,6 +75,51 @@ def test_voxel_bake_nearest_fallback_rgb_and_missing_uv() -> None:
         BakeTextureFromVoxel.execute(mesh=mesh, voxel_colors=voxel, texture_size=64)
 
 
+def test_voxel_bake_large_sparse_keys_and_many_distant_texels() -> None:
+    mesh, voxel = fixture()
+    # Cubic keys exceed int32; more than 8192 stragglers use the spatial-tree tail.
+    voxel["resolution"] = 4096
+    voxel["data"] = torch.tensor([[4095, 4095, 4095], [2048, 1024, 512]])
+    mesh.vertices += 10
+    mesh.uvs = torch.tensor([[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]])
+    result = BakeTextureFromVoxel.execute(mesh=mesh, voxel_colors=voxel, texture_size=128)
+    torch.testing.assert_close(
+        result["base_color"], voxel["voxel_colors"][0, :3].expand(1, 128, 128, 3)
+    )
+    torch.testing.assert_close(
+        result["metallic"], voxel["voxel_colors"][0, 3].expand(1, 128, 128, 3)
+    )
+
+
+def test_voxel_bake_oom_fallback_does_not_hide_other_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_nodes_comfy import voxel_texture
+
+    mesh, voxel = fixture()
+    voxel["data"] = voxel["data"][:1]
+    voxel["voxel_colors"] = voxel["voxel_colors"][:1]
+    original = voxel_texture._trilinear
+
+    def exhausted(positions: Any, *args: Any) -> Any:
+        if positions.dtype == torch.float32:
+            raise torch.OutOfMemoryError("injected allocation failure")
+        return original(positions, *args)
+
+    monkeypatch.setattr(voxel_texture, "_trilinear", exhausted)
+    result = BakeTextureFromVoxel.execute(mesh=mesh, voxel_colors=voxel, texture_size=64)
+    torch.testing.assert_close(
+        result["base_color"], voxel["voxel_colors"][0, :3].expand(1, 64, 64, 3)
+    )
+
+    def invalid(*args: Any) -> Any:
+        raise ValueError("invalid voxel attributes")
+
+    monkeypatch.setattr(voxel_texture, "_trilinear", invalid)
+    with pytest.raises(ValueError, match="invalid voxel attributes"):
+        BakeTextureFromVoxel.execute(mesh=mesh, voxel_colors=voxel, texture_size=64)
+
+
 class VoxelSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:

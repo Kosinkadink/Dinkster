@@ -29,13 +29,36 @@ def _sample(positions: Any, coords: Any, colors: Any, resolution: int) -> Any:
     import torch
 
     r = int(resolution)
+    try:
+        result, valid = _trilinear(positions, coords, colors, r)
+    except Exception as error:
+        management = importlib.import_module("dinkster_inference.model_management")
+        management.raise_non_oom(error)
+        # CPU double arithmetic matches the reference's OOM fallback without zero bleed.
+        result, valid = _trilinear(
+            positions.cpu().double(),
+            coords.cpu(),
+            colors.cpu().float().double(),
+            r,
+        )
+        result = result.to(device=positions.device, dtype=torch.float32)
+        valid = valid.to(positions.device)
+    missing = torch.nonzero(~valid, as_tuple=True)[0]
+    if missing.numel():
+        result[missing] = _nearest(positions[missing], coords, colors, r)
+    return result.clamp_(0.0, 1.0)
+
+
+def _trilinear(positions: Any, coords: Any, colors: Any, r: int) -> tuple[Any, Any]:
+    import torch
+
     dtype = torch.int32 if r**3 <= torch.iinfo(torch.int32).max else torch.int64
     coords = coords.to(device=positions.device, dtype=dtype)
-    colors = colors.to(device=positions.device, dtype=torch.float32)
+    colors = colors.to(device=positions.device, dtype=positions.dtype)
     keys, order = ((coords[:, 0] * r + coords[:, 1]) * r + coords[:, 2]).sort()
     grid = (positions + 0.5) / (1.0 / r) - 0.5
-    base = grid.floor().to(dtype)
-    frac = grid - base.float()
+    base = grid.floor().to(coords.dtype)
+    frac = grid - base.to(positions.dtype)
     result = colors.new_zeros((len(positions), colors.shape[1]))
     weight_sum = colors.new_zeros((len(positions), 1))
     for dx in (0, 1):
@@ -53,15 +76,16 @@ def _sample(positions: Any, coords: Any, colors: Any, resolution: int) -> Any:
                 weight_sum += weight
     valid = weight_sum[:, 0] > 1e-8
     result[valid] /= weight_sum[valid].clamp_min(1e-8)
-    missing = torch.nonzero(~valid, as_tuple=True)[0]
-    if missing.numel():
-        result[missing] = _nearest(positions[missing], coords, colors, r, keys, order)
-    return result.clamp_(0.0, 1.0)
+    return result, valid
 
 
-def _nearest(positions: Any, coords: Any, colors: Any, r: int, keys: Any, order: Any) -> Any:
+def _nearest(positions: Any, coords: Any, colors: Any, r: int) -> Any:
     import torch
 
+    dtype = torch.int32 if r**3 <= torch.iinfo(torch.int32).max else torch.int64
+    coords = coords.to(device=positions.device, dtype=dtype)
+    colors = colors.to(device=positions.device, dtype=torch.float32)
+    keys, order = ((coords[:, 0] * r + coords[:, 1]) * r + coords[:, 2]).sort()
     count = len(positions)
     found = torch.zeros(count, dtype=torch.bool, device=positions.device)
     nearest = torch.zeros(count, dtype=torch.long, device=positions.device)
@@ -191,6 +215,15 @@ class BakeTextureFromVoxel(Node):
             )
         device = management.get_torch_device()
         batch, size = mesh.vertices.shape[0], int(texture_size)
+        reference_faces = reference if reference is not None else mesh
+        face_count = (
+            sum(int(count) for count in reference_faces.face_counts)
+            if reference_faces.face_counts is not None
+            else reference_faces.faces.numel() // 3
+        )
+        management.free_memory(
+            max(size * size * 512, face_count * 512) + management.minimum_inference_memory(), device
+        )
         output: dict[str, list[Any]] = {
             name: [] for name in ("base_color", "metallic", "roughness")
         }
