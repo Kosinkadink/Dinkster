@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tomllib
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -252,6 +253,12 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert preflight["uses"] == "actions/github-script@v7"
     assert "getReleaseByTag" in preflight["with"]["script"]
     assert "Refusing to overwrite an existing release" in preflight["with"]["script"]
+    release_steps = workflow["jobs"]["release"]["steps"]
+    collision_check = next(step for step in release_steps if "--preflight" in step.get("run", ""))
+    assert release_steps.index(collision_check) < release_steps.index(preflight)
+    assert "R2_BUCKET" in collision_check["env"]
+    assert "digest.slice(0, 8)" in preflight["with"]["script"]
+    assert "`v${manifest.version}`" in preflight["with"]["script"]
     assert next(
         step
         for step in workflow["jobs"]["release"]["steps"]
@@ -1252,6 +1259,10 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
+    built_at = datetime.fromisoformat(manifest["builtAt"])
+    assert built_at.tzinfo == UTC
+    assert manifest["label"] == f"{built_at.date().isoformat()}-1.2.3"
+    assert "tag" not in manifest
     assert set(manifest["workspaceWheels"]) == {
         "dinkster-1.2.3-py2.py3-none-any.whl",
         "dinkster_api-1.2.3-py2.py3-none-any.whl",
@@ -1353,7 +1364,8 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
         "format": "dinkster.engine/1",
         "commit": "a" * 40,
         "version": "1.2.3",
-        "tag": "v1.2.3",
+        "label": "2026-10-31-1.2.3",
+        "builtAt": "2026-10-31T12:00:00Z",
         "workerProtocol": 1,
         "workspaceWheels": [wheel.name],
         "artifacts": [
@@ -1414,6 +1426,133 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
     for name, digest in final_sums.items():
         assert hashlib.sha256((output / name).read_bytes()).hexdigest() == digest
     assert json.loads(metadata.read_bytes()) == result
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize(
+    "corruption", [None, "size", "hash", "upstream-size", "upstream-hash", "missing"]
+)
+def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, corruption: str | None
+) -> None:
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts import build_release_pack_locks as builder
+
+    release = tmp_path / "release"
+    release.mkdir()
+    filename = "example_dependency-2.0+native-py3-none-any.whl"
+    wheel = release / filename
+    wheel.write_bytes(b"verified native wheel")
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    upstream = "https://files.example.test/locked/example_dependency-2.0%2Bnative-py3-none-any.whl"
+    (tmp_path / "uv.lock").write_text(
+        f'[[package]]\nname="example-dependency"\nversion="2.0+native"\n'
+        f'[[package.wheels]]\nurl="{upstream}"\n'
+        f"size={wheel.stat().st_size + (1 if corruption == 'upstream-size' else 0)}\n"
+        f'hash="sha256:{"a" * 64 if corruption == "upstream-hash" else digest}"\n'
+        if corruption != "missing"
+        else "package=[]\n"
+    )
+    (release / "constraints.txt").write_text("example-dependency==2.0+native\n")
+    engine = {
+        "version": "1.2.3",
+        "label": "2026-10-31-1.2.3",
+        "workerProtocol": 11,
+        "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
+    }
+    if legacy:
+        engine.pop("label")
+        engine["tag"] = "main-" + "c" * 40
+    metadata = release / "release-manifest.json"
+    base = {
+        "id": "sha256:" + "b" * 64,
+        "variant": "linux-cpu",
+        "workerProtocol": 11,
+        "platform": {"os": "linux"},
+        "interpreter": {"executable": "python/bin/python3"},
+        "archive": {"parts": [{"filename": "base.tar.zst.001", "size": 17, "sha256": "a" * 64}]},
+        "wheels": [],
+        "nvidia": None,
+    }
+    engine["dependencies"] = {"linux-cpu": {"base": base["id"], "wheels": []}}
+    metadata.write_text(json.dumps(engine))
+    if not legacy:
+        base["label"] = "2026-10-31-py3.14.10-torch2.14.1-bbbbbbbb"
+    manifest = tmp_path / "base.json"
+    manifest.write_text(json.dumps(base))
+    monkeypatch.setattr(builder, "qualify", lambda *args: base)
+    monkeypatch.setattr(builder.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(builder, "extract_base", lambda *args, **kwargs: None)
+    monkeypatch.setattr(builder, "effective_constraints", lambda *args, **kwargs: "constraints\n")
+
+    def fetch(sources, filename, destination, digest, size):
+        name = base.get("label", "b" * 64)
+        assert sources == (
+            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/"
+            f"base-linux-cpu-{name}",
+        )
+        return destination
+
+    monkeypatch.setattr(builder, "fetch_artifact", fetch)
+
+    def build_pack(root, output, **kwargs):
+        output.mkdir()
+        path = output / "example-1.2.3-linux-cpu.pack-lock.json"
+        PackLock(
+            "example",
+            "linux-cpu",
+            ">=3.12",
+            ("example-dependency==2.0+native",),
+            ("https://pypi.org/simple",),
+            (
+                LockedDistribution(
+                    "example-dependency",
+                    "2.0+native",
+                    (
+                        LockedWheel(
+                            filename,
+                            wheel.stat().st_size + (1 if corruption == "size" else 0),
+                            "a" * 64 if corruption == "hash" else digest,
+                            wheel.as_uri(),
+                        ),
+                    ),
+                ),
+            ),
+        ).write(path)
+        return (path,)
+
+    monkeypatch.setattr(builder, "build", build_pack)
+    if corruption in ("size", "hash") or (corruption and not legacy):
+        with pytest.raises(ValueError, match="portable.*provenance"):
+            builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+        assert not (tmp_path / "locks").exists()
+        return
+    before = hashlib.sha256(metadata.read_bytes()).hexdigest()
+    [first] = builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+    first_lock = PackLock.read(first)
+    expected = (
+        "https://github.com/Kosinkadink/Dinkster/releases/download/main-"
+        + "c" * 40
+        + "/example_dependency-2.0%2Bnative-py3-none-any.whl"
+        if legacy
+        else upstream
+    )
+    assert first_lock.packages[0].wheels[0].url == expected
+    assert first_lock.packages[0].wheels[0].sha256 == digest
+    shutil.copyfile(first, release / first.name)
+    engine["artifacts"].append(
+        {
+            "name": first.name,
+            "sha256": hashlib.sha256(first.read_bytes()).hexdigest(),
+            "size": first.stat().st_size,
+        }
+    )
+    # Adding lock bytes changes identity, but must not change their own provenance.
+    metadata.write_text(json.dumps(engine))
+    assert hashlib.sha256(metadata.read_bytes()).hexdigest() != before
+    [second] = builder.build_locks(tmp_path, release, manifest, tmp_path / "second-locks")
+    assert second.read_bytes() == first.read_bytes()
 
 
 @pytest.mark.parametrize(
@@ -1514,7 +1653,9 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     releases = {
         number: {
             "id": number,
-            "tag_name": f"main-{number:040x}",
+            "tag_name": (
+                f"main-{number:040x}" if number % 2 else f"main-2026-10-31-0.4.2-{number:08x}"
+            ),
             "published_at": f"2026-10-28T00:00:{number:02d}Z",
             "prerelease": True,
             "draft": False,
@@ -1578,8 +1719,9 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
 
 @pytest.mark.parametrize("system", ["windows", "macos", "linux"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
+@pytest.mark.parametrize("labelled", [False, True])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str, labelled: bool
 ) -> None:
     from copy import deepcopy
 
@@ -1732,6 +1874,18 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         )
         manifest["signature"] = None
         requested = f"base-{variant}-{identity}"
+        if labelled or change.startswith("label-"):
+            label = f"2026-10-31-py{python}-torch2.14.1-{identity[:8]}"
+            if change == "label-hash":
+                label = label[:-8] + "0" * 8
+            elif change == "label-path":
+                label = "../" + label
+            manifest["label"] = label
+            requested = f"base-{variant}-{label}"
+            if change == "label-tag":
+                requested = requested.replace("2026-10-31", "2026-10-30")
+            elif change == "label-variant":
+                requested = requested.replace(f"base-{variant}-", "base-other-")
         if change == "identity":
             manifest["workerProtocol"] = 12
         payload = (json.dumps(manifest, indent=3) + "\n").encode()
@@ -1840,6 +1994,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         "stream-corrupt",
         "stream-short",
         "stream-error",
+        "label-hash",
+        "label-path",
+        "label-tag",
+        "label-variant",
     ):
         destination = tmp_path / change
         with pytest.raises((ValueError, subprocess.CalledProcessError)):

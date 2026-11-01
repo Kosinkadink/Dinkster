@@ -180,8 +180,9 @@ The channel format is `dinkster.channel/1`, with
 `minimumDesktopVersion`, and `signature`. Locations are a nonempty ordered array:
 `{type: "mirror", path}` names the complete manifest path relative to a configured
 mirror; `{type: "github", repository, tag, asset}` names an immutable release asset.
-Mirror paths are `engine/<release hex>/release-manifest.json` and
-`base/<variant>/<base hex>/manifest.json`. GitHub assets use those same manifest
+New mirror paths are `engine/<YYYY-MM-DD>-<version>-<hash8>/release-manifest.json`
+and `base/<variant>/<YYYY-MM-DD>-py<python>-torch<torch>[-cu<nnn>]-<hash8>/manifest.json`.
+Legacy full-hash directory paths remain supported. GitHub assets use those same manifest
 basenames, never alias tags. Both stable and main name exact content digests,
 never a latest-release lookup. Location hints do not replace digest verification.
 A null signature is acceptable only for a Dinkster-operated mirror; signed
@@ -250,7 +251,8 @@ tools or release artifacts.
 --base-manifest BASE_MANIFEST --channel main --output-root MIRROR_DIRECTORY
 --minimum-desktop-version X.Y.Z` builds a local channel document. Repeat
 `--base-manifest` for every selected variant; `--channel stable` uses the same
-builder. It hashes the final release manifest bytes, retains its exact tag,
+builder. It hashes the final release manifest bytes, derives the labelled location
+for a new manifest or retains the embedded tag for a legacy manifest,
 verifies every listed local engine artifact, validates each unchanged base
 manifest and checks worker protocol and effective constraint compatibility.
 Only after all inputs pass does it atomically replace `channels/<name>.json`.
@@ -287,11 +289,18 @@ corrupt metadata falls through to the next configured location.
 
 Under the caller's store writer lock, `acquire(catalog, variant, store)` fetches
 and verifies base parts, safely extracts a missing base, verifies its selected
-wheels and populates `wheels/<sha256 hex>/<filename>`. Engine-owned wheel and
-constraints artifacts are verified through the same downloader. Base-owned
+wheels and populates `wheels/<sha256 hex>/<filename>`. After wheel verification,
+it atomically retains the producer base document at `bases/<base hex>/manifest.json`
+if absent, preserving an existing document's custom provenance. Base identity
+remains the producer's canonical fields, independent of JSON formatting.
+Engine-owned wheel and constraints artifacts are verified through the same
+downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
 the generation. Effective constraints are stored under
-`engines/<release hex>/constraints-<variant>.txt`. A base without hosted parts
+`engines/<release hex>/constraints-<variant>.txt`. The original verified engine
+manifest bytes are atomically retained at `engines/<release hex>/release-manifest.json`,
+without reserialization or another metadata fetch. Missing or inconsistent
+catalog bytes refuse acquisition before cache creation. A base without hosted parts
 currently reports that manifest reconstruction is required; it never resolves
 or substitutes dependencies silently.
 
