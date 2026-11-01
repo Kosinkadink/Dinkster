@@ -24,12 +24,30 @@ authenticated users can make a local copy with
 
 Each `vX.Y.Z` release contains:
 
-- one wheel for every Dinkster workspace package;
-- the `dinkster` meta-package wheel with its `default` extra;
-- a `dinkster-frontend` wheel containing the built browser application;
+- the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, with the
+  browser application embedded in the engine;
 - `constraints.txt`, exported from `uv.lock` with hashes;
-- `release-manifest.json` and `SHA256SUMS`; and
-- `dinkster-source-X.Y.Z.zip`, a maintainer source archive.
+- `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
+- `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
+- native tools ZIPs with the installer interpreters; and
+- the existing official pack artifacts and per-variant pack locks.
+
+No third-party wheels are release assets. Finalization rejects unexpected
+payloads and fails above 100,000,000 bytes excluding native tools ZIPs.
+Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
+locked PyPI artifact URLs into the shared wheel store, checking the exact
+filename, size and SHA256. Base-owned names and exact variant-index wheel pins
+come from the selected Environments manifest. Generation construction uses
+only the store, offline, without resolution or source builds.
+
+`setup --package-index https://packages.example.org/simple` selects a simple
+package mirror instead of those locked artifact origins. The index must offer
+the exact locked filename; index hashes cannot change the required size/hash.
+There is no fallback to PyPI or another version. Confirmed setup saves the
+index for updates; `update --package-index URL` changes it transactionally.
+This option is separate from `--mirror`, which selects channel, base and
+Dinkster release artifact locations. Warm shared-store wheels need no index
+access. Repair and move remain offline.
 
 Download all wheels and `constraints.txt` from the same release. A manual
 installation for inspection can be created without Git credentials:

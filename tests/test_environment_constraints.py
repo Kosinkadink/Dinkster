@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import zipfile
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
-from dinkster_supervisor.environment_constraints import effective_constraints
+from dinkster_supervisor.environment_constraints import (
+    effective_constraints,
+    validate_base_requirements,
+)
 from dinkster_supervisor.environment_state import EnvironmentError
 
 
@@ -47,6 +52,87 @@ def test_selected_base_requirement_absent_from_engine_is_not_resolved():
     assert effective_constraints("", _base()) == (
         "torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n"
     )
+
+
+def test_generic_base_only_versions_and_provenance_do_not_override_selected_artifacts():
+    base = {
+        "python": "3.14.10",
+        "replaces": ["cuda-toolkit"],
+        "wheels": [
+            {
+                "name": "cuda-toolkit",
+                "version": "13.2.2",
+                "lockedVersion": "13.0.3.0",
+                "filename": "cuda_toolkit-13.2.2-py3-none-any.whl",
+                "sha256": "b" * 64,
+            }
+        ],
+    }
+    exact = "cuda-toolkit==13.2.2 --hash=sha256:" + "b" * 64 + "\n"
+    generic = "cuda-toolkit==13.0.3.0 --hash=sha256:" + "a" * 64 + "\n"
+    assert effective_constraints("", base) == exact
+    assert effective_constraints(generic, base, interfaces=set()) == exact
+    assert effective_constraints(exact, base, strict=True) == exact
+    with pytest.raises(EnvironmentError, match="disagrees with engine lock"):
+        effective_constraints(generic, base, interfaces={"cuda-toolkit"})
+    with pytest.raises(EnvironmentError, match="require strict=False"):
+        effective_constraints(generic, base, interfaces=set(), strict=True)
+    marked = (
+        'cuda-toolkit==13.2.2 ; python_version >= "3.14" --hash=sha256:' + "b" * 64 + "\n"
+        'cuda-toolkit==99.0 ; python_version < "3.14" --hash=sha256:' + "c" * 64 + "\n"
+    )
+    assert effective_constraints(marked, base, interfaces={"cuda-toolkit"}) == exact
+
+
+def test_variant_install_lock_requires_exact_backend_version_and_hash():
+    exact = "torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n"
+    assert effective_constraints(exact, _base(), strict=True) == exact
+    for wrong in (
+        "torch==2.14.1 --hash=sha256:" + "b" * 64,
+        "torch==2.14.1+cpu --hash=sha256:" + "a" * 64,
+        "",
+    ):
+        with pytest.raises(EnvironmentError, match="engine lock"):
+            effective_constraints(wrong, _base(), strict=True)
+
+
+@pytest.mark.parametrize(
+    ("requirement", "extra", "compatible"),
+    [
+        ("torch>=2.13,<2.15", False, True),
+        ("torch>=2.15", False, False),
+        ("torch==2.14.1", False, True),
+        ("nvidia-cublas>=13", False, False),
+        ('torch>=2.15; python_version < "3.14"', False, True),
+        ('torch>=2.15; python_version >= "3.14"', False, False),
+        ('torch>=2.15; extra == "accelerated"', False, True),
+        ('torch>=2.15; extra == "accelerated"', True, False),
+    ],
+)
+def test_base_compatibility_uses_wheel_specifiers_target_python_and_requested_extras(
+    tmp_path: Path, requirement: str, extra: bool, compatible: bool
+):
+    base = {**_base(), "python": "3.14.10"}
+    paths = []
+    for name, dependency in (
+        ("adapter", requirement),
+        ("consumer", "adapter[accelerated]" if extra else "adapter"),
+    ):
+        path = tmp_path / f"{name}-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(path, "w") as wheel:
+            wheel.writestr(
+                f"{name}-1.0.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\nRequires-Dist: {dependency}\n",
+            )
+        paths.append(path)
+    if compatible:
+        validate_base_requirements(tuple(paths), base)
+    else:
+        with pytest.raises(
+            EnvironmentError,
+            match="adapter requires .*base provides (torch 2.14.1\\+cpu|nvidia-cublas absent)",
+        ):
+            validate_base_requirements(tuple(paths), base)
 
 
 @pytest.mark.parametrize("version", ["2.15.0+cpu", "2.14.1.post1+cpu"])

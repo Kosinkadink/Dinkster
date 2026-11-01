@@ -80,6 +80,10 @@ def _settings(root: Path) -> dict[str, object] | None:
         raise EnvironmentError("project mirrors must be an array")
     if any(not isinstance(mirror, str) or not mirror for mirror in cast("list[object]", mirrors)):
         raise EnvironmentError("project mirrors must contain nonempty strings")
+    if document.get("packageIndex") is not None and (
+        not isinstance(document["packageIndex"], str) or not document["packageIndex"]
+    ):
+        raise EnvironmentError("project packageIndex must be a nonempty URL or null")
     if type(port) is not int or not 1 <= port <= 65535:
         raise EnvironmentError("project port must be in 1..65535")
     return document
@@ -229,6 +233,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")
     variant = args.variant or (cast("str", settings["variant"]) if settings else None)
     mirrors = tuple(args.mirror or (cast("list[str]", settings["mirrors"]) if settings else ()))
+    package_index = args.package_index or (settings.get("packageIndex") if settings else None)
     port = (
         args.port
         if args.port is not None
@@ -237,13 +242,23 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not variant:
         raise EnvironmentError("setup requires an explicit --variant")
     project_settings = None
-    if settings and (channel != settings["channel"] or variant != settings["variant"]):
+    if settings and (
+        channel != settings["channel"]
+        or variant != settings["variant"]
+        or package_index != settings.get("packageIndex")
+    ):
         if args.operation != "update":
             raise EnvironmentError("change channel or variant with update")
         project_settings = {
             "previous": cast("bytes", snapshot).decode("utf-8"),
             "target": json.dumps(
-                {**settings, "channel": channel, "variant": variant, "mirrors": list(mirrors)},
+                {
+                    **settings,
+                    "channel": channel,
+                    "variant": variant,
+                    "mirrors": list(mirrors),
+                    "packageIndex": package_index,
+                },
                 indent=2,
                 sort_keys=True,
                 ensure_ascii=True,
@@ -390,6 +405,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         with writer_lock(store), writer_lock(root):
             _recover_pending(root, locked_store=store)
             revalidate()
+            published_constraints = None
+            if local is None:
+                assert catalog is not None
+                published_constraints = acquire(
+                    catalog, variant, store, package_index=cast("str | None", package_index)
+                )
             target = next_generation(root)
             journal = (
                 begin_setup(
@@ -413,6 +434,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "channel": channel,
                             "variant": variant,
                             "mirrors": list(mirrors),
+                            "packageIndex": package_index,
                             "port": port,
                         },
                     )
@@ -443,9 +465,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
                 else:
                     assert catalog is not None
+                    assert published_constraints is not None
                     base_id = catalog.channel.base_for(variant)
                     base = catalog.bases[variant]
-                    constraints = acquire(catalog, variant, store)
+                    constraints = published_constraints
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
                     worker_protocol = cast("int", base["workerProtocol"])
@@ -817,6 +840,9 @@ def main() -> None:
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
         command.add_argument("--mirror", action="append", default=[])
+        command.add_argument(
+            "--package-index", help="simple package index for exact locked third-party wheels"
+        )
         command.add_argument("--channel", choices=("stable", "main"))
         command.add_argument("--variant")
         command.add_argument("--data", type=Path)

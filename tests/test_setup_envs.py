@@ -101,6 +101,30 @@ def test_from_scratch_contributor_setup_names_missing_host_row(tmp_path: Path):
         setup_envs.setup(root, from_scratch=True, variant="absent-host", variants=variants)
 
 
+def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Path, monkeypatch):
+    from test_environment_artifacts import _mirror
+
+    mirror, root = tmp_path / "mirror", tmp_path / "checkout"
+    base, _, _ = _mirror(mirror)
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: base["id"][7:]}))
+    (root / "pyproject.toml").write_text('[project]\nname = "fixture"\nversion = "1.0"\n')
+    (root / "uv.lock").write_text("[[package]]\nname = 'fixture-base'\nversion = '9.0'\n")
+
+    def command(*args, **kwargs):
+        if args[:2] == ("uv", "export"):
+            (root / ".run/workspace-requirements.txt").write_text(
+                "fixture-base==9.0 --hash=sha256:" + "a" * 64 + "\n"
+            )
+
+    monkeypatch.setattr(setup_envs, "command", command)
+    setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+    assert (root / ".run/workspace-requirements.txt").read_text() == (
+        "fixture-base==1.0 --hash=sha256:" + base["wheels"][0]["sha256"] + "\n"
+    )
+    assert json.loads((root / ".run/environment-base.json").read_text())["id"] == base["id"]
+
+
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
 def test_apple_silicon_selects_mac_bundle_without_cuda_probe(bases, monkeypatch, arch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
@@ -172,6 +196,7 @@ def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, mat
     root = tmp_path / "checkout"
     (root / "scripts").mkdir(parents=True)
     (root / "scripts/base_bundles.json").write_text('{"win-cpu": "identity"}')
+    (root / "uv.lock").write_text("package = []\n")
     gate = "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
     (root / gate).parent.mkdir(parents=True)
     shutil.copyfile(Path(setup_envs.__file__).resolve().parents[1] / gate, root / gate)
@@ -179,6 +204,7 @@ def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, mat
     base = {
         "id": "sha256:identity",
         "variant": "win-cpu",
+        "platform": {"os": "windows", "arch": "x86_64"},
         "python": sys.version.split()[0],
         "interpreter": {"executable": Path(sys.base_prefix).name + "/python.exe"},
         "wheels": [
