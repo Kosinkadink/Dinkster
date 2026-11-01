@@ -31,6 +31,9 @@
   texture names retain spaces after material-map options or inside quotes.
   Declared adjacent files selected through model3d file inputs receive local host
   grants at submission, without a separate directory scan or indexing step.
+  String-or-FILE_3D inputs bind legacy filename selections through those same
+  grants and preserve canonical file values. Empty, null and `none` source
+  selections normalize before asset validation without opening a file.
   Missing, undeclared and traversing resources fail;
   an empty selection produces no file. It never fetches external URLs.
   Format-specific sockets distinguish mesh, splat and point-cloud files.

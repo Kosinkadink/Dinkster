@@ -46,6 +46,7 @@ from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver
 from dinkster_assets.vault import AssetPublicationError
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
+from dinkster_values.builtin_types import CORE_STRING, FILE_3D_TYPE
 
 from .library import ServerLibrary, acquire_library_asset
 
@@ -77,14 +78,31 @@ def bind_model_names(
             continue
         inputs = dict(node.inputs)
         for spec in schema.inputs:
-            raw = inputs.get(spec.id)
-            value = raw.value if isinstance(raw, TypedLiteral) else raw
             widget = spec.widget
             if isinstance(widget, WidgetRepresentations):
                 widget = widget.representations[0].widget
+            file3d_union = (
+                spec.type.kind == "union"
+                and spec.type.accepts_concrete(CORE_STRING)
+                and spec.type.accepts_concrete(FILE_3D_TYPE)
+            )
             file3d = (
                 spec.source_filename is not None and spec.source_filename.kind == "media/model3d"
-            )
+            ) or file3d_union
+            if file3d and spec.id not in inputs and spec.required and spec.default is None:
+                continue
+            raw = inputs.get(spec.id, spec.default if file3d else None)
+            value = raw.value if isinstance(raw, TypedLiteral) else raw
+            if file3d and (value is None or isinstance(value, str) and value in {"", "none"}):
+                inputs[spec.id] = TypedLiteral(FILE_3D_TYPE, None)
+                continue
+            if file3d_union and isinstance(value, Mapping):
+                inputs[spec.id] = (
+                    raw
+                    if isinstance(raw, TypedLiteral)
+                    else TypedLiteral(FILE_3D_TYPE, cast("Mapping[str, object]", value))
+                )
+                continue
             if file3d and isinstance(value, Mapping) and resolver is not None:
                 wire = cast("Mapping[str, object]", value)
                 source = (
@@ -97,24 +115,29 @@ def bind_model_names(
                 continue
             if (
                 not isinstance(value, str)
-                or not isinstance(widget, AssetWidget)
-                or not (widget.selection or widget.kind.startswith("model/") or file3d)
+                or not file3d_union
+                and (
+                    not isinstance(widget, AssetWidget)
+                    or not (widget.selection or widget.kind.startswith("model/") or file3d)
+                )
             ):
                 continue
-            if widget.selection and value in asset_selection_names(widget.kind):
+            kind = "media/model3d" if file3d_union else cast("AssetWidget", widget).kind
+            selection = isinstance(widget, AssetWidget) and widget.selection
+            if selection and value in asset_selection_names(kind):
                 if not isinstance(raw, TypedLiteral) and spec.type.runtime_type_id() is None:
                     inputs[spec.id] = TypedLiteral("COMBO", value)
                 continue
             ref = (
-                resolver.bind_name(value, widget.kind)
-                if not widget.selection and isinstance(resolver, NamedAssetResolver)
+                resolver.bind_name(value, kind)
+                if not selection and isinstance(resolver, NamedAssetResolver)
                 else None
             )
             if ref is None:
                 missing.append(
                     {
                         "name": value,
-                        "kind": widget.kind,
+                        "kind": kind,
                         "status": "missing",
                         "verification": "unverified",
                         "sources": [],
@@ -125,7 +148,21 @@ def bind_model_names(
                 )
             else:
                 if file3d:
-                    load_file3d(ref)
+                    packet = load_file3d(ref)
+                    if file3d_union:
+                        assert packet is not None
+                        resources = cast("dict[str, AssetRef | LocalAssetRef]", packet["resources"])
+                        inputs[spec.id] = TypedLiteral(
+                            FILE_3D_TYPE,
+                            {
+                                "format": packet["format"],
+                                "source": ref.to_wire(),
+                                "resources": {
+                                    name: item.to_wire() for name, item in resources.items()
+                                },
+                            },
+                        )
+                        continue
                 wire = ref.to_wire()
                 inputs[spec.id] = (
                     replace(raw, value=wire) if isinstance(raw, TypedLiteral) else wire

@@ -176,9 +176,11 @@ def test_load_file3d_engine_grants_unindexed_companions_to_worker(
 
 
 @pytest.mark.parametrize("bound_identity", [False, True])
+@pytest.mark.parametrize("preview_union", [False, True])
 def test_file3d_source_preflight_grants_declared_unindexed_resources(
-    tmp_path: Path, bound_identity: bool
+    tmp_path: Path, bound_identity: bool, preview_union: bool
 ) -> None:
+    from dinkster_graph import graph_from_wire, graph_to_wire
     from dinkster_server.library import ServerLibrary
     from dinkster_server.preflight import bind_model_names
 
@@ -196,11 +198,28 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
     source = table.bind_name("nested/scene.gltf", "media/model3d")
     assert isinstance(source, LocalAssetRef)
     schema = LoadModel3D.define_schema()
+    selection: object = source.to_wire() if bound_identity else "nested/scene.gltf"
+    if preview_union:
+        schema = NodeSchema(
+            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        )
+        if bound_identity:
+            packet = load_file3d(source)
+            assert packet is not None
+            refs = cast("dict[str, LocalAssetRef]", packet["resources"])
+            selection = TypedLiteral(
+                FILE_3D_TYPE,
+                {
+                    "format": "gltf",
+                    "source": source.to_wire(),
+                    "resources": {name: ref.to_wire() for name, ref in refs.items()},
+                },
+            )
     graph = Graph(
         {
             "load": GraphNode(
                 schema.node_type,
-                {"model": source.to_wire() if bound_identity else "nested/scene.gltf"},
+                {"model": selection},
             )
         }
     )
@@ -209,10 +228,21 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
     )
     prepared, missing = bind_model_names(graph, {schema.node_type: schema}, library)
     assert missing == []
-    wire = cast("Mapping[str, object]", prepared.nodes["load"].inputs["model"])
+    if preview_union and bound_identity:
+        assert prepared.nodes["load"].inputs["model"] is selection
+    prepared = graph_from_wire(json.loads(json.dumps(graph_to_wire(prepared))))
     worker = MountSnapshotResolver(snapshot)
-    selected = LocalAssetRef.from_wire(wire, worker)
-    packet = load_file3d(selected)
+    value = prepared.nodes["load"].inputs["model"]
+    if preview_union:
+        assert isinstance(value, TypedLiteral)
+        assert value.type_id == FILE_3D_TYPE
+        worker_registry = TypeRegistry()
+        register_file3d_types(worker_registry, worker)
+        packet = worker_registry.wrap(value.type_id, value.value).resolve()
+    else:
+        wire = cast("Mapping[str, object]", value)
+        selected = LocalAssetRef.from_wire(wire, worker)
+        packet = load_file3d(selected)
     assert packet is not None
     registry = TypeRegistry()
     register_file3d_types(registry, table)
@@ -220,6 +250,155 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
     returned = cast("dict[str, object]", spec.decode(spec.encode(packet)))
     refs = cast("dict[str, LocalAssetRef]", returned["resources"])
     assert refs["mesh.bin"].read_bytes() == b"declared buffer bytes"
+    assert (
+        cast(LocalAssetRef, returned["source"]).read_bytes() == (nested / "scene.gltf").read_bytes()
+    )
+
+
+@pytest.mark.parametrize("preview_union", [False, True])
+@pytest.mark.parametrize("selection", [None, "", "none", TypedLiteral(CORE_STRING, "none")])
+def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
+    preview_union: bool, selection: object
+) -> None:
+    from dinkster_server.preflight import bind_model_names
+
+    schema = LoadModel3D.define_schema()
+    if preview_union:
+        schema = NodeSchema(
+            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        )
+    graph = Graph({"load": GraphNode(schema.node_type, {"model": selection})})
+    prepared, missing = bind_model_names(graph, {schema.node_type: schema}, None)
+    assert missing == []
+    value = prepared.nodes["load"].inputs["model"]
+    assert isinstance(value, TypedLiteral)
+    assert value.type_id == FILE_3D_TYPE
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_asset_type(registry)
+    register_file3d_types(registry)
+    assert registry.wrap(value.type_id, value.value).resolve() is None
+
+    class EmptyFileConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                schema.node_type,
+                inputs=schema.inputs,
+                outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_TYPE)),),
+            )
+
+        @classmethod
+        def execute(cls, *, model: object) -> Mapping[str, object]:
+            return cls.outputs(file=model)
+
+    async def scenario() -> None:
+        nodes = (EmptyFileConsumer,)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        result = await engine.run(prepared, ["load"])
+        assert result.outputs["load"]["file"].resolve() is None
+        assert not result.artifacts
+
+    asyncio.run(scenario())
+    linked = Graph({"load": GraphNode(schema.node_type, {"model": Link("producer", "file")})})
+    prepared, missing = bind_model_names(linked, {schema.node_type: schema}, None)
+    assert prepared == linked
+    assert missing == []
+
+
+def test_file3d_source_preflight_distinguishes_empty_default_from_missing_required() -> None:
+    from dinkster_server.preflight import bind_model_names
+
+    for default, required, expected in (
+        ("", True, {"model": TypedLiteral(FILE_3D_TYPE, None)}),
+        (None, False, {"model": TypedLiteral(FILE_3D_TYPE, None)}),
+        (None, True, {}),
+    ):
+        schema = NodeSchema(
+            "preview-file",
+            inputs=(
+                InputSpec(
+                    "model",
+                    TypeExpr.union(CORE_STRING, FILE_3D_TYPE),
+                    default=default,
+                    required=required,
+                ),
+            ),
+        )
+        graph = Graph({"preview": GraphNode(schema.node_type)})
+        prepared, missing = bind_model_names(graph, {schema.node_type: schema}, None)
+        assert not missing
+        assert prepared.nodes["preview"].inputs == expected
+
+
+@pytest.mark.parametrize("preview_union", [False, True])
+def test_file3d_submission_rejects_missing_companions_as_client_error(
+    tmp_path: Path, preview_union: bool
+) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_engine import EventListener
+    from dinkster_graph import graph_to_wire
+    from dinkster_server import create_app
+    from dinkster_server.library import ServerLibrary
+
+    root = tmp_path / "input"
+    root.mkdir()
+    (root / "scene.gltf").write_bytes(
+        b'{"asset":{"version":"2.0"},"buffers":[{"uri":"missing.bin"}]}'
+    )
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    schema = LoadModel3D.define_schema()
+    if preview_union:
+        schema = NodeSchema(
+            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        )
+    schemas = {schema.node_type: schema}
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+
+    def factory(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, table)
+        register_file3d_types(registry, table)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker({}, registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        client = TestClient(TestServer(create_app(factory, schemas, library=library)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "file3d-test",
+                    "jobId": "missing-companion",
+                    "graph": graph_to_wire(
+                        Graph({"load": GraphNode(schema.node_type, {"model": "scene.gltf"})})
+                    ),
+                    "targets": ["load"],
+                },
+            )
+            assert response.status == 400
+            assert await response.json() == {
+                "error": "selected file is outside its grant or unavailable"
+            }
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 def test_load_file3d_worker_requires_indexed_or_host_granted_contained_bytes(
