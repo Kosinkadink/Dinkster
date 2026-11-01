@@ -100,7 +100,63 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
     return python
 
 
-def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("failure", ["missing", "hash", "short", "oversize"])
+def test_pack_download_failure_names_pack_url_and_verification_result(
+    tmp_path: Path, failure: str
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
+    source = tmp_path / wheel.filename
+    if failure == "missing":
+        source.unlink()
+    else:
+        data = source.read_bytes()
+        source.write_bytes(
+            b"x" * len(data)
+            if failure == "hash"
+            else data[:-1]
+            if failure == "short"
+            else data + b"x"
+        )
+    lock = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (wheel,)),),
+    )
+    generation = tmp_path / "generations/1"
+    python = _generation(generation / "python", [])
+    plan = plan_pack(
+        lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=9000
+    )
+    store = tmp_path / "store"
+    with pytest.raises(ProvisionError) as error:
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=generation / "packs",
+            wheel_store=store,
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+        )
+    message = str(error.value)
+    assert f"pack example: {wheel.url}: download/verification failed:" in message
+    assert {
+        "missing": "urlopen error",
+        "hash": "wheel hash or size mismatch",
+        "short": "wheel hash or size mismatch",
+        "oversize": "wheel exceeds locked size",
+    }[failure] in message
+    assert not (store / wheel.sha256 / wheel.filename).exists()
+    assert not list(store.rglob("*.partial"))
+    assert not (generation / "packs/example").exists()
+
+
+@pytest.mark.parametrize("host_path", ["PYTHONPATH", "PYTHONUSERBASE"])
+def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_path: str
+) -> None:
     torch = _wheel(tmp_path, "torch", "2.14.1", "torch", "value = 41\n")
     cv = _wheel(tmp_path, "opencv-contrib-python-headless", "5.0", "cv2", "value = 17\n")
     extra = _wheel(
@@ -133,7 +189,26 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(tmp_pa
     for number in (1, 2):
         generation = tmp_path / "generations" / str(number)
         parent = _generation(generation, [torch, cv])
-        facts = GenerationPackages.inspect(parent)
+        with monkeypatch.context() as environment:
+            environment.setenv(host_path, str(tmp_path / "host"))
+            site = (
+                Path(
+                    subprocess.check_output(
+                        [str(parent), "-c", "import site; print(site.getusersitepackages())"],
+                        text=True,
+                    ).strip()
+                )
+                if host_path == "PYTHONUSERBASE"
+                else tmp_path / "host"
+            )
+            metadata = site / "host_only-9.0.dist-info"
+            metadata.mkdir(parents=True, exist_ok=True)
+            (metadata / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: host-only\nVersion: 9.0\n"
+            )
+            facts = GenerationPackages.inspect(parent)
+        assert facts.versions["torch"] == "2.14.1"
+        assert "host-only" not in facts.versions
         plan = plan_pack(lock, facts, variant="linux-cpu", own_environment_size=987654)
         assert not plan.conflicts
         assert plan.wheels == (extra,)
@@ -213,7 +288,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
 
     from scripts.build_official_packs import build
 
-    wheels = tmp_path / "wheels"
+    wheels = tmp_path / "wheels with space # %"
     wheels.mkdir()
     pinned = _wheel(wheels, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
     _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
@@ -251,6 +326,35 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         constraints=constraints,
         find_links=[wheels],
     )
+    scripts = source / "scripts"
+    scripts.mkdir()
+    script = scripts / "build_official_packs.py"
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / script.name, script)
+    cli_output = tmp_path / "cli-payloads"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--version",
+            "1.2.3",
+            "--output",
+            str(cli_output),
+            "--variant",
+            "linux-cpu",
+            "--generation-python",
+            sys.executable,
+            "--constraints",
+            str(constraints),
+            "--find-links-stdin",
+        ],
+        input=json.dumps([str(wheels)]),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert (cli_output / "official-packs.lock").read_bytes() == (
+        output / "official-packs.lock"
+    ).read_bytes()
     assert len(payloads) == 11
     assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
@@ -265,6 +369,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         assert entry.version == "1.2.3"
         lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
         lock = PackLock.read(lock_path)
+        assert PackLock.read(cli_output / lock_path.name) == lock
         assert lock.pack == entry.pack
         assert lock.variant == "linux-cpu"
         assert lock.requires_python == ">=3.12"

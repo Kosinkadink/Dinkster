@@ -1,5 +1,39 @@
 ## Media I/O
 
+- Node packs can publish produced bytes through the public
+  `dinkster_api.v1.produced_output_scratch` writer selector. It uses the existing
+  worker scratch and active job authority without granting mounted-file access.
+- Create 3D File (from Mesh) exports the first mesh batch item as a GLB file,
+  preserving padded counts, vertex attributes, PBR texture maps and material
+  factors. The produced asset is readable across ordinary worker hosts and
+  cached executions; empty meshes are rejected.
+- Create 3D File (from Splat) exports the first valid-count-trimmed batch item
+  as PLY with full spherical harmonics, or KSPLAT/SPZ with base color only.
+  Empty splats are rejected and the input tensors remain unchanged.
+- Get Splat reads PLY, SPLAT, KSPLAT and SPZ file assets into a single Gaussian
+  batch. PLY retains spherical harmonics; the other formats retain base color.
+- Save 3D Model saves each nonempty mesh batch item as GLB with submission
+  metadata, or copies a 3D file's primary bytes without changing its format.
+  Filename prefixes target the output mount unless an adjacent mount is selected.
+- Advanced 3D, splat and point-cloud saves preserve the original file and return
+  viewport dimensions, camera and placement data. Explicit camera and placement
+  inputs override authored viewport values without modifying them.
+- Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
+  Image, mask, normal and recording captures carry existing granted asset
+  identities, rebound to the receiving host, rather than filesystem paths.
+  Omitted captures and an empty recording remain distinct authored states.
+- Canonical FILE_3D values preserve original file formats and explicitly granted
+  sidecar assets without converting containers or granting filesystem access.
+  Format-specific sockets distinguish mesh, splat and point-cloud files.
+  Generic and aggregate sockets preserve an empty format for consumers that
+  detect the original container from its contents. Concrete format sockets
+  require their declared format; conflicting explicit formats remain rejected.
+  A JSON manifest rendition preserves the source and named resource identities
+  when reading completed job outputs; local bindings remain host-granted rather
+  than becoming content digests.
+- Local asset bindings support byte reads for callers with local assets:read
+  permission. Reads require a live grant and unchanged file revision; they do not
+  index files, grant path access or advertise immutable caching.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
@@ -45,6 +79,12 @@
   controls, and structural extensions across execution hosts and caches
 - Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
   scales, and structural extensions across execution hosts and caches
+- Camera and model-transform values preserve explicit `None` metadata across
+  execution hosts and caches, distinct from empty transforms or an absent output
+- Camera and model-transform values offer JSON renditions for browser consumers,
+  preserving complete camera fields and model order. Non-JSON extension data
+  remains portable but makes the JSON rendition unavailable rather than dropping
+  fields or substituting values
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
@@ -239,7 +279,8 @@
   splat PLY files. Shared inference and media packs preserve optional per-item
   counts, empty Gaussian tensors and floating dtype across ordinary worker
   boundaries; live tensors retain their device and storage. Empty splats can
-  cross workers but cannot be exported to PLY.
+  be loaded from zero-vertex PLY files and cross workers, but cannot be exported
+  to PLY.
 - Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
   honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights

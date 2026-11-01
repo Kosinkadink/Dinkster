@@ -13,40 +13,45 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from packaging.requirements import Requirement
-from packaging.tags import compatible_tags, cpython_tags
+from packaging.tags import compatible_tags, cpython_tags, mac_platforms
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
-from scripts.build_release import LINUX_PLATFORMS, TARGET_PYTHON, read_base_manifest
+from scripts.build_release import LINUX_PLATFORMS, engine_base_interfaces, read_base_manifest
 
 REPOSITORY = "Kosinkadink/Dinkster-Environments"
-VARIANTS = {
-    "win-nvidia": "cu132",
-    "win-nvidia-cu126": "cu126",
-    "win-cpu": "cpu",
-    "linux-cpu": "cpu",
-}
+TORCH_PACKAGES = {"torch", "torchvision"}
 
 
 def qualify(root: Path, path: Path, tag: str) -> dict:
     manifest = read_base_manifest(path)
     variant = manifest["variant"]
-    if variant not in VARIANTS or tag != f"base-{variant}-{manifest['id'].removeprefix('sha256:')}":
+    if tag != f"base-{variant}-{manifest['id'].removeprefix('sha256:')}":
         raise ValueError("base tag does not match its variant and canonical id")
-    platform = {"arch": "x86_64", "os": "windows" if variant.startswith("win-") else "linux"}
+    platform = manifest["platform"]
+    if platform not in (
+        {"arch": "x86_64", "os": "windows"},
+        {"arch": "x86_64", "os": "linux"},
+        {"arch": "arm64", "os": "macos"},
+    ):
+        raise ValueError("base platform is incompatible with engine")
+    python = Version(manifest["python"])
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+    project_python = Requirement(f"dinkster{project['project']['requires-python']}").specifier
+    if not project_python.contains(python):
+        raise ValueError("base Python is incompatible with the project")
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
-    if (
-        manifest["platform"] != platform
-        or manifest["python"] != TARGET_PYTHON
-        or protocol is None
-        or manifest["workerProtocol"] != int(protocol[1])
-    ):
-        raise ValueError("base platform, Python or worker protocol is incompatible with engine")
+    if protocol is None or manifest["workerProtocol"] != int(protocol[1]):
+        raise ValueError("base worker protocol is incompatible with engine")
     interpreter = manifest["interpreter"]
-    triple = "pc-windows-msvc" if platform["os"] == "windows" else "unknown-linux-gnu"
+    triple = {
+        "windows": "x86_64-pc-windows-msvc",
+        "linux": "x86_64-unknown-linux-gnu",
+        "macos": "aarch64-apple-darwin",
+    }[platform["os"]]
     filename = (
-        f"cpython-{TARGET_PYTHON}+{interpreter['release']}-x86_64-{triple}"
+        f"cpython-{manifest['python']}+{interpreter['release']}-{triple}"
         "-install_only_stripped.tar.gz"
     )
     if (
@@ -60,14 +65,23 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
         != ("python/python.exe" if platform["os"] == "windows" else "python/bin/python3")
     ):
         raise ValueError("base interpreter does not match its target or source identity")
-    platforms = ["win_amd64"] if platform["os"] == "windows" else LINUX_PLATFORMS
-    compatible = set(cpython_tags((3, 14), platforms=platforms)) | set(
-        compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
+    platforms = {
+        "windows": ["win_amd64"],
+        "linux": LINUX_PLATFORMS,
+        "macos": list(mac_platforms((14, 0), "arm64")),
+    }[platform["os"]]
+    compatible = set(cpython_tags((python.major, python.minor), platforms=platforms)) | set(
+        compatible_tags(
+            (python.major, python.minor),
+            interpreter=f"cp{python.major}{python.minor}",
+            platforms=platforms,
+        )
     )
     lock = tomllib.loads((root / "uv.lock").read_text())
     packages: dict[str, list[dict]] = {}
     for package in lock["package"]:
         packages.setdefault(canonicalize_name(package["name"]), []).append(package)
+    interfaces = engine_base_interfaces(lock, manifest)
     members = {}
     for wheel in manifest["wheels"]:
         name = canonicalize_name(wheel["name"])
@@ -84,32 +98,38 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
             raise ValueError(f"invalid or duplicate base wheel: {name}")
         members[name] = version
         locked = packages.get(name, [])
-        matching = [p for p in locked if p["version"] == wheel["lockedVersion"]]
-        if name in {"torch", "torchvision"}:
-            if (
-                not matching
-                or version.public != wheel["lockedVersion"]
-                or version.local != VARIANTS[variant]
-                or wheel["index"] != f"https://download.pytorch.org/whl/{VARIANTS[variant]}"
-                or wheel["verification"] != "index"
-            ):
-                raise ValueError(f"base torch version or variant index disagrees with lock: {name}")
-        elif locked:
-            identity = (wheel["size"], "sha256:" + wheel["sha256"])
-            if (
-                wheel["verification"] != "lock"
-                or str(version) != wheel["lockedVersion"]
-                or not any(
-                    (row.get("size"), row.get("hash")) == identity
-                    and unquote(urlsplit(row["url"]).path).rsplit("/", 1)[-1] == wheel["filename"]
-                    for package in matching
-                    for row in package.get("wheels", [])
-                )
-            ):
-                raise ValueError(f"base wheel does not match engine lock: {name}")
-        elif wheel["lockedVersion"] is not None or wheel["verification"] != "index":
-            raise ValueError(f"base transitive wheel falsely claims lock verification: {name}")
-    project = tomllib.loads((root / "pyproject.toml").read_text())
+        declared = wheel["lockedVersion"]
+        if declared is not None and not isinstance(declared, str):
+            raise ValueError(f"invalid base wheel lock provenance: {name}")
+        if declared is not None:
+            Version(declared)
+        if wheel["verification"] not in {"lock", "index"} or (
+            wheel["verification"] == "lock" and declared != str(version)
+        ):
+            raise ValueError(f"base wheel falsely claims artifact verification: {name}")
+        if name in interfaces and {Version(value).public for value in interfaces[name]} != {
+            version.public
+        }:
+            raise ValueError(f"base interface version disagrees with engine lock: {name}")
+        identity = (wheel["size"], "sha256:" + wheel["sha256"])
+        artifacts = [
+            row
+            for package in locked
+            for row in package.get("wheels", [])
+            if unquote(urlsplit(row["url"]).path).rsplit("/", 1)[-1] == wheel["filename"]
+        ]
+        exact = any((row.get("size"), row.get("hash")) == identity for row in artifacts)
+        if name in TORCH_PACKAGES and platform["os"] != "macos":
+            index = f"https://download.pytorch.org/whl/{version.local}"
+            if not version.local or wheel["index"] != index or wheel["verification"] != "index":
+                raise ValueError(f"base torch source disagrees with variant index: {name}")
+        else:
+            if wheel["index"] != "https://pypi.org/simple":
+                raise ValueError(f"base wheel does not use the producer package index: {name}")
+            if name in interfaces and artifacts and not exact:
+                raise ValueError(f"base interface artifact differs from engine lock: {name}")
+    if not TORCH_PACKAGES.issubset(members):
+        raise ValueError("base is missing a required torch wheel")
     for text in project["dependency-groups"]["engine-base"]:
         requirement = Requirement(text)
         version = members.get(canonicalize_name(requirement.name))
@@ -128,7 +148,7 @@ def acquire(root: Path, tags: list[str], output: Path) -> list[Path]:
         staged.mkdir()
         for tag in tags:
             selection = re.fullmatch(r"base-([a-z0-9-]+)-[0-9a-f]{64}", tag)
-            if selection is None or selection[1] not in VARIANTS:
+            if selection is None:
                 raise ValueError("base selection requires an exact variant/id release tag")
             endpoint = f"repos/{REPOSITORY}/releases/tags/{tag}"
             release = json.loads(subprocess.check_output(["gh", "api", endpoint]))

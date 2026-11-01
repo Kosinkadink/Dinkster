@@ -1,5 +1,69 @@
 ## Image operations
 
+- `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
+  transports flat or per-frame pixel boxes and normalized prompt elements.
+  Both accept JSON only, retaining frame order, integer/float coordinates,
+  negative origins, zero dimensions, labels, scores and declared metadata.
+  Normalized elements retain thousandths in ymin/xmin/ymax/xmax order, text
+  and palettes. Unknown fields, embedded references, nonfinite coordinates
+  and pickle payloads are refused before reconstruction. Global `ARRAY`
+  remains unrestricted by the placement contract. Layer placement retains
+  first-frame selection, source-size zero fallback and canvas-based conversion.
+  `CropByBBoxes` broadcasts a single box or flat box list across image frames;
+  per-frame lists retain last-frame repetition and per-frame union cropping.
+- Native `PadImageNode` pads image batches by explicit dimensions, a multiplier,
+  or a size multiple, using solid-color feathering or repeated mirrored edges.
+- Native `ImageUpscaleWithModel` runs tiled single-image model upscaling with
+  smaller-tile memory retries and separately resized alpha channels.
+- Native `ImageHistogram` reports first-frame RGB and luminance histograms,
+  retaining independent red, green, and blue bin counts.
+- Native `TextOverlay` draws wrapped, aligned text on image batches with optional
+  outlines and straight-alpha compositing for transparent images.
+- Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
+  with optional line and feature-edge quadrics and retained vertex colors.
+- Native `RemeshMesh` re-extracts meshes using unsigned, oriented or graph-cut
+  solid distance fields, with optional sharp-feature placement, component
+  filtering, smoothing and retained vertex colors and per-item batch counts.
+- Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
+  merging transformed scene geometry and retaining the first material's textures
+  and factors. External glTF data must be included in the FILE_3D resource map.
+- Native `FillHoles` fills small boundary components under perimeter and vertex
+  limits, with optional pre-welding and open-chain filling.
+- Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
+  fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
+- Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
+  colors and black boundary outlines.
+- Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
+  seam vertex colors, source textures and variable batch lengths.
+- Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
+  coincident positions or splitting hard creases while retaining mesh attributes.
+- Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
+  occlusion and normal maps as images, with neutral occlusion and normal fallbacks.
+- Native `WeldVertices` merges grid-coincident mesh vertices, averaging positions
+  and colors while retaining faces and remapping their vertex indices.
+- Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
+  angles or a normalized quaternion while retaining material attributes.
+  `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Native `MergeMeshes` concatenates the first batch item of each mesh, excluding
+  padding and offsetting face indices. Missing UVs become zero, missing color
+  channels become white, and only the first available texture is retained.
+- Native `PaintMesh` colors mesh vertices from their nearest sparse voxel,
+  converting clamped RGB colors to linear space and respecting sparse batch IDs.
+- Portable mesh values retain all fifteen geometry and material fields; voxel
+  values retain dense or sparse data, optional colors and resolution.
+- Portable shape-subdivision values retain ordered sparse stages, feature and
+  coordinate tensors, explicit shapes and exact rational scales, without caches.
+- Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
+  occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
+- Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
+  extracts basic or surface-net meshes, retaining variable per-item lengths
+  in padded batches. The deprecated `VoxelToMeshBasic` remains available.
+- Native `Trellis2ShapeStage` converts dense structure occupancy to batch-grouped
+  sparse coordinates and an empty shape latent, with stage-specific conditioning.
+- Native `Trellis2TextureStage` prepares texture conditioning and sparse noise
+  targets from the batch-grouped shape latents emitted by native Trellis stages.
+  Nonstandard custom latents with interleaved coordinate rows retain the source
+  limitation: padded features flatten in batch order without reordering coordinates.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
@@ -23,6 +87,10 @@
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatSamplingPreview` patches a cloned model to report decoded
+  gaussian splat previews during sampling without replacing the sampler callback.
+- Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
+  with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
@@ -31,6 +99,8 @@
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
+  optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
@@ -48,6 +118,8 @@
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `LoadBackgroundRemovalModel` loads an admitted background-removal
+  checkpoint; `RemoveBackground` generates its foreground mask for an image batch.
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
@@ -190,6 +262,8 @@
   prompts can be interpreted as comma-separated phrases or one literal phrase,
   producing scored boxes with source-sized binary masks. The model weights use
   the SAM License
+- SAM 3.1 prompt tokenization works offline with a digest-verified plain-text
+  vocabulary that is readable during pack admission.
 - Detect Objects offers Automatic, SAM 3.1, DETR ResNet-50, and RT-DETR v4
   x-HGNet model choices.
 - Text-prompted segmentation (`Segment Objects by Text`) through the same SAM

@@ -17,13 +17,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
-from urllib.request import urlopen
 
 from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 PUBLISHED_PROJECTS = ("dinkster", "dinkster-api", "dinkster-supervisor")
-TARGET_PYTHON = "3.14.10"
 LINUX_PLATFORMS = [f"manylinux_2_{n}_x86_64" for n in range(28, 4, -1)] + [
     "manylinux2014_x86_64",
     "manylinux2010_x86_64",
@@ -195,39 +193,106 @@ def write_constraints(
     return constraints
 
 
-def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
-    """Fetch the locked CPython 3.14 Windows/Linux closure without resolving."""
+def base_environment(manifest: dict) -> dict[str, str]:
+    platform = manifest["platform"]
+    windows = platform["os"] == "windows"
+    return {
+        "implementation_name": "cpython",
+        "implementation_version": manifest["python"],
+        "os_name": "nt" if windows else "posix",
+        "platform_machine": "AMD64" if windows else platform["arch"],
+        "platform_release": "",
+        "platform_system": {"windows": "Windows", "linux": "Linux", "macos": "Darwin"}[
+            platform["os"]
+        ],
+        "platform_version": "",
+        "python_full_version": manifest["python"],
+        "platform_python_implementation": "CPython",
+        "python_version": ".".join(manifest["python"].split(".")[:2]),
+        "sys_platform": {"windows": "win32", "linux": "linux", "macos": "darwin"}[platform["os"]],
+        "extra": "",
+    }
+
+
+def engine_base_interfaces(lock: dict, base: dict) -> dict[str, set[str]]:
+    """Find target-applicable non-base -> base edges using producer-owned membership."""
+    from packaging.markers import Marker
+    from packaging.utils import canonicalize_name
+
+    environment = base_environment(base)
+    owned = set(base["replaces"])
+    packages: dict[str, list[dict]] = {}
+    for package in lock["package"]:
+        markers = package.get("resolution-markers", [])
+        if not markers or any(Marker(marker).evaluate(environment) for marker in markers):
+            packages.setdefault(canonicalize_name(package["name"]), []).append(package)
+    interfaces = set()
+    for name, entries in packages.items():
+        if name in owned:
+            continue
+        for package in entries:
+            groups = {"": package.get("dependencies", [])}
+            groups.update(package.get("optional-dependencies", {}))
+            for extra, dependencies in groups.items():
+                for dependency in dependencies:
+                    dependency_name = canonicalize_name(dependency["name"])
+                    if dependency_name in owned and (
+                        "marker" not in dependency
+                        or Marker(dependency["marker"]).evaluate(dict(environment, extra=extra))
+                    ):
+                        interfaces.add(dependency_name)
+    return {name: {entry["version"] for entry in packages.get(name, [])} for name in interfaces}
+
+
+def select_dependency_wheels(root: Path, uv: str, base_manifests: list[Path]) -> dict:
+    """Record exact variant wheels without downloading or republishing third-party bytes."""
     from packaging.requirements import Requirement
-    from packaging.tags import compatible_tags, cpython_tags
+    from packaging.tags import compatible_tags, cpython_tags, mac_platforms
     from packaging.utils import canonicalize_name, parse_wheel_filename
+    from packaging.version import Version
 
     lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
-    output.mkdir(parents=True, exist_ok=True)
+    if not base_manifests:
+        raise ValueError("select at least one published base manifest before selecting wheels")
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-export-") as directory:
         requirements = write_constraints(root, Path(directory), [], uv).read_text()
-    selected: dict[str, tuple[str, int, str]] = {}
-    for windows in (True, False):
-        platforms = ["win_amd64"] if windows else LINUX_PLATFORMS
-        tags = list(cpython_tags((3, 14), platforms=platforms)) + list(
-            compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
+    variants = {}
+    for path in base_manifests:
+        manifest = read_base_manifest(path)
+        variant = manifest["variant"]
+        if variant in variants:
+            raise ValueError(f"duplicate base variant: {variant}")
+        owned = set(manifest["replaces"])
+        selected = {
+            wheel["name"]: {
+                key: wheel[key]
+                for key in ("name", "version", "filename", "size", "sha256", "index", "url")
+            }
+            for wheel in manifest["wheels"]
+        }
+        if not selected.keys() <= owned:
+            raise ValueError("base wheels must belong to its replacement names")
+        python = Version(manifest["python"])
+        platform = manifest["platform"]
+        if platform == {"os": "windows", "arch": "x86_64"}:
+            platforms = ["win_amd64"]
+        elif platform == {"os": "linux", "arch": "x86_64"}:
+            platforms = LINUX_PLATFORMS
+        elif platform == {"os": "macos", "arch": "arm64"}:
+            platforms = list(mac_platforms((14, 0), "arm64"))
+        else:
+            raise ValueError(f"unsupported published base platform: {platform!r}")
+        tags = list(cpython_tags((python.major, python.minor), platforms=platforms)) + list(
+            compatible_tags(
+                (python.major, python.minor),
+                interpreter=f"cp{python.major}{python.minor}",
+                platforms=platforms,
+            )
         )
         priority = {}
         for index, tag in enumerate(tags):
             priority.setdefault(tag, index)
-        environment = {
-            "implementation_name": "cpython",
-            "implementation_version": TARGET_PYTHON,
-            "os_name": "nt" if windows else "posix",
-            "platform_machine": "AMD64" if windows else "x86_64",
-            "platform_release": "",
-            "platform_system": "Windows" if windows else "Linux",
-            "platform_version": "",
-            "python_full_version": TARGET_PYTHON,
-            "platform_python_implementation": "CPython",
-            "python_version": "3.14",
-            "sys_platform": "win32" if windows else "linux",
-            "extra": "",
-        }
+        environment = base_environment(manifest)
         for line in requirements.replace("\\\n", "").splitlines():
             if not line.strip():
                 continue
@@ -242,6 +307,8 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
                 )
             if requirement.url is not None:
                 raise ValueError(f"unsupported direct wheel requirement: {requirement.name}")
+            if canonicalize_name(requirement.name) in owned:
+                continue
             hashes = set(re.findall(r"--hash=sha256:([0-9a-f]{64})", line))
             candidates = []
             for package in lock["package"]:
@@ -262,28 +329,29 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
                     if ranks and wheel.get("hash", "").removeprefix("sha256:") in hashes:
                         candidates.append((min(ranks), name, package, wheel))
             if not candidates:
-                raise ValueError(f"no locked cp314 wheel for {requirement.name} on {platforms[0]}")
+                raise ValueError(
+                    f"no locked cp{python.major}{python.minor} wheel for "
+                    f"{requirement.name} on {platforms[0]}"
+                )
             _, name, package, wheel = min(candidates, key=lambda item: (item[0], item[1]))
-            size = wheel["size"]
-            identity = (wheel["url"], size, wheel["hash"].removeprefix("sha256:"))
-            if name in selected and selected[name][1:] != identity[1:]:
+            distribution = canonicalize_name(package["name"])
+            row = {
+                "name": distribution,
+                "version": package["version"],
+                "filename": name,
+                "size": wheel["size"],
+                "sha256": wheel["hash"].removeprefix("sha256:"),
+                "index": package["source"]["registry"],
+                "url": wheel["url"],
+            }
+            if distribution in selected and selected[distribution] != row:
                 raise ValueError(f"conflicting locked artifact: {name}")
-            selected[name] = identity
-    paths = []
-    for name, (url, size, digest) in sorted(selected.items()):
-        target = output / name
-        if target.exists():
-            raise ValueError(f"external download output already exists: {name}")
-        try:
-            with urlopen(url, timeout=60) as response, target.open("wb") as handle:
-                shutil.copyfileobj(response, handle)
-            if target.stat().st_size != size or sha256(target) != digest:
-                raise ValueError(f"downloaded wheel does not match lock: {name}")
-        except BaseException:
-            target.unlink(missing_ok=True)
-            raise
-        paths.append(target)
-    return paths
+            selected[distribution] = row
+        variants[variant] = {
+            "base": manifest["id"],
+            "wheels": sorted(selected.values(), key=lambda row: row["filename"]),
+        }
+    return variants
 
 
 def read_base_manifest(path: Path) -> dict:
@@ -329,58 +397,6 @@ def read_base_manifest(path: Path) -> dict:
     return manifest
 
 
-def stage_external_wheels(
-    root: Path,
-    output: Path,
-    candidates: list[Path],
-    base_manifests: list[Path],
-    target_variants: set[str],
-) -> list[Path]:
-    """Omit only locked artifacts proven present in every selected target base."""
-    bases: dict[str, set[tuple[str, int, str]]] = {}
-    for path in base_manifests:
-        manifest = read_base_manifest(path)
-        variant = manifest.get("variant")
-        if variant not in target_variants or variant in bases:
-            raise ValueError(f"unexpected or duplicate base variant {variant!r}: {path}")
-        bases[variant] = (
-            {(wheel["filename"], wheel["size"], wheel["sha256"]) for wheel in manifest["wheels"]}
-            if manifest["archive"]["parts"]
-            else set()
-        )
-
-    lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
-    locked = set()
-    names = {candidate.name for candidate in candidates}
-    for package in lock["package"]:
-        for wheel in package.get("wheels", []):
-            name = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
-            if name not in names or not wheel["hash"].startswith("sha256:"):
-                continue
-            if "size" in wheel:
-                size = wheel["size"]
-            else:
-                continue
-            locked.add((name, size, wheel["hash"].removeprefix("sha256:")))
-    staged = []
-    for candidate in candidates:
-        identity = (candidate.name, candidate.stat().st_size, sha256(candidate))
-        if candidate.suffix != ".whl" or identity not in locked:
-            raise ValueError(f"external wheel does not match a locked artifact: {candidate}")
-        if (
-            bases
-            and bases.keys() == target_variants
-            and all(identity in members for members in bases.values())
-        ):
-            continue
-        target = output / candidate.name
-        if target.exists():
-            raise ValueError(f"duplicate release artifact: {candidate.name}")
-        shutil.copyfile(candidate, target)
-        staged.append(target)
-    return staged
-
-
 def build(
     root: Path,
     output: Path,
@@ -388,11 +404,8 @@ def build(
     frontend_artifact: Path,
     *,
     uv: str = "uv",
-    external_wheels: list[Path] | None = None,
     base_manifests: list[Path] | None = None,
-    target_variants: set[str] | None = None,
     payload_artifacts: list[Path] | None = None,
-    download_external: bool = False,
 ) -> dict[str, object]:
     version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
@@ -428,33 +441,11 @@ def build(
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         raise ValueError(f"wheel set mismatch: missing={missing}, extra={extra}")
-    with tempfile.TemporaryDirectory(prefix="dinkster-external-wheels-") as directory:
-        candidates = list(external_wheels or [])
-        if download_external:
-            candidates.extend(download_external_wheels(root, Path(directory), uv))
-        external = stage_external_wheels(
-            root, output, candidates, base_manifests or [], target_variants or set()
-        )
-        constraints = write_constraints(root, output, wheels, uv)
+    dependencies = select_dependency_wheels(root, uv, base_manifests) if base_manifests else {}
+    constraints = write_constraints(root, output, wheels, uv)
     source = build_source_archive(root, version, output)
-    artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
-    reserved = {path.name.casefold() for path in artifacts} | {
-        "release-manifest.json",
-        "sha256sums",
-    }
-    for candidate in payload_artifacts or []:
-        name = candidate.name
-        if (
-            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
-            or name.casefold() in reserved
-            or candidate.suffix.casefold() == ".whl"
-        ):
-            raise ValueError(f"invalid or duplicate release payload name: {name}")
-        target = output / name
-        shutil.copyfile(candidate, target)
-        artifacts.append(target)
-        reserved.add(name.casefold())
-    artifacts.sort(key=lambda path: path.name)
+    artifacts = sorted([*wheels, constraints, source], key=lambda path: path.name)
+    stage_payloads(output, artifacts, payload_artifacts or [])
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
@@ -467,41 +458,185 @@ def build(
         "version": version,
         "workerProtocol": int(protocol[1]),
         "workspaceWheels": [wheel.name for wheel in wheels],
-        "artifacts": [
-            {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
-            for path in artifacts
-        ],
+        "dependencies": dependencies,
     }
+    write_manifest(output, manifest, artifacts)
+    return manifest
+
+
+def stage_payloads(output: Path, artifacts: list[Path], candidates: list[Path]) -> None:
+    reserved = {path.name.casefold() for path in artifacts} | {
+        "release-manifest.json",
+        "sha256sums",
+    }
+    for candidate in candidates:
+        name = candidate.name
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
+            or name.casefold() in reserved
+            or candidate.suffix.casefold() == ".whl"
+        ):
+            raise ValueError(f"invalid or duplicate release payload name: {name}")
+        reserved.add(name.casefold())
+    for candidate in candidates:
+        target = output / candidate.name
+        shutil.copyfile(candidate, target)
+        artifacts.append(target)
+    artifacts.sort(key=lambda path: path.name)
+
+
+def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Path]) -> None:
+    manifest["artifacts"] = [
+        {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
+        for path in artifacts
+    ]
     manifest_path = output / "release-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     checksummed = [*artifacts, manifest_path]
     (output / "SHA256SUMS").write_text(
         "".join(f"{sha256(path)}  {path.name}\n" for path in checksummed), encoding="utf-8"
     )
+
+
+def extend_release(
+    output: Path, candidates: list[Path], *, base_manifests: list[Path] | None = None
+) -> dict[str, object]:
+    """Finalize an existing release only after checking every original asset."""
+    manifest_path = output / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("format") != "dinkster.engine/1":
+        raise ValueError("unsupported engine manifest format")
+    artifacts: list[Path] = []
+    names = {"release-manifest.json", "sha256sums"}
+    for row in manifest["artifacts"]:
+        name = row["name"]
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None or name.casefold() in names:
+            raise ValueError(f"invalid or duplicate release artifact: {name}")
+        names.add(name.casefold())
+        path = output / name
+        if path.stat().st_size != row["size"] or sha256(path) != row["sha256"]:
+            raise ValueError(f"release artifact size or SHA256 mismatch: {name}")
+        artifacts.append(path)
+    checksummed = [*artifacts, manifest_path]
+    expected = {path.name: sha256(path) for path in checksummed}
+    lines = (output / "SHA256SUMS").read_text(encoding="ascii").splitlines()
+    if len(lines) != len(expected) or dict(line.split("  ", 1)[::-1] for line in lines) != expected:
+        raise ValueError("release SHA256SUMS mismatch")
+    if {path.name for path in output.iterdir()} != {*expected, "SHA256SUMS"}:
+        raise ValueError("release contains unlisted artifacts")
+    catalog = next((path for path in artifacts if path.name == "official-packs.lock"), None)
+    locks = {
+        path.name: path
+        for path in [*artifacts, *candidates]
+        if path.name.endswith(".pack-lock.json")
+    }
+    if catalog is not None:
+        from dinkster_registry.install import Lockfile
+        from dinkster_workers.pack_lock import PackLock
+
+        if not base_manifests:
+            raise ValueError("dependency lock admission requires selected base manifests")
+        variants = {read_base_manifest(path)["variant"] for path in base_manifests}
+        packs = Lockfile.from_record_json(catalog.read_text(encoding="utf-8")).packs
+        required = {
+            f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
+            for pack in packs
+            for variant in variants
+        }
+        if locks.keys() != required.keys():
+            raise ValueError(
+                "dependency lock coverage mismatch: "
+                f"missing={sorted(required.keys() - locks.keys())}, "
+                f"extra={sorted(locks.keys() - required.keys())}"
+            )
+        for name, path in locks.items():
+            lock = PackLock.read(path)
+            if (lock.pack, lock.variant) != required[name]:
+                raise ValueError(f"dependency lock identity mismatch: {name}")
+            urls = [*lock.indexes, *(w.url for p in lock.packages for w in p.wheels)]
+            if any(
+                urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc
+                for url in urls
+            ):
+                raise ValueError(f"dependency lock contains a nonportable URL: {name}")
+    elif locks:
+        raise ValueError("dependency locks require an official pack catalog")
+    stage_payloads(output, artifacts, candidates)
+    write_manifest(output, manifest, artifacts)
     return manifest
+
+
+def check_release(output: Path, maximum_bytes: int) -> int:
+    """Check the finalized payload allowlist and count all bytes except native tools ZIPs."""
+    from packaging.utils import parse_wheel_filename
+
+    manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
+    names = {row["name"] for row in manifest["artifacts"]}
+    wheels = {name for name in names if name.endswith(".whl")}
+    if (
+        wheels != set(manifest["workspaceWheels"])
+        or len(wheels) != len(PUBLISHED_PROJECTS)
+        or {parse_wheel_filename(name)[0] for name in wheels} != set(PUBLISHED_PROJECTS)
+    ):
+        raise ValueError("release must contain only the three Dinkster workspace wheels")
+    if {path.name for path in output.iterdir()} != names | {"release-manifest.json", "SHA256SUMS"}:
+        raise ValueError("release contains unlisted artifacts")
+    allowed = wheels | {"constraints.txt", "official-packs.lock"}
+    catalog = output / "official-packs.lock"
+    if catalog.is_file():
+        packs = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
+        for pack in packs:
+            allowed.add(f"{pack['pack']}-{pack['version']}.zip")
+            allowed.update(
+                f"{pack['pack']}-{pack['version']}-{variant}.pack-lock.json"
+                for variant in manifest["dependencies"]
+            )
+    for name in names - allowed:
+        if (
+            re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", name)
+            or name == f"dinkster-source-{manifest.get('version')}.zip"
+        ):
+            continue
+        raise ValueError(f"unexpected release payload: {name}")
+    total = sum(
+        path.stat().st_size
+        for path in output.iterdir()
+        if re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", path.name)
+        is None
+    )
+    if total > maximum_bytes:
+        raise ValueError(f"release size {total} bytes exceeds budget {maximum_bytes} bytes")
+    print(f"Release size excluding tools ZIPs: {total} / {maximum_bytes} bytes")
+    return total
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="vX.Y.Z; omit for a commit-identified development build")
-    parser.add_argument("--frontend-artifact", type=Path, required=True)
+    parser.add_argument("--frontend-artifact", type=Path)
+    parser.add_argument("--check", action="store_true", help="Check finalized contents and size")
+    parser.add_argument("--max-bytes", type=int, default=100_000_000)
+    parser.add_argument(
+        "--extend", action="store_true", help="Verify and extend an existing release"
+    )
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--uv", default="uv")
-    parser.add_argument("--external-wheel", type=Path, action="append", default=[])
     parser.add_argument("--base-manifest", type=Path, action="append", default=[])
-    parser.add_argument("--target-variant", action="append", default=[])
     parser.add_argument("--artifact", type=Path, action="append", default=[])
-    parser.add_argument("--download-external-wheels", action="store_true")
     args = parser.parse_args()
-    build(
-        Path(__file__).resolve().parent.parent,
-        args.output.resolve(),
-        args.tag,
-        args.frontend_artifact.resolve(),
-        uv=args.uv,
-        external_wheels=args.external_wheel,
-        base_manifests=args.base_manifest,
-        target_variants=set(args.target_variant),
-        payload_artifacts=args.artifact,
-        download_external=args.download_external_wheels,
-    )
+    if args.check:
+        check_release(args.output.resolve(), args.max_bytes)
+    elif args.extend:
+        extend_release(args.output.resolve(), args.artifact, base_manifests=args.base_manifest)
+    elif args.frontend_artifact is None:
+        parser.error("--frontend-artifact is required when building a release")
+    else:
+        build(
+            Path(__file__).resolve().parent.parent,
+            args.output.resolve(),
+            args.tag,
+            args.frontend_artifact.resolve(),
+            uv=args.uv,
+            base_manifests=args.base_manifest,
+            payload_artifacts=args.artifact,
+        )

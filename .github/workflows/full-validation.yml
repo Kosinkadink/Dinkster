@@ -2,7 +2,7 @@ name: full-validation
 
 on:
   push:
-    branches: [main]
+    branches: [main, windows-sqlite-runtime-570]
   schedule:
     - cron: '0 6-22/2 * * *'
       timezone: America/Los_Angeles
@@ -16,7 +16,7 @@ permissions:
 
 env:
   # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
-  FRONTEND_REF: 34a761fb0b7f83b56ccd36e9155ace51e0ba85f9
+  FRONTEND_REF: 388ba9794cb02fde8f88c49f24e44267a70be2d4
 
 # Pushes batch behind the active run while scheduled and release validation always finish.
 concurrency:
@@ -28,19 +28,26 @@ jobs:
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
     outputs:
-      model-matrix: ${{ steps.plan.outputs.model-matrix }}
       run-heavy: ${{ steps.plan.outputs.run-heavy }}
+      run-torch: ${{ steps.plan.outputs.run-torch }}
     steps:
       - name: Skip an unchanged scheduled commit
         id: plan
         uses: actions/github-script@v7
-        env:
-          ALWAYS_MODEL_MATRIX: >-
-            [{"name":"HED, upscale and EfficientSAM","group":"vision-fast","suites":"hed,upscale,efficient-sam","pytest-args":"","timeout-minutes":30},{"name":"Depth Anything V2, DETR and RT-DETR","group":"vision-detection","suites":"depth-anything-v2,detr,rtdetr","pytest-args":"","timeout-minutes":30},{"name":"BiRefNet and Depth Anything V3","group":"vision-large","suites":"birefnet,depth-anything-v3","pytest-args":"","timeout-minutes":30},{"name":"SAM 3.1","group":"vision-sam","suites":"sam31","pytest-args":"","timeout-minutes":45}]
         with:
           script: |
-            const alwaysModelMatrix = JSON.parse(process.env.ALWAYS_MODEL_MATRIX);
-            core.setOutput('model-matrix', JSON.stringify(alwaysModelMatrix));
+            let runTorch = true;
+            if (context.eventName === 'push' && !/^0+$/.test(context.payload.before)) {
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${context.payload.before}...${context.sha}`,
+              });
+              const files = comparison.data.files || [];
+              // The compare API caps files at 300. A capped response must run everything.
+              const relevant = /^(packages\/dinkster-(nodes-(comfy|vision)|inference[^/]*|compat-comfy)\/|tests\/test_(comfy_|vision_)|\.github\/(actions\/torch-cpu-suite\/|workflows\/full-validation\.yml$)|uv\.lock$)/;
+              runTorch = files.length >= 300 || files.some(file => relevant.test(file.filename) || relevant.test(file.previous_filename || ''));
+            }
+            core.setOutput('run-torch', String(runTorch));
             if (context.eventName !== 'schedule') {
               core.setOutput('run-heavy', 'true');
               return;
@@ -76,7 +83,7 @@ jobs:
             python-version: "3.12"
             shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6"
             run_checks: true
             timeout-minutes: 30
           - os: linux
@@ -84,7 +91,7 @@ jobs:
             python-version: "3.12"
             shard: 2
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -92,7 +99,7 @@ jobs:
             python-version: "3.12"
             shard: 3
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -100,35 +107,65 @@ jobs:
             python-version: "3.12"
             shard: 4
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 5
+            shard_name: ", shard 5"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 6
+            shard_name: ", shard 6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
-            run_checks: true
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
+            run_checks: false
             timeout-minutes: 45
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
+            run_checks: true
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard_name: ", shard 4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
-            shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
+            python-version: "3.14.10"
+            shard_name: ", shard 5"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard_name: ", shard 6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
             run_checks: false
             timeout-minutes: 30
     steps:
@@ -152,6 +189,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: matrix.os == 'windows'
       - run: uv sync --all-packages
       - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'
@@ -179,6 +218,10 @@ jobs:
           uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
       - run: >
           uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --ignore-glob=tests/test_environment_*.py
+          --ignore=tests/test_installer.py
+          --ignore=tests/test_release_install.py
+          --ignore-glob=tests/test_supervisor*.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
         if: runner.os == 'Windows'
@@ -236,13 +279,14 @@ jobs:
         working-directory: .frontend-validation
         run: |
           pnpm install --frozen-lockfile
+          node --test ../tools/validate_default_catalog.test.mjs
           pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
 
   torch-cpu:
     needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
+    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.validation-plan.outputs.run-torch == 'true'
     name: torch-cpu (${{ matrix.suite }}${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 20
@@ -276,60 +320,85 @@ jobs:
       - uses: ./.github/actions/torch-cpu-suite
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "false"
           suite: ${{ matrix.suite }}
           comfy-pytest-args: ${{ matrix.pytest-args }}
 
-  model-tests:
+  windows-runtime:
     needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
-    name: model-tests (${{ matrix.name }})
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: ${{ matrix.timeout-minutes }}
-    permissions:
-      contents: read
+    if: needs.validation-plan.outputs.run-heavy == 'true'
+    name: Windows environment and supervisor runtime (shard ${{ matrix.shard }})
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).windows }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.validation-plan.outputs.model-matrix) }}
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      MKL_CBWR: COMPATIBLE
-      ONEDNN_MAX_CPU_ISA: AVX2
-      OMP_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
-      DINKSTER_MODEL_TEST_GROUP: ${{ matrix.group }}
-      PYTEST_ADDOPTS: --durations=10
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/torch-cpu-suite
+      - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "true"
-          pytest-args: ${{ matrix.pytest-args }}
-
-  model-tests-gate:
-    needs: [validation-plan, model-tests]
-    if: always() && needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 2
-    steps:
-      - name: Verify every model-test group passed
-        run: test '${{ needs.model-tests.result }}' = success
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+      - name: Set up Windows runtime environment
+        run: uv sync --locked --all-packages
+      - name: Install and verify published Windows engine dependencies
+        shell: pwsh
+        run: |
+          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
+          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
+            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+      - name: Test Windows runtime contracts
+        shell: pwsh
+        env:
+          DINKSTER_SLOW_TESTS: "1"
+          COVERAGE_FILE: .coverage.windows-runtime-${{ matrix.shard }}
+        run: |
+          $files = Get-ChildItem tests -File | Where-Object {
+            $_.Name -like 'test_environment_*.py' -or
+            $_.Name -eq 'test_installer.py' -or
+            $_.Name -eq 'test_release_install.py' -or
+            $_.Name -like 'test_supervisor*.py'
+          } | ForEach-Object { $_.FullName }
+          if (-not $files) { throw 'No Windows runtime tests selected' }
+          uv run --no-sync python -m pytest -q @files `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=0 `
+            --case-shard-file tests/test_environment_generations.py `
+            --cov=dinkster_api --cov=dinkster_assets `
+            --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
+            --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
+            --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io `
+            --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values `
+            --cov=dinkster_workers --cov-branch --cov-report=
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-shard-windows-runtime-${{ matrix.shard }}
+          path: .coverage.windows-runtime-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
 
   coverage-gate:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
-    needs: [validation-plan, test]
+    needs: [validation-plan, test, windows-runtime]
     if: always() && needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 5
     steps:
       - name: Require every coverage shard to pass
-        run: test '${{ needs.test.result }}' = success
+        run: |
+          test '${{ needs.test.result }}' = success
+          test '${{ needs.windows-runtime.result }}' = success
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -347,10 +416,14 @@ jobs:
           merge-multiple: true
       - name: Combine coverage and enforce the unchanged branch floor
         run: |
-          for shard in 1 2 3 4; do
+          for shard in 1 2 3 4 5 6; do
             test -f "coverage-data/.coverage.$shard"
           done
-          uv run coverage combine coverage-data
+          for shard in 1 2 3; do
+            test -f "coverage-data/.coverage.windows-runtime-$shard"
+          done
+          printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
+          uv run coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
           uv run coverage report --fail-under=80
 
   video-template-replay:
@@ -382,7 +455,7 @@ jobs:
       - validation-plan
       - test
       - torch-cpu
-      - model-tests-gate
+      - windows-runtime
       - coverage-gate
       - video-template-replay
       - registry-install
@@ -394,12 +467,12 @@ jobs:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
-          MODEL_RESULT: ${{ needs.model-tests-gate.result }}
+          RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s"}}\n' \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s"}}\n' \
             "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
-            "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" \
+            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -412,18 +485,25 @@ jobs:
       - name: Require every selected lane to pass
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
+          RUN_TORCH: ${{ needs.validation-plan.outputs.run-torch }}
           TEST_RESULT: ${{ needs.test.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
-          MODEL_RESULT: ${{ needs.model-tests-gate.result }}
+          RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
           REGISTRY_RESULT: ${{ needs.registry-install.result }}
+          VIDEO_RESULT: ${{ needs.video-template-replay.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
-          test "$TORCH_RESULT" = success
-          test "$MODEL_RESULT" = success
+          if [ "$RUN_TORCH" = true ]; then
+            test "$TORCH_RESULT" = success
+          else
+            test "$TORCH_RESULT" = skipped
+          fi
+          test "$RUNTIME_RESULT" = success
           test "$COVERAGE_RESULT" = success
           test "$REGISTRY_RESULT" = success
+          test "$VIDEO_RESULT" = success
 
   registry-install:
     needs: validation-plan

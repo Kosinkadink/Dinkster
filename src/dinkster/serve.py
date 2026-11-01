@@ -1684,7 +1684,7 @@ def main(argv: list[str] | None = None) -> None:
     sandbox_mounts: list[MountDef] = []
     if args.library_root:
         library_root = Path(args.library_root)
-        if args.allow_mount_changes:
+        if args.allow_mount_changes or args.generation is not None:
             ensure_default_mounts(library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
@@ -2013,6 +2013,7 @@ def main(argv: list[str] | None = None) -> None:
             library = ServerLibrary(
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
+                scratch_root=root / "scratch",
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),

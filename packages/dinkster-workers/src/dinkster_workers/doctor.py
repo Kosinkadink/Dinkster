@@ -47,7 +47,7 @@ from dinkster_schema import claim_covers, reserved_root
 from packaging.requirements import InvalidRequirement, Requirement
 
 from .accelerator import detect_accelerator
-from .interpreter import InterpreterPreflightError, preflight_interpreter
+from .interpreter import InterpreterPreflightError, module_command, preflight_interpreter
 from .manifest import (
     BLUEPRINT_PACK_MAX_BYTES,
     TEMPLATE_PACK_MAX_BYTES,
@@ -141,6 +141,7 @@ class DoctorReport:
     docs_coverage: DocsCoverage | None = None
     entry_path: str = ""
     interpreter: str = ""
+    node_source: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -157,6 +158,7 @@ class DoctorReport:
             "interpreter": self.interpreter,
             "ok": self.ok,
             "nodeTypes": list(self.node_types),
+            "nodeSource": self.node_source,
             "findings": [asdict(f) for f in self.findings],
         }
         if self.docs_coverage is not None:
@@ -849,7 +851,7 @@ def _run_probe(
     try:
         if probe_jail is None:
             proc = subprocess.run(
-                argv,
+                module_command(argv),
                 capture_output=True,
                 text=True,
                 errors="replace",
@@ -1267,7 +1269,11 @@ def _check_pack(
         docs_findings, docs_coverage = _check_docs(manifest, probed_nodes)
         declaration_findings.extend(docs_findings)
         findings.extend(declaration_findings)
-        if not node_types and not any(f.severity == "error" for f in findings):
+        if (
+            not node_types
+            and manifest.node_source is None
+            and not any(f.severity == "error" for f in findings)
+        ):
             findings.append(
                 Finding(
                     severity="warning",
@@ -1307,6 +1313,7 @@ def _check_pack(
         docs_coverage=docs_coverage,
         entry_path=entry_path,
         interpreter=selected_interpreter,
+        node_source=manifest.node_source,
     )
 
 

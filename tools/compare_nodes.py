@@ -8,9 +8,11 @@ directory, pair and literal choices require their exact selection kind;
 ordinary combo types, options and defaults remain exact.
 V3 inputs follow the recorded declaration sequence, including optional inputs
 between required inputs. V1 inputs retain required-then-optional group order.
-Hidden inputs are outside the workflow contract on both sides. Output names
-count only when the reference declares RETURN_NAMES (or explicit V3 output
-labels); dumps must leave return_names null when names are synthesized.
+Hidden required/optional declarations remain part of the input contract.
+Operational hidden-group sentinels and unmatched native hidden inputs are
+excluded. Output names count only when the reference declares RETURN_NAMES
+(or explicit V3 output labels); dumps must leave return_names null when names
+are synthesized.
 Unnamed outputs compare by type and position. A reference wildcard
 socket matches an unrestricted native type-template socket, not a concrete
 type. List flags never wrap the reference declaration. On a list-flagged
@@ -86,6 +88,8 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
             if not isinstance(options, dict):
                 raise ValueError(f"{name}: input options must be an object")
             entry: dict[str, Any] = {"name": name, "group": group, "type": value_type}
+            if options.get("hidden"):
+                entry["hidden"] = True
             if isinstance(value_type, list):
                 entry.update(type="COMBO", options=value_type)
             elif value_type == "COMBO":
@@ -153,16 +157,22 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
     return result
 
 
-def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _native_inputs(
+    items: list[dict[str, Any]], public_inputs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     result = []
+    public_by_name = {entry["name"]: entry for entry in public_inputs}
     for item in items:
         role = item["role"]
-        if role not in INPUT_ROLES or item.get("hidden"):
+        public = public_by_name.get(item["id"], {})
+        if role not in INPUT_ROLES or (item.get("hidden") and not public):
             continue
         entry: dict[str, Any] = {
             "name": item["id"],
             "group": "required" if item.get("required", True) else "optional",
         }
+        if item.get("hidden"):
+            entry["hidden"] = True
         if role == "input":
             entry["type"] = _type(item["type"])
             widget = item.get("widget") or {}
@@ -188,6 +198,12 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         option["value"] if isinstance(option, dict) else option
                         for option in widget["options"]
                     ]
+                elif (
+                    widget.get("type") == "COMBO"
+                    and widget.get("editableOptions") is True
+                    and "remote_route" not in entry
+                ):
+                    entry["options"] = []
                 elif widget.get("type") == "ASSET":
                     entry["file_picker"] = True
                 if entry.get("options"):
@@ -197,10 +213,20 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if entry.get("multiselect") is False:
                 entry.pop("multiselect")
         elif role == "dynamicCombo":
+            public_options = (
+                {option["key"]: option["inputs"] for option in public.get("options", [])}
+                if public.get("type") == role
+                else {}
+            )
             entry.update(
                 type=role,
                 options=[
-                    {"key": option["key"], "inputs": _native_inputs(option["inputs"])}
+                    {
+                        "key": option["key"],
+                        "inputs": _native_inputs(
+                            option["inputs"], public_options.get(option["key"], [])
+                        ),
+                    }
                     for option in item["options"]
                 ],
             )
@@ -208,7 +234,9 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 entry["default"] = item["default"]
         elif role == "inputFamily":
             entry.update(
-                type=role, template=_native_inputs(item["template"]), min=item.get("minMembers", 0)
+                type=role,
+                template=_native_inputs(item["template"], public.get("template", [])),
+                min=item.get("minMembers", 0),
             )
             if item.get("optionalAfterMinimum") and entry["min"] == 0:
                 for member in entry["template"]:
@@ -389,7 +417,7 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         ):
             return ["reference V3 input sequence does not match public input groups"]
         expected = [by_name[name] for name in names]
-    actual = _native_inputs(schema.get("interface", []))
+    actual = _native_inputs(schema.get("interface", []), expected)
     differences = []
     for item in expected:
         conditional = item.pop("possible_options", [])

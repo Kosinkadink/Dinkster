@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import signal
@@ -9,7 +10,7 @@ import sys
 import time
 import venv
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
@@ -32,6 +33,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--host', required=True)
 parser.add_argument('--port', type=int, required=True)
 parser.add_argument('--generation', required=True)
+parser.add_argument('--library-root')
+parser.add_argument('--prepare-stale-catalogs', action='store_true')
+parser.add_argument('--allow-mount-changes', action='store_true')
 args = parser.parse_args()
 
 class Handler(BaseHTTPRequestHandler):
@@ -68,7 +72,7 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def make_generation(root: Path, number: int = 1) -> None:
+def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
     generation = root / "generations" / str(number)
     python = generation / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
     python.parent.mkdir(parents=True)
@@ -96,22 +100,136 @@ def make_generation(root: Path, number: int = 1) -> None:
         )
     )
     (generation / "constraints.txt").write_text("test\n")
-    package = root / "dinkster"
-    package.mkdir(exist_ok=True)
-    (package / "__init__.py").write_text("")
-    (package / "serve.py").write_text(SERVE)
+    if fake_serve:
+        package = root / "dinkster"
+        package.mkdir(exist_ok=True)
+        (package / "__init__.py").write_text("")
+        (package / "serve.py").write_text(SERVE)
     (root / "queue.json").write_text('{"running": [], "queued": []}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
 
 
-@pytest.mark.parametrize("redirecting_launcher", [False, True])
+@pytest.mark.parametrize("custom_library", [False, True])
+def test_managed_generation_command_uses_local_project_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, custom_library: bool
+) -> None:
+    root = tmp_path / "project"
+    make_generation(root)
+    library = tmp_path / "chosen library" if custom_library else root / "dinkster-library"
+    if custom_library:
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    else:
+        monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    commands = []
+
+    def launch(command, **kwargs):
+        commands.append(command)
+        raise OSError("captured launch")
+
+    monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+    with pytest.raises(OSError, match="captured launch"):
+        start_engine(root, 1, "main", free_port())
+    command = commands[0]
+    assert command[command.index("--") + 1 :] == [
+        str(root / "generations/1/python" / ("python.exe" if os.name == "nt" else "bin/python3")),
+        "-m",
+        "dinkster.serve",
+        "--generation",
+        str(root / "generations/1"),
+        "--library-root",
+        str(library),
+        "--prepare-stale-catalogs",
+        "--allow-mount-changes",
+    ]
+
+
+def test_managed_generation_persists_folder_grant_across_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from test_serve import write_shutdown_pack
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    monkeypatch.setenv(
+        "PYTHONPATH", os.pathsep.join(str(Path(path).resolve()) for path in sys.path if path)
+    )
+    root = tmp_path / "project"
+    generation = root / "generations/1"
+    generation.mkdir(parents=True)
+    manifest = write_shutdown_pack(tmp_path / "source", 57)
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    pack = "shutdown-pack-57"
+    lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
+    stage_generation_packs(generation, lock, {pack: archive})
+    source = generation / "pack-sources" / pack
+    assert prepare_catalog(
+        source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+    ).ok
+    make_generation(root, fake_serve=False)
+    record = json.loads((generation / "generation.json").read_text())
+    record["inProcessPacks"] = [pack]
+    (generation / "generation.json").write_text(json.dumps(record))
+    granted = tmp_path / "user files"
+    granted.mkdir()
+    port = free_port()
+    url = f"http://127.0.0.1:{port}/api/mounts"
+    try:
+        start_engine(root, 1, "main", port)
+        with urlopen(url, timeout=5) as response:  # noqa: S310
+            initial = json.load(response)
+        assert initial["mountChangesAllowed"] is True
+        assert {row["id"] for row in initial["mounts"]} == {"imports", "output"}
+        assert initial["outputMount"] == "output"
+        request = Request(
+            url,
+            data=json.dumps({"id": "chosen", "path": str(granted)}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=5) as response:  # noqa: S310
+            assert response.status == 201
+            assert json.load(response)["mode"] == "read"
+        stop_engine(root, "main")
+        start_engine(root, 1, "main", port)
+        with urlopen(url, timeout=5) as response:  # noqa: S310
+            listing = json.load(response)
+        assert listing["mountChangesAllowed"] is True
+        selected = next(row for row in listing["mounts"] if row["id"] == "chosen")
+        assert selected["path"] == str(granted)
+        assert selected["mode"] == "read"
+        assert listing["restartRequired"] is False
+    finally:
+        stop_engine(root, "main")
+
+
+@pytest.mark.parametrize(
+    ("redirecting_launcher", "health_body_timeout"),
+    [(False, False), (True, False), (False, True)],
+)
 def test_start_status_idempotence_and_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, redirecting_launcher: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    redirecting_launcher: bool,
+    health_body_timeout: bool,
 ) -> None:
     monkeypatch.setattr(
         "dinkster_supervisor.environment_runtime.secrets.token_urlsafe", lambda _: "-token"
     )
+    if health_body_timeout:
+        original_read = http.client.HTTPResponse.read
+
+        def read(response, *args, **kwargs):
+            if response.geturl().endswith("/api/health"):
+                monkeypatch.setattr(http.client.HTTPResponse, "read", original_read)
+                raise TimeoutError("health response body stalled")
+            return original_read(response, *args, **kwargs)
+
+        monkeypatch.setattr(http.client.HTTPResponse, "read", read)
     if redirecting_launcher:
         launcher = tmp_path / "launcher.py"
         launcher.write_text(
@@ -127,8 +245,8 @@ def test_start_status_idempotence_and_stop(
         monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     make_generation(tmp_path)
     port = free_port()
-    row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
     try:
+        row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
         assert row == {
             "name": "main",
             "generation": 1,

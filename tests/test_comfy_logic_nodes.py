@@ -8,12 +8,22 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.logic import ComfyAndNode, ComfyNotNode, ComfyOrNode
+from dinkster_nodes_comfy.logic import ComfyAndNode, ComfyNotNode, ComfyOrNode, CustomCombo
 from dinkster_nodes_comfy.primitive import PrimitiveInt
 from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
+
+
+@pytest.mark.parametrize("index", [0, -7, 205])
+def test_custom_combo_passes_through_choice_and_index(index: int) -> None:
+    choice = "authored outside the empty menu"
+    assert CustomCombo.execute(choice=choice, index=index, **{"2": "unused", "label": 5}) == {
+        "STRING": choice,
+        "INDEX": index,
+    }
+    assert CustomCombo.execute(choice="") == {"STRING": "", "INDEX": 0}
 
 
 @pytest.mark.parametrize(

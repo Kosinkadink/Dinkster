@@ -2,7 +2,8 @@
 
 The `dinkster` command starts the engine and browser frontend on one loopback
 origin, prepares missing or stale pack catalogs, and opens the editor. These
-source-checkout steps work on Windows x64, Linux x64, and macOS Apple Silicon.
+source-checkout steps work on Windows x64, Linux x64, and Apple Silicon with
+macOS 14 or newer. Intel macOS is unsupported.
 
 ## Install
 
@@ -26,18 +27,20 @@ If PowerShell blocks local scripts, use
 If uv is missing, the script installs it using the
 [official installer](https://docs.astral.sh/uv/getting-started/installation/)
 in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), without sudo,
-administrator rights, or shell-profile changes. Linux/macOS need curl or wget
+administrator rights, or shell-profile changes. Linux needs curl or wget
 for this download. The installed uv is available immediately to the script.
-The script uses uv-managed Python 3.12 with development headers included,
-prepares the pinned inference and Torch
-environments, builds the pinned frontend, creates local state, and opens the
+The script installs the machine's verified Dinkster-Environments Python/torch
+bundle and locked workspace into `.venv`, builds the pinned frontend,
+creates local state, and opens the
 editor. It does not need the Desktop app or a separate frontend checkout.
-The first run downloads dependencies and can take several minutes. NVIDIA
-machines need a driver compatible with the pinned CUDA 13.0 Torch runtime.
-macOS uses the native Torch wheel with MPS; machines without NVIDIA use CPU.
-An empty `CUDA_VISIBLE_DEVICES` (or `-1`) forces CPU. If NVIDIA detection fails
-or the installed driver cannot use CUDA Torch, the launcher reports the reason
-and uses CPU Torch instead of blocking the editor.
+Windows checks the selected runtime's [SQLite mapped-shm recovery](install.md#windows-interpreter)
+and private-base identity before installing workspace dependencies.
+The first run downloads dependencies and can take several minutes.
+Windows NVIDIA machines select a bundle using its manifest's driver and
+compute-capability bounds; otherwise Windows uses its CPU bundle. Linux uses
+the published Linux CPU bundle; Apple Silicon uses `mac-arm64` with MPS.
+An empty `CUDA_VISIBLE_DEVICES` (or `-1`)
+forces CPU selection. There is no second local torch pin or fallback resolve.
 
 The scripts create the local library and managed-pack roots under `~/.dinkster`
 (`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before launch to
@@ -72,7 +75,7 @@ open the printed URL from a browser on that machine.
 To put the supervisor in front of the engine, run:
 
 ```sh
-uv run dinkster-supervisor -- uv run --no-sync dinkster-serve
+uv run --no-sync dinkster-supervisor -- uv run --no-sync dinkster-serve
 ```
 
 An embedded or headless core installation may omit both optional packages.
@@ -80,7 +83,7 @@ From a source checkout, remove them from the environment and disable automatic
 sync while launching so the default meta-package does not restore them:
 
 ```sh
-uv sync --no-install-package dinkster-collab --no-install-package dinkster-supervisor
+uv pip uninstall --python .venv dinkster-collab dinkster-supervisor
 uv run --no-sync dinkster-serve
 ```
 

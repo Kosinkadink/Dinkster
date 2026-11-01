@@ -152,7 +152,9 @@ print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in m.distribu
                   "tags": [str(t) for t in sys_tags()], "markers": default_environment()}))
 """
         try:
-            result = subprocess.run([str(python), "-c", script], capture_output=True, text=True)
+            result = subprocess.run(
+                [str(python), "-I", "-c", script], capture_output=True, text=True
+            )
         except OSError as exc:
             raise ProvisionError(f"cannot inspect generation interpreter {python}: {exc}") from exc
         if result.returncode:
@@ -250,7 +252,8 @@ def resolve_pack_lock(
         root = Path(directory)
         source = root / "requirements.in"
         output = root / "pylock.toml"
-        source.write_text("\n".join(normalized) + "\n", encoding="ascii")
+        sources = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in find_links)
+        source.write_text(sources + "\n".join(normalized) + "\n", encoding="ascii")
         command = [
             uv,
             "pip",
@@ -274,8 +277,6 @@ def resolve_pack_lock(
                 command.extend(["--index", index])
         elif find_links:
             command.append("--no-index")
-        for path in find_links:
-            command.extend(["--find-links", str(path)])
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode:
             raise ProvisionError(f"pack {pack} dependency conflict: {result.stderr.strip()}")

@@ -601,9 +601,14 @@ class ComboWidget:
     remote_timeout_ms: int | None = None
     remote_max_retries: int | None = None
     remote_refresh_ms: int | None = None
+    editable_options: bool = False
 
     def __post_init__(self) -> None:
         _validate_static_combo_options(self.options, subject="combo widget")
+        if type(self.editable_options) is not bool:
+            raise ValueError("combo widget editable_options must be a bool")
+        if self.editable_options and (self.option_source is not None or self.remote_route):
+            raise ValueError("editable combo options cannot have another option source")
         if self.option_source is not None and not isinstance(
             cast("object", self.option_source), InputFamilyOptionSource
         ):
@@ -615,7 +620,12 @@ class ComboWidget:
             )
         if self.remote_route:
             _remote_choice_id(self.remote_route)
-        if not self.options and not self.remote_route and self.option_source is None:
+        if (
+            not self.options
+            and not self.remote_route
+            and self.option_source is None
+            and not self.editable_options
+        ):
             raise ValueError(
                 "combo widget needs static options, a remote route, or an "
                 "input-family option source"
@@ -1822,9 +1832,12 @@ class DynamicComboSpec:
     required: bool = True
     doc: str = ""
     display_name: str = ""
+    hidden: bool = False
 
     def __post_init__(self) -> None:
         _validate_structural_id(self.id, "dynamic combo id")
+        if type(self.hidden) is not bool:
+            raise ValueError(f"dynamic combo {self.id}: hidden must be a bool")
         keys = [option.key for option in self.options]
         if len(set(keys)) != len(keys):
             raise ValueError(f"dynamic combo {self.id}: duplicate option keys")
@@ -2412,10 +2425,24 @@ class NodeSchema:
     Empty retains inputs, families, combos, then slots. An explicit order
     names every entry exactly once and preserves order within each group.
     """
+    additional_inputs: TypeExpr | None = None
+    """Opt-in type declaration for otherwise undeclared input names.
+
+    Supplied names elaborate to ordinary optional inputs. Declared dynamic
+    namespaces remain reserved even when their inputs are inactive. Wildcard
+    literals require explicit registered type stamps, just like any other
+    wildcard input; this declaration never bypasses value admission.
+    """
 
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
+        if self.additional_inputs is not None and not isinstance(
+            cast("object", self.additional_inputs), TypeExpr
+        ):
+            raise ValueError("additional_inputs must be a TypeExpr")
+        if self.additional_inputs is not None and self.additional_inputs.requires_elaboration:
+            raise ValueError("additional_inputs cannot depend on another input")
         if type(self.execution_context) is not bool:
             raise ValueError("execution_context must be a bool")
         if type(self.input_values) is not bool:
@@ -2692,7 +2719,7 @@ class NodeSchema:
                 raise ValueError(
                     "input types cannot reference family or literal output declarations"
                 )
-        for output in self.outputs:
+        for output in (*self.outputs, *self.output_families):
             validate_output_type(output.type)
         if self.output_descriptors is not None:
             descriptor_input = inputs_by_id.get(self.output_descriptors.input)
@@ -2800,7 +2827,8 @@ class NodeSchema:
     @property
     def is_static(self) -> bool:
         return (
-            not self.input_families
+            self.additional_inputs is None
+            and not self.input_families
             and not self.output_families
             and self.output_descriptors is None
             and not self.combos

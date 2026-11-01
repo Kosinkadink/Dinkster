@@ -10,6 +10,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--host", required=True)
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--generation", required=True)
+parser.add_argument("--library-root")
+parser.add_argument("--prepare-stale-catalogs", action="store_true")
+parser.add_argument("--allow-mount-changes", action="store_true")
 args = parser.parse_args()
 
 

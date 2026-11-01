@@ -23,6 +23,7 @@ from dinkster_schema import (
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
+    OutputFamilySpec,
     OutputRepresents,
     OutputSpec,
     SaveTargetWidget,
@@ -57,6 +58,57 @@ def test_schema_reexports_custom_widget_descriptor() -> None:
     assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
     with pytest.raises(ValueError, match="MOUNT.*reserved"):
         CustomWidgetDescriptor("MOUNT")
+
+
+def test_editable_combo_and_additional_inputs_preserve_declared_types() -> None:
+    schema = NodeSchema(
+        "test.authored",
+        inputs=(
+            InputSpec(
+                "choice", TypeExpr.concrete("COMBO"), widget=ComboWidget(editable_options=True)
+            ),
+        ),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+    assert schema_from_wire(json.loads(json.dumps(schema_to_wire(schema)))) == schema
+    effective = elaborate(
+        schema, {"choice": "not in menu", "option117": "duplicate", "sparse-name": 7}
+    )
+    assert [(spec.id, spec.type, spec.required) for spec in effective.inputs] == [
+        ("choice", TypeExpr.concrete("COMBO"), True),
+        ("option117", TypeExpr.wildcard(), False),
+        ("sparse-name", TypeExpr.wildcard(), False),
+    ]
+    assert effective.is_static
+    assert schema_signature(schema) != schema_signature(
+        dataclasses.replace(schema, additional_inputs=None)
+    )
+    assert len(elaborate(schema, ["choice", *(f"option{i * 2}" for i in range(150))]).inputs) == 151
+    with pytest.raises(ValueError, match="budget"):
+        elaborate(schema, ["choice", *(f"option{i}" for i in range(1024))])
+    with pytest.raises(ValueError, match="needs static options"):
+        ComboWidget()
+
+
+def test_additional_inputs_cannot_reclaim_inactive_dynamic_names() -> None:
+    schema = NodeSchema(
+        "test.reserved",
+        combos=(
+            DynamicComboSpec(
+                "mode",
+                (
+                    DynamicComboOption("a", (InputSpec("value", TypeExpr.concrete("INT")),)),
+                    DynamicComboOption("b", (InputSpec("other", TypeExpr.concrete("STRING")),)),
+                ),
+            ),
+        ),
+        additional_inputs=TypeExpr.wildcard(),
+    )
+    assert [
+        spec.id for spec in elaborate(schema, ["mode.value"], slot_variants={"mode": "a"}).inputs
+    ] == ["mode.value"]
+    with pytest.raises(ValueError, match="declared dynamic construct"):
+        elaborate(schema, ["mode.value", "mode.other"], slot_variants={"mode": "a"})
 
 
 def test_scalar_combo_choices_preserve_wire_types_and_metadata() -> None:
@@ -634,6 +686,48 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
         )
 
 
+@pytest.mark.parametrize("hidden", [False, True])
+def test_dynamic_combo_visibility_round_trips_without_changing_choice_contract(
+    hidden: bool,
+) -> None:
+    combo = DynamicComboSpec(
+        "codec",
+        (
+            DynamicComboOption("auto"),
+            DynamicComboOption("custom", (InputSpec("quality", TypeExpr.concrete("INT")),)),
+        ),
+        required=False,
+        hidden=hidden,
+    )
+    schema = NodeSchema("test.hidden-choice", combos=(combo,))
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert (entry.get("hidden") is True) is hidden
+    if not hidden:
+        assert "hidden" not in entry
+    assert "default" not in entry
+    assert entry["required"] is False
+    assert schema_from_wire(wire) == schema
+    effective = elaborate(schema_from_wire(wire), (), slot_variants={"codec": "custom"})
+    assert [item.id for item in effective.inputs] == ["codec.quality"]
+    assert effective.inputs[0].type == TypeExpr.concrete("INT")
+    assert elaborate(schema_from_wire(wire), ()).inputs == ()
+
+
+@pytest.mark.parametrize("hidden", [None, 0, 1, "true"])
+def test_dynamic_combo_visibility_rejects_nonboolean_flags(hidden: object) -> None:
+    with pytest.raises(ValueError, match="hidden must be a bool"):
+        DynamicComboSpec("codec", (DynamicComboOption("auto"),), hidden=hidden)  # type: ignore[arg-type]
+    wire = schema_to_wire(
+        NodeSchema(
+            "test.hidden-choice", combos=(DynamicComboSpec("codec", (DynamicComboOption("auto"),)),)
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["hidden"] = hidden
+    with pytest.raises(ValueError, match="dynamicCombo.hidden"):
+        schema_from_wire(wire)
+
+
 def test_mixed_input_order_survives_wire_and_elaboration() -> None:
     integer = TypeExpr.concrete("INT")
     schema = NodeSchema(
@@ -755,15 +849,32 @@ def test_tuple_element_projects_only_a_stored_integer_selector() -> None:
         resolved_type_id(effective.outputs[0].type, {"Tuple": "list<INT>"})
 
 
-def test_tuple_schema_rejects_missing_or_shared_declaration_sources() -> None:
-    with pytest.raises(ValueError, match="independent"):
-        NodeSchema(
-            "test.bad_family", outputs=(OutputSpec("tuple", TypeExpr.tuple_from_family("missing")),)
-        )
-    with pytest.raises(ValueError, match="unknown tuple input"):
+@pytest.mark.parametrize("family_output", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "expression, message",
+    [
+        (TypeExpr.tuple_from_family("missing"), "independent"),
+        (TypeExpr.tuple_element("missing", "index"), "unknown tuple input"),
+        (TypeExpr.tuple_element("values", "missing"), "selector must reference an INT input"),
+        (TypeExpr.tuple_element("values", "label"), "selector must reference an INT input"),
+    ],
+)
+def test_tuple_schema_rejects_missing_or_shared_declaration_sources(
+    family_output: bool, nested: bool, expression: TypeExpr, message: str
+) -> None:
+    if nested:
+        expression = TypeExpr.list_of(TypeExpr.tuple_of(expression))
+    with pytest.raises(ValueError, match=message):
         NodeSchema(
             "test.bad_projection",
-            outputs=(OutputSpec("item", TypeExpr.tuple_element("missing", "index")),),
+            inputs=(
+                InputSpec("values", TypeExpr.tuple_of(TypeExpr.concrete("INT"))),
+                InputSpec("index", TypeExpr.concrete("INT")),
+                InputSpec("label", TypeExpr.concrete("STRING")),
+            ),
+            outputs=() if family_output else (OutputSpec("item", expression),),
+            output_families=(OutputFamilySpec("items", expression),) if family_output else (),
         )
     with pytest.raises(ValueError, match="tuple_of"):
         TypeExpr.concrete("tuple<IMAGE,INT>")

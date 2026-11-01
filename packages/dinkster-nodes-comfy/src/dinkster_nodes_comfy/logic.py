@@ -6,6 +6,10 @@ from collections.abc import Mapping
 
 from dinkster_api.v1 import (
     CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_INT,
+    CORE_STRING,
+    ComboWidget,
     InputFamilySpec,
     InputSpec,
     Node,
@@ -113,4 +117,30 @@ class ComfyOrNode(Node):
         return cls.outputs(BOOLEAN=any(values.values()))
 
 
-LOGIC_NODES = (ComfyNotNode, ComfyAndNode, ComfyOrNode)
+class CustomCombo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="CustomCombo",
+            display_name="Custom Combo",
+            category="utilities",
+            inputs=(
+                InputSpec(
+                    "choice",
+                    TypeExpr.concrete(CORE_COMBO),
+                    widget=ComboWidget(options=(), editable_options=True),
+                ),
+            ),
+            outputs=(
+                OutputSpec("STRING", TypeExpr.concrete(CORE_STRING)),
+                OutputSpec("INDEX", TypeExpr.concrete(CORE_INT)),
+            ),
+            additional_inputs=TypeExpr.wildcard(),
+        )
+
+    @classmethod
+    def execute(cls, *, choice: str, index: int = 0, **kwargs: object) -> Mapping[str, object]:
+        return cls.outputs(STRING=choice, INDEX=index)
+
+
+LOGIC_NODES = (ComfyNotNode, ComfyAndNode, ComfyOrNode, CustomCombo)

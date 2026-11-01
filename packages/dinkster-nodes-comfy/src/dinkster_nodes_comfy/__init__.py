@@ -10,6 +10,8 @@ from dinkster_api.v1 import (
     register_asset_type,
     register_audio_value_type,
     register_curve_type,
+    register_file3d_types,
+    register_load3d_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -31,6 +33,7 @@ from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .background_removal import BACKGROUND_REMOVAL_NODES
 from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
@@ -68,7 +71,7 @@ from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
-from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES, VAEDecodeHunyuan3D
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -88,7 +91,9 @@ from .image_file_tools import (
     SaveImage,
 )
 from .image_filters import IMAGE_FILTER_NODES
+from .image_histogram import ImageHistogram
 from .image_layers import AddLayer
+from .image_model_upscale import ImageUpscaleWithModel
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -129,6 +134,16 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mesh import MESH_NODES
+from .mesh_decimate import DecimateMesh
+from .mesh_holes import FillHoles
+from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
+from .mesh_normals import MeshSmoothNormals
+from .mesh_paint import PaintMesh
+from .mesh_remesh import RemeshMesh
+from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
+from .mesh_unwrap import UnwrapMesh
+from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -145,6 +160,7 @@ from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
+from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
@@ -177,6 +193,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -192,6 +209,7 @@ from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
+from .splat_files import File3DToSplat, SplatToFile3D
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -201,11 +219,21 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .text_overlay import TextOverlay
+from .trellis import Trellis2TextureStage
 from .trellis_conditioning import Trellis2Conditioning
+from .trellis_shape import Trellis2ShapeStage
+from .trellis_structure import VaeDecodeStructureTrellis2
 from .trellis_upsample import Trellis2UpsampleStage
-from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
+)
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
+from .uv_atlas import RenderUVAtlas
 from .vae import VAE_NODES
 from .video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -222,6 +250,7 @@ from .void_conditioning import (
 )
 from .void_sampler import VOIDSampler
 from .void_warped_noise import VOIDWarpedNoise
+from .voxel_mesh import VOXEL_MESH_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -445,6 +474,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    *BACKGROUND_REMOVAL_NODES,
     CropByBBoxes,
     CameraAngle,
     CreateCameraInfo,
@@ -454,8 +484,11 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
+    MoGePointMapToMesh,
     TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
     TripoSplatConditioning,
+    VAEDecodeTripoSplat,
     LoadAudio,
     RecordAudio,
     PreviewAudio,
@@ -503,12 +536,40 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Pixal3DConditioning,
     Pixal3DMultiViewConditioning,
     Trellis2Conditioning,
+    *MESH_NODES,
+    *VOXEL_MESH_NODES,
+    VAEDecodeHunyuan3D,
+    Trellis2ShapeStage,
+    VaeDecodeStructureTrellis2,
+    Trellis2TextureStage,
+    PaintMesh,
+    WeldVertices,
+    MeshTextureToImage,
+    MeshSmoothNormals,
+    RenderUVAtlas,
+    UnwrapMesh,
+    ApplyTextureToMesh,
+    FillHoles,
+    Get3DComponents,
+    DecimateMesh,
+    RemeshMesh,
+    MeshToFile3D,
+    SaveGLB,
+    Save3DAdvanced,
+    SaveGaussianSplat,
+    SavePointCloud,
+    SplatToFile3D,
+    File3DToSplat,
+    ImageUpscaleWithModel,
+    ImageHistogram,
+    TextOverlay,
 )
 
 
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    register_load3d_type(registry)
     if AUDIO_RECORD_TYPE not in registry:
         register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if AUDIO_TYPE not in registry:
@@ -516,6 +577,7 @@ def register_inference_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_curve_type(registry)
+    register_file3d_types(registry, resolver_from_env())
     _register_inference_types(registry)
 
 

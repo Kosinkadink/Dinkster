@@ -235,12 +235,17 @@ def test_validation_error_literal(cache_enabled: bool, value: object, error: boo
     async def scenario() -> None:
         graph = Graph({"validation": GraphNode("dev.execution.admission", {"value": value})})
         if error:
-            with pytest.raises(
-                GraphValidationError, match="value must be a float literal"
-            ) as failure:
+            message = (
+                "input 'value' literal does not match FLOAT"
+                if isinstance(value, str)
+                else "value must be a float literal"
+            )
+            with pytest.raises(GraphValidationError, match=message) as failure:
                 await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert failure.value.diagnostics[0].node_id == "validation"
-            assert failure.value.diagnostics[0].message == "value must be a float literal"
+            assert failure.value.diagnostics[0].message == message
+            if isinstance(value, str):
+                assert failure.value.diagnostics[0].code == "literal-type"
         else:
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0

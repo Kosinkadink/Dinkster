@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
+import ssl
 import uuid
 from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -17,6 +19,58 @@ if TYPE_CHECKING:
 # composition tests must never contact the production remote-node service.
 os.environ["DINKSTER_REMOTE_CATALOG_BASE"] = ""
 os.environ["DINKSTER_REMOTE_GATEWAY_BASE"] = ""
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "network(*hosts): requires outbound HTTPS to named hosts")
+
+
+@pytest.fixture(scope="session")
+def network_reachability() -> dict[str, str | None]:
+    return {}
+
+
+@pytest.fixture(autouse=True)
+def _probe_network_hosts(request: pytest.FixtureRequest, network_reachability) -> None:
+    marker = request.node.get_closest_marker("network")
+    if marker is None:
+        return
+    assert marker.args, "network tests must name their external hosts"
+    for host in marker.args:
+        if host not in network_reachability:
+            try:
+                with socket.create_connection((host, 443), timeout=5) as connection:
+                    with ssl.create_default_context().wrap_socket(connection, server_hostname=host):
+                        pass
+            except OSError as error:
+                network_reachability[host] = str(error)
+            else:
+                network_reachability[host] = None
+        if error := network_reachability[host]:
+            pytest.skip(f"HTTPS reachability probe failed for {host}: {error}")
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    if os.name != "nt":
+        return
+    import winreg
+
+    base = r"SOFTWARE\Microsoft\Windows\Windows Error Reporting"
+    for suffix, names in (
+        ("", ("DontShowUI", "Disabled")),
+        (r"\LocalDumps", ("DumpFolder", "DumpCount", "DumpType")),
+    ):
+        path = base + suffix
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, access=winreg.KEY_READ) as key:
+                for name in names:
+                    try:
+                        value, _ = winreg.QueryValueEx(key, name)
+                    except OSError as exc:
+                        value = f"unavailable: {exc}"
+                    print(f"WER HKLM\\{path} {name}={value!r}")
+        except OSError as exc:
+            print(f"WER HKLM\\{path} unavailable: {exc}")
 
 
 @pytest.fixture(autouse=True)

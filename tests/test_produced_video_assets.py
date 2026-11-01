@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
+import os
 import shutil
 import threading
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, cast
@@ -21,21 +25,36 @@ from dinkster_assets import (
     AssetVault,
     LocalAssetRef,
     digest_bytes,
+    register_audio_value_type,
     register_video_value_type,
+    resolver_from_env,
+)
+from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
+from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.scratch import (
+    ProducedScratchState,
+    claim_inactive_produced_job,
+    claim_inactive_produced_scratch,
+    hold_produced_job,
 )
 from dinkster_caches import BudgetedDiskCAS
+from dinkster_engine.control import EngineRunContext, RunControlState
+from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import Invocation, InvocationResult
+from dinkster_schema import Node, NodeSchema, RunExecutionContext
 from dinkster_values import TypeRegistry, Value, ValueMeta, default_encode, make_list_value
 from dinkster_values.model import PyObjPayload
-from dinkster_workers import BoundaryDiagnostic, IsolatedWorker, RemoteWorker
+from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker, RemoteWorker
 from dinkster_workers import session as session_module
 from dinkster_workers.blobs import attribute_moved_wire
 from dinkster_workers.boundary import ValueCodec, encode_result, read_frame
 from dinkster_workers.produced_assets import (
     ProducedAssetAuthority,
+    offer_source_assets,
     result_asset_digests,
     source_asset_files,
 )
+from produced_video_nodes import ProduceAudio, ProduceVideo
 from test_remote import TOKEN, start_service, stop_service
 from test_reservations import core_registry, make_invocation
 
@@ -51,6 +70,507 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
+
+
+def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
+    job_lease = hold_produced_job(Path(env["DINKSTER_PACK_SCRATCH"]), "process job")
+    with use_produced_output_job("process job", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        _publish(vault, b"recoverable publication")
+        writer = vault.writer(digest_bytes(b"pending bytes"))
+        writer.write(b"pending bytes")
+        channel.send(str(vault.root))
+        command = channel.recv()
+        if command == "crash":
+            os._exit(0)
+        assert command == "close scope"
+    channel.send("scope closed")
+    assert channel.recv() == "close writer"
+    writer.__exit__(None, None, None)
+    channel.send("writer closed")
+    job_lease.close()
+    channel.close()
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_produced_scratch_claim_protects_live_process_and_open_writer(
+    tmp_path: Path, crash: bool
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    process = context.Process(target=_hold_produced_scratch, args=(child, env))
+    process.start()
+    child.close()
+
+    def receive() -> object:
+        assert parent.poll(20), "producer did not complete the requested transition"
+        return parent.recv()
+
+    try:
+        root = Path(cast(str, receive()))
+        with claim_inactive_produced_job(Path(env["DINKSTER_PACK_SCRATCH"]), "process job") as idle:
+            assert not idle
+        with claim_inactive_produced_scratch(root) as inactive:
+            assert not inactive
+        parent.send("crash" if crash else "close scope")
+        if not crash:
+            assert receive() == "scope closed"
+            with claim_inactive_produced_job(
+                Path(env["DINKSTER_PACK_SCRATCH"]), "process job"
+            ) as idle:
+                assert not idle
+            with claim_inactive_produced_scratch(root) as inactive:
+                assert not inactive
+            parent.send("close writer")
+            assert receive() == "writer closed"
+        process.join(20)
+        assert process.exitcode == 0
+        with claim_inactive_produced_job(Path(env["DINKSTER_PACK_SCRATCH"]), "process job") as idle:
+            assert idle
+        assert ProducedScratchState(root).publications() == (
+            (digest_bytes(b"recoverable publication"), len(b"recoverable publication"), False),
+        )
+        with claim_inactive_produced_scratch(root) as inactive:
+            assert inactive
+            with use_produced_output_job("process job", 1):
+                with pytest.raises(AssetError, match="busy with reconciliation"):
+                    produced_output_scratch(env)
+        with use_produced_output_job("process job", 1):
+            vault = produced_output_scratch(env)
+            assert vault is not None
+            assert _publish(vault, b"next invocation").read_bytes() == b"next invocation"
+        path = AssetVault(root).resolve(digest_bytes(b"recoverable publication"))
+        assert path is not None
+        assert path.read_bytes() == b"recoverable publication"
+    finally:
+        if process.is_alive():
+            process.terminate()
+        process.join(20)
+        parent.close()
+
+
+def test_produced_scratch_claim_refuses_escaping_lease_directory(tmp_path: Path) -> None:
+    root = tmp_path / "scratch"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"untouched")
+    try:
+        (root.parent / ".leases").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(AssetError, match="must not be a symlink"):
+        with claim_inactive_produced_scratch(root):
+            pytest.fail("unsafe lease directory was claimed")
+    assert sentinel.read_bytes() == b"untouched"
+    assert list(outside.iterdir()) == [sentinel]
+
+
+def test_produced_host_job_refuses_escaping_ownership_directory(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (scratch / "produced-jobs").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(AssetError, match="must not be a symlink"):
+        hold_produced_job(scratch, "safe job")
+    with pytest.raises(AssetError, match="must not be a symlink"):
+        with claim_inactive_produced_job(scratch, "safe job"):
+            pytest.fail("escaping job ownership was claimed")
+    assert not list(outside.iterdir())
+
+
+def test_produced_scratch_claim_refuses_unmanaged_data(tmp_path: Path) -> None:
+    vault = AssetVault(tmp_path / "unmanaged")
+    ref = _publish(vault, b"unknown owner")
+    with pytest.raises(AssetError, match="ownership state is unavailable"):
+        with claim_inactive_produced_scratch(vault.root):
+            pytest.fail("unmanaged data was claimed")
+    assert ref.read_bytes() == b"unknown owner"
+    assert not (tmp_path / ".leases").exists()
+
+
+def test_produced_scratch_claim_survives_data_directory_removal(tmp_path: Path) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    with use_produced_output_job("removed job", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        root = vault.root
+    with claim_inactive_produced_scratch(root) as inactive:
+        assert inactive
+        shutil.rmtree(root)
+        with use_produced_output_job("removed job", 1):
+            with pytest.raises(AssetError, match="busy with reconciliation"):
+                produced_output_scratch(env)
+        assert not root.exists()
+    with use_produced_output_job("removed job", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        assert _publish(vault, b"new invocation").read_bytes() == b"new invocation"
+
+
+@pytest.mark.parametrize("creation_result", [False, True])
+def test_produced_scratch_preserves_publication_handoff_after_restart(
+    tmp_path: Path, creation_result: bool
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    data = b"offered publication"
+    unused = b"unused intermediate"
+    digest = digest_bytes(data)
+    with use_produced_output_job("handoff job", 2):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            if creation_result:
+                path, created = writer.commit_with_result()
+                assert created
+            else:
+                path = writer.commit()
+        _publish(vault, unused)
+        before = ProducedScratchState(vault.root).publications()
+        assert set(before) == {
+            (digest, len(data), False),
+            (digest_bytes(unused), len(unused), False),
+        }
+        outputs = {"video": _value(AssetRef(digest, "source", len(data)))}
+        assert source_asset_files(outputs, vault) == [(digest, path)]
+        assert ProducedScratchState(vault.root).publications() == before
+        offer_source_assets(outputs)
+    expected = {(digest, len(data), True), (digest_bytes(unused), len(unused), False)}
+    assert set(ProducedScratchState(vault.root).publications()) == expected
+    with use_produced_output_job("handoff job", 2):
+        reopened = produced_output_scratch(env)
+        assert reopened is not None and reopened.root == vault.root
+        assert set(ProducedScratchState(reopened.root).publications()) == expected
+    with pytest.raises(AssetError, match="ownership is unavailable or changed"):
+        ProducedScratchState(vault.root).bind("different owner", 2)
+    assert path.read_bytes() == data
+
+
+def test_produced_scratch_refuses_missing_journal_without_reclassifying_bytes(
+    tmp_path: Path,
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    with use_produced_output_job("lost state", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        ref = _publish(vault, b"keep recoverable source")
+    (vault.root / ".produced-scratch.sqlite").unlink()
+    with use_produced_output_job("lost state", 1):
+        with pytest.raises(AssetError, match="untracked data"):
+            produced_output_scratch(env)
+    assert ref.read_bytes() == b"keep recoverable source"
+
+
+def test_produced_scratch_parallel_invocations_share_job_without_losing_publications(
+    tmp_path: Path,
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    contents = [f"distinct intermediate {index}".encode() for index in range(8)]
+    ready = threading.Barrier(len(contents))
+
+    def produce(data: bytes) -> tuple[Path, AssetRef]:
+        ready.wait(20)
+        with use_produced_output_job("parallel job", 1):
+            vault = produced_output_scratch(env)
+            assert vault is not None
+            ref = _publish(vault, data)
+            offer_source_assets({"video": _value(ref)})
+            return vault.root, ref
+
+    with ThreadPoolExecutor(max_workers=len(contents)) as pool:
+        results = list(pool.map(produce, contents))
+    roots = {root for root, _ in results}
+    assert len(roots) == 1
+    for (_, ref), data in zip(results, contents, strict=True):
+        assert ref.read_bytes() == data
+    assert set(ProducedScratchState(roots.pop()).publications()) == {
+        (digest_bytes(data), len(data), True) for data in contents
+    }
+
+
+def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    resolver = resolver_from_env(env)
+    assert resolver is not None
+    data = b"identical produced bytes"
+    digest = digest_bytes(data)
+
+    async def scenario() -> Sequence[Path]:
+        ready = [asyncio.Event() for _ in range(3)]
+
+        async def publish(index: int, job: str, attempt: int) -> Path:
+            with use_produced_output_job(job, attempt):
+                vault = produced_output_scratch(env)
+                assert vault is not None
+                assert resolver.resolve(digest) is None
+                ref = await asyncio.to_thread(_publish, vault, data)
+                ready[index].set()
+                await asyncio.gather(*(event.wait() for event in ready))
+                assert resolver.resolve(digest) == ref.local_path()
+                assert await asyncio.to_thread(ref.read_bytes) == data
+                return ref.local_path()
+
+        return await asyncio.wait_for(
+            asyncio.gather(
+                publish(0, "../job with spaces", 1),
+                publish(1, "../job with spaces", 2),
+                publish(2, "another job", 1),
+            ),
+            10,
+        )
+
+    paths = asyncio.run(scenario())
+    assert len(set(paths)) == 3
+    assert all(
+        path.is_relative_to(tmp_path / "scratch" / "produced-assets" / "jobs") for path in paths
+    )
+    assert resolver.resolve(digest) is None
+    with use_produced_output_job("../job with spaces", 1):
+        assert resolver.resolve(digest) == paths[0]
+    assert not (tmp_path / "job with spaces").exists()
+
+
+@pytest.mark.parametrize("outcome", ["complete", "failure", "cancel"])
+@pytest.mark.parametrize("store_kind", ["scratch", "vault"])
+def test_completed_produced_scope_refuses_detached_tasks_and_held_writers(
+    tmp_path: Path, outcome: str, store_kind: str
+) -> None:
+    env = {
+        "DINKSTER_PACK_SCRATCH" if store_kind == "scratch" else "DINKSTER_ASSET_VAULT": str(
+            tmp_path / store_kind
+        )
+    }
+    data = b"unpublished source"
+    digest = digest_bytes(data)
+
+    async def scenario() -> None:
+        resume = asyncio.Event()
+        detached: list[asyncio.Task[None]] = []
+
+        async def owner() -> None:
+            with use_produced_output_job("ending job", 1) as owns:
+                assert owns
+                vault = produced_output_scratch(env)
+                assert vault is not None
+                writer = vault.writer(digest)
+                writer.write(data)
+
+                async def late_publication() -> None:
+                    await resume.wait()
+                    try:
+                        with pytest.raises(AssetError, match="no longer active"):
+                            produced_output_scratch(env)
+                        with pytest.raises(AssetError, match="no longer active"):
+                            vault.writer(digest)
+                        with pytest.raises(AssetError, match="no longer active"):
+                            writer.write(b"late bytes")
+                        with pytest.raises(AssetError, match="no longer active"):
+                            writer.commit()
+                        with pytest.raises(AssetError, match="no longer active"):
+                            writer.commit_with_result()
+                    finally:
+                        writer.__exit__(None, None, None)
+
+                detached.append(asyncio.create_task(late_publication()))
+                if outcome == "failure":
+                    raise ValueError("job failed")
+                if outcome == "cancel":
+                    raise asyncio.CancelledError
+
+        try:
+            await owner()
+        except (ValueError, asyncio.CancelledError):
+            assert outcome != "complete"
+        resume.set()
+        await asyncio.wait_for(asyncio.gather(*detached), 5)
+        with use_produced_output_job("ending job", 1):
+            vault = produced_output_scratch(env)
+            assert vault is not None
+            assert vault.resolve(digest) is None
+            assert not list(vault.root.glob(".ingest-*"))
+            with use_produced_output_job("ending job", 1) as owns:
+                assert not owns
+            assert _publish(vault, data).read_bytes() == data
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("configured_vault", [False, True])
+@pytest.mark.parametrize("media", ["audio", "video"])
+def test_in_process_produced_sources_require_durable_adoption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_vault: bool, media: str
+) -> None:
+    engine = AssetVault(tmp_path / "engine")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
+    if configured_vault:
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+    else:
+        monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    node = ProduceVideo if media == "video" else ProduceAudio
+    node_type = node.define_schema().node_type
+    worker = InProcessWorker({node_type: node}, registry)
+
+    async def scenario() -> None:
+        result = await worker.invoke(
+            Invocation(
+                invocation_id="produce",
+                job_ref="local job",
+                attempt_id=3,
+                node_id="produce",
+                node_type=node_type,
+                inputs={},
+                effective_schema=worker.schemas[node_type],
+            )
+        )
+        with use_produced_output_job("local job", 3):
+            store = produced_output_scratch()
+            assert store is not None
+            digests = store.digests()
+            assert len(digests) == 1
+            produced = store.resolve(digests[0])
+            assert produced is not None
+            original = produced.read_bytes()
+            assert digest_bytes(original) == digests[0]
+            assert ProducedScratchState(store.root).publications() == (
+                (digests[0], len(original), True),
+            )
+        if not configured_vault:
+            assert result.error is not None
+            assert "require an engine DINKSTER_ASSET_VAULT" in result.error.message
+            assert produced.read_bytes() == original
+            assert not engine.digests()
+            return
+        assert result.error is None, result.error
+        assert result.outputs is not None
+        shutil.rmtree(scratch)
+        value = cast(Mapping[str, object], result.outputs[media].resolve())
+        source = cast(AssetRef, value["source"])
+        assert source.digest == digests[0]
+        assert source.local_path() == engine.resolve(digests[0])
+        assert source.read_bytes() == original
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("configured_vault", [False, True])
+@pytest.mark.parametrize("media", ["audio", "video"])
+def test_in_process_control_sources_are_adopted_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_vault: bool, media: str
+) -> None:
+    engine = AssetVault(tmp_path / "engine")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
+    if configured_vault:
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+    else:
+        monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    producer = ProduceVideo if media == "video" else ProduceAudio
+    original: dict[str, bytes] = {}
+    saved_contexts: list[RunExecutionContext] = []
+
+    class PublishMedia(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema("control.media", outputs=(), execution_context=True)
+
+        @classmethod
+        async def execute(cls, execution_context: RunExecutionContext) -> Mapping[str, object]:
+            saved_contexts.append(execution_context)
+            value = registry.wrap(
+                VIDEO_TYPE if media == "video" else AUDIO_TYPE, producer.execute()[media]
+            )
+            store = produced_output_scratch()
+            assert store is not None
+            for digest in store.digests():
+                path = store.resolve(digest)
+                assert path is not None
+                original[digest] = path.read_bytes()
+            assert len(original) == 1
+            await execution_context.publish_run_value("target", {media: value})
+            return {}
+
+    worker = InProcessWorker({"control.media": PublishMedia}, registry)
+
+    async def scenario() -> None:
+        state = RunControlState()
+
+        def published(_target: str, values: Mapping[str, Value]) -> None:
+            digest, data = next(iter(original.items()))
+            assert digest_bytes(data) == digest
+            path = engine.resolve(digest)
+            assert path is not None, "publication reached the engine before durable adoption"
+            assert path.read_bytes() == data
+            with use_produced_output_job("control job", 2):
+                store = produced_output_scratch()
+                assert store is not None
+                assert ProducedScratchState(store.root).publications() == (
+                    (digest, len(data), True),
+                )
+            # The invocation still owns lease files outside its producer data.
+            shutil.rmtree(store.root)
+            assert not store.root.exists()
+            payload = cast(Mapping[str, object], values[media].resolve())
+            assert cast(AssetRef, payload["source"]).read_bytes() == data
+
+        context = EngineRunContext(
+            "publish",
+            {},
+            state,
+            lambda: Graph({"target": GraphNode("control.media")}),
+            published,
+            lambda _nodes: None,
+            lambda _node, _inputs: None,
+            {},
+        )
+        result = await worker.invoke(
+            Invocation(
+                invocation_id="control-source",
+                job_ref="control job",
+                attempt_id=2,
+                node_id="publish",
+                node_type="control.media",
+                inputs={},
+                effective_schema=worker.schemas["control.media"],
+                run_control=context,
+            )
+        )
+        if configured_vault:
+            assert result.error is None, result.error
+            assert state.future("target").done()
+            values = await context.await_run_value("target")
+            payload = cast(Mapping[str, object], values[media].resolve())
+            assert cast(AssetRef, payload["source"]).read_bytes() == next(iter(original.values()))
+        else:
+            assert result.error is not None
+            assert "require an engine DINKSTER_ASSET_VAULT" in result.error.message
+            assert not state.future("target").done()
+            with use_produced_output_job("control job", 2):
+                store = produced_output_scratch()
+                assert store is not None
+                digest, data = next(iter(original.items()))
+                path = store.resolve(digest)
+                assert path is not None
+                assert path.read_bytes() == data
+        with pytest.raises(RuntimeError, match="no longer active"):
+            await saved_contexts[0].publish_run_value("target", {})
+        state.close()
+
+    asyncio.run(scenario())
 
 
 def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:
@@ -97,6 +617,11 @@ def test_adoption_rejects_size_mismatch_without_publishing(
     with pytest.raises(AssetError, match="byte size|truncated"):
         authority.capture({"video": _value(AssetRef(digest, "source", declared_size))})
     assert engine.resolve(digest) is None
+    authority.capture({"video": _value(AssetRef(digest, "source", 3))})
+    adopted = ProducedAssetInventory(engine.root).entries()
+    assert len(adopted) == 1 and adopted[0].size == 3
+    assert adopted[0].adopted_at_ns is not None
+    assert AssetRef(digest, "source", 3, resolver=engine).read_bytes() == b"123"
 
 
 def test_adoption_rejects_corrupt_content_and_missing_sources(
@@ -115,6 +640,81 @@ def test_adoption_rejects_corrupt_content_and_missing_sources(
     path.unlink()
     with pytest.raises(AssetError, match="did not reach the engine"):
         authority.capture(outputs)
+
+
+def test_produced_adoption_inventory_survives_restart_and_failed_copy(
+    vaults: tuple[AssetVault, AssetVault],
+) -> None:
+    producer, engine = vaults
+    ref = _publish(producer, b"recoverable original")
+    source = ref.local_path()
+    source.write_bytes(b"incorrect source----")
+    outputs = {"video": _value(ref)}
+    with pytest.raises(AssetError, match="ingest did not verify"):
+        ProducedAssetAuthority(engine, producer).capture(outputs)
+    pending = ProducedAssetInventory(engine.root).entries()
+    assert [(row.digest, row.size, row.adopted_at_ns) for row in pending] == [
+        (ref.digest, ref.size, None)
+    ]
+    assert engine.resolve(ref.digest) is None
+    assert source.read_bytes() == b"incorrect source----"
+    source.write_bytes(b"recoverable original")
+    ProducedAssetAuthority(engine, producer).capture(outputs)
+    adopted = ProducedAssetInventory(engine.root).entries()
+    assert len(adopted) == 1
+    assert adopted[0].digest == ref.digest
+    assert adopted[0].size == ref.size
+    assert adopted[0].adopted_at_ns is not None
+    source.unlink()
+    ProducedAssetAuthority(AssetVault(engine.root)).capture(outputs)
+    assert ProducedAssetInventory(engine.root).entries() == adopted
+    assert replace(ref, resolver=engine).read_bytes() == b"recoverable original"
+
+
+def test_produced_adoption_repairs_copy_completed_before_inventory_commit(
+    vaults: tuple[AssetVault, AssetVault], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    producer, engine = vaults
+    ref = _publish(producer, b"adopted before interruption")
+    outputs = {"video": _value(ref)}
+
+    def interrupted(self: ProducedAssetInventory, digest: str, size: int) -> None:
+        raise AssetError("interrupted inventory commit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ProducedAssetInventory, "adopted", interrupted)
+        with pytest.raises(AssetError, match="interrupted inventory commit"):
+            ProducedAssetAuthority(engine, producer).capture(outputs)
+    assert replace(ref, resolver=engine).read_bytes() == b"adopted before interruption"
+    assert ProducedAssetInventory(engine.root).entries()[0].adopted_at_ns is None
+    ref.local_path().unlink()
+    ProducedAssetAuthority(AssetVault(engine.root)).capture(outputs)
+    assert ProducedAssetInventory(engine.root).entries()[0].adopted_at_ns is not None
+
+
+def test_produced_adoption_does_not_inventory_existing_inputs_or_mounts(
+    vaults: tuple[AssetVault, AssetVault],
+) -> None:
+    producer, engine = vaults
+    mounted = _publish(producer, b"mounted input")
+    existing = _publish(engine, b"downloaded input")
+    authority = ProducedAssetAuthority(engine, existing=producer)
+    authority.capture({"video": _value(mounted)})
+    ProducedAssetAuthority(engine).capture({"video": _value(existing)})
+    assert not (engine.root / ".produced-assets.sqlite").exists()
+    assert not engine.has(mounted.digest)
+    assert mounted.read_bytes() == b"mounted input"
+    assert existing.read_bytes() == b"downloaded input"
+
+
+def test_produced_inventory_refuses_missing_or_corrupt_state(tmp_path: Path) -> None:
+    inventory = ProducedAssetInventory(tmp_path)
+    with pytest.raises(AssetError, match="inventory is unavailable"):
+        inventory.entries()
+    assert not (tmp_path / ".produced-assets.sqlite").exists()
+    (tmp_path / ".produced-assets.sqlite").write_bytes(b"not a database")
+    with pytest.raises(AssetError, match="inventory is unavailable"):
+        inventory.entries()
 
 
 @pytest.mark.parametrize("recorded", [False, True])
