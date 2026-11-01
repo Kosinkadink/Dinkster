@@ -1,5 +1,8 @@
 ## Installed pack startup
 
+- Catalog-driven packs explicitly declare their remote gateway node source.
+  Offline doctor reports that source without treating zero static schemas as
+  a missing-node warning; broken imports and invalid declarations still fail.
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
 - Windows isolated packs and catalog probes support native extensions beneath
@@ -135,6 +138,17 @@
   installed standard-suite distribution.
 - Development scaffolding is workspace-only and is excluded from engine and
   official-pack releases.
+- Engine release assembly records variant-specific dependency wheel identities
+  without uploading third-party wheels. Finalization rejects unexpected payloads
+  and enforces a 100 MB budget excluding native tools ZIPs.
+- Confirmed published setup/update acquires non-base wheels by exact locked
+  filename, size and SHA256 from their recorded origins or `--package-index`.
+  The package index is saved for updates, independently of channel `--mirror`.
+  Selected bases must match their variant install lock; intact shared-store
+  wheels need no index access, and generation construction remains offline.
+- Setup/update refuses non-base dependencies whose version requirements are
+  not satisfied by the selected base, naming the requiring distribution and
+  base version before constructing or activating a generation.
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.

@@ -54,6 +54,17 @@ are not truncated and optional-key omission survives encoding. Public
 Live tensors keep their dtype, device and storage. Registration is cold and
 preserves existing authority; malformed tensor records are rejected.
 
+`SHAPE_SUBDIVIDES` transports ordered sparse stages containing `feats`, `coords`,
+explicit `shape`, and three exact rational scale components. Its structural
+tensor envelope retains dtype, dimensions and bytes without importing Torch.
+The public `materialize_shape_subdivides` API rebuilds inference `SparseTensor`
+stages without spatial caches. Live tensors retain storage, dtype and device;
+the consuming node owns placement. Scale is stored as integer numerator and
+denominator pairs, never rounded through floating point. Registration preserves
+prior authority; unknown stage fields and malformed tensor records are refused.
+The subprocess transport/cache keeper is
+`tests/test_geometry_wire.py::test_shape_subdivides_survives_ordinary_hosts_and_cache_restart`.
+
 This package is a uv workspace member. From the repository root:
 
 ```sh

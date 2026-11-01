@@ -16,6 +16,7 @@ sys.modules['dinkster_inference'] = None
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.mesh_decimate import DecimateMesh
 from dinkster_nodes_comfy.mesh_holes import FillHoles
+from dinkster_nodes_comfy.mesh_remesh import RemeshMesh
 from dinkster_nodes_comfy.mesh_weld import WeldVertices
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(WeldVertices) == 1
@@ -42,6 +43,15 @@ assert schema.outputs[0].type.types == ('MESH',)
 assert schema.combos[0].id == 'placement_mode'
 assert [option.key for option in schema.combos[0].options] == ['midpoint', 'qem']
 assert [slot.default for slot in schema.combos[0].options[1].inputs] == [0., 0., 30., True]
+assert COMFY_NODES.count(RemeshMesh) == 1
+assert manifest.namespaces.count('RemeshMesh') == 1
+schema = RemeshMesh.schema()
+assert schema.inputs[1].default == 512
+assert schema.outputs[0].type.types == ('MESH',)
+assert [option.key for option in schema.combos[0].options] == ['udf', 'sdf', 'solid']
+assert [slot.default for slot in schema.combos[0].options[0].inputs] == [False, False, False]
+assert [slot.default for slot in schema.combos[0].options[1].inputs] == [True, False]
+assert [slot.default for slot in schema.combos[0].options[2].inputs] == [20., False]
 """,
         ],
         capture_output=True,

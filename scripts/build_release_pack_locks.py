@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 from dinkster_supervisor.environment_archives import extract_base
+from dinkster_supervisor.environment_artifacts import engine_constraints
 from dinkster_supervisor.environment_constraints import effective_constraints
 from dinkster_supervisor.environment_downloads import fetch_artifact
 from dinkster_workers.pack_lock import PackLock
@@ -66,7 +67,7 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
         )
         constraints = work / "constraints.txt"
         constraints.write_text(
-            effective_constraints((release / "constraints.txt").read_text(), base),
+            effective_constraints(engine_constraints(engine, variant), base, strict=True),
             encoding="ascii",
         )
         wheel_urls = {
@@ -101,9 +102,8 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
             variant=variant,
             python=tree / base["interpreter"]["executable"],
             constraints=constraints,
-            indexes=tuple(
-                dict.fromkeys(["https://pypi.org/simple", *[w["index"] for w in base["wheels"]]])
-            ),
+            # Native base wheels come from find-links; backend indexes can shadow PyPI pins.
+            indexes=("https://pypi.org/simple",),
             find_links=(release, tree / "wheels"),
             accelerator="cuda" if base["nvidia"] is not None else "cpu",
         )
