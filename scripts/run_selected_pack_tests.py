@@ -151,11 +151,13 @@ def run_selected_tests(
                     namespace.mkdir(exist_ok=True)
                     for provider in module.iterdir():
                         if provider.is_dir():
-                            (namespace / provider.name).symlink_to(
-                                provider, target_is_directory=True
-                            )
+                            target = namespace / provider.name
+                            shutil.move(provider, target)
+                            provider.symlink_to(target, target_is_directory=True)
                 elif module.is_dir() and not (src / module.name).exists():
-                    (src / module.name).symlink_to(module, target_is_directory=True)
+                    target = src / module.name
+                    shutil.move(module, target)
+                    module.symlink_to(target, target_is_directory=True)
             module_roots.append(str(src))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(src / entry.replace(".", "/"))

@@ -1022,6 +1022,8 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + "def test_selected_value():\n"
         "    assert VALUE == 47\n"
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
+        "    assert Path(dinkster_nodes_image.__file__).resolve()"
+        ".is_relative_to(pack_root / 'src')\n"
         "    assert (pack_root / 'dinkster_nodes_image/__init__.py').resolve(strict=True) "
         "== Path(dinkster_nodes_image.__file__).resolve()\n"
         "    subprocess.run([sys.executable, '-I', '-c', "
