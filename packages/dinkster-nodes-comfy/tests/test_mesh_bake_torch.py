@@ -58,6 +58,11 @@ def test_ambient_occlusion_distance_strength_and_gutters() -> None:
     gutters = bake(low, high)
     assert gutters[0, 0, 0].mean() < 0.15
     assert gutters.shape == (1, 64, 64, 3) and gutters.device.type == "cpu"
+    lifted = bake(low, high, bias=0.1)
+    torch.testing.assert_close(lifted, torch.ones_like(lifted), rtol=0, atol=0)
+    low.normals = torch.tensor([[[0.0, 0.0, -1.0]] * 4])
+    downward = bake(low, high)
+    torch.testing.assert_close(downward, torch.ones_like(downward), rtol=0, atol=0)
 
 
 def test_ambient_occlusion_ragged_empty_and_shared_high_mesh() -> None:
