@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     import torch
 
 
-def _point_tri_closest(
+def point_tri_closest(
     points: torch.Tensor, tris: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Closest point and squared distance per (point, triangle) pair (Ericson's region test); points (N, 3), tris (N, 3, 3)."""
@@ -155,7 +155,7 @@ def _udf_exact(
         ci = torch.from_numpy(cand[s:e]).to(device).long()
         tri = tri_verts[ci].reshape(n * kq, 3, 3)
         P = query_points[s:e][:, None, :].expand(-1, kq, -1).reshape(n * kq, 3)
-        closest, d2 = _point_tri_closest(P, tri)
+        closest, d2 = point_tri_closest(P, tri)
         d2 = d2.reshape(n, kq)
         closest = closest.reshape(n, kq, 3)
         best = d2.argmin(dim=1)

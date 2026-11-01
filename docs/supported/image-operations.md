@@ -1,5 +1,11 @@
 ## Image operations
 
+- Native `BakeAmbientOcclusion` bakes high-poly occlusion into a low-poly UV
+  layout, with counted mesh batches, surface projection, distance, bias and
+  strength controls, cosine-weighted rays and filled UV gutters.
+- Native `RenderMesh` produces a single image and coverage mask from the first
+  counted mesh, with texture, vertex-color, clay, normal and depth modes,
+  authored model transforms, supplied cameras and automatic framing.
 - Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
   preserve original-file assets and sidecars while returning viewport camera,
   model placement and dimensions, with explicit metadata inputs taking priority.
@@ -42,6 +48,9 @@
   limits, with optional pre-welding and open-chain filling.
 - Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
+- Native `BakeNormalMapFromMesh` bakes high-poly surface normals into existing
+  low-poly UVs as OpenGL +Y tangent-space images, with cage projection,
+  closest-surface fallback and filled UV gutters.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
 - Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
@@ -126,8 +135,14 @@
 - Native `DA3Render` visualizes raw or normalized depth, confidence and sky.
   `DA3GeometryToMesh` unprojects one frame with confidence/sky filtering,
   stride and discontinuity selection, UVs and optional source-image texture.
+- Native `MediaPipeFaceMeshVisualize` draws selected face connections, points
+  or a filled outline on an optional image. `MediaPipeFaceMask` unions selected
+  face regions into one binary mask per frame, including empty frames.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
+- Native `SAM3DBody_Smooth` reduces temporal pose jitter with Gaussian or
+  Savitzky-Golay filtering, wrapped-angle handling and fast-spin geometry
+  protection while camera motion remains smoothed.
 - Structural tensor values preserve unsigned 16-bit joint indices and unsigned
   32-bit mesh faces without narrowing their values to a signed integer range.
 - Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
