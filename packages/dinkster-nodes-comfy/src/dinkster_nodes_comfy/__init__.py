@@ -220,6 +220,7 @@ from .text_overlay import TextOverlay
 from .trellis import Trellis2TextureStage
 from .trellis_conditioning import Trellis2Conditioning
 from .trellis_shape import Trellis2ShapeStage
+from .trellis_structure import VaeDecodeStructureTrellis2
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -534,6 +535,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
+    VaeDecodeStructureTrellis2,
     Trellis2TextureStage,
     PaintMesh,
     WeldVertices,
