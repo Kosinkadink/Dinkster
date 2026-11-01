@@ -14,7 +14,9 @@ import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
+    BOUNDING_BOX_TYPE,
     CORE_STRING,
+    FACE_DETECTION_MODEL_TYPE,
     FACE_LANDMARKS_TYPE,
     IMAGE_TYPE,
     MASK_TYPE,
@@ -28,7 +30,9 @@ from dinkster_api.v1 import (
     digest_bytes,
     materialize_image,
     materialize_latent,
+    materialize_vision_packet,
 )
+from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
 from dinkster_nodes_comfy.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from dinkster_nodes_comfy.mediapipe_detection import (
@@ -391,31 +395,26 @@ def test_face_detection_empty_frames(
     assert result["face_landmarks"]["image_size"] == (7, 11)
 
 
-def test_face_loader_bound_state_variants_and_real_patchers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_api.v1 import initialize_inference_process
-    from safetensors.torch import save_file
+class LoaderLandmarker(torch.nn.Module):
+    def __init__(self, *, device: Any, dtype: Any, operations: Any, detector_variant: str) -> None:
+        super().__init__()
+        assert operations is None and dtype == torch.float32
+        self.variant = detector_variant
+        for name in ("detector", "mesh", "blendshapes"):
+            module = torch.nn.Module()
+            module.register_buffer("probe", torch.empty(1, device=device, dtype=dtype))
+            self.add_module(name, module)
 
-    initialize_inference_process()
+    def detect_batch(self, images: Any, num_faces: int, score_thresh: float) -> Any:
+        assert self.state_dict()["detector.probe"].item() == (3 if self.variant == "short" else 7)
+        assert self.state_dict()["mesh.probe"].item() == 11
+        assert self.state_dict()["blendshapes.probe"].item() == 0.25
+        assert self.training is False
+        assert num_faces == 0 and score_thresh == 0.37
+        return DetectionModel().detect_batch(images, num_faces, score_thresh, self.variant)
 
-    class Landmarker(torch.nn.Module):
-        def __init__(
-            self, *, device: Any, dtype: Any, operations: Any, detector_variant: str
-        ) -> None:
-            super().__init__()
-            assert operations is None and dtype == torch.float32
-            self.variant = detector_variant
-            for name in ("detector", "mesh", "blendshapes"):
-                module = torch.nn.Module()
-                module.register_buffer("probe", torch.empty(1, device=device, dtype=dtype))
-                self.add_module(name, module)
 
-    monkeypatch.setitem(
-        sys.modules,
-        "dinkster_inference.mediapipe.face_landmarker",
-        SimpleNamespace(FaceLandmarker=Landmarker),
-    )
+def _loader_state() -> dict[str, Any]:
     state = {
         "detector_short.probe": torch.tensor([3.0]),
         "detector_full.probe": torch.tensor([7.0]),
@@ -438,6 +437,22 @@ def test_face_loader_bound_state_variants_and_real_patchers(
         )
     ):
         state[f"topology.{name}"] = torch.tensor([[index, index + 1]], dtype=torch.int32)
+    return state
+
+
+def test_face_loader_bound_state_variants_and_real_patchers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import initialize_inference_process
+    from safetensors.torch import save_file
+
+    initialize_inference_process()
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_inference.mediapipe.face_landmarker",
+        SimpleNamespace(FaceLandmarker=LoaderLandmarker),
+    )
+    state = _loader_state()
     path = tmp_path / "face.safetensors"
     save_file(state, path)
     data = path.read_bytes()
@@ -462,3 +477,200 @@ def test_face_loader_bound_state_variants_and_real_patchers(
         model.canonical_data["canonical_vertices"], state["canonical_vertices"].numpy()
     )
     assert path.read_bytes() == data
+
+
+def test_face_loader_rejects_unbound_file() -> None:
+    with pytest.raises(TypeError, match="model_name must be an AssetRef or LocalAssetRef"):
+        LoadMediaPipeFaceLandmarker.execute(model_name="face.safetensors")
+
+
+def _loaded_geometry_probe(face: Any, width: int, height: int, canonical: Any) -> Any:
+    for name in ("canonical_vertices", "procrustes_indices", "procrustes_weights"):
+        np.testing.assert_array_equal(canonical[name], _loader_state()[name].numpy())
+    return _geometry_probe(face, width, height, {"probe": 7})
+
+
+def _detection_images() -> Any:
+    images = torch.zeros(18, 7, 11, 4)
+    images[..., 0] = torch.arange(18)[:, None, None] / 255
+    images[..., 1] = 23 / 255
+    images[..., 2] = 51 / 255
+    images[..., 3] = 0.7
+    return images
+
+
+class DetectionSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="face-detection-fixture.source",
+            inputs=(),
+            outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        return cls.outputs(image=_detection_images())
+
+
+class DetectionInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="face-detection-fixture.inspect",
+            inputs=(
+                InputSpec("model", TypeExpr.concrete(FACE_DETECTION_MODEL_TYPE)),
+                InputSpec("faces", TypeExpr.concrete(FACE_LANDMARKS_TYPE)),
+                InputSpec("boxes", TypeExpr.concrete(BOUNDING_BOX_TYPE)),
+                InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any, faces: Any, boxes: Any, image: Any) -> Any:
+        from dinkster_inference import model_management
+        from dinkster_inference.model_patcher import CoreModelPatcher
+
+        for variant in ("short", "full"):
+            assert isinstance(model.patchers[variant], CoreModelPatcher)
+            assert model.patchers[variant].load_device == model_management.text_encoder_device()
+            assert (
+                model.patchers[variant].offload_device
+                == model_management.text_encoder_offload_device()
+            )
+        packet = materialize_vision_packet(faces)
+        boxes = materialize_vision_packet(boxes)
+        assert packet["image_size"] == (7, 11)
+        assert packet["connection_sets"]["all"] == frozenset((i, i + 1) for i in range(8))
+        assert len(packet["frames"]) == len(boxes) == 18
+        for index, (frame, frame_boxes) in enumerate(zip(packet["frames"], boxes, strict=True)):
+            xs = [1, 9] if index in (0, 1) else [float(min(index, 16))]
+            assert len(frame) == len(frame_boxes) == len(xs)
+            for face, box, x in zip(frame, frame_boxes, xs, strict=True):
+                np.testing.assert_array_equal(face["bbox_xyxy"], [x, 2, x + 3, 6])
+                np.testing.assert_array_equal(face["landmarks_xy"], [[x, 2], [x + 3, 6]])
+                np.testing.assert_array_equal(face["landmarks_3d"], [[x, 2, -1], [x + 3, 6, 1]])
+                np.testing.assert_array_equal(face["transformation_matrix"], np.diag([11, 7, x, 1]))
+                np.testing.assert_allclose(face["blendshapes"]["jawOpen"], x / 20)
+                assert box == {
+                    "x": x,
+                    "y": 2.0,
+                    "width": 3.0,
+                    "height": 4.0,
+                    "label": "face",
+                    "score": 0.8,
+                }
+        assert torch.equal(materialize_image(image), _detection_images())
+        return cls.outputs(result="loaded face state and detection values preserved")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_face_loader_detection_ordinary_hosts_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    """Real asset/model/packet boundaries with controlled architecture and geometry delegation."""
+    from safetensors.torch import save_file
+
+    model_module = "dinkster_inference.mediapipe.face_landmarker"
+    geometry_module = "dinkster_inference.mediapipe.face_geometry"
+    monkeypatch.setitem(sys.modules, model_module, SimpleNamespace(FaceLandmarker=LoaderLandmarker))
+    monkeypatch.setitem(
+        sys.modules,
+        geometry_module,
+        SimpleNamespace(transformation_matrix_from_detection=_loaded_geometry_probe),
+    )
+    path = tmp_path / "face.safetensors"
+    save_file(_loader_state(), path)
+    before = path.read_bytes()
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    table.add(MountDef(id="detection", path=tmp_path), kind="model/detection")
+    table.scan("detection")
+    asset = table.bind_name(path.name, "model/detection")
+    assert asset is not None
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
+    module = f"face_detection_fixture_{int(in_process)}"
+    (tmp_path / f"{module}.py").write_text(
+        "import sys\nfrom types import SimpleNamespace\n"
+        "from test_mediapipe_torch import (LoaderLandmarker, DetectionSource, DetectionInspect, "
+        "_loaded_geometry_probe)\n"
+        "from dinkster_api.v1 import register_inference_types\n"
+        f"sys.modules[{model_module!r}] = SimpleNamespace(FaceLandmarker=LoaderLandmarker)\n"
+        f"sys.modules[{geometry_module!r}] = SimpleNamespace("
+        "transformation_matrix_from_detection=_loaded_geometry_probe)\n"
+        "NODES = (DetectionSource, DetectionInspect)\n",
+        encoding="ascii",
+    )
+    fixture = tmp_path / "fixture.toml"
+    fixture.write_text(
+        '[pack]\nname="face-detection-fixture"\npublisher="dinkster"\n'
+        'namespaces=["face-detection-fixture"]\n'
+        f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(tmp_path / "mounts.json"),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="detection",
+                        group_manifests=(native, fixture),
+                    )
+                )
+            graph = graph_from_wire(
+                graph_to_wire(
+                    Graph(
+                        nodes={
+                            "source": GraphNode("face-detection-fixture.source"),
+                            "load": GraphNode(
+                                "LoadMediaPipeFaceLandmarker", {"model_name": asset.to_wire()}
+                            ),
+                            "detect": GraphNode(
+                                "MediaPipeFaceLandmarker",
+                                {
+                                    "face_detection_model": Link("load", "FACE_DETECTION_MODEL"),
+                                    "image": Link("source", "image"),
+                                    "detector_variant": "both",
+                                    "num_faces": 0,
+                                    "min_confidence": 0.37,
+                                    "missing_frame_fallback": "interpolate",
+                                },
+                            ),
+                            "inspect": GraphNode(
+                                "face-detection-fixture.inspect",
+                                {
+                                    "model": Link("load", "FACE_DETECTION_MODEL"),
+                                    "faces": Link("detect", "face_landmarks"),
+                                    "boxes": Link("detect", "bboxes"),
+                                    "image": Link("source", "image"),
+                                },
+                            ),
+                        }
+                    )
+                )
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["result"].resolve() == (
+                    "loaded face state and detection values preserved"
+                )
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    assert path.read_bytes() == before
