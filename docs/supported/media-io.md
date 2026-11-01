@@ -10,6 +10,8 @@
 - Create 3D File (from Splat) exports the first valid-count-trimmed batch item
   as PLY with full spherical harmonics, or KSPLAT/SPZ with base color only.
   Empty splats are rejected and the input tensors remain unchanged.
+- Get Splat reads PLY, SPLAT, KSPLAT and SPZ file assets into a single Gaussian
+  batch. PLY retains spherical harmonics; the other formats retain base color.
 - Save 3D Model saves each nonempty mesh batch item as GLB with submission
   metadata, or copies a 3D file's primary bytes without changing its format.
   Filename prefixes target the output mount unless an adjacent mount is selected.

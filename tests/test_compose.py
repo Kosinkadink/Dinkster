@@ -1364,7 +1364,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:3059cb21c012775a4e16e21a2a8dde55bc2853b50f8426781bf78e1afd8d89ea",
+            "blake3:b3710f2c80803ab0f5f524cf1e7f29940b3d5ada8fa1aac84a6b7a76703ebc46",
         ),
     ],
 )
