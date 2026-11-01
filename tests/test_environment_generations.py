@@ -72,7 +72,7 @@ def _standalone_tree(root: Path) -> None:
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
 
 
-def _workspace_tree(root: Path) -> None:
+def _workspace_tree(root: Path) -> Path:
     _standalone_tree(root)
     site = Path(
         subprocess.check_output(
@@ -90,6 +90,7 @@ def _workspace_tree(root: Path) -> None:
     (site / "fixture.pth").write_text(
         "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
     )
+    return site
 
 
 def _assert_shared(first: Path, second: Path) -> None:

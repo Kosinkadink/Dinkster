@@ -38,15 +38,12 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_generations import _standalone_tree, _workspace_tree
 from test_environment_runtime import free_port, make_generation
 
 
-def _target(root: Path, number: int, *, workspace: bool = False) -> Path:
+def _target(root: Path, number: int) -> Path:
     make_generation(root, number)
     target = root / "generations" / str(number)
-    shutil.rmtree(target / "python")
-    (_workspace_tree if workspace else _standalone_tree)(target / "python")
     generation = Generation.read(target / "generation.json")
     hashes = tuple(
         sorted(
@@ -339,7 +336,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
         shutil.copyfile(mirror / "channels/main.json", mirror / "channels/stable.json")
-    old = _target(root, 1, workspace=True)
+    old = _target(root, 1)
     (old / "dinkster.lock").write_text(Lockfile().record_json())
     (root / "store").write_text(str(store) + "\n")
     payload = b"verified model from selected pack"
@@ -398,7 +395,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
 
     def fixture_build(**kwargs: object) -> None:
         # Admission, acquisition and activation use the real paths over fixture generations.
-        target = _target(root, int(str(kwargs["number"])), workspace=True)
+        target = _target(root, int(str(kwargs["number"])))
         generation = Generation.read(target / "generation.json")
         (target / "generation.json").unlink()
         stage_generation_packs(target, lock, {"example": archive})
