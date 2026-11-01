@@ -75,7 +75,7 @@ def _decode(data: bytes) -> list[dict[str, object]]:
         not isinstance(stage, Mapping) for stage in cast("list[object]", samples)
     ):
         raise ValueError("SHAPE_SUBDIVIDES frame requires a list of stage mappings")
-    stages = _stages(samples)
+    stages = _stages(cast("list[object]", samples))
     for stage in stages:
         feats, coords = stage["feats"], stage["coords"]
         shape = cast("tuple[int, ...]", stage["shape"])
