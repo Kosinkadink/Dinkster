@@ -127,6 +127,41 @@ def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Pa
     assert json.loads((root / ".run/environment-base.json").read_text())["id"] == base["id"]
 
 
+@pytest.mark.parametrize(
+    "host,arch,variant",
+    [
+        ("Linux", "x86_64", "linux-cpu"),
+        ("Windows", "AMD64", "win-cpu"),
+        ("Darwin", "arm64", "mac-arm64"),
+    ],
+)
+def test_setup_reads_only_host_manifests(tmp_path, monkeypatch, host, arch, variant):
+    from dinkster_supervisor import environment_artifacts
+    from test_environment_artifacts import _mirror
+
+    mirror, root = tmp_path / "mirror", tmp_path / "checkout"
+    target = {
+        "Linux": ("linux", "x86_64"),
+        "Windows": ("windows", "x86_64"),
+        "Darwin": ("macos", "arm64"),
+    }[host]
+    base, _, _ = _mirror(mirror, variant=variant, target=target)
+    (root / "scripts").mkdir(parents=True)
+    selections = {name: "0" * 64 for name in ("linux-cpu", "win-cpu", "mac-arm64")}
+    selections[variant] = base["id"][7:]
+    (root / "scripts/base_bundles.json").write_text(json.dumps(selections))
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: host)
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: arch)
+
+    def stop_after_selection(selected, mirrors, store):
+        assert selected["id"] == base["id"]
+        raise RuntimeError("selected host base acquired")
+
+    monkeypatch.setattr(environment_artifacts, "acquire_base", stop_after_selection)
+    with pytest.raises(RuntimeError, match="selected host base acquired"):
+        setup_envs.setup(root, mirror=str(mirror), variant=variant)
+
+
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
 def test_apple_silicon_selects_mac_bundle_without_cuda_probe(bases, monkeypatch, arch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
-from http.client import HTTPException, HTTPMessage
+import time
+from collections.abc import Callable
+from http.client import HTTPException, HTTPMessage, HTTPResponse
 from pathlib import Path, PurePosixPath
 from typing import IO, BinaryIO
 from urllib.error import HTTPError, URLError
@@ -19,6 +21,10 @@ __all__ = ["DownloadError", "fetch_artifact", "read_metadata"]
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CONTENT_RANGE_PATTERN = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z")
 _USER_AGENT = "dinkster-env"
+_REMOTE_ATTEMPTS = 3
+_METADATA_BUDGET_SECONDS = 120
+_ARTIFACT_BUDGET_SECONDS = 1800
+_SOCKET_TIMEOUT_SECONDS = 30
 
 
 class DownloadError(ValueError):
@@ -48,10 +54,24 @@ def read_metadata(mirror: str, relative_path: str) -> bytes:
         _validate_remote_url(mirror)
         url = mirror.rstrip("/") + "/" + quote(relative_path, safe="/")
         request = Request(url, headers={"User-Agent": _USER_AGENT})
-        with build_opener(_SafeRedirects()).open(request, timeout=30) as response:
-            if response.status != 200:
-                raise DownloadError("unexpected metadata response status")
-            data = response.read(maximum + 1)
+
+        def read_remote(deadline: float) -> bytes:
+            with build_opener(_SafeRedirects()).open(
+                request, timeout=_remaining_timeout(deadline)
+            ) as response:
+                if response.status != 200:
+                    raise DownloadError(f"unexpected metadata HTTP status {response.status}")
+                chunks = bytearray()
+                while len(chunks) <= maximum:
+                    chunk = _read_http(response, maximum + 1 - len(chunks), deadline)
+                    if not chunk:
+                        if response.length:
+                            raise HTTPException("incomplete metadata response")
+                        break
+                    chunks.extend(chunk)
+                return bytes(chunks)
+
+        data = _retry_remote(mirror, read_remote, _METADATA_BUDGET_SECONDS)
     else:
         root = Path(mirror).resolve(strict=True)
         source = (root / relative_path).resolve(strict=True)
@@ -102,18 +122,9 @@ def fetch_artifact(
     failures: list[str] = []
     for mirror in mirrors:
         try:
-            resumed = partial.exists() and partial.stat().st_size > 0
-            streamed_digest = _download_from_mirror(mirror, relative_path, partial, size)
-            if streamed_digest != sha256 and partial.stat().st_size == size and resumed:
-                # A saved prefix may be corrupt even when the resumed suffix is valid.
-                partial.unlink()
-                streamed_digest = _download_from_mirror(mirror, relative_path, partial, size)
-            if partial.stat().st_size == size and streamed_digest == sha256:
-                partial.replace(destination)
-                return destination
-            if partial.stat().st_size == size:
-                partial.unlink()
-            failures.append(f"{_mirror_label(mirror)} returned corrupt or short data")
+            _download_from_mirror(mirror, relative_path, partial, sha256, size)
+            partial.replace(destination)
+            return destination
         except (HTTPError, HTTPException, URLError, OSError, ValueError) as exc:
             failures.append(f"{_mirror_label(mirror)}: {_failure_reason(exc)}")
             if partial.exists() and partial.stat().st_size > size:
@@ -146,11 +157,68 @@ def _validate_path(relative_path: str) -> None:
         raise DownloadError(f"unsafe artifact path {relative_path!r}")
 
 
-def _download_from_mirror(mirror: str, relative_path: str, partial: Path, size: int) -> str:
+def _download_from_mirror(
+    mirror: str, relative_path: str, partial: Path, sha256: str, size: int
+) -> None:
     parsed = urlparse(mirror)
-    if parsed.scheme and not Path(mirror).is_absolute():
-        return _download_http(mirror, relative_path, partial, size)
-    return _download_local(Path(mirror), relative_path, partial, size)
+    remote = bool(parsed.scheme and not Path(mirror).is_absolute())
+    if remote:
+        _validate_remote_url(mirror)
+
+    def download(deadline: float) -> None:
+        def stream() -> str:
+            if remote:
+                return _download_http(mirror, relative_path, partial, size, deadline)
+            return _download_local(Path(mirror), relative_path, partial, size)
+
+        resumed = partial.exists() and partial.stat().st_size > 0
+        streamed_digest = stream()
+        if streamed_digest != sha256 and partial.stat().st_size == size and resumed:
+            # A saved prefix may be corrupt even when the resumed suffix is valid.
+            partial.unlink()
+            streamed_digest = stream()
+        if partial.stat().st_size == size and streamed_digest == sha256:
+            return
+        if partial.stat().st_size == size:
+            partial.unlink()
+        raise DownloadError("returned corrupt or short data")
+
+    if remote:
+        _retry_remote(mirror, download, _ARTIFACT_BUDGET_SECONDS)
+    else:
+        download(0)
+
+
+def _remaining_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("mirror time budget exhausted")
+    return min(_SOCKET_TIMEOUT_SECONDS, remaining)
+
+
+def _retry_remote[T](mirror: str, operation: Callable[[float], T], budget: float) -> T:
+    # A read1 call performs at most one socket read. The final blocking operation
+    # can overrun the shared budget by at most the socket timeout (30 seconds).
+    deadline = time.monotonic() + budget
+    failures: list[str] = []
+    for attempt in range(1, _REMOTE_ATTEMPTS + 1):
+        try:
+            _remaining_timeout(deadline)
+            return operation(deadline)
+        except (HTTPException, URLError, OSError, ValueError) as exc:
+            failures.append(f"attempt {attempt}: {_failure_reason(exc)}")
+            transient = (
+                500 <= exc.code < 600
+                if isinstance(exc, HTTPError)
+                else isinstance(exc, (URLError, HTTPException, ConnectionError, TimeoutError))
+            )
+            if isinstance(exc, HTTPError):
+                exc.close()
+            delay = 2 ** (attempt - 1)
+            if not transient or attempt == _REMOTE_ATTEMPTS or time.monotonic() + delay >= deadline:
+                break
+            time.sleep(delay)
+    raise DownloadError(f"{_mirror_label(mirror)}: {'; '.join(failures)}")
 
 
 def _download_local(mirror: Path, relative_path: str, partial: Path, size: int) -> str:
@@ -167,7 +235,9 @@ def _download_local(mirror: Path, relative_path: str, partial: Path, size: int) 
         return _append_stream(stream, partial, offset, size)
 
 
-def _download_http(mirror: str, relative_path: str, partial: Path, size: int) -> str:
+def _download_http(
+    mirror: str, relative_path: str, partial: Path, size: int, deadline: float
+) -> str:
     _validate_remote_url(mirror)
     base = mirror if mirror.endswith("/") else f"{mirror}/"
     url = urljoin(base, quote(relative_path, safe="/"))
@@ -180,7 +250,9 @@ def _download_http(mirror: str, relative_path: str, partial: Path, size: int) ->
     if offset:
         headers["Range"] = f"bytes={offset}-"
     request = Request(url, headers=headers)
-    with build_opener(_SafeRedirects()).open(request, timeout=30) as response:
+    with build_opener(_SafeRedirects()).open(
+        request, timeout=_remaining_timeout(deadline)
+    ) as response:
         status = response.status
         if offset and status == 206:
             _validate_content_range(response.headers.get("Content-Range"), offset, size)
@@ -189,10 +261,17 @@ def _download_http(mirror: str, relative_path: str, partial: Path, size: int) ->
             offset = 0
         elif status != 200:
             raise ValueError(f"unexpected HTTP status {status}")
-        return _append_stream(response, partial, offset, size)
+        return _append_stream(response, partial, offset, size, deadline=deadline)
 
 
-def _append_stream(stream: BinaryIO, partial: Path, offset: int, size: int) -> str:
+def _read_http(response: HTTPResponse, maximum: int, deadline: float) -> bytes:
+    _remaining_timeout(deadline)
+    return response.read1(maximum)
+
+
+def _append_stream(
+    stream: BinaryIO, partial: Path, offset: int, size: int, *, deadline: float | None = None
+) -> str:
     digest = hashlib.sha256()
     if offset:
         with partial.open("rb") as prefix:
@@ -201,7 +280,11 @@ def _append_stream(stream: BinaryIO, partial: Path, offset: int, size: int) -> s
     mode = "ab" if offset else "wb"
     received = offset
     with partial.open(mode) as output:
-        while chunk := stream.read(ENVIRONMENT_STREAM_CHUNK_BYTES):
+        while chunk := (
+            _read_http(stream, ENVIRONMENT_STREAM_CHUNK_BYTES, deadline)
+            if isinstance(stream, HTTPResponse) and deadline is not None
+            else stream.read(ENVIRONMENT_STREAM_CHUNK_BYTES)
+        ):
             received += len(chunk)
             if received > size:
                 raise ValueError("response exceeds expected size")
@@ -255,7 +338,8 @@ def _mirror_label(mirror: str) -> str:
 
 def _failure_reason(exc: BaseException) -> str:
     if isinstance(exc, HTTPError):
-        return f"HTTP {exc.code}"
+        ray = exc.headers.get("cf-ray")
+        return f"HTTP {exc.code}" + (f" (cf-ray={ray})" if ray else "")
     if isinstance(exc, URLError):
         return "network error"
     return str(exc) or exc.__class__.__name__

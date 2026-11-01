@@ -76,6 +76,11 @@
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.
+- Release mirror reads retry transient HTTP 5xx, connection failures and timeouts
+  with bounded backoff. Terminal failures retain each attempt's status and
+  Cloudflare request identifier when supplied. HTTP 4xx and invalid artifact bytes
+  do not gain transient retries; size and SHA256 verification remain mandatory.
+  Contributor setup reads only the selected host platform's published manifests.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
