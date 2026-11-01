@@ -10,6 +10,12 @@
 - Create 3D File (from Splat) exports the first valid-count-trimmed batch item
   as PLY with full spherical harmonics, or KSPLAT/SPZ with base color only.
   Empty splats are rejected and the input tensors remain unchanged.
+- Native `BuildPoseFile` constructs animated GLB body meshes, bones, OpenPose
+  and SCAIL rigs, or single-track BVH, as asset-backed FILE_3D values.
+  It preserves track selection, frame gaps, camera translation, smoothing and
+  external rig bind/skin data. Body meshes, bones and BVH require an external
+  rig or a SAM3D model. Controlled CPU rig execution is tested; real-weight
+  loading is not verified with the currently pinned inference release.
 - Get Splat reads PLY, SPLAT, KSPLAT and SPZ file assets into a single Gaussian
   batch. PLY retains spherical harmonics; the other formats retain base color.
 - Save 3D Model saves each nonempty mesh batch item as GLB with submission

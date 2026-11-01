@@ -37,7 +37,7 @@ def _vertex_normals(verts: Any, faces: Any) -> Any:
     return vn / vn.norm(dim=-1, keepdim=True).clamp(min=1e-8)
 
 
-def _build_vcolor(canonical: Any, preset: str, tilt_x: float, tilt_z: float) -> Any:
+def build_vertex_colors(canonical: Any, preset: str, tilt_x: float, tilt_z: float) -> Any:
     positions = np.asarray(canonical.get("positions"), dtype=np.float32)
     color = rainbow_colors_from_canonical(positions, tilt_x, tilt_z).copy()
     if preset in ("rainbow_face_normal", "rainbow_face_semantic"):
@@ -286,7 +286,9 @@ def render_mesh(
         colors = cache.get(key)
         if colors is None:
             colors = torch.as_tensor(
-                _build_vcolor(canonical, shader_preset, rainbow_tilt_x_deg, rainbow_tilt_z_deg),
+                build_vertex_colors(
+                    canonical, shader_preset, rainbow_tilt_x_deg, rainbow_tilt_z_deg
+                ),
                 dtype=torch.float32,
                 device=device,
             )
