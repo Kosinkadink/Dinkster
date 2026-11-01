@@ -140,6 +140,7 @@ from .mesh_holes import FillHoles
 from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
+from .mesh_remesh import RemeshMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
@@ -546,6 +547,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     FillHoles,
     Get3DComponents,
     DecimateMesh,
+    RemeshMesh,
     MeshToFile3D,
     SaveGLB,
     Save3DAdvanced,

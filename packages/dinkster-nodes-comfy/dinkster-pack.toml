@@ -612,6 +612,7 @@ namespaces = [
     "FillHoles",
     "Get3DComponents",
     "DecimateMesh",
+    "RemeshMesh",
     "MeshToFile3D",
     "SaveGLB",
     "Save3DAdvanced",
