@@ -80,7 +80,9 @@ def rasterize_uv(faces: Any, uvs: Any, size: int) -> tuple[Any, Any, Any]:
     return face_index, bary, coverage
 
 
-def closest_points(points: Any, triangles: Any, bvh: dict[str, Any]) -> Any:
+def closest_points(
+    points: Any, triangles: Any, bvh: dict[str, Any], return_face: bool = False
+) -> Any:
     import torch
 
     from .mesh_remesh_ops import point_tri_closest
@@ -91,6 +93,9 @@ def closest_points(points: Any, triangles: Any, bvh: dict[str, Any]) -> Any:
     stack[:, 0] = 0
     best = torch.full((count,), 1e30, device=points.device)
     result = points.clone()
+    best_face = (
+        torch.full((count,), -1, dtype=torch.long, device=points.device) if return_face else None
+    )
     active = torch.arange(count, device=points.device)
     overflow = 0
 
@@ -113,6 +118,8 @@ def closest_points(points: Any, triangles: Any, bvh: dict[str, Any]) -> Any:
             update = squared < best[ga]
             chosen = ga[update]
             best[chosen], result[chosen] = squared[update], projected[update]
+            if best_face is not None:
+                best_face[chosen] = faces[update].long()
         internal = within & ~is_leaf
         if bool(internal.any()):
             gi = a[internal]
@@ -129,7 +136,7 @@ def closest_points(points: Any, triangles: Any, bvh: dict[str, Any]) -> Any:
         active = a[sp[a] > 0]
     if overflow:
         logging.warning("Mesh back-projection BVH stack overflow on %d pushes", overflow)
-    return result
+    return (result, best_face) if return_face else result
 
 
 def any_hit(
@@ -281,3 +288,66 @@ def bake_occlusion(
     image = torch.ones((size, size), device=device)
     image[mask] = ao
     return fill_gutters(image[..., None].repeat(1, 1, 3), mask)
+
+
+def bake_normal_map(
+    high_vertices: Any,
+    high_faces: Any,
+    high_normals: Any,
+    vertices: Any,
+    faces: Any,
+    uvs: Any,
+    normals: Any,
+    tangents: Any,
+    resolution: int,
+    cage_distance: float,
+    ignore_backfaces: bool,
+) -> Any:
+    import torch
+
+    from .mesh_render_ops import barycentric, build_bvh, closest_hit
+
+    face_index, weights, mask = rasterize_uv(faces, uvs, resolution)
+    output = vertices.new_tensor([0.5, 0.5, 1.0]).repeat(resolution, resolution, 1)
+    if not bool(mask.any()):
+        return output
+    vtri, bary = faces[face_index[mask]], weights[mask]
+
+    def interpolate(attribute: Any) -> Any:
+        return (bary[:, :, None] * attribute[vtri]).sum(1)
+
+    points = interpolate(vertices)
+    normal = torch.nn.functional.normalize(interpolate(normals), dim=-1, eps=1e-6)
+    tangent = interpolate(tangents[:, :3])
+    handedness = interpolate(tangents[:, 3:4])[:, 0]
+    triangles = high_vertices[high_faces.to(torch.int32)]
+    bvh = build_bvh(triangles)
+    diagonal = float((high_vertices.amax(0) - high_vertices.amin(0)).norm().clamp_min(1e-6))
+    cage = max(1e-6, cage_distance * diagonal)
+    origin = points + normal * cage
+    distance, hit_face, hit = closest_hit(
+        origin, -normal, triangles, bvh, 0.0, 2.0 * cage, ignore_backfaces
+    )
+    selected = hit_face.clamp_min(0)
+    hitpoint = origin - distance[:, None] * normal
+    miss = ~hit
+    # Already resolved cage rays must not pay for a second full BVH traversal.
+    if bool(miss.any()):
+        projected, projected_face = closest_points(points[miss], triangles, bvh, return_face=True)
+        selected = selected.clone()
+        hitpoint = hitpoint.clone()
+        selected[miss], hitpoint[miss] = projected_face.clamp_min(0), projected
+    high_bary = barycentric(hitpoint, triangles[selected])
+    matched = torch.nn.functional.normalize(
+        (high_bary[:, :, None] * high_normals[high_faces[selected]]).sum(1), dim=-1, eps=1e-6
+    )
+    tangent = torch.nn.functional.normalize(
+        tangent - normal * (normal * tangent).sum(-1, keepdim=True), dim=-1, eps=1e-6
+    )
+    bitangent = handedness[:, None] * torch.cross(normal, tangent, dim=-1)
+    z = (matched * normal).sum(-1)
+    encoded = torch.stack([(matched * tangent).sum(-1), (matched * bitangent).sum(-1), z], dim=-1)
+    encoded = torch.nn.functional.normalize(encoded, dim=-1, eps=1e-6)
+    encoded[z < 0.0] = vertices.new_tensor([0.0, 0.0, 1.0])
+    output[mask] = encoded.mul_(0.5).add_(0.5).clamp_(0.0, 1.0)
+    return fill_gutters(output, mask)

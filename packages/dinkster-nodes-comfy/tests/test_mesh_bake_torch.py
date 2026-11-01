@@ -10,7 +10,7 @@ import pytest
 import torch
 from dinkster_api.v1 import MESH_TYPE, Node, NodeSchema, OutputSpec, TriangleMeshBatch, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.mesh_bake import BakeAmbientOcclusion
+from dinkster_nodes_comfy.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -102,9 +102,61 @@ class MeshSource(Node):
         return cls.outputs(low=low, high=high)
 
 
+def test_normal_bake_tangent_handedness_fallback_and_counted_batches() -> None:
+    low, high = plane(), plane(2.0)
+    high.normals = torch.tensor([[[0.0, 0.6, 0.8]] * 4])
+    low.uvs = low.uvs * 0.4 + 0.2
+    # The high plane is outside the cage: nearest-surface fallback still retains +Y.
+    image = BakeNormalMapFromMesh.execute(low_poly=low, high_poly=high, resolution=64)["IMAGE"]
+    expected = torch.tensor([0.5, 0.8, 0.9]).expand(1, 64, 64, 3)
+    torch.testing.assert_close(image, expected)
+    low.uvs[..., 1] = 1.0 - low.uvs[..., 1]
+    mirrored = BakeNormalMapFromMesh.execute(low_poly=low, high_poly=high, resolution=64)["IMAGE"]
+    torch.testing.assert_close(mirrored, torch.tensor([0.5, 0.2, 0.9]).expand_as(mirrored))
+    low.vertices = low.vertices.repeat(3, 1, 1)
+    low.faces = low.faces.repeat(3, 1, 1)
+    low.uvs = low.uvs.repeat(3, 1, 1)
+    low.vertex_counts, low.face_counts = torch.tensor([4, 4, 3]), torch.tensor([2, 2, 0])
+    result = BakeNormalMapFromMesh.execute(low_poly=low, high_poly=high, resolution=64)["IMAGE"]
+    torch.testing.assert_close(result[:2], mirrored.expand(2, -1, -1, -1))
+    torch.testing.assert_close(result[2], torch.full((64, 64, 3), 0.5))
+    low.uvs = None
+    with pytest.raises(ValueError, match="low_poly has no UVs"):
+        BakeNormalMapFromMesh.execute(low_poly=low, high_poly=high, resolution=64)
+
+
+def test_normal_bake_cage_and_backfaces() -> None:
+    low, high = plane(), plane()
+    low.normals = torch.tensor([[[0.0, 0.0, 1.0]] * 4])
+    roof = plane(0.15)
+    high.vertices = torch.cat([high.vertices, roof.vertices], dim=1)
+    high.faces = torch.cat([high.faces, roof.faces.flip(-1) + 4], dim=1)
+    high.normals = torch.tensor([[[0.0, 0.0, 1.0]] * 4 + [[0.6, 0.0, 0.8]] * 4])
+
+    def run(cage: float, cull: bool) -> torch.Tensor:
+        return BakeNormalMapFromMesh.execute(
+            low_poly=low,
+            high_poly=high,
+            resolution=64,
+            cage_distance=cage,
+            ignore_backfaces=cull,
+        )["IMAGE"]
+
+    front = run(0.1, True)
+    torch.testing.assert_close(front, torch.tensor([0.5, 0.5, 1.0]).expand_as(front))
+    both = run(0.1, False)
+    torch.testing.assert_close(both, torch.tensor([0.8, 0.5, 0.9]).expand_as(both))
+    narrow = run(0.001, False)
+    torch.testing.assert_close(narrow, front)
+    high.normals[..., 2] = -1.0
+    safe = run(0.1, False)
+    torch.testing.assert_close(safe, front)
+
+
 @pytest.mark.parametrize("in_process", [True, False])
-def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
-    module = f"ambient_occlusion_source_{in_process}"
+@pytest.mark.parametrize("node_type", ["BakeAmbientOcclusion", "BakeNormalMapFromMesh"])
+def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool, node_type: str) -> None:
+    module = f"mesh_bake_source_{node_type}_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_mesh_bake_torch import MeshSource\n"
         "from dinkster_nodes_comfy import register_inference_types\nNODES=(MeshSource,)\n",
@@ -135,15 +187,16 @@ def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool) -> N
                 {
                     "source": GraphNode("ambient-occlusion-source.make"),
                     "bake": GraphNode(
-                        "BakeAmbientOcclusion",
+                        node_type,
                         {
                             "low_poly": Link("source", "low"),
                             "high_poly": Link("source", "high"),
                             "resolution": 64,
-                            "samples": 16,
-                            "max_distance": 0.5,
-                            "strength": 0.5,
-                            "bias": 0.001,
+                            **(
+                                dict(samples=16, max_distance=0.5, strength=0.5, bias=0.001)
+                                if node_type == "BakeAmbientOcclusion"
+                                else dict(cage_distance=0.05, ignore_backfaces=True)
+                            ),
                         },
                     ),
                 }
@@ -153,8 +206,13 @@ def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool) -> N
                 result = await engine.run(graph, ["bake"])
                 image = torch.as_tensor(result.outputs["bake"]["IMAGE"].resolve())
                 assert image.shape == (1, 64, 64, 3) and image.dtype == torch.float32
-                assert 0.5 <= image.mean() < 0.6
-                torch.testing.assert_close(image[..., 0], image[..., 2], rtol=0, atol=0)
+                if node_type == "BakeAmbientOcclusion":
+                    assert 0.5 <= image.mean() < 0.6
+                    torch.testing.assert_close(image[..., 0], image[..., 2], rtol=0, atol=0)
+                else:
+                    torch.testing.assert_close(
+                        image, torch.tensor([0.5, 0.5, 1.0]).expand_as(image)
+                    )
         finally:
             await composer.close()
 
