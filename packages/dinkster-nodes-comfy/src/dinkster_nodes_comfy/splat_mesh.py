@@ -46,14 +46,14 @@ class SplatToMesh(Node):
                     "kernel",
                     TypeExpr.concrete(CORE_INT),
                     default=5,
-                    widget=NumberWidget(min=1, max=8, step=1),
+                    widget=NumberWidget(min=1, max=8),
                 ),
                 InputSpec(
                     "smooth",
                     TypeExpr.concrete(CORE_INT),
                     default=0,
                     advanced=True,
-                    widget=NumberWidget(min=0, max=60, step=1),
+                    widget=NumberWidget(min=0, max=60),
                 ),
                 InputSpec(
                     "level",
