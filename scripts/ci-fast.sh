@@ -72,4 +72,5 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
+  tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection \
   tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency

@@ -2234,10 +2234,14 @@ def main(argv: list[str] | None = None) -> None:
         # Every intended pack and remote gets a report row up front
         # ("pending"), so /api/composition tells the whole startup story
         # from the first request - including what has not landed yet.
-        keys = state.seed_composition(
-            [*default_pack_failures]
-            + [_spec_label(entry) for entry in specs]
-            + [spec.name for spec in remote_specs]
+        keys = (
+            state.seed_composition(
+                [*default_pack_failures]
+                + [_spec_label(entry) for entry in specs]
+                + [spec.name for spec in remote_specs]
+            )
+            if total
+            else []
         )
         default_failure_keys = keys[:default_failure_count]
         pack_start = default_failure_count

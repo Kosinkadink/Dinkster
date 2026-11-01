@@ -176,8 +176,9 @@
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.
-- Health reports composed and failed counts and is not ready when composition
-  is empty or any pack failed.
+- Health reports composed and failed counts when packs are selected and is not
+  ready when their composition is empty or any pack failed. An explicitly empty
+  source selection starts a healthy zero-pack engine without bundled defaults.
 - Local operators can print a read-only requirement plan with
   `dinkster workflow workflow.json --variant linux-cpu` (optional `--server`
   and `--project`). Multiple files produce their union without rewriting them.
