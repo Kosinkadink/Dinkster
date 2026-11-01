@@ -1241,6 +1241,35 @@ def test_empty_pack_warns(tmp_path: Path) -> None:
     assert "entry.no-nodes" in codes(report)
 
 
+@pytest.mark.parametrize("broken", (False, True))
+def test_catalog_driven_node_source_is_reported_without_hiding_entry_errors(
+    tmp_path: Path, broken: bool
+) -> None:
+    manifest_text = HEALTHY_MANIFEST.replace(
+        "[pack]\n", '[pack]\nnode-source = "remote-gateway-catalog"\n'
+    )
+    source = 'raise RuntimeError("broken entry")\n' if broken else "NODES = []\n"
+    manifest = write_pack(tmp_path / "dynamic", manifest_text, "healthy_nodes", source)
+    manifest.write_text(
+        manifest.read_text().replace('types = "healthy_nodes:register_types"\n', "")
+    )
+    report = diagnose(manifest)
+    assert report.ok is not broken, render_text(report)
+    assert json.loads(report.to_json())["nodeSource"] == "remote-gateway-catalog"
+    assert report.node_types == ()
+    assert ("entry.unresolvable" in codes(report)) is broken
+    assert "entry.no-nodes" not in codes(report)
+    completed = subprocess.run(
+        [sys.executable, "-m", "dinkster_workers._doctor_probe", str(manifest)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    raw = json.loads(completed.stdout)
+    assert raw["node_source"] == "remote-gateway-catalog"
+    assert (raw["entry_error"] is not None) is broken
+
+
 def test_cli_renders_and_exits_by_health(tmp_path: Path, capsys) -> None:
     manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
     # pack directory (not manifest path) is accepted, --json is machine-readable

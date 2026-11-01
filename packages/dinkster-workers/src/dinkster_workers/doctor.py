@@ -141,6 +141,7 @@ class DoctorReport:
     docs_coverage: DocsCoverage | None = None
     entry_path: str = ""
     interpreter: str = ""
+    node_source: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -157,6 +158,7 @@ class DoctorReport:
             "interpreter": self.interpreter,
             "ok": self.ok,
             "nodeTypes": list(self.node_types),
+            "nodeSource": self.node_source,
             "findings": [asdict(f) for f in self.findings],
         }
         if self.docs_coverage is not None:
@@ -1267,7 +1269,11 @@ def _check_pack(
         docs_findings, docs_coverage = _check_docs(manifest, probed_nodes)
         declaration_findings.extend(docs_findings)
         findings.extend(declaration_findings)
-        if not node_types and not any(f.severity == "error" for f in findings):
+        if (
+            not node_types
+            and manifest.node_source is None
+            and not any(f.severity == "error" for f in findings)
+        ):
             findings.append(
                 Finding(
                     severity="warning",
@@ -1307,6 +1313,7 @@ def _check_pack(
         docs_coverage=docs_coverage,
         entry_path=entry_path,
         interpreter=selected_interpreter,
+        node_source=manifest.node_source,
     )
 
 

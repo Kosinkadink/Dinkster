@@ -163,6 +163,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
     add_pack_root_to_import_path(manifest, sys.path)
 
     report: dict[str, Any] = {
+        "node_source": manifest.node_source,
         "entry_error": None,
         "entry_path": "",
         "interpreter": str(Path(sys.executable).absolute()),
