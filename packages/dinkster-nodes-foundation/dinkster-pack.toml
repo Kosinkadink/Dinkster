@@ -3,6 +3,8 @@
 
 [pack]
 name = "dinkster-nodes-foundation"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 # std and dinkster are reserved roots. This first-party pack receives explicit
 # host trust but otherwise follows the same composition path as every pack.
