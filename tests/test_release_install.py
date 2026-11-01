@@ -1480,7 +1480,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     monkeypatch.setattr(builder, "qualify", lambda *args: base)
     monkeypatch.setattr(builder.platform, "system", lambda: "Linux")
     monkeypatch.setattr(builder, "extract_base", lambda *args, **kwargs: None)
-    monkeypatch.setattr(builder, "effective_constraints", lambda *args: "constraints\n")
+    monkeypatch.setattr(builder, "effective_constraints", lambda *args, **kwargs: "constraints\n")
 
     def fetch(sources, filename, destination, digest, size):
         name = base.get("label", "b" * 64)
