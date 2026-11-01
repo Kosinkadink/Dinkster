@@ -136,6 +136,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
+from .mediapipe_detection import LoadMediaPipeFaceLandmarker, MediaPipeFaceLandmarker
 from .mesh import MESH_NODES
 from .mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from .mesh_decimate import DecimateMesh
@@ -592,6 +593,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     ImageHistogram,
     TextOverlay,
     SAM3DBody_Render,
+    LoadMediaPipeFaceLandmarker,
+    MediaPipeFaceLandmarker,
 )
 
 
