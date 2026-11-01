@@ -2214,7 +2214,9 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
     monkeypatch.setattr(manager, "diagnose", lambda *_args, **_kwargs: report)
     submitted: list[str] = []
 
-    def publish(_registry, _archive, pack_name: str, _version: str) -> PublishVerdict:
+    def publish(
+        _registry, _archive, pack_name: str, _version: str, *, locks=None
+    ) -> PublishVerdict:
         submitted.append(pack_name)
         return PublishVerdict("queued", (), "candidate-1")
 
@@ -2246,6 +2248,125 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
     assert submitted == ["demo"]
     assert "submitted demo 1.2.3 blake3:" in output
     assert output.rstrip().endswith("as candidate candidate-1")
+
+
+@pytest.mark.parametrize("mode", ["raw", "locks", "refused", "missing"])
+def test_cli_publishes_exact_archive_with_optional_published_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    from email import policy
+    from email.parser import BytesParser
+
+    pack = write_pack(tmp_path / "demo", "demo")
+    expected_archive = tmp_path / "expected.zip"
+    digest = build_artifact(pack, expected_archive)
+    locks = tmp_path / "locks.json"
+    lock_bytes = (
+        json.dumps(
+            {
+                variant: {
+                    "baseId": "sha256:" + identity * 64,
+                    "artifactDigest": digest,
+                    "lock": {
+                        "format": "dinkster.pack-lock/1",
+                        "pack": "demo",
+                        "variant": variant,
+                        "requiresPython": ">=3.12",
+                        "requirements": [],
+                        "indexes": [],
+                        "packages": [],
+                    },
+                }
+                for variant, identity in (("linux-cpu", "a"), ("win-cpu", "b"))
+            }
+        ).encode()
+        + b"\n"
+    )
+    if mode != "missing":
+        locks.write_bytes(lock_bytes)
+    requests: list[tuple[str, str | None, str, bytes]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            requests.append(
+                (
+                    self.path,
+                    self.headers.get("Authorization"),
+                    self.headers["Content-Type"],
+                    self.rfile.read(int(self.headers["Content-Length"])),
+                )
+            )
+            self.send_response(400 if mode == "refused" else 202)
+            self.end_headers()
+            self.wfile.write(
+                b'{"error":{"message":"lock binding refused"}}'
+                if mode == "refused"
+                else b'{"status":"queued","candidateId":"candidate-1"}'
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    config = tmp_path / "registries.toml"
+    config.write_text(
+        "[registries.test]\n"
+        f'endpoint = "http://127.0.0.1:{server.server_port}"\n'
+        'token-env = "DINKSTER_TEST_PUBLISH_TOKEN"\n'
+    )
+    monkeypatch.setenv("DINKSTER_TEST_PUBLISH_TOKEN", "test-publish-token")
+    arguments = [
+        "--registries",
+        str(config),
+        "--registry",
+        "test",
+        "publish",
+        "--no-preflight",
+        "--version",
+        "1.2.3",
+        str(pack),
+    ]
+    if mode != "raw":
+        arguments.extend(["--locks", str(locks)])
+    try:
+        if mode in {"refused", "missing"}:
+            with pytest.raises(SystemExit) as error:
+                run_cli(*arguments)
+            assert error.value.code == 2
+            detail = capsys.readouterr().err
+            assert "lock binding refused" in detail if mode == "refused" else "locks.json" in detail
+        else:
+            run_cli(*arguments)
+            assert "as candidate candidate-1" in capsys.readouterr().out
+        if mode == "missing":
+            assert requests == []
+            return
+        assert len(requests) == 1
+        path, authorization, content_type, body = requests[0]
+        assert path == "/v1/publish/demo/versions/1.2.3"
+        assert authorization == "Bearer test-publish-token"
+        if mode == "raw":
+            assert content_type == "application/zip" and body == expected_archive.read_bytes()
+        else:
+            message = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {content_type}\r\n\r\n".encode() + body
+            )
+            parts = list(message.iter_parts())
+            assert [part.get_param("name", header="content-disposition") for part in parts] == [
+                "archive",
+                "locks",
+            ]
+            assert parts[0].get_filename() == "artifact.zip"
+            assert parts[0].get_content_type() == "application/zip"
+            assert parts[0].get_payload(decode=True) == expected_archive.read_bytes()
+            assert parts[1].get_filename() is None
+            assert parts[1].get_payload(decode=True) == lock_bytes
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_publish_usage_error_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

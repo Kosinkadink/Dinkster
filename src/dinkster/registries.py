@@ -60,6 +60,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import warnings
 import zipfile
 from collections.abc import Mapping
@@ -144,17 +145,36 @@ def publish_release(
     pack_name: str,
     version: str,
     *,
+    locks: Path | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
 ) -> PublishVerdict:
-    """Submit one canonical artifact to the service's admission queue."""
+    """Submit exact artifact bytes and optional publisher-produced base locks."""
+    try:
+        data = archive.read_bytes()
+        lock_data = locks.read_bytes() if locks is not None else None
+    except OSError as exc:
+        raise RegistryPublishError(f"cannot read publication input: {exc}") from exc
+    content_type = "application/zip"
+    if lock_data is not None:
+        boundary = "dinkster-" + uuid.uuid4().hex
+        content_type = f"multipart/form-data; boundary={boundary}"
+        data = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="archive"; '
+            'filename="artifact.zip"\r\nContent-Type: application/zip\r\n\r\n'.encode("ascii")
+            + data
+            + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="locks"\r\n'
+            "Content-Type: application/json\r\n\r\n".encode("ascii")
+            + lock_data
+            + f"\r\n--{boundary}--\r\n".encode("ascii")
+        )
     headers = {"User-Agent": "dinkster-pack"}
     token = registry.token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     submit = urllib.request.Request(
         f"{registry.endpoint}/v1/publish/{pack_name}/versions/{version}",
-        data=archive.read_bytes(),
-        headers={**headers, "Content-Type": "application/zip"},
+        data=data,
+        headers={**headers, "Content-Type": content_type},
         method="POST",
     )
     payload = _publish_request(registry, submit, action="publish submission", timeout=timeout)

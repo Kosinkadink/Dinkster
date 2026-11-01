@@ -35,6 +35,15 @@ through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
 generation-based activation.
 
+`dinkster-pack publish --version VERSION --locks /scratch/locks.json PACK_DIR`
+submits the same deterministic archive with a publisher-produced per-base map.
+Each variant maps to `baseId` (exact SHA-256 base identity), `artifactDigest`
+(the archive's BLAKE3 digest), and `lock` (the standard pack-lock document).
+The client sends those bytes without resolving dependencies; service admission
+validates the bindings before acceptance. Omitting `--locks` retains raw-ZIP
+submission. Publication errors and unreadable lock files refuse without a queued
+receipt; a queued receipt is not an admission verdict.
+
 The host installer's `Installer.apply` checks each declared pack engine range
 against its running engine before staging or returning an identical-lock no-op.
 The check reads supplied, cached or staged sources without importing pack code;

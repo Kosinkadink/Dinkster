@@ -442,7 +442,7 @@ def _cmd_publish(args: argparse.Namespace) -> None:
             digest = build_artifact(manifest_path.parent, archive)
         except ArtifactError as exc:
             raise RegistryPublishError(str(exc)) from exc
-        verdict = publish_release(registry, archive, manifest.name, args.version)
+        verdict = publish_release(registry, archive, manifest.name, args.version, locks=args.locks)
     for finding in verdict.findings:
         print(f"{finding.code}: {finding.message}")
     print(f"submitted {manifest.name} {args.version} {digest} as candidate {verdict.candidate_id}")
@@ -1441,6 +1441,9 @@ def main() -> None:
     )
     publish.add_argument("pack", metavar="PACK_DIR_OR_MANIFEST")
     publish.add_argument("--version", required=True, metavar="X.Y.Z")
+    publish.add_argument(
+        "--locks", type=Path, help="Publish-time per-base lock map; registry admission validates it"
+    )
     publish.add_argument(
         "--no-preflight",
         action="store_true",
