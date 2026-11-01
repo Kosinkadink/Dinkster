@@ -1410,7 +1410,7 @@ requires-dist = [
     { name = "blake3", specifier = ">=0.4" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-workers", editable = "packages/dinkster-workers" },
-    { name = "packaging", specifier = ">=24" },
+    { name = "packaging", specifier = ">=25" },
 ]
 
 [[package]]

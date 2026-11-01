@@ -14,9 +14,11 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from dinkster_nodes_comfy.mesh_decimate import DecimateMesh
 from dinkster_nodes_comfy.mesh_holes import FillHoles
 from dinkster_nodes_comfy.mesh_remesh import RemeshMesh
+from dinkster_nodes_comfy.mesh_render import RenderMesh
 from dinkster_nodes_comfy.mesh_weld import WeldVertices
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(WeldVertices) == 1
@@ -52,6 +54,30 @@ assert [option.key for option in schema.combos[0].options] == ['udf', 'sdf', 'so
 assert [slot.default for slot in schema.combos[0].options[0].inputs] == [False, False, False]
 assert [slot.default for slot in schema.combos[0].options[1].inputs] == [True, False]
 assert [slot.default for slot in schema.combos[0].options[2].inputs] == [20., False]
+assert COMFY_NODES.count(RenderMesh) == manifest.namespaces.count('RenderMesh') == 1
+schema = RenderMesh.schema()
+assert [slot.id for slot in schema.inputs] == [
+    'mesh', 'mode', 'width', 'height', 'background', 'model_3d_info', 'camera_info'
+]
+assert [slot.id for slot in schema.outputs] == ['IMAGE', 'MASK']
+assert 'dinkster_nodes_comfy.mesh_render_ops' not in sys.modules
+assert COMFY_NODES.count(BakeAmbientOcclusion) == 1
+assert manifest.namespaces.count('BakeAmbientOcclusion') == 1
+schema = BakeAmbientOcclusion.schema()
+assert [slot.id for slot in schema.inputs] == [
+    'low_poly', 'high_poly', 'resolution', 'samples', 'max_distance', 'strength', 'bias'
+]
+assert schema.outputs[0].type.types == ('IMAGE',)
+assert 'dinkster_nodes_comfy.mesh_bake_ops' not in sys.modules
+assert COMFY_NODES.count(BakeNormalMapFromMesh) == 1
+assert manifest.namespaces.count('BakeNormalMapFromMesh') == 1
+schema = BakeNormalMapFromMesh.schema()
+assert [slot.id for slot in schema.inputs] == [
+    'low_poly', 'high_poly', 'resolution', 'cage_distance', 'ignore_backfaces'
+]
+assert [slot.default for slot in schema.inputs[2:]] == [1024, 0.05, True]
+assert schema.outputs[0].type.types == ('IMAGE',)
+assert 'dinkster_nodes_comfy.mesh_bake_ops' not in sys.modules
 """,
         ],
         capture_output=True,

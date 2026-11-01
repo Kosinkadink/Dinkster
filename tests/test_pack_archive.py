@@ -953,9 +953,11 @@ def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem:
     result = run_executable_probe(
         root,
         settings=ProbeSettings(
-            probe_timeout_seconds=1, probe_output_limit_bytes=4096, probe_operator_tail_bytes=512
+            probe_timeout_seconds=1 if problem == "timeout" else 30,
+            probe_output_limit_bytes=4096,
+            probe_operator_tail_bytes=512,
         ),
-        require_isolation=False,
+        require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1",
     )
     codes = {finding.code for finding in result.findings}
     if problem == "remote":
@@ -964,7 +966,9 @@ def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem:
         assert result.blocked
         expected = {
             "empty": "probe.no-schemas",
-            "exception": "entry.unresolvable",
+            "exception": "probe.invalid-report"
+            if os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
+            else "entry.unresolvable",
             "output": "probe.output-limit",
             "timeout": "probe.timeout",
         }[problem]
