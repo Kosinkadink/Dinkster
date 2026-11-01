@@ -196,7 +196,7 @@ class TextureInspect(Node):
 def test_ordinary_manifest_texture_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-        (tmp_path / "texture_fixture.py").write_text(
+        (tmp_path / "trellis_texture_fixture.py").write_text(
             "from test_trellis_texture_torch import TextureSource, TextureInspect\n"
             "from dinkster_nodes_comfy import register_inference_types\n"
             "NODES = (TextureSource, TextureInspect)\n",
@@ -204,7 +204,7 @@ def test_ordinary_manifest_texture_twice(tmp_path: Path, in_process: bool) -> No
         )
         fixture = tmp_path / "texture.toml"
         fixture.write_text(
-            '[pack]\nname="texture-fixture"\npublisher="dinkster"\nnamespaces=["texture-fixture"]\n[pack.entry]\nnodes="texture_fixture:NODES"\ntypes="texture_fixture:register_inference_types"\n',
+            '[pack]\nname="texture-fixture"\npublisher="dinkster"\nnamespaces=["texture-fixture"]\n[pack.entry]\nnodes="trellis_texture_fixture:NODES"\ntypes="trellis_texture_fixture:register_inference_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
