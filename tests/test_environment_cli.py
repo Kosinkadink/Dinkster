@@ -278,6 +278,105 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()
 
 
+def test_custom_update_refuses_newer_torch_before_project_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root, store, mirror = tmp_path / "project", tmp_path / "store", tmp_path / "mirror"
+    donor, engine, channel = _mirror(mirror)
+    previous = mirror / "engine" / channel["engine"]["release"][7:]
+    filename = "fixture_engine-2.0-py3-none-any.whl"
+    payload = _wheel_payload("fixture_engine", "2.0", "fixture-base>=1")
+    engine["artifacts"][1] = _artifact(filename, payload)
+    constraints = (previous / "constraints.txt").read_bytes() + (
+        b"torch==2.15.0 --hash=sha256:" + b"c" * 64 + b"\n"
+    )
+    engine["artifacts"][0] = _artifact("constraints.txt", constraints)
+    data = _json(engine)
+    identity = hashlib.sha256(data).hexdigest()
+    release = previous.parent / identity
+    release.mkdir()
+    (release / "release-manifest.json").write_bytes(data)
+    (release / "constraints.txt").write_bytes(constraints)
+    (release / filename).write_bytes(payload)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"] = [
+        {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+    ]
+    (mirror / "channels/main.json").write_bytes(_json(channel))
+    custom = json.loads(_json(donor))
+    custom.update(variant="studio-cuda", replaces=["fixture-base", "torch"])
+    torch = b"retained custom torch wheel"
+    custom["wheels"].append(
+        {
+            **donor["wheels"][0],
+            **_artifact("torch-2.14.1+cu130-py3-none-any.whl", torch, key="filename"),
+            "name": "torch",
+            "version": "2.14.1+cu130",
+            "lockedVersion": None,
+        }
+    )
+    base_identity = {
+        key: custom[key]
+        for key in (
+            "format",
+            "variant",
+            "platform",
+            "python",
+            "interpreter",
+            "wheels",
+            "replaces",
+            "workerProtocol",
+            "nvidia",
+        )
+    }
+    base_identity["archive"] = {"format": "tar+zstd"}
+    custom.update(
+        id="sha256:" + hashlib.sha256(_json(base_identity)).hexdigest(), source="user-defined"
+    )
+    cached = store / "bases" / custom["id"][7:] / "wheels"
+    cached.mkdir(parents=True)
+    for row, content in zip(
+        custom["wheels"],
+        (b"base wheel bytes; execution is covered by generation tests", torch),
+        strict=True,
+    ):
+        (cached / row["filename"]).write_bytes(content)
+    record = _generation(root, 1)
+    document = json.loads(record.read_bytes())
+    document.update(base=custom["id"], variant="studio-cuda")
+    record.write_bytes(_json(document))
+    (record.parent / "base-manifest.json").write_bytes(_json(custom))
+    (root / "current").write_bytes(b"1\n")
+    (root / "store").write_text(str(store) + "\n")
+    (root / "project.json").write_bytes(
+        _json(
+            {
+                "format": "dinkster.project/1",
+                "channel": "main",
+                "variant": "studio-cuda",
+                "mirrors": [str(mirror)],
+                "port": 3639,
+            }
+        )
+    )
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    code, result = _run(root, "update", "--yes")
+    assert code == 1 and result["status"] == "error", result
+    assert "engine requires torch 2.15.0" in result["error"]
+    assert "custom base provides torch 2.14.1+cu130" in result["error"]
+    assert "variants.toml" in result["error"] and "rebuild" in result["error"]
+    assert before == {
+        path: path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != ".lock"
+    }
+    assert not (root / "journal").exists()
+    assert not (store / "projects.json").exists()
+    assert not (tmp_path / "user-data/dinkster/stores.json").exists()
+
+
 def test_status_returns_configured_channel_and_variant_without_starting_anything(tmp_path: Path):
     root = tmp_path / "project"
     code, result = _run(root, "status")
