@@ -191,6 +191,7 @@ def project_operation(
     artifacts: Path | None = None,
     approved: dict[str, object] | None = None,
     target_generation: Path | None = None,
+    requirements_only: bool = False,
 ) -> dict[str, object]:
     """Plan or apply workflow requirements through the generation's core adapter."""
     command = [
@@ -218,6 +219,19 @@ def project_operation(
         if target_generation is None:
             raise EnvironmentError("workflow execution requires a target generation")
         command.append("--yes")
+    if requirements_only:
+        command = [
+            str(interpreter(generation)),
+            "-B",
+            "-c",
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "from dinkster.project_requirements import load_project_requirements\n"
+            "requirements, inputs = load_project_requirements(Path(sys.argv[1]))\n"
+            "print(json.dumps({'requirements': requirements.to_wire(), 'inputs': list(inputs), "
+            "'plan': {'packs': [], 'assets': [], 'errors': []}}))\n",
+            str(root),
+        ]
     result = subprocess.run(
         command,
         input=json.dumps(approved) if approved is not None else None,

@@ -395,7 +395,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if previous_root is None:
             raise EnvironmentError("workflow planning requires an existing generation interpreter")
         catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
-        if catalog_lock is None:
+        if catalog_lock is None and not custom_workflow:
             cached_sources = acquire_sources(catalog, store, download=False)
             if cached_sources is not None:
                 catalog_lock, source_artifacts = cached_sources
@@ -405,6 +405,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             variant=planning_variant,
             catalog_lock=catalog_lock,
             artifacts=source_artifacts,
+            requirements_only=custom_workflow,
         )
         actions = cast("dict[str, object]", workflow["plan"])
         for kind in ("packs", "assets"):
@@ -444,13 +445,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 catalog_lock=workflow_catalog,
                 artifacts=workflow_artifacts,
                 target_generation=workflow_target,
+                requirements_only=custom_workflow and workflow_target is None,
             )
             if any(observed[key] != workflow[key] for key in ("requirements", "inputs")):
                 raise EnvironmentError("workflow inputs changed after planning; request a new plan")
             observed_actions = cast("dict[str, object]", observed["plan"])
-            if (
-                observed_actions["errors"] and (not custom_workflow or workflow_target is not None)
-            ) or (workflow_applied and any(observed_actions.values())):
+            if observed_actions["errors"] or (workflow_applied and any(observed_actions.values())):
                 raise EnvironmentError(
                     "workflow requirements failed revalidation; request a new plan"
                 )
@@ -616,6 +616,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 )
                 if workflow is not None and previous_root is not None:
                     if custom_workflow:
+                        workflow_catalog, workflow_artifacts = catalog_lock, source_artifacts
+                        workflow_catalog_digest = (
+                            content_digest(catalog_lock) if catalog_lock is not None else None
+                        )
                         workflow_target = root / "generations" / str(target)
                         observed = project_operation(
                             root,
