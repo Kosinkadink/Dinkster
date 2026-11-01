@@ -906,17 +906,19 @@ class Installer:
                 )
             os.replace(candidate, self.artifacts_dir / f"{_digest_hex(digest)}.zip")
 
-    def manifest_of(self, entry: LockedPack) -> PackManifest | None:
+    def manifest_of(
+        self, entry: LockedPack, *, artifact: Path | None = None
+    ) -> PackManifest | None:
         """The manifest of an entry's exact bytes, from the unpacked
         store when staged, else read out of the archived artifact - so
         PLAN display can show compatibility (declared platforms,
         accelerator-conditional requirements) before anything mutates.
-        None when neither is present (a gc'd plan; apply refuses that
-        separately)."""
+        ``artifact`` supplies an explicit archive instead of the cached path.
+        None when neither is present (a gc'd plan; apply refuses that separately)."""
         store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
         if store_manifest.is_file():
             return load_manifest(store_manifest)
-        archive = self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
+        archive = artifact or self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
         if not archive.is_file():
             return None
         with tempfile.TemporaryDirectory(prefix="dinkster-manifest-") as scratch:
@@ -1242,6 +1244,18 @@ class Installer:
         with self._locked():
             current = self.current_lockfile()
             current_number = self.current_number()
+            for entry in target.packs:
+                manifest = self.manifest_of(
+                    entry,
+                    artifact=artifacts.get(entry.artifact_digest)
+                    if artifacts is not None
+                    else None,
+                )
+                if manifest is not None and manifest.compatibility is not None:
+                    try:
+                        manifest.compatibility.require_engine(entry.pack, dinkster_version)
+                    except ValueError as exc:
+                        raise InstallError(str(exc)) from exc
             explicit_topology = (
                 hosting_groups is not None
                 or hosting_in_process is not None

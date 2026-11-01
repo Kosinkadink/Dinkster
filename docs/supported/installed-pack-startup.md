@@ -60,6 +60,10 @@
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a
   refusal leaves the generation unsealed and its dependency inputs intact.
+- Explicit pack application checks declared engine ranges before staging or
+  returning an identical-lock no-op. External archives, cached and already
+  staged sources, and grouped packs follow the same admission rule. Refusal
+  preserves the active selection, staged content and generation history.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

@@ -35,6 +35,15 @@ through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
 generation-based activation.
 
+The host installer's `Installer.apply` checks each declared pack engine range
+against its running engine before staging or returning an identical-lock no-op.
+The check reads supplied, cached or staged sources without importing pack code;
+grouped packs follow the same rule. An incompatible range reports the pack id,
+manifest version, range and engine version without changing the active selection
+or staged generation content. Manifests without a declaration retain their
+legacy unpublished behavior. Read-only manifest inspection still supports plans
+for incompatible packs.
+
 Build selected official source archives from committed manifests:
 
 ```sh

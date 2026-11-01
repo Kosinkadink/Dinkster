@@ -464,6 +464,62 @@ def test_archived_manifest_inspection_keeps_declared_template(tmp_path: Path) ->
     )
 
 
+@pytest.mark.parametrize("engine", ["0.4", "0.5", "0.6"])
+@pytest.mark.parametrize("source", ["external", "cached", "staged", "grouped"])
+def test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: str, source: str
+) -> None:
+    installer = make_installer(tmp_path)
+    baseline = local_lockfile(installer, write_pack(tmp_path / "safe", "safe"))
+    installer.apply(baseline)
+    pack = write_pack(tmp_path / "demo", "demo", "raise RuntimeError('must not import')\n")
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "demo"\nversion = "2.3.1"\nengine = ">=0.5,<0.6"\n'
+        '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    artifacts = tmp_path / "external" if source == "external" else installer.artifacts_dir
+    entry, archive = lock_local_pack(pack, artifacts)
+    target = Lockfile.of([entry])
+    groups = ()
+    if source == "grouped":
+        target = Lockfile.of([entry, *baseline.packs])
+        groups = (("shared", ("demo", "safe")),)
+    if source == "staged":
+        monkeypatch.setattr(installer_module, "dinkster_version", "0.5")
+        installer.apply(target)
+    number = installer.current_number()
+    current = installer.current_lockfile()
+    protected = {
+        str(path.relative_to(installer.root)): path.read_bytes()
+        for part in ("store", "venvs", "generations")
+        for path in (installer.root / part).rglob("*")
+        if path.is_file()
+    }
+    pointer = (installer.root / "current").read_bytes()
+    monkeypatch.setattr(installer_module, "dinkster_version", engine)
+    if engine == "0.5":
+        installer.apply(target, {entry.artifact_digest: archive}, hosting_groups=groups)
+        assert installer.current_lockfile() == target
+        if source == "staged":
+            assert installer.current_number() == number
+    else:
+        with pytest.raises(InstallError) as refusal:
+            installer.apply(target, {entry.artifact_digest: archive}, hosting_groups=groups)
+        assert (
+            f"pack demo@2.3.1 declares engine >=0.5,<0.6; engine {engine} is incompatible"
+            in str(refusal.value)
+        )
+        assert installer.current_number() == number
+        assert installer.current_lockfile() == current
+        assert (installer.root / "current").read_bytes() == pointer
+        assert {
+            str(path.relative_to(installer.root)): path.read_bytes()
+            for part in ("store", "venvs", "generations")
+            for path in (installer.root / part).rglob("*")
+            if path.is_file()
+        } == protected
+
+
 def test_packs_for_serving_carries_generation_worker_groups(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     alpha = write_pack(tmp_path / "alpha", "alpha")

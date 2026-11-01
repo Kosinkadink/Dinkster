@@ -26,6 +26,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_http_registry_fetcher_uses_verified_download_ticket \
   tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_ticket_size \
   tests/test_installer.py::test_cli_restore_downloads_registry_sources \
+  tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
   tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
   tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
   tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
