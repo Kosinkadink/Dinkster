@@ -27,7 +27,9 @@
   The public file loader retains selected source bytes and binds declared glTF,
   GLB and OBJ sidecars from explicit asset identities or the selected source's
   input/model3d mount grant. glTF resource URIs may encode spaces in contained
-  filenames. Missing, undeclared and traversing resources fail;
+  filenames. OBJ material and texture declarations support continued lines;
+  texture names retain spaces after material-map options or inside quotes.
+  Missing, undeclared and traversing resources fail;
   an empty selection produces no file. It never fetches external URLs.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
   Generic and aggregate sockets preserve an empty format for consumers that

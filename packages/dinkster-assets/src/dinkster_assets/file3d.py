@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -74,6 +75,59 @@ def _gltf_resource_name(uri: object) -> str:
     if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
         raise AssetError("FILE_3D resource URI must be a contained relative path")
     return _resource_name(unquote(parsed.path, errors="strict"))
+
+
+def _mtl_texture_name(declaration: str) -> str:
+    stream = io.StringIO(declaration)
+    lexer = shlex.shlex(stream, posix=True)
+    lexer.whitespace_split = True
+    tokens: list[tuple[str, int]] = []
+    while True:
+        start = stream.tell()
+        token = lexer.get_token()
+        if token is None:
+            break
+        tokens.append((token, start))
+    fixed = {
+        "-blendu": 1,
+        "-blendv": 1,
+        "-boost": 1,
+        "-mm": 2,
+        "-texres": 1,
+        "-clamp": 1,
+        "-bm": 1,
+        "-imfchan": 1,
+        "-type": 1,
+        "-cc": 1,
+    }
+    index = 0
+    while index < len(tokens):
+        option = tokens[index][0]
+        if option in {"-o", "-s", "-t"}:
+            index += 1
+            count = 0
+            while index < len(tokens) and count < 3:
+                try:
+                    float(tokens[index][0])
+                except ValueError:
+                    break
+                index += 1
+                count += 1
+            if count == 0:
+                raise AssetError(f"MTL texture option {option} requires a numeric argument")
+        elif option in fixed:
+            index += 1 + fixed[option]
+        else:
+            break
+    if index >= len(tokens):
+        raise AssetError("MTL texture declaration requires a filename")
+    remainder = declaration[tokens[index][1] :].split("#", 1)[0].strip()
+    if remainder.startswith(("'", '"')):
+        names = shlex.split(remainder)
+        if len(names) != 1:
+            raise AssetError("MTL texture declaration requires one filename")
+        remainder = names[0]
+    return _resource_name(remainder)
 
 
 def load_file3d(
@@ -150,21 +204,27 @@ def load_file3d(
                 if uri is not None and not (isinstance(uri, str) and uri.startswith("data:")):
                     bind(_gltf_resource_name(uri))
     elif format_id == "obj":
-        for line in source.read_bytes().decode("utf-8-sig").splitlines():
+        text = source.read_bytes().decode("utf-8-sig").replace("\r\n", "\n").replace("\\\n", "")
+        for line in text.splitlines():
             words = line.split(maxsplit=1)
             if len(words) != 2 or words[0] != "mtllib":
                 continue
             for name in shlex.split(words[1], comments=True):
                 material = bind(name)
-                for declaration in material.read_bytes().decode("utf-8-sig").splitlines():
+                text = (
+                    material.read_bytes()
+                    .decode("utf-8-sig")
+                    .replace("\r\n", "\n")
+                    .replace("\\\n", "")
+                )
+                for declaration in text.splitlines():
                     parts = declaration.split(maxsplit=1)
                     if len(parts) == 2 and (
-                        parts[0].startswith("map_") or parts[0] in {"bump", "disp", "decal", "norm"}
+                        parts[0].startswith("map_")
+                        or parts[0] in {"bump", "disp", "decal", "norm", "refl"}
                     ):
-                        options = shlex.split(parts[1], comments=True)
-                        if options:
-                            texture = _resource_name(options[-1])
-                            bind((PurePosixPath(name).parent / texture).as_posix())
+                        texture = _mtl_texture_name(parts[1])
+                        bind((PurePosixPath(name).parent / texture).as_posix())
     if supplied is not None and supplied.keys() != bound.keys():
         raise AssetError("FILE_3D resources contain undeclared files")
     return {"format": format_id, "source": source, "resources": bound}

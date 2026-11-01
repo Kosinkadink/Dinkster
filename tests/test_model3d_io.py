@@ -165,6 +165,58 @@ def test_load_file3d_explicit_obj_dependencies_and_missing_extra_controls(tmp_pa
     assert source.read_bytes() == b"mtllib materials/model.mtl\nv 2 3 5\n"
 
 
+@pytest.mark.parametrize("continuation", [b"", b"\\\r\n"])
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "textures/red  wood.png",
+        '"textures/red  wood.png"',
+        "-s 1 2 3 -mm 0.2 0.8 textures/red  wood.png",
+        '-o -1 .5 -t 2 -clamp on -bm .4 -s 1 2 3 "textures/red  wood.png"',
+        "-s 1 2 \\\r\n3 textures/red  wood.png # an inline comment",
+        (
+            "-blendu on -blendv off -boost 1 -texres 512 -imfchan r "
+            "-type sphere -cc on textures/red  wood.png"
+        ),
+    ],
+)
+def test_load_file3d_obj_material_options_preserve_filename_remainder(
+    tmp_path: Path, declaration: str, continuation: bytes
+) -> None:
+    vault = AssetVault(tmp_path / "assets")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest_bytes(data), name, len(data), resolver=vault)
+
+    primary = b"mtllib " + continuation + b'"materials/surface file.mtl"\r\nv 3 5 7\r\n'
+    material_bytes = (
+        "newmtl surface\nmap_Kd " + declaration + "\nrefl -type sphere textures/reflection.png\n"
+    ).encode()
+    source = publish(primary, "scene.obj")
+    material = publish(material_bytes, "surface file.mtl")
+    texture = publish(b"asymmetric texture bytes", "red  wood.png")
+    reflection = publish(b"different reflection bytes", "reflection.png")
+    resources = {
+        "materials/surface file.mtl": material,
+        "materials/textures/red  wood.png": texture,
+        "materials/textures/reflection.png": reflection,
+    }
+    packet = load_file3d(source, resources=resources)
+    assert packet is not None
+    assert {
+        name: ref.read_bytes()
+        for name, ref in cast("dict[str, AssetRef]", packet["resources"]).items()
+    } == {
+        "materials/surface file.mtl": material_bytes,
+        "materials/textures/red  wood.png": b"asymmetric texture bytes",
+        "materials/textures/reflection.png": b"different reflection bytes",
+    }
+    assert source.read_bytes() == primary
+
+
 @pytest.mark.parametrize("format_id", ["gltf", "glb"])
 def test_load_file3d_explicit_gltf_resources_decode_uri_names(
     tmp_path: Path, format_id: str
@@ -256,6 +308,12 @@ def test_load_file3d_empty_and_self_contained_binary_sources(tmp_path: Path) -> 
     source = AssetRef(digest_bytes(payload), "source.GLB", len(payload), resolver=vault)
     assert load_file3d(source) == {"format": "glb", "source": source, "resources": {}}
     assert source.read_bytes() == payload
+    for format_id in ("fbx", "stl", "ply", "spz", "splat", "ksplat", "usdz"):
+        source = AssetRef(
+            digest_bytes(payload), "source." + format_id.upper(), len(payload), resolver=vault
+        )
+        assert load_file3d(source) == {"format": format_id, "source": source, "resources": {}}
+        assert source.read_bytes() == payload
 
 
 @pytest.mark.parametrize("node", [Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud])
