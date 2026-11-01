@@ -430,14 +430,22 @@ def _process_alive(record: dict[str, object]) -> bool:
         return False
     if os.name == "nt":
         return _windows_process_alive(pid)
-    try:
-        stat = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
-        if stat.rsplit(")", 1)[1].split()[0] == "Z":
+    if sys.platform == "linux":
+        try:
+            stat = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
+            if stat.rsplit(")", 1)[1].split()[0] == "Z":
+                return False
+        except (FileNotFoundError, ProcessLookupError):
             return False
-    except (FileNotFoundError, ProcessLookupError):
-        return False
-    except OSError as exc:
-        raise EnvironmentError("cannot determine supervisor process state") from exc
+        except OSError as exc:
+            raise EnvironmentError("cannot determine supervisor process state") from exc
+    else:
+        # Signal zero also succeeds for an exited, unreaped child.
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                return False
+        except ChildProcessError:
+            pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
