@@ -15,8 +15,6 @@ from .sam3d_pose import (
 )
 
 np = importlib.import_module("numpy")
-torch = importlib.import_module("torch")
-management = importlib.import_module("dinkster_inference.model_management")
 
 
 def _build_specs(
@@ -111,6 +109,7 @@ def _build_specs(
 
 
 def _ray_capsule_t(rays: Any, starts: Any, ends: Any, axis: Any, length: Any, radius: Any) -> Any:
+    torch = importlib.import_module("torch")
     radius_sq = radius * radius
     dn, da, db = (
         rays @ axis.transpose(0, 1),
@@ -152,6 +151,7 @@ def _render_capsules(
     device: Any,
     flat_shade: bool,
 ) -> Any:
+    torch = importlib.import_module("torch")
     count = int(starts.shape[0])
     if count == 0:
         return (
@@ -257,6 +257,8 @@ def render_capsules(
     flat_shade: bool = False,
     hand_radius_scale: float = 0.4,
 ) -> Any:
+    torch = importlib.import_module("torch")
+    management = importlib.import_module("dinkster_inference.model_management")
     persons: list[dict[str, Any]] = pose_data["frames"][frame_idx]
     device = management.get_torch_device()
     focal = float(min(H, W))

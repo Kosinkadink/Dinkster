@@ -9,7 +9,6 @@ from .pose_draw import draw_disks, draw_pose
 from .sam3d_pose import OPENPOSE_HAND_COLORS_21, openpose_render_keypoints
 
 np = importlib.import_module("numpy")
-torch = importlib.import_module("torch")
 Image = importlib.import_module("PIL.Image")
 
 _FACE_TARGETS = (
@@ -103,6 +102,7 @@ def render_pose_data_openpose(
     face_marker_radius_px: int = 3,
     person_brightness_falloff: float = 0.0,
 ) -> Any:
+    torch = importlib.import_module("torch")
     persons = pose_data["frames"][frame_idx]
     if composite == "over" and background is not None:
         canvas = (np.clip(background.cpu().numpy(), 0.0, 1.0) * 255.0).astype(np.uint8)

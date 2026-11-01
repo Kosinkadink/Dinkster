@@ -6,8 +6,6 @@ import importlib
 from typing import Any
 
 np = importlib.import_module("numpy")
-torch = importlib.import_module("torch")
-management = importlib.import_module("dinkster_inference.model_management")
 
 _CANONICAL_PRESETS = {"rainbow", "rainbow_face_normal", "rainbow_face_semantic"}
 
@@ -30,6 +28,7 @@ def rainbow_colors_from_canonical(
 
 
 def _vertex_normals(verts: Any, faces: Any) -> Any:
+    torch = importlib.import_module("torch")
     v0, v1, v2 = (verts[faces[:, i]] for i in range(3))
     fn = torch.cross(v1 - v0, v2 - v0, dim=-1)
     vn = torch.zeros_like(verts)
@@ -63,6 +62,7 @@ def _rasterize_chunk(
     extent: int,
     width: int,
 ) -> tuple[Any, Any, Any, Any]:
+    torch = importlib.import_module("torch")
     device = fv_pix.device
     sx, sy = max_x - min_x, max_y - min_y
     x_off = torch.arange(extent, device=device)
@@ -99,6 +99,7 @@ def _rasterize_person(
     mask_buf: Any,
     shade: Any,
 ) -> None:
+    torch = importlib.import_module("torch")
     valid = vertices[:, 2] > 0.05
     z = vertices[:, 2].clamp(min=0.05)
     px = 0.5 * width + focal * vertices[:, 0] / z
@@ -165,6 +166,7 @@ def _make_shade_fn(
     light_dir: Any,
     pastel_mix: float,
 ) -> Any:
+    torch = importlib.import_module("torch")
     device = normals.device
     base = torch.as_tensor(base_color, dtype=torch.float32, device=device)
     light = -torch.as_tensor(light_dir, dtype=torch.float32, device=device)
@@ -247,6 +249,8 @@ def render_mesh(
     person_brightness_falloff: float = 0.6,
     cache: dict[Any, Any] | None = None,
 ) -> Any:
+    torch = importlib.import_module("torch")
+    management = importlib.import_module("dinkster_inference.model_management")
     device = management.get_torch_device()
     cache = {} if cache is None else cache
     persons: list[dict[str, Any]] = (
