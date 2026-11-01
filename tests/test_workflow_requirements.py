@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -240,13 +241,14 @@ def custom_generation(root: Path, device: str) -> Path:
     version_file.parent.mkdir(parents=True)
     version_file.write_text(
         "__version__ = '2.5.0'\n"
-        + f"cuda: str | None = {'None' if device == 'cpu' else repr('12.4')}\n"
-        + "hip = None\n"
+        + f"cuda: str | None = {repr('12.4') if device == 'cuda' else 'None'}\n"
+        + f"hip = {repr('6.0') if device == 'rocm' else 'None'}\n"
+        + f"xpu = {repr('2025.0') if device == 'xpu' else 'None'}\n"
     )
     base = {
         "format": "dinkster.base/1",
         "variant": "user-target",
-        "platform": {"os": "linux", "arch": "x86_64"},
+        "platform": {"os": "macos" if device == "mps" else "linux", "arch": "x86_64"},
         "python": "3.14.10",
         "interpreter": {"executable": "python/bin/python3"},
         "wheels": [
@@ -296,6 +298,78 @@ def custom_generation(root: Path, device: str) -> Path:
     ).write(generation / "generation.json")
     (generation / "dinkster.lock").write_text(Lockfile().record_json())
     return generation
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "rocm", "xpu", "mps"])
+def test_acquired_base_device_matches_sealed_target(tmp_path: Path, device: str) -> None:
+    from dinkster.workflow_requirements import acquired_base_device, generation_device
+
+    generation = custom_generation(tmp_path, device)
+    base = json.loads((generation / "base-manifest.json").read_bytes())
+    metadata = generation / "python/lib/python3.14/site-packages/torch/version.py"
+    wheel = tmp_path / base["wheels"][0]["filename"]
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "torch/version.py", metadata.read_bytes() + b"raise RuntimeError('executed')\n"
+        )
+    base["wheels"][0].update(
+        size=wheel.stat().st_size, sha256=hashlib.sha256(wheel.read_bytes()).hexdigest()
+    )
+    before = {path: path.read_bytes() for path in generation.rglob("*") if path.is_file()}
+    assert acquired_base_device(base, wheel) == device
+    assert generation_device(generation, "user-target") == device
+    assert {path: path.read_bytes() for path in before} == before
+    with wheel.open("r+b") as stream:
+        stream.seek(-1, os.SEEK_END)
+        stream.write(b"x")
+    with pytest.raises(RequirementError, match="torch wheel differs from its manifest"):
+        acquired_base_device(base, wheel)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "problem", "message"),
+    [
+        ("__version__='2.5.0'\ncuda=None\nhip=None\n", "size", "differs from its manifest"),
+        ("__version__='2.5.0'\ncuda=None\nhip=None\n", "duplicate", "one torch/version.py"),
+        ("__version__='2.5.0'\ncuda='12.4'\nhip='6.0'\n", None, "conflicting device"),
+        ("__version__='2.6.0'\ncuda=None\nhip=None\n", None, "version differs"),
+        ("__version__='2.5.0'\ncuda=str(12.4)\nhip=None\n", None, "literal"),
+        ("__version__='2.5.0'\ncuda=None\ncuda='12.4'\nhip=None\n", None, "repeated"),
+        ("__version__='2.5.0'\n", None, "no declared device"),
+        ("__version__='2.5.0'\ncuda=7\nhip=None\n", None, "invalid device"),
+        ("__version__='2.5.0'\ncuda=None\nhip=None\nif True: cuda='12.4'\n", None, "top-level"),
+        ("__version__='2.5.0'\ncuda=\nhip=None\n", None, "not valid Python"),
+    ],
+)
+def test_acquired_base_device_refuses_unverified_or_ambiguous_metadata(
+    tmp_path: Path, metadata: str, problem: str | None, message: str
+) -> None:
+    from dinkster.workflow_requirements import acquired_base_device, generation_device
+
+    generation = custom_generation(tmp_path, "cpu")
+    base = json.loads((generation / "base-manifest.json").read_bytes())
+    wheel = tmp_path / base["wheels"][0]["filename"]
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("torch/version.py", metadata)
+        if problem == "duplicate":
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                archive.writestr("torch/version.py", metadata)
+    base["wheels"][0].update(
+        size=wheel.stat().st_size + (problem == "size"),
+        sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(RequirementError, match=message):
+        acquired_base_device(base, wheel)
+    if problem is None:
+        version = generation / "python/lib/python3.14/site-packages/torch/version.py"
+        version.write_text(metadata)
+        record = json.loads((generation / "generation.json").read_bytes())
+        record["files"][version.relative_to(generation).as_posix()] = (
+            "sha256:" + hashlib.sha256(version.read_bytes()).hexdigest()
+        )
+        (generation / "generation.json").write_text(json.dumps(record))
+        with pytest.raises(RequirementError, match=message):
+            generation_device(generation, "user-target")
 
 
 @pytest.mark.parametrize(

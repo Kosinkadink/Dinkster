@@ -163,8 +163,10 @@
   available for read-only comparisons; no target is inferred from hardware.
   A selected custom generation uses its validated base and inventoried torch
   build metadata for device compatibility, without importing torch or probing
-  host hardware. GPU-only packs still refuse a CPU custom base. Unknown custom
-  comparison targets require their own generation rather than a guessed device.
+  host hardware. Missing, nonliteral, repeated or conflicting device declarations
+  refuse planning rather than guessing a device. GPU-only packs still refuse a
+  CPU custom base. Unknown custom comparison targets require their own generation
+  rather than a guessed device.
   Project plans can select that target with `--generation`; installed pack
   versions still come from `--source-generation`. Applying a project plan checks
   device compatibility against the target generation, not the previous base.

@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from zipfile import BadZipFile, ZipFile
 
 from dinkster_assets import AssetRef, AssetSource, PackagedSource, RemoteSource
 from dinkster_workers import PackManifest
@@ -220,8 +221,53 @@ def generation_device(generation: Path, variant: str) -> str:
     data = path.read_bytes()
     if path.is_symlink() or "sha256:" + hashlib.sha256(data).hexdigest() != files.get(name):
         raise RequirementError("generation torch build metadata differs from its inventory")
+    return _torch_device(data, version=cast("str", torch["version"]), system=cast("str", system))
+
+
+def acquired_base_device(base: Mapping[str, object], wheel: Path) -> str:
+    """Derive preflight device from the verified acquired base's exact retained torch wheel."""
+    wheels = cast("list[dict[str, object]]", base["wheels"])
+    rows = [row for row in wheels if row["name"] == "torch"]
+    if len(rows) != 1:
+        raise RequirementError("acquired base must declare one torch wheel")
+    row = rows[0]
+    if (
+        wheel.is_symlink()
+        or not wheel.is_file()
+        or wheel.name != row["filename"]
+        or wheel.stat().st_size != row["size"]
+    ):
+        raise RequirementError("acquired torch wheel differs from its manifest")
+    with wheel.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != row["sha256"]:
+            raise RequirementError("acquired torch wheel differs from its manifest")
+        stream.seek(0)
+        try:
+            with ZipFile(stream) as archive:
+                members = [row for row in archive.infolist() if row.filename == "torch/version.py"]
+                if len(members) != 1:
+                    raise RequirementError("acquired torch wheel must contain one torch/version.py")
+                data = archive.read(members[0])
+        except BadZipFile as exc:
+            raise RequirementError("acquired torch wheel metadata is invalid") from exc
+    system = cast("dict[str, object]", base["platform"])["os"]
+    return _torch_device(data, version=cast("str", row["version"]), system=cast("str", system))
+
+
+def _torch_device(data: bytes, *, version: str, system: str) -> str:
+    """Read literal torch build declarations without executing the metadata module."""
     metadata: dict[str, object] = {}
-    for statement in ast.parse(data).body:
+    fields = {"__version__", "cuda", "hip", "rocm", "xpu"}
+    try:
+        module = ast.parse(data)
+    except (SyntaxError, ValueError) as exc:
+        raise RequirementError("torch build metadata is not valid Python") from exc
+    declarations = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id in fields
+    ]
+    for statement in module.body:
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
             target, value = statement.target, statement.value
         elif (
@@ -232,18 +278,35 @@ def generation_device(generation: Path, variant: str) -> str:
             target, value = statement.targets[0], statement.value
         else:
             continue
-        if isinstance(value, ast.Constant):
-            metadata[target.id] = value.value
-    if metadata.get("__version__") != torch["version"]:
-        raise RequirementError("generation torch version differs from its base")
+        if target.id not in fields:
+            continue
+        if target.id in metadata:
+            raise RequirementError("torch build metadata has repeated declarations")
+        if not isinstance(value, ast.Constant):
+            raise RequirementError("torch build metadata requires literal declarations")
+        metadata[target.id] = value.value
+    if len(declarations) != len(metadata):
+        raise RequirementError(
+            "torch build metadata requires unique top-level literal declarations"
+        )
+    if metadata.get("__version__") != version:
+        raise RequirementError("torch version differs from its base")
+    devices: set[str] = set()
     for field, device in (("hip", "rocm"), ("rocm", "rocm"), ("cuda", "cuda"), ("xpu", "xpu")):
-        if metadata.get(field):
-            return device
-    if system == "macos":
-        return "mps"
+        value = metadata.get(field)
+        if value is not None:
+            if not isinstance(value, str) or not value.strip():
+                raise RequirementError("torch build metadata has an invalid device declaration")
+            devices.add(device)
+    if len(devices) > 1 or (
+        metadata.get("hip") and metadata.get("rocm") and metadata["hip"] != metadata["rocm"]
+    ):
+        raise RequirementError("torch build metadata has conflicting device declarations")
+    if devices:
+        return devices.pop()
     if "cuda" in metadata and "hip" in metadata:
-        return "cpu"
-    raise RequirementError("generation torch build has no declared device family")
+        return "mps" if system == "macos" else "cpu"
+    raise RequirementError("torch build has no declared device family")
 
 
 def manifest_unavailability(
