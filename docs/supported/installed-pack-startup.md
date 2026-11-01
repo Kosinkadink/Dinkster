@@ -36,6 +36,14 @@
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
+- Public archive admission verifies deterministic source ZIPs with bounded
+  portable paths, validates manifest publication metadata, runs static doctor
+  and a bounded isolated executable probe, and distinguishes security blocks
+  from files requiring review. These checks need no private checkout, registry
+  database or publication credentials. Missing or degraded probe isolation
+  refuses rather than skipping executable checks. Manifests may declare a paired
+  public pack version and PEP 440 engine range; admission can reject a version
+  outside that range without importing pack code.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
