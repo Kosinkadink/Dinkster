@@ -137,6 +137,7 @@ from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from .mesh import MESH_NODES
+from .mesh_bake import BakeAmbientOcclusion
 from .mesh_decimate import DecimateMesh
 from .mesh_holes import FillHoles
 from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
@@ -567,6 +568,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     RenderUVAtlas,
     UnwrapMesh,
     ApplyTextureToMesh,
+    BakeAmbientOcclusion,
     FillHoles,
     Get3DComponents,
     DecimateMesh,

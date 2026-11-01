@@ -14,6 +14,7 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.mesh_bake import BakeAmbientOcclusion
 from dinkster_nodes_comfy.mesh_decimate import DecimateMesh
 from dinkster_nodes_comfy.mesh_holes import FillHoles
 from dinkster_nodes_comfy.mesh_remesh import RemeshMesh
@@ -60,6 +61,13 @@ assert [slot.id for slot in schema.inputs] == [
 ]
 assert [slot.id for slot in schema.outputs] == ['IMAGE', 'MASK']
 assert 'dinkster_nodes_comfy.mesh_render_ops' not in sys.modules
+assert COMFY_NODES.count(BakeAmbientOcclusion) == manifest.namespaces.count('BakeAmbientOcclusion') == 1
+schema = BakeAmbientOcclusion.schema()
+assert [slot.id for slot in schema.inputs] == [
+    'low_poly', 'high_poly', 'resolution', 'samples', 'max_distance', 'strength', 'bias'
+]
+assert schema.outputs[0].type.types == ('IMAGE',)
+assert 'dinkster_nodes_comfy.mesh_bake_ops' not in sys.modules
 """,
         ],
         capture_output=True,
