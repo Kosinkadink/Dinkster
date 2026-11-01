@@ -18,6 +18,7 @@ import pytest
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
+    prepare_engine_interpreter,
     stage_pack_sources,
 )
 from dinkster_supervisor.environment_state import (
@@ -883,6 +884,37 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert first.in_process_packs == ("fixture",)
     first_dir = root / "generations" / "1"
     set_current(root, 1)
+    constraints.write_text(
+        f"stable-fixture==1.0 --hash=sha256:{stable_hash}\n"
+        f"changed-fixture==2.0 --hash=sha256:{second_hash}\n"
+    )
+    scratch = store / "preflight"
+    target = prepare_engine_interpreter(
+        scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+    )
+    assert (
+        subprocess.check_output(
+            [
+                str(target),
+                "-B",
+                "-c",
+                "import stable_fixture,changed_fixture; "
+                "print(stable_fixture.VALUE+changed_fixture.VALUE)",
+            ]
+        ).strip()
+        == b"47"
+    )
+    assert {path.name for path in scratch.iterdir()} == {"python", "constraints.txt"}
+    assert read_current(root) == 1
+    assert first.drift(first_dir) == ()
+    assert not list(base.rglob("stable_fixture.py"))
+    assert not list(base.rglob("changed_fixture.py"))
+    with pytest.raises(EnvironmentError, match="destination already exists"):
+        prepare_engine_interpreter(
+            scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+        )
+    assert target.is_file()
+    shutil.rmtree(scratch)
     second = build(2, "2.0", second_hash)
     second_dir = root / "generations" / "2"
     assert read_current(root) == 1

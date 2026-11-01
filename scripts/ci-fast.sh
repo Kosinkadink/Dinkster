@@ -23,8 +23,20 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_installer.py::test_http_registry_fetcher_uses_verified_download_ticket \
+  tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_ticket_size \
+  tests/test_installer.py::test_cli_restore_downloads_registry_sources \
+  tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
+  tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
+  tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
+  tests/test_installer.py::test_registry_source_identity_comes_from_verified_archive \
+  tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \
+  tests/test_installer.py::test_cli_prepares_compatible_registry_sources_without_generation_mutation \
+  tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
+  tests/test_installer.py::test_generation_source_staging_cli \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
+  tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
@@ -38,6 +50,9 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
+  tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
+  tests/test_manifest.py::test_pack_declares_independent_version_and_engine_compatibility \
+  tests/test_manifest.py::test_pack_rejects_invalid_version_or_engine_declaration \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_preserves_first_authority \
   tests/test_audio_lazy.py::test_native_comfy_audio_registration_is_torch_free \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \

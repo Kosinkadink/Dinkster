@@ -1,5 +1,7 @@
 [pack]
 name = "dinkster-nodes-remote"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = ["httpx>=0.28,<1"]
 namespaces = ["dinkster.remote"]

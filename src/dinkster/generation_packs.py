@@ -26,6 +26,7 @@ from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.pack_lock import resolve_pack_lock
 from dinkster_workers.provision import ProvisionError
 
+from . import __version__ as engine_version
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
 
@@ -38,6 +39,11 @@ def _manifest(root: Path, entry: LockedPack) -> PackManifest:
         raise CompositionError(f"generation pack {entry.pack!r} manifest claims differ from lock")
     if manifest.publisher and canonical_name(manifest.publisher) != entry.publisher:
         raise CompositionError(f"generation pack {entry.pack!r} publisher differs from lock")
+    if manifest.compatibility is not None:
+        try:
+            manifest.compatibility.require_engine(entry.pack, engine_version)
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
     return manifest
 
 

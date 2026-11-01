@@ -326,6 +326,102 @@ def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -
         )
 
 
+def prepare_engine_interpreter(
+    destination: Path,
+    *,
+    store: Path,
+    base: str,
+    constraints: Path,
+    uv: str = "uv",
+    refresh_cache: bool = False,
+) -> Path:
+    """Prepare acquired engine inputs in a new caller-owned, unsealed directory.
+
+    The caller holds the store writer lock and owns destination cleanup on both
+    success and failure. No project, journal, pack or generation record is written.
+    """
+    digest(base)
+    source = store / "bases" / base.removeprefix("sha256:") / "python"
+    if destination.exists():
+        raise EnvironmentError(f"interpreter destination already exists: {destination}")
+    if not source.is_dir():
+        raise EnvironmentError(f"base {base} is not in the local store")
+    parent = destination.parent
+    while not parent.exists():
+        parent = parent.parent
+    if source.stat().st_dev != parent.stat().st_dev:
+        raise EnvironmentError("project and wheel store must be on the same volume")
+    if not constraints.is_file():
+        raise EnvironmentError("effective constraints.txt is missing")
+
+    def ignore_bytecode(directory: str, names: list[str]) -> set[str]:
+        return {
+            name
+            for name in names
+            if name == "__pycache__"
+            or "__pycache__"
+            in (Path(directory) / name).resolve().relative_to(source.resolve()).parts
+        }
+
+    destination.mkdir(parents=True)
+    shutil.copytree(
+        source,
+        destination / "python",
+        copy_function=link_file,
+        ignore=ignore_bytecode,
+    )
+    shutil.copyfile(constraints, destination / "constraints.txt")
+    python = interpreter(destination)
+    if not python.is_file():
+        raise EnvironmentError(f"base has no generation interpreter: {python}")
+    base_python = source / python.relative_to(destination / "python")
+    link_mode = "hardlink" if python.samefile(base_python) else "clone"
+    wheels = store / "wheels"
+    hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
+    links = [
+        wheels,
+        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+    ]
+    command = [
+        uv,
+        "pip",
+        "sync",
+        "--python",
+        str(python),
+        # Standalone bases may carry a manager marker; only this owned target is writable.
+        "--break-system-packages",
+        "--offline",
+        "--no-index",
+        "--require-hashes",
+        "--only-binary",
+        ":all:",
+        "--link-mode",
+        link_mode,
+    ]
+    for directory in links:
+        command.extend(["--find-links", str(directory)])
+    command.append(str(destination / "constraints.txt"))
+    environment = {
+        **os.environ,
+        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_OFFLINE": "1",
+        "UV_NO_INDEX": "1",
+        "UV_PYTHON_DOWNLOADS": "never",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    if refresh_cache:
+        # A hand-edited hardlink can also corrupt uv's extracted cache.
+        cleaned = subprocess.run(
+            [uv, "cache", "clean"], env=environment, capture_output=True, text=True
+        )
+        if cleaned.returncode:
+            raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
+    result = subprocess.run(command, env=environment, capture_output=True, text=True)
+    if result.returncode:
+        raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+    return python
+
+
 def build_generation(
     *,
     root: Path,
@@ -368,81 +464,17 @@ def build_generation(
     destination = root / "generations" / str(number)
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
-    if not source.is_dir():
-        raise EnvironmentError(f"base {base} is not in the local store")
-    if source.stat().st_dev != root.stat().st_dev:
-        raise EnvironmentError("project and wheel store must be on the same volume")
-    if not constraints.is_file():
-        raise EnvironmentError("effective constraints.txt is missing")
-
-    def ignore_bytecode(directory: str, names: list[str]) -> set[str]:
-        return {
-            name
-            for name in names
-            if name == "__pycache__"
-            or "__pycache__"
-            in (Path(directory) / name).resolve().relative_to(source.resolve()).parts
-        }
-
-    destination.mkdir(parents=True)
     try:
-        shutil.copytree(
-            source,
-            destination / "python",
-            copy_function=link_file,
-            ignore=ignore_bytecode,
+        prepare_engine_interpreter(
+            destination,
+            store=store,
+            base=base,
+            constraints=constraints,
+            uv=uv,
+            refresh_cache=refresh_cache,
         )
-        shutil.copyfile(constraints, destination / "constraints.txt")
         if source_kind == "local" or (source.parent / "manifest.json").is_file():
             shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
-        python = interpreter(destination)
-        if not python.is_file():
-            raise EnvironmentError(f"base has no generation interpreter: {python}")
-        base_python = source / python.relative_to(destination / "python")
-        link_mode = "hardlink" if python.samefile(base_python) else "clone"
-        wheels = store / "wheels"
-        hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
-        links = [
-            wheels,
-            *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
-        ]
-        command = [
-            uv,
-            "pip",
-            "sync",
-            "--python",
-            str(python),
-            # Standalone bases may carry a manager marker; only this owned target is writable.
-            "--break-system-packages",
-            "--offline",
-            "--no-index",
-            "--require-hashes",
-            "--only-binary",
-            ":all:",
-            "--link-mode",
-            link_mode,
-        ]
-        for directory in links:
-            command.extend(["--find-links", str(directory)])
-        command.append(str(destination / "constraints.txt"))
-        environment = {
-            **os.environ,
-            "UV_CACHE_DIR": str(store / "uv-cache"),
-            "UV_OFFLINE": "1",
-            "UV_NO_INDEX": "1",
-            "UV_PYTHON_DOWNLOADS": "never",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
-        if refresh_cache:
-            # A hand-edited hardlink can also corrupt uv's extracted cache.
-            cleaned = subprocess.run(
-                [uv, "cache", "clean"], env=environment, capture_output=True, text=True
-            )
-            if cleaned.returncode:
-                raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
-        result = subprocess.run(command, env=environment, capture_output=True, text=True)
-        if result.returncode:
-            raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
         provisioned: set[str] = set()
         if (
             source_generation is not None
@@ -522,5 +554,6 @@ def build_generation(
         generation.write(destination / "generation.json")
         return generation
     except BaseException:
-        shutil.rmtree(destination)
+        if destination.exists():
+            shutil.rmtree(destination)
         raise

@@ -178,6 +178,7 @@ def http_registry_fetcher(
             ticket = cast("dict[str, object]", ticket_raw)
             url = ticket.get("url")
             digest = ticket.get("artifactDigest")
+            size = ticket.get("artifactSize")
             required_headers = ticket.get("requiredHeaders", {})
             if (
                 not isinstance(url, str)
@@ -189,12 +190,20 @@ def http_registry_fetcher(
                 )
             ):
                 raise ValueError("ticket fields do not match the locked release")
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise ValueError("ticket artifactSize must be a nonnegative integer")
             url = urllib.parse.urljoin(base + "/", url)
             if not url.startswith(("http://", "https://")):
                 raise ValueError("ticket URL is not HTTP(S)")
             request = urllib.request.Request(url, headers=cast("dict[str, str]", required_headers))  # noqa: S310 - service-issued ticket URL
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                return response.read()
+                data = response.read(size + 1)
+            if len(data) != size:
+                raise ValueError(
+                    f"archive size differs from ticket: expected {size}, got {len(data)}; "
+                    "refusing to return unverified bytes"
+                )
+            return data
         except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise InstallError(
                 f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"

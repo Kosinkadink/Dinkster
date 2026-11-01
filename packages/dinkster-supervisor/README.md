@@ -400,6 +400,14 @@ commands do not acquire these options.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 
+`environment_generations.prepare_engine_interpreter` prepares a new,
+caller-owned directory from an acquired base and effective hashed constraints.
+It returns the target Python after the same offline sync used by generation
+construction. The caller holds the store writer lock and owns directory cleanup,
+including failures. This operation does not acquire inputs, prepare packs or
+write project, journal or generation metadata. Generation construction separately
+retains base provenance, prepares packs and seals the inventory.
+
 Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
 and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the

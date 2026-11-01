@@ -151,10 +151,24 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
         ("lock", "unsupported lockfile format"),
         ("sealed", "fresh, unsealed"),
         ("relative", "absolute paths"),
+        (
+            "engine-below",
+            "pack example@1.2.3 declares engine >=0.0.3; engine 0.0.2 is incompatible",
+        ),
+        ("engine-above", "pack example@1.2.3 declares engine <0.0.2; engine 0.0.2 is incompatible"),
     ],
 )
 def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
     pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
+    engine = {"engine-below": ">=0.0.3", "engine-above": "<0.0.2"}.get(
+        problem or "", ">=0.0.2.dev0,<0.1"
+    )
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text().replace(
+            "[pack]\n", f'[pack]\nversion = "1.2.3"\nengine = "{engine}"\n'
+        )
+    )
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     archive = artifacts / "temporary.zip"
@@ -2416,12 +2430,13 @@ def _serve_artifacts(
     return server
 
 
-def _download_ticket(entry: LockedPack) -> bytes:
+def _download_ticket(entry: LockedPack, data: bytes) -> bytes:
     return json.dumps(
         {
             "packName": entry.pack,
             "version": entry.version,
             "artifactDigest": entry.artifact_digest,
+            "artifactSize": len(data),
             "url": f"/v1/artifacts/{entry.artifact_digest}",
             "requiredHeaders": {},
         }
@@ -2441,7 +2456,7 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
     ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
     artifact_path = f"/v1/artifacts/{release.artifact_digest}"
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release), artifact_path: data}, requests
+        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -2463,6 +2478,51 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
         http_registry_fetcher("file:///etc")
     with pytest.raises(InstallError, match="failed"):
         http_registry_fetcher("http://127.0.0.1:1")(release)  # connection refused
+
+
+@pytest.mark.parametrize(
+    ("size", "malformed"),
+    [
+        (None, True),
+        ("missing", True),
+        (True, True),
+        (False, True),
+        (-1, True),
+        ("2", True),
+        (2.5, True),
+        (0, False),
+        (1, False),
+        (3, False),
+    ],
+)
+def test_http_registry_fetcher_rejects_invalid_ticket_size(size: object, malformed: bool) -> None:
+    release = LockedPack("demo", "1.0.0", "blake3:" + "1" * 64, "acme", ())
+    data = b"ab"
+    ticket = json.loads(_download_ticket(release, data))
+    if size == "missing":
+        del ticket["artifactSize"]
+    else:
+        ticket["artifactSize"] = size
+    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(
+        {
+            ticket_path: json.dumps(ticket).encode(),
+            f"/v1/artifacts/{release.artifact_digest}": data,
+        },
+        requests,
+    )
+    try:
+        reason = (
+            "artifactSize must be a nonnegative integer" if malformed else "archive size differs"
+        )
+        with pytest.raises(InstallError, match=reason) as refusal:
+            http_registry_fetcher(f"http://127.0.0.1:{server.server_port}")(release)
+        assert "demo@1.0.0" in str(refusal.value)
+        if malformed:
+            assert requests == [(ticket_path, None)]
+    finally:
+        server.shutdown()
 
 
 def test_cli_restore_downloads_registry_sources(
@@ -2497,7 +2557,7 @@ def test_cli_restore_downloads_registry_sources(
     ticket_path = f"/v1/packs/{locked.pack}/versions/{locked.version}/download-tickets"
     artifact_path = f"/v1/artifacts/{locked.artifact_digest}"
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(locked), artifact_path: data}, requests
+        {ticket_path: _download_ticket(locked, data), artifact_path: data}, requests
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -2521,8 +2581,8 @@ def test_cli_restore_downloads_registry_sources(
         # a lying server: different bytes refuse, nothing activates
         lying = _serve_artifacts(
             {
-                ticket_path: _download_ticket(locked),
-                artifact_path: b"different bytes entirely",
+                ticket_path: _download_ticket(locked, data),
+                artifact_path: b"x" * len(data),
             },
             [],
         )
@@ -2783,6 +2843,509 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("minimum", "engine", "expected"),
+    [
+        ("1.0", "0.5", "10.0"),
+        ("1.0", "0.6", "2.8rc1"),
+        ("1.0", "0.4", "1.5"),
+        ("1.5", "0.4", "1.5"),
+        ("2.0", "0.4", None),
+        ("1.0", "0.3", None),
+    ],
+)
+def test_registry_resolves_newest_compatible_pack_across_all_pages(
+    minimum: str, engine: str, expected: str | None
+) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    versions = [
+        ("12.0", ">=0.7,<0.9", "active"),
+        ("11.0", ">=0.4,<0.7", "yanked"),
+        ("10.0", ">=0.5,<0.6", "active"),
+        ("2.9", ">=0.4,<0.7", "pending_review"),
+        ("2.8rc1", ">=0.6,<0.7", "active"),
+        ("2.7", ">=0.5,<0.6", "active"),
+        ("1.5", ">=0.4,<0.5", "active"),
+    ]
+    digests = {
+        version: "blake3:" + f"{index:064x}"
+        for index, (version, _, _) in enumerate(versions, start=1)
+    }
+    files: dict[str, bytes] = {}
+    for cursor, rows, following in (("", versions[:2], "older"), ("older", versions[2:], None)):
+        path = "/v1/packs/demo/versions?limit=100" + (f"&cursor={cursor}" if cursor else "")
+        files[path] = json.dumps(
+            {
+                "items": [
+                    {"version": version, "dinkster": bounds, "state": state}
+                    for version, bounds, state in rows
+                ],
+                "nextCursor": following,
+            }
+        ).encode()
+    for version, bounds, state in versions:
+        entry = LockedPack("demo", version, digests[version], "dinkster", ())
+        files[f"/v1/packs/demo/versions/{version}"] = _release_record(
+            entry, state=state, manifest={"dinkster": bounds}
+        )
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        if expected is None:
+            with pytest.raises(InstallError, match=f"demo.*{minimum}.*{engine}"):
+                resolve_compatible_release(registry, "demo", minimum, engine)
+        else:
+            selected = resolve_compatible_release(registry, "demo", minimum, engine)
+            assert selected.version == expected
+            assert selected.artifact_digest == digests[expected]
+            assert selected.pack == "demo"
+            assert selected.source == registry.source
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize("detail", [{"state": "yanked"}, {"manifest": {"dinkster": ">=0.8,<0.9"}}])
+def test_registry_selection_rechecks_exact_release_before_install(
+    detail: dict[str, object],
+) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    entry = LockedPack("demo", "3.1", "blake3:" + "b" * 64, "dinkster", ())
+    files = {
+        "/v1/packs/demo/versions?limit=100": json.dumps(
+            {"items": [{"version": "3.1", "dinkster": ">=0.4,<0.7", "state": "active"}]}
+        ).encode(),
+        "/v1/packs/demo/versions/3.1": _release_record(
+            entry, **{"state": "active", "manifest": {"dinkster": ">=0.4,<0.7"}, **detail}
+        ),
+    }
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        with pytest.raises(InstallError, match="demo@3.1"):
+            resolve_compatible_release(registry, "demo", "1.0", "0.5")
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"items": "bad"},
+        {"items": [42]},
+        {"items": [{"version": "1.0", "state": "active"}]},
+        {"items": [{"version": "v1.0", "dinkster": ">=0.4", "state": "active"}]},
+        {"items": [{"version": "1.0", "dinkster": "", "state": "active"}]},
+        {"items": [], "nextCursor": False},
+        {"items": [], "nextCursor": "again"},
+    ],
+)
+def test_registry_compatible_selection_refuses_malformed_pages(page: dict[str, object]) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    payload = json.dumps(page).encode()
+    server = _serve_artifacts(
+        {
+            "/v1/packs/demo/versions?limit=100": payload,
+            "/v1/packs/demo/versions?limit=100&cursor=again": payload,
+        },
+        [],
+    )
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        with pytest.raises(InstallError, match="registry.*versions of demo"):
+            resolve_compatible_release(registry, "demo", "1.0", "0.5")
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [None, "digest", "path", "name", "version", "publisher", "declaration", "below", "above"],
+)
+def test_registry_source_identity_comes_from_verified_archive(
+    tmp_path: Path, problem: str | None
+) -> None:
+    import zipfile
+
+    from dinkster_registry import artifact_digest
+
+    from dinkster.compose import CompositionError
+    from dinkster.generation_packs import stage_generation_packs
+    from dinkster.registries import NamedRegistry, registry_source_lock, resolve_compatible_release
+
+    pack = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
+    name = "other" if problem == "name" else "demo"
+    version = "2.3.2" if problem == "version" else "2.3.1"
+    publisher = "" if problem == "publisher" else "acme"
+    declaration = (
+        "" if problem == "declaration" else f'version = "{version}"\nengine = ">=0.0.2.dev0,<0.7"\n'
+    )
+    (pack / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
+        + declaration
+        + 'namespaces = ["demo.tools"]\n[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    archive = tmp_path / "published.zip"
+    digest = build_artifact(pack, archive)
+    if problem == "path":
+        with zipfile.ZipFile(archive, "a") as unsafe:
+            unsafe.writestr("../escape.txt", "must not be extracted")
+        digest = artifact_digest(archive.read_bytes())
+    release = LockedPack("demo", "2.3.1", digest, "audit-actor", ())
+    files = {
+        "/v1/packs/demo/versions?limit=100": json.dumps(
+            {"items": [{"version": "2.3.1", "dinkster": ">=0.0.2.dev0,<0.7", "state": "active"}]}
+        ).encode(),
+        "/v1/packs/demo/versions/2.3.1": _release_record(
+            release, state="active", manifest={"dinkster": ">=0.0.2.dev0,<0.7"}
+        ),
+        "/v1/packs/demo/versions/2.3.1/download-tickets": _download_ticket(
+            release, archive.read_bytes()
+        ),
+        f"/v1/artifacts/{digest}": (
+            b"x" * archive.stat().st_size if problem == "digest" else archive.read_bytes()
+        ),
+    }
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="official", endpoint=f"http://127.0.0.1:{server.server_port}")
+        selected = resolve_compatible_release(registry, "demo", "2.0", "0.5")
+        cached = tmp_path / f"{digest[7:]}.zip"
+        cached.write_bytes(http_registry_fetcher(registry.endpoint)(selected))
+        engine = {"below": "0.0.1", "above": "0.7"}.get(problem or "", "0.5")
+        if problem:
+            reason = {
+                "digest": "digest mismatch",
+                "path": "escapes the destination",
+                "name": "archive manifest names 'other'",
+                "version": "archive manifest version is 2.3.2",
+                "publisher": "archive manifest has no publisher",
+                "declaration": "archive manifest has no pack version and engine range",
+                "below": "declares engine >=0.0.2.dev0,<0.7; engine 0.0.1 is incompatible",
+                "above": "declares engine >=0.0.2.dev0,<0.7; engine 0.7 is incompatible",
+            }[problem]
+            with pytest.raises(InstallError, match="demo@2.3.1") as refusal:
+                registry_source_lock(selected, cached, engine_version=engine)
+            assert reason in str(refusal.value)
+        else:
+            entry = registry_source_lock(selected, cached, engine_version=engine)
+            assert entry == LockedPack(
+                "demo", "2.3.1", digest, "acme", ("demo-tools",), "registry:official"
+            )
+            assert entry.publisher != selected.publisher
+            assert cached.read_bytes() == archive.read_bytes()
+            generation = tmp_path / "generation"
+            generation.mkdir()
+            stage_generation_packs(generation, Lockfile.of([entry]), {"demo": cached})
+            assert Lockfile.from_record_json(
+                (generation / "dinkster.lock").read_text()
+            ) == Lockfile.of([entry])
+            for tampered, field in (
+                (replace(entry, claims=("other",)), "claims"),
+                (replace(entry, publisher="another-publisher"), "publisher"),
+            ):
+                rejected = tmp_path / field
+                rejected.mkdir()
+                with pytest.raises(CompositionError, match="claims differ|publisher differs"):
+                    stage_generation_packs(rejected, Lockfile.of([tampered]), {"demo": cached})
+                assert not (rejected / "dinkster.lock").exists()
+    finally:
+        server.shutdown()
+
+
+def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
+    import tomllib
+
+    from packaging.version import Version
+
+    from dinkster.registries import DEFAULT_PACKS_PATH, default_pack_minimums
+
+    declared = default_pack_minimums()
+    assert tomllib.loads(DEFAULT_PACKS_PATH.read_text()) == {"packs": declared}
+    assert set(declared) == {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
+        "dinkster-vision-rtdetr",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
+    }
+    root = Path(__file__).resolve().parents[1]
+    manifests = {
+        manifest.name: manifest
+        for path in (root / "packages").glob("dinkster-nodes-*/**/dinkster-pack.toml")
+        for manifest in (installer_module.load_manifest(path),)
+    }
+    for pack, minimum in declared.items():
+        compatibility = manifests[pack].compatibility
+        assert compatibility is not None
+        assert Version(minimum) <= Version(compatibility.version)
+
+
+@pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])
+def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    from dinkster import __version__
+    from dinkster.registries import default_pack_minimums
+
+    pack_name = "dinkster-nodes-foundation"
+    source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
+    (source / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
+        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["std"]\n'
+        '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    archive = tmp_path / "published.zip"
+    digest = build_artifact(source, archive)
+    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    files = {
+        f"/v1/packs/{pack_name}/versions?limit=100": json.dumps(
+            {
+                "items": [
+                    {"version": "0.0.4", "dinkster": ">=0.2", "state": "active"},
+                    {"version": "0.0.3", "dinkster": ">=0.0.2.dev0,<0.1", "state": "active"},
+                ]
+            }
+        ).encode(),
+        f"/v1/packs/{pack_name}/versions/0.0.3": _release_record(
+            release, state="active", manifest={"dinkster": ">=0.0.2.dev0,<0.1"}
+        ),
+        f"/v1/packs/{pack_name}/versions/0.0.3/download-tickets": _download_ticket(
+            release, archive.read_bytes()
+        ),
+        f"/v1/artifacts/{digest}": (
+            b"x" * archive.stat().st_size if mode == "corrupt" else archive.read_bytes()
+        ),
+    }
+    server = _serve_artifacts({} if mode == "offline" else files, [])
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "current").write_text("7\n")
+    (root / "project.json").write_text('{"unchanged": true}\n')
+    before = {path.name: path.read_bytes() for path in root.iterdir()}
+    output = tmp_path / "prepared" / "dinkster.lock"
+    artifacts = tmp_path / "artifacts"
+    args = [
+        "--root",
+        str(root),
+        "--registry",
+        f"http://127.0.0.1:{server.server_port}",
+        "prepare-registry-sources",
+        "--catalog-lock",
+        str(output),
+        "--artifacts",
+        str(artifacts),
+    ]
+    if mode in {"partial", "offline"}:
+        args.append("--allow-missing")
+    else:
+        args.extend(["--minimum", f"{pack_name}@0.0.2"])
+        if mode == "strict":
+            args.extend(["--minimum", "missing@1.0"])
+    try:
+        if mode in {"strict", "corrupt"}:
+            with pytest.raises(SystemExit):
+                run_cli(*args)
+            error = capsys.readouterr().err
+            assert ("missing" if mode == "strict" else "digest mismatch") in error
+            assert not output.exists()
+            if mode == "corrupt":
+                assert not list(artifacts.iterdir())
+        else:
+            run_cli(*args)
+            report = json.loads(capsys.readouterr().out)
+            lock = Lockfile.from_record_json(output.read_text())
+            assert report["engineVersion"] == __version__
+            assert report["catalogLock"] == str(output)
+            assert report["artifacts"] == str(artifacts)
+            if mode == "offline":
+                assert not lock.packs and not report["packs"]
+                assert set(report["unavailable"]) == set(default_pack_minimums())
+            else:
+                assert lock.packs == (
+                    replace(
+                        release,
+                        publisher="dinkster",
+                        claims=("std",),
+                        source=f"registry:http://127.0.0.1:{server.server_port}",
+                    ),
+                )
+                assert report["packs"] == [pack_name]
+                cached = artifacts / f"{digest[7:]}.zip"
+                assert cached.read_bytes() == archive.read_bytes()
+                if mode == "partial":
+                    assert set(report["unavailable"]) == set(default_pack_minimums()) - {pack_name}
+                else:
+                    assert report["unavailable"] == {}
+                    files[f"/v1/artifacts/{digest}"] = b"x" * archive.stat().st_size
+                    run_cli(*args)
+                    assert json.loads(capsys.readouterr().out) == report
+                    retained = output.read_bytes()
+                    cached.write_bytes(b"x" * cached.stat().st_size)
+                    with pytest.raises(SystemExit):
+                        run_cli(*args)
+                    assert "digest mismatch" in capsys.readouterr().err
+                    assert output.read_bytes() == retained
+        assert {path.name: path.read_bytes() for path in root.iterdir()} == before
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "upgrade",
+        "url",
+        "bare",
+        "compatible",
+        "lower-only",
+        "offline",
+        "unknown",
+        "optional",
+        "in-place",
+        "empty",
+    ],
+)
+def test_cli_reresolves_installed_sources_without_mutating_project(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    from dinkster import __version__
+
+    pack_name = "dinkster-nodes-foundation"
+    source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
+    bounds = ">=0.0.2.dev0,<0.1"
+    (source / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
+        f'version = "0.0.3"\nengine = "{bounds}"\nnamespaces = ["std"]\n'
+        '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    archive = tmp_path / "published.zip"
+    digest = build_artifact(source, archive)
+    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    rows = [
+        {"version": "0.0.4", "dinkster": ">=0.2", "state": "active"},
+        {"version": "0.0.3", "dinkster": bounds, "state": "active"},
+        {
+            "version": "0.0.2",
+            "dinkster": bounds if mode == "compatible" else ">=0.2",
+            "state": "active",
+        },
+        {"version": "0.0.1", "dinkster": bounds, "state": "active"},
+    ]
+    files = {
+        f"/v1/packs/{pack_name}/versions?limit=100": json.dumps(
+            {"items": [row for row in rows if mode != "lower-only" or row["version"] != "0.0.3"]}
+        ).encode(),
+        f"/v1/packs/{pack_name}/versions/0.0.3": _release_record(
+            release, state="active", manifest={"dinkster": bounds}
+        ),
+        f"/v1/packs/{pack_name}/versions/0.0.3/download-tickets": _download_ticket(
+            release, archive.read_bytes()
+        ),
+        f"/v1/artifacts/{digest}": archive.read_bytes(),
+    }
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts({} if mode == "offline" else files, requests)
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}"
+        root = tmp_path / "project"
+        root.mkdir()
+        (root / "current").write_text("7\n")
+        (root / "project.json").write_text('{"unchanged": true}\n')
+        registry_source = {
+            "url": f"registry:{endpoint}",
+            "bare": "registry",
+            "unknown": "registry:missing",
+        }.get(mode, "registry:official")
+        old = replace(release, version="0.0.2", source=registry_source, publisher="dinkster")
+        local = LockedPack("my-local", "0.0.1", "blake3:" + "a" * 64, "dinkster", (), "local:/pack")
+        git = replace(local, pack="my-git", source="git:repo")
+        third_party = replace(local, pack="third-party", publisher="acme", source="registry:other")
+        installed = Lockfile.of([] if mode == "empty" else [old, local, git, third_party])
+        retained = root / "dinkster.lock"
+        retained.write_text(installed.record_json())
+        before = {path.name: path.read_bytes() for path in root.iterdir()}
+        config = tmp_path / "registries.toml"
+        config.write_text(
+            f'[registries.official]\nendpoint = "{endpoint}"\n'
+            f'[registries.other]\nendpoint = "{endpoint}/other"\ndefault = true\n'
+        )
+        output = tmp_path / "candidate.lock"
+        output.write_text("previous candidate\n")
+        args = [
+            "--root",
+            str(root),
+            "--registries",
+            str(config),
+            "--registry",
+            "official" if mode == "bare" else "other",
+            "prepare-registry-sources",
+            "--installed-lock",
+            str(retained),
+            "--catalog-lock",
+            str(retained if mode == "in-place" else output),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+        ]
+        if mode == "optional":
+            args.append("--allow-missing")
+        if mode in {"lower-only", "offline", "unknown", "optional", "in-place"}:
+            with pytest.raises(SystemExit):
+                run_cli(*args)
+            error = capsys.readouterr().err
+            if mode == "optional":
+                assert "--allow-missing is only valid for fresh" in error
+            elif mode == "in-place":
+                assert "candidate source lock must differ" in error
+            else:
+                assert f"updating installed {pack_name}@0.0.2 for engine {__version__}" in error
+                assert {
+                    "lower-only": "declares engine >=0.2",
+                    "offline": "HTTP 404",
+                    "unknown": "not configured",
+                }[mode] in error
+            assert output.read_text() == "previous candidate\n"
+        else:
+            run_cli(*args)
+            report = json.loads(capsys.readouterr().out)
+            result = Lockfile.from_record_json(output.read_text())
+            expected = Lockfile.of(
+                []
+                if mode == "empty"
+                else [
+                    replace(
+                        release,
+                        publisher="dinkster",
+                        claims=("std",),
+                        source=f"registry:{endpoint}" if mode == "url" else "registry:official",
+                    ),
+                    local,
+                    git,
+                    third_party,
+                ]
+            )
+            assert result == expected
+            assert report["packs"] == [entry.pack for entry in expected.packs]
+            assert report["unavailable"] == {}
+        assert {path.name: path.read_bytes() for path in root.iterdir()} == before
+        assert not any(path.startswith("/other/") for path, _ in requests)
+        if mode in {"empty", "unknown", "optional", "in-place"}:
+            assert not requests
+    finally:
+        server.shutdown()
+
+
 def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> None:
     """Browse asks ONE registry's pack index, parses rows strictly, and
     surfaces the query-bound keyset cursor; a malformed answer refuses
@@ -2901,7 +3464,7 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
 
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release), artifact_path: data}, requests
+        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -2952,7 +3515,7 @@ def test_cli_install_resolves_pack_version_from_named_registry(
     server = _serve_artifacts(
         {
             "/v1/packs/demo/versions/1.0.0": _release_record(release),
-            ticket_path: _download_ticket(release),
+            ticket_path: _download_ticket(release, data),
             artifact_path: data,
         },
         requests,

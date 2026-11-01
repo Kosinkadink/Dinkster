@@ -28,6 +28,38 @@
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
+- Pack manifests can declare an independent public pack version and a PEP 440
+  engine compatibility range. Invalid or incomplete declarations are rejected
+  without importing pack code. Every first-party node pack declares both,
+  including development and engine-carried generation packs.
+- The registry client can select the newest active pack version meeting a
+  minimum version and target engine range across paginated results. Active
+  prereleases inside those bounds remain eligible. The selected release is
+  checked again before returning its immutable artifact identity.
+- Official source archive builds can select exact pack ids and use each pack's
+  own manifest version, retaining its declared engine range in the archive.
+  Unknown pack ids and missing publication declarations refuse the build.
+- Registry archive inspection verifies the selected digest, safely extracts
+  the manifest without importing pack code, and checks its pack id, version
+  and engine range. Source publisher and namespaces describe that verified
+  content, not the publishing audit actor; they do not authenticate publisher
+  authority. Generation admission still rejects source identity mismatches.
+  Registry downloads also require the ticket's nonnegative integer archive
+  size and reject truncated or excess bytes before acquisition.
+- Registry source preparation resolves the committed default ids and minimum
+  versions, or an explicitly requested set, using the running engine's version.
+  It returns a verified source lock and digest-addressed archives without
+  changing a project or generation. Unavailable packs normally refuse the
+  operation; optional missing-default reporting can return an empty source set.
+- Installed-source preparation re-resolves official registry packs against the
+  target engine without adding defaults, dropping installed packs or downgrading
+  them. Recorded registries remain authoritative; third-party, local and git
+  selections remain unchanged for generation admission. Unavailable releases refuse
+  before the candidate source lock is written, even with missing-default opt-in.
+- Generation source admission checks each declared pack engine range against
+  the admitting interpreter's engine version before recording the source lock.
+  An incompatible range names the pack/version, range and target engine; a
+  refusal leaves the generation unsealed and its dependency inputs intact.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

@@ -1,5 +1,7 @@
 [pack]
 name = "dinkster-nodes-comfy"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
     "simpleeval==1.0.8",
@@ -323,6 +325,7 @@ namespaces = [
     "ImageRotate",
     "ImageFlip",
     "ImageScaleToMaxDimension",
+    "PadImageNode",
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
@@ -616,6 +619,9 @@ namespaces = [
     "SaveGaussianSplat",
     "SavePointCloud",
     "SplatToFile3D",
+    "ImageUpscaleWithModel",
+    "ImageHistogram",
+    "TextOverlay",
 ]
 
 [pack.sandbox]

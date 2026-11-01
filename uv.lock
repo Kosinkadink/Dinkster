@@ -1417,10 +1417,14 @@ version = "0.0.2"
 source = { editable = "packages/dinkster-schema" }
 dependencies = [
     { name = "dinkster-values" },
+    { name = "packaging" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "dinkster-values", editable = "packages/dinkster-values" }]
+requires-dist = [
+    { name = "dinkster-values", editable = "packages/dinkster-values" },
+    { name = "packaging", specifier = ">=24" },
+]
 
 [[package]]
 name = "dinkster-server"
