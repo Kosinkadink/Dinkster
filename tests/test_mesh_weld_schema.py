@@ -61,7 +61,8 @@ assert [slot.id for slot in schema.inputs] == [
 ]
 assert [slot.id for slot in schema.outputs] == ['IMAGE', 'MASK']
 assert 'dinkster_nodes_comfy.mesh_render_ops' not in sys.modules
-assert COMFY_NODES.count(BakeAmbientOcclusion) == manifest.namespaces.count('BakeAmbientOcclusion') == 1
+assert COMFY_NODES.count(BakeAmbientOcclusion) == 1
+assert manifest.namespaces.count('BakeAmbientOcclusion') == 1
 schema = BakeAmbientOcclusion.schema()
 assert [slot.id for slot in schema.inputs] == [
     'low_poly', 'high_poly', 'resolution', 'samples', 'max_distance', 'strength', 'bias'
