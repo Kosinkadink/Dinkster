@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `BakeAmbientOcclusion` bakes high-poly occlusion into a low-poly UV
+  layout, with counted mesh batches, surface projection, distance, bias and
+  strength controls, cosine-weighted rays and filled UV gutters.
 - Native `RenderMesh` produces a single image and coverage mask from the first
   counted mesh, with texture, vertex-color, clay, normal and depth modes,
   authored model transforms, supplied cameras and automatic framing.
@@ -48,6 +51,9 @@
   limits, with optional pre-welding and open-chain filling.
 - Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
+- Native `BakeNormalMapFromMesh` bakes high-poly surface normals into existing
+  low-poly UVs as OpenGL +Y tangent-space images, with cage projection,
+  closest-surface fallback and filled UV gutters.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
 - Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
