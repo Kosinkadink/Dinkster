@@ -223,6 +223,39 @@ class RegistryConfig:
     def names(self) -> tuple[str, ...]:
         return tuple(registry.name for registry in self.registries)
 
+    def registry_for(
+        self, entry: LockedPack, selected: NamedRegistry | None = None
+    ) -> NamedRegistry:
+        """Route recorded provenance without searching another registry."""
+        source = entry.source
+        if source == "registry":
+            chosen = selected if selected is not None else self.default_registry()
+            if chosen is None:
+                raise InstallError(
+                    f"cannot acquire {entry.pack}: source 'registry' names no "
+                    f"specific registry and none is the default - pass "
+                    f"--registry or flag one 'default = true'"
+                )
+            return chosen
+        qualifier = source.removeprefix("registry:")
+        if qualifier.startswith(("http://", "https://")):
+            endpoint = qualifier.rstrip("/")
+            if selected is not None and selected.endpoint == endpoint:
+                return selected
+            for registry in self.registries:
+                if registry.endpoint == endpoint:
+                    return registry
+            return NamedRegistry(name="", endpoint=endpoint)
+        named = self.get(qualifier)
+        if named is None:
+            configured = ", ".join(self.names) if self.names else "none configured"
+            raise InstallError(
+                f"cannot acquire {entry.pack}: recorded source {source!r} names "
+                f"registry {qualifier!r}, which is not configured "
+                f"(configured: {configured}); add it to registries.toml"
+            )
+        return named
+
 
 def _normalized_endpoint(label: str, endpoint: str) -> str:
     if not endpoint.startswith(("http://", "https://")):
@@ -341,38 +374,8 @@ def routing_registry_fetcher(
     ``"registry"`` sources go there, falling back to the configured
     default."""
 
-    def registry_for(entry: LockedPack) -> NamedRegistry:
-        source = entry.source
-        if source == "registry":
-            chosen = selected if selected is not None else config.default_registry()
-            if chosen is None:
-                raise InstallError(
-                    f"cannot acquire {entry.pack}: source 'registry' names no "
-                    f"specific registry and none is the default - pass "
-                    f"--registry or flag one 'default = true'"
-                )
-            return chosen
-        qualifier = source.removeprefix("registry:")
-        if qualifier.startswith(("http://", "https://")):
-            endpoint = qualifier.rstrip("/")
-            if selected is not None and selected.endpoint == endpoint:
-                return selected
-            for registry in config.registries:
-                if registry.endpoint == endpoint:
-                    return registry  # the matching credential rides along
-            return NamedRegistry(name="", endpoint=endpoint)
-        named = config.get(qualifier)
-        if named is None:
-            configured = ", ".join(config.names) if config.names else "none configured"
-            raise InstallError(
-                f"cannot acquire {entry.pack}: recorded source {source!r} names "
-                f"registry {qualifier!r}, which is not configured "
-                f"(configured: {configured}); add it to registries.toml"
-            )
-        return named
-
     def fetch(entry: LockedPack) -> bytes:
-        registry = registry_for(entry)
+        registry = config.registry_for(entry, selected)
         return http_registry_fetcher(registry.endpoint, token=registry.token())(entry)
 
     return fetch
@@ -525,6 +528,7 @@ def resolve_compatible_release(
     minimum_version = Version(minimum)
     target_engine = Version(engine_version)
     selected: Version | None = None
+    minimum_engine: str | None = None
     cursor = ""
     seen: set[str] = set()
     subject = f"versions of {wanted_pack}"
@@ -565,6 +569,8 @@ def resolve_compatible_release(
             except ValueError as exc:
                 raise InstallError(f"registry {registry.label} answered {subject}: {exc}") from exc
             candidate = Version(compatibility.version)
+            if candidate == minimum_version:
+                minimum_engine = compatibility.engine
             if (
                 state == "active"
                 and candidate >= minimum_version
@@ -584,9 +590,12 @@ def resolve_compatible_release(
             raise InstallError(f"registry {registry.label} repeated the cursor for {subject}")
         seen.add(cursor)
     if selected is None:
+        declaration = (
+            f"; {wanted_pack}@{minimum} declares engine {minimum_engine}" if minimum_engine else ""
+        )
         raise InstallError(
             f"registry {registry.label} has no active {wanted_pack} >= {minimum} "
-            f"compatible with engine {engine_version}"
+            f"compatible with engine {engine_version}{declaration}"
         )
     return resolve_release(
         registry, wanted_pack, str(selected), engine_version=engine_version, timeout=timeout
@@ -679,6 +688,43 @@ def prepare_registry_sources(
     if unavailable and not allow_missing:
         raise InstallError("registry pack preparation refused: " + "; ".join(unavailable.values()))
     return Lockfile.of(entries), unavailable
+
+
+def prepare_registry_update_sources(
+    config: RegistryConfig,
+    installed: Lockfile,
+    artifacts: Path,
+    *,
+    engine_version: str,
+    selected: NamedRegistry | None = None,
+) -> Lockfile:
+    """Re-resolve installed official registry packs without adding or dropping packs.
+
+    Other selections remain unchanged for generation admission. Official registry
+    selections cannot downgrade or switch their recorded source on engine update.
+    """
+    entries: list[LockedPack] = []
+    for entry in installed.packs:
+        if entry.publisher != "dinkster" or (
+            entry.source != "registry" and not entry.source.startswith("registry:")
+        ):
+            entries.append(entry)
+            continue
+        try:
+            registry = config.registry_for(entry, selected)
+            lock, _ = prepare_registry_sources(
+                registry, {entry.pack: entry.version}, artifacts, engine_version=engine_version
+            )
+            entries.extend(
+                replace(updated, source=entry.source) if entry.source != "registry" else updated
+                for updated in lock.packs
+            )
+        except InstallError as exc:
+            raise InstallError(
+                f"updating installed {entry.pack}@{entry.version} "
+                f"for engine {engine_version} refused: {exc}"
+            ) from exc
+    return Lockfile.of(entries)
 
 
 @dataclass(frozen=True)

@@ -51,6 +51,11 @@
   It returns a verified source lock and digest-addressed archives without
   changing a project or generation. Unavailable packs normally refuse the
   operation; optional missing-default reporting can return an empty source set.
+- Installed-source preparation re-resolves official registry packs against the
+  target engine without adding defaults, dropping installed packs or downgrading
+  them. Recorded registries remain authoritative; third-party, local and git
+  selections remain unchanged for generation admission. Unavailable releases refuse
+  before the candidate source lock is written, even with missing-default opt-in.
 - Generation source admission checks each declared pack engine range against
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a

@@ -3202,6 +3202,150 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "upgrade",
+        "url",
+        "bare",
+        "compatible",
+        "lower-only",
+        "offline",
+        "unknown",
+        "optional",
+        "in-place",
+        "empty",
+    ],
+)
+def test_cli_reresolves_installed_sources_without_mutating_project(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+) -> None:
+    from dinkster import __version__
+
+    pack_name = "dinkster-nodes-foundation"
+    source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
+    bounds = ">=0.0.2.dev0,<0.1"
+    (source / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
+        f'version = "0.0.3"\nengine = "{bounds}"\nnamespaces = ["std"]\n'
+        '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
+    )
+    archive = tmp_path / "published.zip"
+    digest = build_artifact(source, archive)
+    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    rows = [
+        {"version": "0.0.4", "dinkster": ">=0.2", "state": "active"},
+        {"version": "0.0.3", "dinkster": bounds, "state": "active"},
+        {
+            "version": "0.0.2",
+            "dinkster": bounds if mode == "compatible" else ">=0.2",
+            "state": "active",
+        },
+        {"version": "0.0.1", "dinkster": bounds, "state": "active"},
+    ]
+    files = {
+        f"/v1/packs/{pack_name}/versions?limit=100": json.dumps(
+            {"items": [row for row in rows if mode != "lower-only" or row["version"] != "0.0.3"]}
+        ).encode(),
+        f"/v1/packs/{pack_name}/versions/0.0.3": _release_record(
+            release, state="active", manifest={"dinkster": bounds}
+        ),
+        f"/v1/packs/{pack_name}/versions/0.0.3/download-tickets": _download_ticket(
+            release, archive.read_bytes()
+        ),
+        f"/v1/artifacts/{digest}": archive.read_bytes(),
+    }
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts({} if mode == "offline" else files, requests)
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}"
+        root = tmp_path / "project"
+        root.mkdir()
+        (root / "current").write_text("7\n")
+        (root / "project.json").write_text('{"unchanged": true}\n')
+        registry_source = {
+            "url": f"registry:{endpoint}",
+            "bare": "registry",
+            "unknown": "registry:missing",
+        }.get(mode, "registry:official")
+        old = replace(release, version="0.0.2", source=registry_source, publisher="dinkster")
+        local = LockedPack("my-local", "0.0.1", "blake3:" + "a" * 64, "dinkster", (), "local:/pack")
+        git = replace(local, pack="my-git", source="git:repo")
+        third_party = replace(local, pack="third-party", publisher="acme", source="registry:other")
+        installed = Lockfile.of([] if mode == "empty" else [old, local, git, third_party])
+        retained = root / "dinkster.lock"
+        retained.write_text(installed.record_json())
+        before = {path.name: path.read_bytes() for path in root.iterdir()}
+        config = tmp_path / "registries.toml"
+        config.write_text(
+            f'[registries.official]\nendpoint = "{endpoint}"\n'
+            f'[registries.other]\nendpoint = "{endpoint}/other"\ndefault = true\n'
+        )
+        output = tmp_path / "candidate.lock"
+        output.write_text("previous candidate\n")
+        args = [
+            "--root",
+            str(root),
+            "--registries",
+            str(config),
+            "--registry",
+            "official" if mode == "bare" else "other",
+            "prepare-registry-sources",
+            "--installed-lock",
+            str(retained),
+            "--catalog-lock",
+            str(retained if mode == "in-place" else output),
+            "--artifacts",
+            str(tmp_path / "artifacts"),
+        ]
+        if mode == "optional":
+            args.append("--allow-missing")
+        if mode in {"lower-only", "offline", "unknown", "optional", "in-place"}:
+            with pytest.raises(SystemExit):
+                run_cli(*args)
+            error = capsys.readouterr().err
+            if mode == "optional":
+                assert "--allow-missing is only valid for fresh" in error
+            elif mode == "in-place":
+                assert "candidate source lock must differ" in error
+            else:
+                assert f"updating installed {pack_name}@0.0.2 for engine {__version__}" in error
+                assert {
+                    "lower-only": "declares engine >=0.2",
+                    "offline": "HTTP 404",
+                    "unknown": "not configured",
+                }[mode] in error
+            assert output.read_text() == "previous candidate\n"
+        else:
+            run_cli(*args)
+            report = json.loads(capsys.readouterr().out)
+            result = Lockfile.from_record_json(output.read_text())
+            expected = Lockfile.of(
+                []
+                if mode == "empty"
+                else [
+                    replace(
+                        release,
+                        publisher="dinkster",
+                        claims=("std",),
+                        source=f"registry:{endpoint}" if mode == "url" else "registry:official",
+                    ),
+                    local,
+                    git,
+                    third_party,
+                ]
+            )
+            assert result == expected
+            assert report["packs"] == [entry.pack for entry in expected.packs]
+            assert report["unavailable"] == {}
+        assert {path.name: path.read_bytes() for path in root.iterdir()} == before
+        assert not any(path.startswith("/other/") for path, _ in requests)
+        if mode in {"empty", "unknown", "optional", "in-place"}:
+            assert not requests
+    finally:
+        server.shutdown()
+
+
 def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> None:
     """Browse asks ONE registry's pack index, parses rows strictly, and
     surfaces the query-bound keyset cursor; a malformed answer refuses

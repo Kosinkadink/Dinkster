@@ -77,6 +77,17 @@ and writes the available set, including an empty lock when none is available.
 This command prepares source inputs only; dependency locks and generation
 activation are separate steps. It never changes project or generation state.
 
+For an engine update, pass `--installed-lock /retained/dinkster.lock` instead
+of `--minimum`. Only installed registry packs attributed to publisher `dinkster`
+are re-resolved, at or above their installed versions. Each uses its recorded
+registry, not a newly chosen default; bare registry sources bind to the
+selected/default endpoint. Third-party, local and git entries remain unchanged
+for subsequent generation admission. This content attribution is not a new
+authenticated authority claim. The candidate output must differ from the input.
+An empty installed set stays empty. Missing compatible releases, registry errors or
+invalid archives refuse before writing the candidate lock; unavailable installed
+packs cannot use `--allow-missing`. No new default pack is added during update.
+
 ## Template catalog
 
 `ReleaseIndex.template_catalog()` is the version 1 payload served by

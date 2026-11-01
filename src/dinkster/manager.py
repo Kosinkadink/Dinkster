@@ -101,6 +101,7 @@ from .registries import (
     load_registries,
     parse_registry_spec,
     prepare_registry_sources,
+    prepare_registry_update_sources,
     publish_release,
     resolve_release,
     routing_registry_fetcher,
@@ -1074,8 +1075,10 @@ def _cmd_archive(args: argparse.Namespace) -> None:
 
 def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     config = _registry_config(args)
-    selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
-    registry = select_registry(config, selector)
+    if args.installed_lock and args.allow_missing:
+        raise InstallError("--allow-missing is only valid for fresh pack selection")
+    if args.installed_lock and args.installed_lock.resolve() == args.catalog_lock.resolve():
+        raise InstallError("candidate source lock must differ from --installed-lock")
     minimums: dict[str, str] = {}
     for spec in args.minimum:
         parsed = parse_registry_spec(spec)
@@ -1085,16 +1088,29 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
         if pack in minimums:
             raise InstallError(f"duplicate minimum for {pack}")
         minimums[pack] = minimum
-    if not args.minimum:
-        minimums = default_pack_minimums()
     try:
-        lock, unavailable = prepare_registry_sources(
-            registry,
-            minimums,
-            args.artifacts.resolve(),
-            engine_version=dinkster_version,
-            allow_missing=args.allow_missing,
-        )
+        if args.installed_lock:
+            installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
+            lock = prepare_registry_update_sources(
+                config,
+                installed,
+                args.artifacts.resolve(),
+                engine_version=dinkster_version,
+                selected=select_registry(config, args.registry) if args.registry else None,
+            )
+            unavailable: dict[str, str] = {}
+        else:
+            selector = args.registry or (
+                "" if config.registries else "https://registry.dinkster.org"
+            )
+            registry = select_registry(config, selector)
+            lock, unavailable = prepare_registry_sources(
+                registry,
+                minimums if args.minimum else default_pack_minimums(),
+                args.artifacts.resolve(),
+                engine_version=dinkster_version,
+                allow_missing=args.allow_missing,
+            )
         args.catalog_lock.parent.mkdir(parents=True, exist_ok=True)
         args.catalog_lock.write_text(lock.record_json() + "\n", encoding="utf-8", newline="\n")
     except OSError as exc:
@@ -1250,12 +1266,16 @@ def main() -> None:
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
-    sources.add_argument(
+    selection = sources.add_mutually_exclusive_group()
+    selection.add_argument(
         "--minimum",
         action="append",
         default=[],
         metavar="PACK@VERSION",
         help="default: official set",
+    )
+    selection.add_argument(
+        "--installed-lock", type=Path, help="re-resolve installed official packs, retaining others"
     )
     sources.add_argument(
         "--allow-missing", action="store_true", help="report unavailable fresh defaults"
