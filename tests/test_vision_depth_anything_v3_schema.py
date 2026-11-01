@@ -56,7 +56,7 @@ def test_depth_anything_v3_pack_declares_cpu_provider_and_pinned_model() -> None
     assert manifest.requires == (
         "numpy",
         "opencv-contrib-python-headless",
-        "pillow==12.0.0",
+        "pillow>=12.0.0",
         "safetensors==0.8.0",
         "torch",
         "transformers==5.16.1",
