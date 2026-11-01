@@ -816,6 +816,8 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["acceptsStorage"] = True
     if spec.accepts_stream:
         entry["acceptsStream"] = True
+    if spec.accepts_list:
+        entry["acceptsList"] = True
     if spec.source_filename is not None:
         entry["sourceFilename"] = {
             "kind": spec.source_filename.kind,
@@ -1397,6 +1399,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
         source_filename=source_filename,
         accepts_storage=_expect_bool(entry.get("acceptsStorage", False), "input.acceptsStorage"),
         accepts_stream=_expect_bool(entry.get("acceptsStream", False), "input.acceptsStream"),
+        accepts_list=_expect_bool(entry.get("acceptsList", False), "input.acceptsList"),
         **_media_policy_from_wire(entry, wire_version),
     )
 

@@ -159,11 +159,9 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_vision": {"dinkster_api"},
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
-    # The pure registry model (DESIGN M8): shares only the closed name
-    # grammar with the rest of the stack. Doctor evidence arrives as the
-    # report JSON, never a dinkster_workers import - the registry consumes
-    # the machine interface, keeping it deployable without host machinery.
-    "dinkster_registry": {"dinkster_schema"},
+    # Archive admission shares the worker manifest, doctor and probe jail;
+    # registry service state and engine execution remain outside this package.
+    "dinkster_registry": {"dinkster_schema", "dinkster_workers"},
     # Layer 0, above even the server: the supervisor spawns engine hosts
     # and speaks HTTP to them, NEVER importing engine code - the layer
     # that will manage multiple installations (different code versions,

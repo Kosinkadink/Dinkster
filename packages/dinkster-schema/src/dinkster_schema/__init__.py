@@ -136,6 +136,7 @@ from .node import (
     build_schemas,
 )
 from .output_descriptors import output_descriptor_entries
+from .pack import PackCompatibility
 from .replace import (
     InputFamilyMapping,
     InputFamilyMember,
@@ -184,6 +185,7 @@ from .wire import (
 )
 
 __all__ = [
+    "PackCompatibility",
     "RunExecutionContext",
     "Expansion",
     "ExpansionBuilder",

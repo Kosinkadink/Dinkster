@@ -17,7 +17,8 @@ uses the adjacent manifest; an installed wheel uses that embedded artifact.
 `Create List` collects same-typed values in document order. `Append to List`
 adds each variadic item as one element after the existing list. A list-valued
 item remains nested in both nodes. `Concat Lists` is the explicit operation
-that flattens its list inputs by one level; no list operation implicitly
+that flattens its list inputs by one level, retaining typed child envelopes
+for heterogeneous lists and nested payloads. No list operation implicitly
 promotes scalars or flattens nested values.
 
 ## Math expression grammar v1

@@ -623,6 +623,9 @@ namespaces = [
     "RenderUVAtlas",
     "UnwrapMesh",
     "ApplyTextureToMesh",
+    "BakeAmbientOcclusion",
+    "BakeNormalMapFromMesh",
+    "BakeTextureFromVoxel",
     "FillHoles",
     "Get3DComponents",
     "DecimateMesh",
@@ -641,6 +644,7 @@ namespaces = [
     "ImageUpscaleWithModel",
     "ImageHistogram",
     "TextOverlay",
+    "SAM3DBody_Render",
 ]
 
 [pack.sandbox]

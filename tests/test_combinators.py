@@ -25,6 +25,9 @@ from dinkster_graph import (
 )
 from dinkster_schema import (
     InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
     TypeExpr,
     TypeSolveError,
     bind_type_variables,
@@ -308,6 +311,54 @@ def test_length_element_reverse_concat_repeat() -> None:
     assert resolved_list(result, "cat", "list") == [5, 6, 6, 5]
     assert result.outputs["rep"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "rep", "list") == [5, 5, 5]
+
+
+def test_concat_preserves_heterogeneous_children_and_nested_payloads() -> None:
+    registry = TypeRegistry()
+    register_core_types(registry)
+    first = registry.wrap("STRING", "tail")
+    second = registry.wrap("INT", 7)
+    nested = registry.wrap("list<INT>", [11, 2])
+
+    class Source(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.heterogeneous",
+                outputs=(
+                    OutputSpec("head", TypeExpr.list_of(TypeExpr.wildcard())),
+                    OutputSpec("tail", TypeExpr.list_of(TypeExpr.wildcard())),
+                ),
+            )
+
+        @classmethod
+        def execute(cls) -> dict[str, object]:
+            return {"head": [first], "tail": [second, nested]}
+
+    nodes = (*SCAFFOLD_NODES, Source)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+    graph = Graph(
+        nodes={
+            "source": GraphNode("test.heterogeneous"),
+            "cat": GraphNode(
+                "std.list.concat",
+                {
+                    "lists.second": Link("source", "head"),
+                    "lists.first": Link("source", "tail"),
+                },
+            ),
+        }
+    )
+    result = asyncio.run(engine.run(graph, ["cat"]))
+    value = result.outputs["cat"]["list"]
+    assert value.type_id == "list<*>"
+    assert list_children(value) == (first, second, nested)
+    assert value.resolve() == ["tail", 7, [11, 2]]
 
 
 def test_list_slice_uses_python_bounds_and_direction() -> None:

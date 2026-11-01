@@ -138,7 +138,9 @@ def build_bvh(tri: Any) -> dict[str, Any]:
     )
 
 
-def _ray_triangle(o: Any, d: Any, tri: Any, tmin: float, tmax: float) -> tuple[Any, Any]:
+def ray_triangle(
+    o: Any, d: Any, tri: Any, tmin: float, tmax: Any, cull_backface: bool = False
+) -> tuple[Any, Any]:
     import torch
 
     a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
@@ -152,11 +154,19 @@ def _ray_triangle(o: Any, d: Any, tri: Any, tmin: float, tmax: float) -> tuple[A
     v = (d * q).sum(-1) * inv
     t = (e2 * q).sum(-1) * inv
     hit = (det.abs() > 1e-20) & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > tmin) & (t < tmax)
+    if cull_backface:
+        hit = hit & ((torch.cross(e1, e2, dim=-1) * d).sum(-1) < 0)
     return hit, t
 
 
-def _closest_hit(
-    orig: Any, dirs: Any, tri: Any, bvh: dict[str, Any], tmin: float = 1e-5, tmax: float = 1e30
+def closest_hit(
+    orig: Any,
+    dirs: Any,
+    tri: Any,
+    bvh: dict[str, Any],
+    tmin: float = 1e-5,
+    tmax: float = 1e30,
+    cull_backface: bool = False,
 ) -> tuple[Any, Any, Any]:
     import torch
 
@@ -183,7 +193,7 @@ def _closest_hit(
         if bool(leaves.any()):
             ga = a[leaves]
             face = bvh["order"][node[leaves] - leaf]
-            hit, t = _ray_triangle(orig[ga], dirs[ga], tri[face], tmin, tmax)
+            hit, t = ray_triangle(orig[ga], dirs[ga], tri[face], tmin, tmax, cull_backface)
             update = hit & (t < best_t[ga])
             gu = ga[update]
             best_t[gu], best_f[gu] = t[update], face[update].long()
@@ -235,7 +245,7 @@ def model_transform(values: Any, transform: Any, is_normal: bool = False) -> Any
     return (values * scale) @ rotation.T + position
 
 
-def _barycentric(p: Any, tri: Any) -> Any:
+def barycentric(p: Any, tri: Any) -> Any:
     import torch
 
     a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
@@ -289,12 +299,12 @@ def render_view(
     hit_all = torch.zeros(height * width, dtype=torch.bool, device=tri.device)
     for start in range(0, height * width, 1 << 22):
         end = min(start + (1 << 22), height * width)
-        t_hit, face, hit = _closest_hit(origins[start:end], directions[start:end], tri, bvh)
+        t_hit, face, hit = closest_hit(origins[start:end], directions[start:end], tri, bvh)
         if not bool(hit.any()):
             continue
         fh = face[hit].clamp_min(0)
         points = origins[start:end][hit] + t_hit[hit, None] * directions[start:end][hit]
-        bary = _barycentric(points, tri[fh])
+        bary = barycentric(points, tri[fh])
         local = torch.zeros((end - start, 3), device=tri.device)
         if render_normal:
             if vertex_normals is not None:
