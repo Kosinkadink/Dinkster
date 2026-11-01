@@ -8,14 +8,18 @@ import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import sysconfig
 import tarfile
 import tempfile
+import time
 import tomllib
 import zipfile
+from http.client import HTTPException
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
@@ -24,6 +28,8 @@ from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from scripts.build_release import sha256, wheel_metadata
+
+_REMOTE_ATTEMPTS = 3
 
 
 def acquire(source: str, destination: Path, size: int, digest: str) -> None:
@@ -36,10 +42,27 @@ def acquire(source: str, destination: Path, size: int, digest: str) -> None:
     elif parsed.scheme:
         if parsed.scheme != "https" or parsed.username or parsed.password:
             raise ValueError("tools acquisition requires credential-free HTTPS")
-        with urlopen(source, timeout=60) as response, destination.open("wb") as target:
-            if urlsplit(response.url).scheme != "https":
-                raise ValueError("tools acquisition redirected outside HTTPS")
-            shutil.copyfileobj(response, target)
+        for attempt in range(1, _REMOTE_ATTEMPTS + 1):
+            try:
+                with urlopen(source, timeout=60) as response, destination.open("wb") as target:
+                    if urlsplit(response.url).scheme != "https":
+                        raise ValueError("tools acquisition redirected outside HTTPS")
+                    shutil.copyfileobj(response, target)
+                break
+            except (HTTPException, URLError, OSError) as exc:
+                destination.unlink(missing_ok=True)
+                transient = (
+                    500 <= exc.code < 600
+                    if isinstance(exc, HTTPError)
+                    else isinstance(
+                        exc, (HTTPException, URLError, ssl.SSLError, ConnectionError, TimeoutError)
+                    )
+                )
+                if isinstance(exc, HTTPError):
+                    exc.close()
+                if not transient or attempt == _REMOTE_ATTEMPTS:
+                    raise
+                time.sleep(2 ** (attempt - 1))
     else:
         shutil.copyfile(source, destination)
     if destination.stat().st_size != size or sha256(destination) != digest:

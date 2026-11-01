@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sysconfig
 import tarfile
 import zipfile
+from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError, URLError
 
 import pytest
 from test_environment_generations import _standalone_tree, _wheel
 
-from scripts import build_native_tools
+from scripts import build_environment_tools, build_native_tools
 from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
@@ -69,6 +74,59 @@ def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) 
     with pytest.raises(ValueError, match="size or SHA256 mismatch"):
         acquire(str(source), target, 7, "a" * 64)
     assert not target.exists()
+
+
+def test_tools_acquisition_retries_transient_tls_failure_without_retaining_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = b"verified tools wheel"
+    destination = tmp_path / "archive"
+    attempts = []
+    sleeps = []
+
+    class InterruptedResponse(io.BytesIO):
+        url = "https://files.pythonhosted.org/tools.whl"
+
+        def read(self, size: int | None = -1) -> bytes:
+            if self.tell() > 0:
+                raise URLError(ssl.SSLEOFError(8, "fixture TLS EOF"))
+            return super().read(4)
+
+    class CompleteResponse(io.BytesIO):
+        url = "https://files.pythonhosted.org/tools.whl"
+
+    def open_remote(source: str, timeout: int):
+        attempts.append((source, timeout, destination.exists()))
+        return InterruptedResponse(data) if len(attempts) == 1 else CompleteResponse(data)
+
+    monkeypatch.setattr(build_environment_tools, "urlopen", open_remote)
+    monkeypatch.setattr(build_environment_tools.time, "sleep", sleeps.append)
+    acquire(CompleteResponse.url, destination, len(data), hashlib.sha256(data).hexdigest())
+
+    assert destination.read_bytes() == data
+    assert attempts == [(CompleteResponse.url, 60, False), (CompleteResponse.url, 60, False)]
+    assert sleeps == [1]
+
+
+def test_tools_acquisition_does_not_retry_terminal_http_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "archive"
+    calls = []
+    sleeps = []
+
+    def open_remote(source: str, timeout: int):
+        calls.append((source, timeout))
+        raise HTTPError(source, 404, "missing", Message(), None)
+
+    monkeypatch.setattr(build_environment_tools, "urlopen", open_remote)
+    monkeypatch.setattr(build_environment_tools.time, "sleep", sleeps.append)
+    with pytest.raises(HTTPError, match="HTTP Error 404"):
+        acquire("https://files.pythonhosted.org/missing.whl", destination, 1, "a" * 64)
+
+    assert calls == [("https://files.pythonhosted.org/missing.whl", 60)]
+    assert sleeps == []
+    assert not destination.exists()
 
 
 @pytest.mark.parametrize("corruption", [None, "size", "hash", "unadmitted"])
