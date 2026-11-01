@@ -97,7 +97,7 @@ class BakeAmbientOcclusion(Node):
         torch = importlib.import_module("torch")
         management = importlib.import_module("dinkster_inference.model_management")
         from .mesh_bake_ops import bake_occlusion, vertex_normals
-        from .mesh_texture import _normalize_uvs
+        from .mesh_texture import normalize_uvs
 
         low, high = materialize_mesh(low_poly), materialize_mesh(high_poly)
         if low.uvs is None:
@@ -127,7 +127,7 @@ class BakeAmbientOcclusion(Node):
                 low.faces[i, :f].to(device).long(),
             )
             uv = low.uvs[i, :n] if low.uvs.ndim == 3 else low.uvs[:n]
-            uv = torch.from_numpy(_normalize_uvs(uv.detach().cpu().numpy())).to(device)
+            uv = torch.from_numpy(normalize_uvs(uv.detach().cpu().numpy())).to(device)
             normals = (
                 low.normals[i, :n].to(device).float()
                 if low.normals is not None

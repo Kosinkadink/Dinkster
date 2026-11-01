@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import math
 from typing import Any
@@ -10,7 +11,7 @@ from dinkster_api.v1 import report_progress
 
 
 def vertex_normals(vertices: Any, faces: Any) -> Any:
-    import torch
+    torch = importlib.import_module("torch")
 
     triangles = vertices[faces]
     normal = torch.cross(
@@ -82,7 +83,7 @@ def rasterize_uv(faces: Any, uvs: Any, size: int) -> tuple[Any, Any, Any]:
 def closest_points(points: Any, triangles: Any, bvh: dict[str, Any]) -> Any:
     import torch
 
-    from .mesh_remesh_ops import _point_tri_closest
+    from .mesh_remesh_ops import point_tri_closest
 
     count, stack_size = points.shape[0], 64
     stack = torch.full((count, stack_size), -1, dtype=torch.int32, device=points.device)
@@ -108,7 +109,7 @@ def closest_points(points: Any, triangles: Any, bvh: dict[str, Any]) -> Any:
         if bool(leaves.any()):
             ga = a[leaves]
             faces = bvh["order"][node[leaves] - bvh["LEAF"]]
-            projected, squared = _point_tri_closest(query[leaves], triangles[faces])
+            projected, squared = point_tri_closest(query[leaves], triangles[faces])
             update = squared < best[ga]
             chosen = ga[update]
             best[chosen], result[chosen] = squared[update], projected[update]
@@ -136,7 +137,7 @@ def any_hit(
 ) -> Any:
     import torch
 
-    from .mesh_render_ops import _ray_triangle
+    from .mesh_render_ops import ray_triangle
 
     count, stack_size = origins.shape[0], 64
     inverse = 1.0 / torch.where(
@@ -161,7 +162,7 @@ def any_hit(
         if bool(leaves.any()):
             ga = a[leaves]
             tri = triangles[bvh["order"][node[leaves] - bvh["LEAF"]]]
-            found, _ = _ray_triangle(origins[ga], directions[ga], tri, tmin, far_bound[ga])
+            found, _ = ray_triangle(origins[ga], directions[ga], tri, tmin, far_bound[ga])
             hit[ga[found]] = True
         internal = within & ~is_leaf
         if bool(internal.any()):
@@ -222,10 +223,10 @@ def bake_occlusion(
     progress_end: int,
 ) -> Any:
     import torch
-    from dinkster_inference import model_management
 
     from .mesh_render_ops import build_bvh
 
+    model_management = importlib.import_module("dinkster_inference.model_management")
     device = low_vertices.device
     free = model_management.get_free_memory(device)
     ray_chunk = int(min(1 << 22, max(1 << 20, (free * 0.25) / (samples * 4 + 200))))

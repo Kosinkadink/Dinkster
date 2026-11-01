@@ -76,7 +76,7 @@ class MeshTextureToImage(Node):
         )
 
 
-def _normalize_uvs(uvs: Any) -> Any:
+def normalize_uvs(uvs: Any) -> Any:
     np = importlib.import_module("numpy")
     values = uvs.astype(np.float32)
     lo, hi = values.min(axis=0), values.max(axis=0)
@@ -174,10 +174,10 @@ class ApplyTextureToMesh(Node):
                     if source.vertex_counts is not None
                     else source.vertices.shape[1]
                 )
-                values = _normalize_uvs(uvs[index, :count].detach().cpu().numpy())
+                values = normalize_uvs(uvs[index, :count].detach().cpu().numpy())
                 normalized[index, :count] = torch.from_numpy(values).to(normalized)
         else:
-            normalized = torch.from_numpy(_normalize_uvs(uvs.detach().cpu().numpy())).to(uvs)
+            normalized = torch.from_numpy(normalize_uvs(uvs.detach().cpu().numpy())).to(uvs)
         out: Any = copy.copy(source)
         out.uvs = normalized
         out.texture = materialize_image(base_color).float().clamp(0.0, 1.0).cpu()
