@@ -393,7 +393,7 @@ def build_generation(
             ignore=ignore_bytecode,
         )
         shutil.copyfile(constraints, destination / "constraints.txt")
-        if source_kind == "local":
+        if source_kind == "local" or (source.parent / "manifest.json").is_file():
             shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
         python = interpreter(destination)
         if not python.is_file():

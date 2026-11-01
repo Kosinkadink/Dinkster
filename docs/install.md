@@ -98,6 +98,48 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
 
+### User-defined environment variants
+
+User-defined torch versions and indexes are a supported `dinkster-env` path,
+not a development override and not `--from-scratch`. Put `variants.toml` in
+the project root or the shared store, or select it with `--variants PATH`.
+An explicit file wins over the project file, which wins over the store file.
+Use a distinct variant name for your custom base. For example:
+
+```toml
+[variants.linux-custom-cuda]
+os = "linux"
+arch = "x86_64"
+torch = "2.14.1"
+torch-index = "https://download.pytorch.org/whl/cu130"
+extras-index = "https://pypi.org/simple"
+```
+
+Choose an exact torch version that your index supplies for the native Python
+and platform. `torchvision` may also name an exact version; otherwise it is
+resolved with torch. `extras-index` defaults to PyPI. Torch comes only from
+`torch-index`; other base dependencies try that index, then `extras-index`,
+then PyPI. Index URLs must use HTTPS without embedded credentials.
+
+```sh
+dinkster-env --root /absolute/project setup --channel main \
+  --variant linux-custom-cuda --variants /absolute/variants.toml --yes
+```
+
+Setup builds a real content-addressed base in the shared store using a verified
+native interpreter. Its manifest records the source file, definition digest,
+build time and wheel origins. It then installs the selected channel engine
+offline onto that base. Status, doctor and Desktop show the user-defined
+variant, torch version and torch index.
+
+Channel updates retain the custom base rather than replacing it with a
+published one or resolving it again. An engine dependency requiring a newer
+torch refuses before activation, reports required and present versions, and
+explains how to rebuild the custom base. Editing `variants.toml` alone does
+not mutate existing generations. Selecting a rebuilt variant uses the normal
+confirmed update and rollback journal; retained published and custom
+generations can both be reactivated without rebuilding them.
+
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform
@@ -110,7 +152,9 @@ is downloaded and verified from the producer's interpreter definition, or reused
 from the store's download cache. Populate that cache before denying interpreter
 release access. `--python /absolute/python` explicitly selects a host interpreter
 instead, including when a host interpreter row is missing.
-`--variants /absolute/variants.toml` selects alternate producer definitions.
+With `--from-scratch`, `--variants /absolute/variants.toml` selects the
+interpreter and variant definitions used for checkout-local resolution;
+without it, the same option selects the supported custom-base rows above.
 
 Contributor setup exposes the same opt-in with `python scripts/setup_envs.py
 --from-scratch --variant linux-cpu` and the same `--python`/`--variants` overrides.

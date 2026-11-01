@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -22,6 +22,9 @@ from dinkster_registry import (
 )
 from dinkster_schema import canonical_claim, canonical_name
 from dinkster_workers import ManifestError, PackManifest, load_manifest
+from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
+from dinkster_workers.pack_lock import resolve_pack_lock
+from dinkster_workers.provision import ProvisionError
 
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
@@ -51,6 +54,52 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
     (generation / "dinkster.lock").write_text(
         lock.record_json() + "\n", encoding="utf-8", newline="\n"
     )
+
+
+def prepare_pack_locks(
+    generation: Path,
+    lock: Lockfile,
+    artifacts: Mapping[str, Path],
+    output: Path,
+    *,
+    variant: str,
+    indexes: Sequence[str] = (),
+    find_links: Sequence[Path] = (),
+    accelerator: str | None = None,
+    uv: str = "uv",
+) -> tuple[Path, ...]:
+    """Resolve selected archives against an unsealed custom generation's constraints."""
+    if (generation / "generation.json").exists() or (generation / "dinkster.lock").exists():
+        raise CompositionError("pack locks require a fresh, unsealed generation")
+    constraints = generation / "constraints.txt"
+    if not constraints.is_file():
+        raise CompositionError("custom pack locks require effective generation constraints")
+    output.mkdir(exist_ok=False)
+    paths: list[Path] = []
+    with tempfile.TemporaryDirectory(prefix="dinkster-custom-pack-sources-") as directory:
+        manifests = []
+        for entry in lock.packs:
+            source = unpack_artifact(
+                artifacts[entry.pack], Path(directory) / entry.pack, entry.artifact_digest
+            )
+            manifests.append(_manifest(source, entry))
+        for manifest in manifests:
+            dependency_lock = resolve_pack_lock(
+                pack=manifest.name,
+                variant=variant,
+                requirements=(
+                    manifest.requires_for(accelerator) if accelerator else manifest.requires
+                ),
+                python=Path(sys.executable),
+                constraints=constraints,
+                indexes=indexes,
+                find_links=find_links,
+                uv=uv,
+            )
+            path = output / f"{manifest.name}.pack-lock.json"
+            dependency_lock.write(path)
+            paths.append(path)
+    return tuple(paths)
 
 
 def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
@@ -140,9 +189,18 @@ def main() -> int:
     parser.add_argument("--generation", type=Path, required=True)
     parser.add_argument("--catalog-lock", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument(
+        "--prepare-locks", type=Path, help="new scratch output for custom pack locks"
+    )
+    parser.add_argument("--variant")
+    parser.add_argument("--index", action="append", default=[])
+    parser.add_argument("--find-links", type=Path, action="append", default=[])
+    parser.add_argument("--accelerator")
+    parser.add_argument("--uv", default="uv")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     packs: list[str] = []
+    locks: tuple[Path, ...] = ()
     errors: list[str] = []
     try:
         if not all(
@@ -156,21 +214,41 @@ def main() -> int:
             entry.pack: args.artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
             for entry in lock.packs
         }
-        stage_generation_packs(args.generation, lock, artifacts)
+        if args.prepare_locks is not None:
+            if not args.prepare_locks.is_absolute() or not args.variant:
+                raise CompositionError("custom pack locks require absolute output and --variant")
+            locks = prepare_pack_locks(
+                args.generation,
+                lock,
+                artifacts,
+                args.prepare_locks,
+                variant=args.variant,
+                indexes=args.index,
+                find_links=args.find_links,
+                accelerator=resolve_accelerator(args.accelerator) if args.accelerator else None,
+                uv=args.uv,
+            )
+        else:
+            stage_generation_packs(args.generation, lock, artifacts)
         packs = [entry.pack for entry in lock.packs]
     except (
+        AcceleratorError,
         ArtifactError,
         CompositionError,
         InstallError,
         ManifestError,
         OSError,
+        ProvisionError,
         ValueError,
         zipfile.BadZipFile,
     ) as exc:
         errors.append(str(exc))
         print(str(exc), file=sys.stderr)
     if args.json:
-        print(json.dumps({"packs": packs, "errors": errors}))
+        result: dict[str, object] = {"packs": packs, "errors": errors}
+        if args.prepare_locks is not None:
+            result["locks"] = [str(path) for path in locks]
+        print(json.dumps(result))
     elif packs:
         print("\n".join(packs))
     return int(bool(errors))

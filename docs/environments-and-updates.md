@@ -14,9 +14,9 @@ command line. Developers who change Dinkster itself work from a checkout
 | Term | Meaning | Where it lives |
 |---|---|---|
 | Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
-| Lock | Dinkster's `uv.lock` at that commit, the single resolution every wheel hash comes from; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
-| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
-| Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
+| Lock | Dinkster's `uv.lock` at that commit, the resolution for published engine wheels; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
+| Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
+| Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
 | Pack venv | A small venv over a generation's interpreter holding one pack's extra dependencies | `<root>/generations/<n>/packs/<pack>/` |
@@ -208,10 +208,10 @@ or publish artifacts itself.
 is written when a push to `main` finishes the same workflow without a
 version: the engine release it names is a prerelease of the next version
 identified by commit. Both channels are served by the same client code path
-and differ only in the channel file. Neither resolves on the user's machine:
-every wheel an engine install needs is in the base bundle or the engine
-release, and when a commit adds a dependency the base does not carry, that
-commit's engine release includes the wheel until the next base picks it up.
+and differ only in the channel file. Published-base installs do not resolve on
+the user's machine: every wheel an engine install needs is in the base bundle
+or the engine release. When a commit adds a dependency the base does not carry,
+that commit's engine release includes the wheel until the next base picks it up.
 The base is shared between the channels because it rebuilds only when its
 part of the lock changes.
 
@@ -276,12 +276,53 @@ compares the base-relevant lock entries with the newest published base
 manifest and skips the build when they match, so a tag that only touches
 Dinkster code produces no new base.
 
+### User-defined bases
+
+A user can build a supported base without adding a published channel variant.
+The [complete variants.toml example](install.md#user-defined-environment-variants)
+names an exact torch version, torch index and optional extras index. Definitions
+are selected from `--variants PATH`, `<project>/variants.toml`, or
+`<store>/variants.toml`, in that order. Ordinary setup uses this row to build
+the base, not to resolve a checkout or opt into `--from-scratch`.
+
+The builder reuses a verified native interpreter and resolves the custom base's
+dependency closure. The result uses the published `dinkster.base/1` format,
+content identity and archive verification. Its additional provenance records
+`source: user-defined` and `localBuild` source-file path, definition digest,
+build time, torch index and extras index. The shared store retains its manifest,
+archive parts and exact wheels. Each generation retains its base manifest,
+so labels do not depend on the definitions file remaining present or unchanged.
+
+An engine update keeps that exact custom base and installs the new engine onto
+it using verified engine wheels and effective hashed constraints. It does not
+require a published variant with the custom name. Published exact base/wheel
+alignment is unchanged; the explicit custom path checks the engine wheels'
+dependency requirements against the custom base versions. A newer required
+torch is reported with the present version and rebuild instructions before
+changing the project or its active generation. The custom index is not a reason
+to reject an otherwise compatible update.
+
+Custom generations use the ordinary generation format and activation journal,
+not the checkout-local generation source. Selecting a rebuilt custom variant,
+or selecting a published variant again, uses the same confirmed update.
+Rollback reactivates the retained interpreter and project selection without
+resolving or rebuilding either base. Status, doctor and Desktop identify the
+active base as user-defined and show its variant, torch version and index.
+
+The optional per-variant extras index supplies base dependencies not available
+from the torch index; it defaults to PyPI. Torch is bound to its requested
+index. Other packages try the torch index, then the extras index, then PyPI.
+Resolved manifests record each wheel's actual registry origin, not merely the
+configured fallback. Indexes must be credential-free HTTPS URLs.
+
+### Published base pins
+
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
 and are not on PyPI for that triple. A pack that needs a compiled wheel the
 extras index does not carry takes the own-environment path described below.
 
-Every variant shares one set of base pins: Python 3.14, torch 2.14.1 with
+Published variants share one set of base pins: Python 3.14, torch 2.14.1 with
 the matching torchvision, numpy 2.5, `opencv-contrib-python-headless` 5.0.
 Python 3.14 receives bug fixes until late 2027 and security fixes until
 2030; every dependency of the engine and of the popular ComfyUI packs
