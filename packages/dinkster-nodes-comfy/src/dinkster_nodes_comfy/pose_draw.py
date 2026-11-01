@@ -11,8 +11,8 @@ np = importlib.import_module("numpy")
 Image = importlib.import_module("PIL.Image")
 ImageDraw = importlib.import_module("PIL.ImageDraw")
 
-_HEAD_EDGES = [[2, 1], [1, 15], [15, 17], [1, 16], [16, 18]]
-_BODY_EDGES = [
+HEAD_EDGES = [[2, 1], [1, 15], [15, 17], [1, 16], [16, 18]]
+BODY_EDGES = [
     [2, 3],
     [2, 6],
     [3, 4],
@@ -26,7 +26,7 @@ _BODY_EDGES = [
     [12, 13],
     [13, 14],
 ]
-_HAND_EDGES = [
+HAND_EDGES = [
     [0, 1],
     [1, 2],
     [2, 3],
@@ -48,7 +48,7 @@ _HAND_EDGES = [
     [18, 19],
     [19, 20],
 ]
-_COLORS = [
+COLORS = [
     [255, 0, 0],
     [255, 85, 0],
     [255, 170, 0],
@@ -179,8 +179,8 @@ def draw_pose(
     centers: list[tuple[int, int]] = []
     colors: list[list[int]] = []
     if draw_body or draw_head:
-        edges = (_BODY_EDGES if draw_body else []) + (_HEAD_EDGES if draw_head else [])
-        offset = 0 if draw_body else len(_BODY_EDGES)
+        edges = (BODY_EDGES if draw_body else []) + (HEAD_EDGES if draw_head else [])
+        offset = 0 if draw_body else len(BODY_EDGES)
         polygons: list[tuple[Any, Any]] = []
         for i, (first, second) in enumerate(edges):
             a, b = first - 1, second - 1
@@ -196,7 +196,7 @@ def draw_pose(
             polygon = _ellipse_polygon(
                 (int(my), int(mx)), (int(length / 2), stick_width), int(angle)
             )
-            polygons.append((polygon, _COLORS[(i + offset) % len(_COLORS)]))
+            polygons.append((polygon, COLORS[(i + offset) % len(COLORS)]))
         _fill_polygons(canvas, polygons)
         centers, colors = [], []
         for i in range(18):
@@ -208,7 +208,7 @@ def draw_pose(
             x, y = int(keypoints[i][0]), int(keypoints[i][1])
             if 0 <= x < w and 0 <= y < h:
                 centers.append((x, y))
-                colors.append(_COLORS[i % len(_COLORS)])
+                colors.append(COLORS[i % len(COLORS)])
         _draw_disks(canvas, centers, 4, colors)
     if draw_feet:
         centers, colors = [], []
@@ -218,19 +218,19 @@ def draw_pose(
             x, y = int(keypoints[i][0]), int(keypoints[i][1])
             if 0 <= x < w and 0 <= y < h:
                 centers.append((x, y))
-                colors.append(_COLORS[i % len(_COLORS)])
+                colors.append(COLORS[i % len(COLORS)])
         _draw_disks(canvas, centers, 4, colors)
     if draw_hands:
         offsets = _disk_offsets(1.5)
         for start in (92, 113):
-            for ie, (first, second) in enumerate(_HAND_EDGES):
+            for ie, (first, second) in enumerate(HAND_EDGES):
                 a, b = start + first, start + second
                 if scores[a] < threshold or scores[b] < threshold:
                     continue
                 x1, y1 = int(keypoints[a][0]), int(keypoints[a][1])
                 x2, y2 = int(keypoints[b][0]), int(keypoints[b][1])
                 if 0.01 < x1 < w and 0.01 < y1 < h and 0.01 < x2 < w and 0.01 < y2 < h:
-                    rgb = colorsys.hsv_to_rgb(ie / float(len(_HAND_EDGES)), 1.0, 1.0)
+                    rgb = colorsys.hsv_to_rgb(ie / float(len(HAND_EDGES)), 1.0, 1.0)
                     color = tuple(int(c * 255) for c in rgb)
                     _draw_disks(canvas, _line_points((x1, y1), (x2, y2)), 1.5, color, offsets)
             centers = []
