@@ -265,14 +265,31 @@ Its build workflow:
    version, every wheel with its filename, size, sha256 and source index,
    the `workerProtocol` the engine wheels in this lock declare, the minimum
    NVIDIA driver and compute capability for the CUDA tag, and
-   `signature: null`.
+   `signature: null`. New manifests also carry `label`, UTC ISO 8601 `builtAt`,
+   exact `torchVersion` and `torchIndex`, and `lockSource` with repository URL
+   and the actual source checkout commit. These display fields do not affect
+   the canonical base id; unchanged builds retain their original metadata.
 4. Archives the interpreter and wheels as one tar stream compressed with zstd,
    byte-split strictly below 2,000,000,000 bytes per part. The manifest carries
    `archive: {"format": "tar+zstd", "parts": [...]}` with ordered filenames,
    sizes and SHA-256 hashes. The canonical identity includes the archive format,
    not its derived part rows.
-5. Publishes to a GitHub release of `Dinkster-Environments` and, when the R2
-   secrets are present, to `releases.dinkster.org/base/<variant>/<id>/`.
+5. Publishes new bases with tag `base-<variant>-<label>` and R2 directory
+   `base/<variant>/<label>/`, where the label is
+   `YYYY-MM-DD-py<python>-torch<torch>[-cu<family>]-<hash8>`. Existing full-id
+   publications remain unchanged. New publication requires R2 inventory for
+   collision checking before any upload.
+
+Mirror convergence regenerates `base/<variant>/index.json` from bucket
+manifests and matching extras, newest first with undated legacy entries last.
+Rows carry `label`, full `id`, `builtAt`, `python`, `torchVersion`, `torchIndex`,
+total publication `size` and bucket-relative `path`. Size includes declared
+archive parts even after archive retention; metadata without matching extras
+is omitted until convergence completes it. Retained seven-zip metadata is
+listed using its historical identity and volume sizes, without restoring
+seven-zip builds or installation. The index is discovery metadata, never a
+verification or local cache key. A conflicting or unidentifiable hash8 fails
+publication; a retry with the same full identity remains allowed.
 
 The consumer verifies every part before streaming the ordered bytes through
 `zstandard` into Python's tar data extraction filter. Relative internal symlinks
@@ -694,8 +711,10 @@ duplicate variant fails; incomplete or absent base coverage retains all
 candidates. The base's full transitive `wheels` list is authoritative, not a
 union of package names or a list of closure seeds.
 
-`python -m scripts.acquire_engine_bases --tag base-<variant>-<id-hex>`
-accepts repeated exact tags from `Kosinkadink/Dinkster-Environments` and
+`python -m scripts.acquire_engine_bases --tag base-<variant>-<label>`
+accepts repeated exact tags from `Kosinkadink/Dinkster-Environments`, including
+legacy `base-<variant>-<id-hex>` tags, validates the label against the canonical
+manifest's variant and full identity, and
 writes the original documents to `engine-base-manifests/<variant>/manifest.json`.
 The output directory must be new; a failed selection leaves no partial set.
 Acquisition requires a published release, complete archive parts with verified
