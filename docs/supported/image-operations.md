@@ -106,6 +106,12 @@
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- Native `LoadDA3Model` loads one bound Depth Anything 3 model file with optional
+  weight dtype selection. `DA3Inference` predicts monocular or multi-view depth,
+  optional confidence and sky, and multi-view cameras at the source image size.
+- Native `DA3Render` visualizes raw or normalized depth, confidence and sky.
+  `DA3GeometryToMesh` unprojects one frame with confidence/sky filtering,
+  stride and discontinuity selection, UVs and optional source-image texture.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
 - Structural tensor values preserve unsigned 16-bit joint indices and unsigned
