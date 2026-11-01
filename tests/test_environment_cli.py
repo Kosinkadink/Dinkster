@@ -106,6 +106,35 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert not root.exists()
 
 
+def test_setup_names_published_variants_without_resolving_or_creating_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _mirror(mirror, variant="linux-cpu")
+    code, result = _run(
+        root,
+        "setup",
+        "--variant",
+        "absent-platform",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--data",
+        str(store),
+        "--yes",
+    )
+    assert code != 0
+    assert "does not provide variant absent-platform" in result["error"]
+    assert "supported published variants: linux-cpu" in result["error"]
+    assert "--from-scratch" in result["error"]
+    assert not root.exists()
+    assert not store.exists()
+
+
 @pytest.mark.parametrize("operation", ["setup", "update"])
 def test_incompatible_published_dependency_refuses_before_project_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str

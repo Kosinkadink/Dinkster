@@ -86,8 +86,10 @@ def select_base(bases: list[dict], variant: str | None = None) -> dict:
         if usable(base) and (variant is None or base["variant"] == variant)
     ]
     if not candidates:
+        supported = ", ".join(sorted(base["variant"] for base in bases))
         raise RuntimeError(
-            "No published base supports this machine/selection; see Dinkster-Environments. "
+            "No published base supports this machine/selection; "
+            f"supported published variants: {supported}. "
             "For development/fallback use --from-scratch --variant NAME --python PATH."
         )
     return max(
