@@ -1120,3 +1120,57 @@ def test_custom_variant_rejects_invalid_definitions_before_store_creation(
     with pytest.raises(EnvironmentError):
         custom_selection(definition, "custom-cuda", {"platform": {"os": "linux", "arch": "x86_64"}})
     assert set(tmp_path.iterdir()) == {definition}
+
+
+def test_custom_rebuild_preserves_recoverable_archive_and_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_custom
+
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    template, _, _ = _mirror(mirror)
+    sources = (str(mirror / "base" / template["variant"] / template["id"][7:]),)
+    definition = tmp_path / "variants.toml"
+    definition.write_text(
+        '[variants.studio-cuda]\ntorch = "2.14.1"\n'
+        'torch-index = "https://download.pytorch.org/whl/cu130"\n'
+    )
+    selection = custom_selection(definition, "studio-cuda", template)
+    assert selection is not None
+    store.mkdir()
+
+    def resolve(command: list[str], *, cwd: Path) -> str:
+        (cwd / "uv.lock").write_text(
+            '[[package]]\nname = "fixture-base"\nversion = "1.0"\n'
+            '[package.source]\nregistry = "https://pypi.org/simple"\n'
+        )
+        (cwd / "pylock.toml").write_text("packages = []\n")
+        return ""
+
+    monkeypatch.setattr(environment_custom, "run_local_command", resolve)
+    monkeypatch.setattr(
+        environment_custom,
+        "retain_wheels",
+        lambda *_: json.loads(json.dumps(template["wheels"])),
+    )
+    first = environment_custom.build_custom_base(selection, template, sources, store)
+    retained = store / "downloads" / first["id"][7:]
+    original = {path.name: path.read_bytes() for path in retained.iterdir()}
+    assert environment_custom.build_custom_base(selection, template, sources, store) == first
+    assert {path.name: path.read_bytes() for path in retained.iterdir()} == original
+
+    download_only = tmp_path / "download-only"
+    shutil.copytree(store / "downloads", download_only / "downloads")
+    assert (
+        environment_custom.build_custom_base(selection, template, sources, download_only) == first
+    )
+    assert {
+        path.name: path.read_bytes()
+        for path in (download_only / "downloads" / first["id"][7:]).iterdir()
+    } == original
+    recovered = environment_artifacts.acquire_base(first, (str(retained),), tmp_path / "recovered")
+    for wheel in first["wheels"]:
+        assert (
+            hashlib.sha256((recovered / "wheels" / wheel["filename"]).read_bytes()).hexdigest()
+            == (wheel["sha256"])
+        )
