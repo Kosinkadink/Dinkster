@@ -51,6 +51,41 @@ set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
 Dinkster remains a client of that service for browsing, publishing, resolving,
 and downloading exact pack releases.
 
+### Prepare compatible registry pack sources
+
+Run source preparation with the engine interpreter that will load the packs.
+The committed `src/dinkster/default-packs.toml` specifies official ids and
+minimum versions. It does not pin release bytes: the registry client chooses
+the newest active version whose declared engine range admits that interpreter's
+engine version, then verifies the selected archive by size and BLAKE3 digest.
+
+```sh
+python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts --allow-missing
+```
+
+Use writable scratch paths that are separate from an installed generation.
+On Windows, use the target environment's `Scripts\python.exe` and Windows
+paths. The JSON result lists selected ids and an `unavailable` map with a
+reason for each missing pack. With no registry access, `--allow-missing`
+produces an empty source lock; without it, any unavailable pack refuses the
+command. An engine serving an explicitly empty generation remains healthy
+with zero nodes rather than loading checkout defaults.
+
+This command prepares verified sources only. It does not install the engine,
+obtain dependency locks, build a generation or activate it. For an update,
+use `--installed-lock /retained/dinkster.lock` instead of fresh selection;
+the output lock must have a different path. Installed official registry packs
+are re-resolved without downgrading, adding defaults or changing their recorded
+registry. Other installed selections are preserved for admission. Update
+preparation refuses unavailable compatible releases and does not allow
+`--allow-missing`.
+
+Pack versions are independent of engine versions. A pack's `[pack] version`
+and `engine` fields declare its version and PEP 440 engine range; excluded
+engines refuse installation, including an identical-lock no-op. See
+[pack compatibility and dependency locks](environments-and-updates.md#versions-and-engine-compatibility)
+and the [registry client guide](../packages/dinkster-registry/README.md#use).
+
 ## Develop from source
 
 The run scripts above are the default source installation path. For a manual

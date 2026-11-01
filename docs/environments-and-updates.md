@@ -500,6 +500,49 @@ wheels.
 
 ## Packs and their dependencies
 
+### Versions and engine compatibility
+
+Official packs have their own versions, independent of engine versions. Each
+versioned pack declares both fields in `dinkster-pack.toml`:
+
+```toml
+[pack]
+name = "my-pack"
+version = "1.2.0"
+engine = ">=0.0.2.dev0,<0.1"
+```
+
+The shared `dinkster-schema` declaration uses public PEP 440 versions and
+specifier sets. The range is evaluated against the target engine, including
+development versions; a refusal names the pack id, pack version, range and
+engine version. A declared range also gates explicit installation and
+identical-lock no-ops. Unpublished local sources may omit both fields, but
+cannot supply just one.
+
+`src/dinkster/default-packs.toml` contains the default official ids and minimum
+versions, not exact versions or byte identities. Target-interpreter source
+preparation resolves each id to the newest active compatible registry version
+at or above its minimum, including eligible prereleases. The resulting source
+lock records exact archive digests for verification; this does not pin the
+default declaration to those bytes.
+
+`dinkster.manager prepare-registry-sources --allow-missing` prepares the
+available defaults and reports unavailable ids with reasons, including an
+empty source lock when the registry cannot be reached. A deliberately empty
+generation starts a healthy zero-node engine without substituting checkout
+defaults. This source-preparation command does not build or activate a
+generation. Without `--allow-missing`, unavailable sources refuse preparation.
+
+Update source preparation uses `--installed-lock` instead of fresh defaults.
+It re-resolves only installed official registry packs, keeps their recorded
+registry and minimum installed version, and preserves third-party, local and
+git selections. It neither adds defaults nor drops or downgrades installed
+packs. An unavailable compatible release refuses the candidate source lock;
+`--allow-missing` is not permitted for updates. See the
+[registry client guide](../packages/dinkster-registry/README.md#use) for commands.
+
+### Published dependency locks
+
 Externally supplied packs run isolated by default ([pack-authoring.md](pack-authoring.md)). A pack
 declares its dependencies in its pack manifest and ships no wheels. At
 publish time the publisher, or the registry on the publisher's behalf,
