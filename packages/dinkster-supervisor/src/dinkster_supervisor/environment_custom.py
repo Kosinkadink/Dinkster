@@ -29,6 +29,7 @@ from .environment_state import (
     read_document,
     write_document,
 )
+from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
 
 
 def variant_file(root: Path, store: Path, explicit: Path | None) -> Path | None:
@@ -260,7 +261,9 @@ def build_custom_base(
                 part = work / f"base.tar.zst.{len(parts) + 1:03d}"
                 remaining = 1_900_000_000
                 with part.open("wb") as target:
-                    while remaining and (chunk := compressed.read(min(remaining, 1024 * 1024))):
+                    while remaining and (
+                        chunk := compressed.read(min(remaining, ENVIRONMENT_STREAM_CHUNK_BYTES))
+                    ):
                         target.write(chunk)
                         remaining -= len(chunk)
                 parts.append(
