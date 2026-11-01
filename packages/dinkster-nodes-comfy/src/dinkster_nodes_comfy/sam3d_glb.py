@@ -94,13 +94,19 @@ def inverse_bind_matrices(state: Any) -> Any:
     return np.linalg.inv(matrix.astype(np.float64)).astype(np.float32).transpose(0, 2, 1)
 
 
-def compute_normals(vertices: Any, faces: Any) -> Any:
+def compute_normals(vertices: Any, faces: Any, *, orphan_y: bool = False) -> Any:
     a, b, c = (vertices[faces[:, index]] for index in range(3))
     face_normals = np.cross(b - a, c - a).astype(np.float32)
     normals = np.zeros_like(vertices, dtype=np.float32)
     for index in range(3):
         np.add.at(normals, faces[:, index], face_normals)
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    if orphan_y:
+        return np.where(
+            lengths > 1e-8,
+            normals / np.maximum(lengths, 1e-12),
+            np.array([[0.0, 1.0, 0.0]], dtype=np.float32),
+        ).astype(np.float32)
     lengths[lengths < 1e-8] = 1.0
     return (normals / lengths).astype(np.float32)
 
