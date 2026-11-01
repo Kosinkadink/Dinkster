@@ -59,7 +59,7 @@
           "id": "save",
           "type": "SaveImage",
           "values": {
-            "mount": "mac-readiness-output",
+            "mount": "mac-readiness-comfy-output",
             "filename_prefix": "sd15"
           }
         }

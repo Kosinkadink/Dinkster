@@ -4,8 +4,10 @@ import io
 import json
 import tempfile
 import unittest
+from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from dinkster_graph import graph_from_wire, validate
 from dinkster_nodes_comfy.clip import CLIPTextEncode
@@ -22,7 +24,7 @@ assert SPEC is not None and SPEC.loader is not None
 receipt = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(receipt)
 STARTER_COMMIT = "2f880079bb3b48867795db4f7ed45633fa25e374"
-STARTER_SHA256 = "35afda805252f88399f0f1966315d671b232b8c4e883261e6f21ae5a2936e9c7"
+STARTER_SHA256 = "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
 STARTER_BYTES = (ROOT / "tests/fixtures/macos-sd15.json").read_bytes()
 SCHEMAS = build_schemas(
     (CheckpointLoaderSimple, CLIPTextEncode, EmptyLatentImage, KSampler, VAEDecode, SaveImage)
@@ -129,9 +131,17 @@ class MacWorkflowReceiptTests(unittest.TestCase):
             ("mps", "completed", [], "accepted"),
             ("mps", "completed", [], "history"),
             ("mps", "completed", [], "no-output"),
+            ("mps", "completed", [], "mount-fresh"),
+            ("mps", "completed", [], "mount-race"),
+            ("mps", "completed", [], "mount-path"),
+            ("mps", "completed", [], "mount-mode"),
+            ("mps", "completed", [], "mount-kind"),
+            ("mps", "completed", [], "mount-failed"),
+            ("mps", "completed", [], "mount-timeout"),
+            ("mps", "completed", [], "mount-restart"),
         ):
             with (
-                self.subTest(device=device, state=state),
+                self.subTest(device=device, state=state, foreign=foreign),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
@@ -147,6 +157,41 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                     "size": 15,
                 }
                 submitted = []
+                grants = [
+                    {
+                        "id": "mac-readiness-models",
+                        "path": str(checkpoint.parent),
+                        "mode": "read",
+                        "kind": "model/checkpoint",
+                        "state": "ready",
+                    },
+                    {
+                        "id": "mac-readiness-output",
+                        "path": "retained-failed-evidence",
+                        "state": "pending",
+                    },
+                ]
+                if foreign in ("mount-fresh", "mount-race"):
+                    grants.pop(0)
+                elif foreign in ("mount-path", "mount-mode", "mount-kind"):
+                    grants[0][foreign.removeprefix("mount-")] = "conflicting"
+                elif foreign in ("mount-failed", "mount-timeout"):
+                    grants[0]["state"] = "failed" if foreign == "mount-failed" else "pending"
+                mount_failure = foreign in (
+                    "mount-path",
+                    "mount-mode",
+                    "mount-kind",
+                    "mount-failed",
+                    "mount-timeout",
+                    "mount-restart",
+                )
+                success = (
+                    device == "mps"
+                    and state == "completed"
+                    and not cached
+                    and foreign in (None, "mount-fresh", "mount-race")
+                )
+                clock = iter(range(0, 10000, 301 if foreign == "mount-timeout" else 1))
 
                 def respond(
                     request,
@@ -159,13 +204,38 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                     device=device,
                     cached=cached,
                     foreign=foreign,
+                    grants=grants,
                 ):
                     route = request.full_url.removeprefix("http://127.0.0.1:8123")
                     if route == "/supervisor/status":
                         body = {"state": "ready", "instance": "instance-2"}
                     elif route == "/api/nodes":
                         body = CATALOG
+                    elif route == "/api/mounts?project=default":
+                        body = {
+                            "project": "default",
+                            "mounts": [dict(row) for row in grants],
+                            "restartRequired": foreign == "mount-restart",
+                        }
+                        if foreign != "mount-timeout":
+                            for row in grants:
+                                if row["id"] != "mac-readiness-output":
+                                    row["state"] = "ready"
+                    elif route == "/api/mounts":
+                        body = json.loads(request.data)
+                        self.assertFalse(any(row["id"] == body["id"] for row in grants))
+                        body["state"] = "pending"
+                        grants.append(body)
+                        if foreign == "mount-race":
+                            raise HTTPError(request.full_url, 409, "duplicate", Message(), None)
                     elif route == "/api/mounts/resolve-path":
+                        self.assertTrue(
+                            all(
+                                row["state"] == "ready"
+                                for row in grants
+                                if row["id"] != "mac-readiness-output"
+                            )
+                        )
                         body = {"status": "resolved", "asset": asset}
                     elif route == "/api/jobs":
                         submitted.append(json.loads(request.data))
@@ -229,24 +299,41 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                         hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
                     ),
                     patch.object(receipt, "urlopen", side_effect=respond),
+                    patch.object(receipt.time, "sleep"),
+                    patch.object(receipt.time, "monotonic", side_effect=clock.__next__),
                     patch("sys.stderr", new_callable=io.StringIO),
                 ):
-                    if device == "mps" and state == "completed" and not cached and not foreign:
+                    if success:
                         receipt.main()
                     else:
                         with self.assertRaises(RuntimeError):
                             receipt.main()
                 report = json.loads((output / "receipt.json").read_text())
+                if mount_failure:
+                    self.assertEqual(report["status"], "failed")
+                    self.assertEqual(submitted, [])
+                    self.assertIn("mount", report["error"])
+                    continue
                 if foreign != "accepted":
                     self.assertEqual(report["jobRef"], "server-assigned")
                 self.assertEqual(
                     report["status"],
-                    "pass"
-                    if device == "mps" and state == "completed" and not cached and not foreign
-                    else "failed",
+                    "pass" if success else "failed",
                 )
                 job = submitted[0]
                 self.assertFalse(job["cacheEnabled"])
+                self.assertEqual(
+                    job["graph"]["nodes"]["save"]["inputs"]["mount"],
+                    "mac-readiness-comfy-output",
+                )
+                self.assertEqual(
+                    next(row for row in grants if row["id"] == "mac-readiness-output"),
+                    {
+                        "id": "mac-readiness-output",
+                        "path": "retained-failed-evidence",
+                        "state": "pending",
+                    },
+                )
                 self.assertEqual(job["graph"]["nodes"]["checkpoint"]["inputs"]["ckpt_name"], asset)
                 self.assertEqual(
                     job["graph"]["nodes"]["save"]["inputs"]["images"],

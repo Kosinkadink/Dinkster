@@ -10,6 +10,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
@@ -18,7 +19,7 @@ CHECKPOINT_BYTES = 2132696762
 # tests/fixtures/macos-sd15.json is independent of the installed engine's starter templates.
 STARTER_SHA256_BY_COMMIT = {
     "2f880079bb3b48867795db4f7ed45633fa25e374": (
-        "35afda805252f88399f0f1966315d671b232b8c4e883261e6f21ae5a2936e9c7"
+        "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
     ),
 }
 
@@ -194,20 +195,50 @@ def main() -> None:
                     )
         for mount_id, path, mode, kind in (
             ("mac-readiness-models", checkpoint.parent, "read", "model/checkpoint"),
-            ("mac-readiness-output", images, "readwrite", "directory/output"),
+            ("mac-readiness-comfy-output", images, "readwrite", "directory/output"),
         ):
-            save(
-                mount_id + ".json",
-                request(
-                    "/api/mounts",
-                    {
-                        "id": mount_id,
-                        "path": str(path),
-                        "mode": mode,
-                        "kind": kind,
-                    },
-                ),
-            )
+            deadline = time.monotonic() + 300
+            added = False
+            while True:
+                mounts = request("/api/mounts?project=default")
+                save(mount_id + ".json", mounts)
+                if mounts.get("project") != "default" or mounts.get("restartRequired"):
+                    raise RuntimeError("mounts require a matching project without pending restart")
+                rows = [row for row in mounts["mounts"] if row["id"] == mount_id]
+                if not rows:
+                    if added:
+                        raise RuntimeError(f"mount {mount_id!r} is not visible after registration")
+                    try:
+                        response = request(
+                            "/api/mounts",
+                            {
+                                "id": mount_id,
+                                "path": str(path),
+                                "mode": mode,
+                                "kind": kind,
+                                "project": "default",
+                            },
+                        )
+                        save(mount_id + "-registration.json", response)
+                        if response.get("restartRequired"):
+                            raise RuntimeError("mount registration requires a restart")
+                    except HTTPError as exc:
+                        if exc.code != 409:
+                            raise
+                    added = True
+                    continue
+                if len(rows) != 1 or any(
+                    rows[0].get(key) != value
+                    for key, value in (("path", str(path)), ("mode", mode), ("kind", kind))
+                ):
+                    raise RuntimeError(f"mount {mount_id!r} conflicts with the required grant")
+                if rows[0].get("state") == "ready":
+                    break
+                if rows[0].get("state") not in ("pending", "scanning"):
+                    raise RuntimeError(f"mount {mount_id!r} is not ready: {rows[0].get('state')}")
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"mount {mount_id!r} did not become ready")
+                time.sleep(1)
         resolved = request(
             "/api/mounts/resolve-path",
             {
