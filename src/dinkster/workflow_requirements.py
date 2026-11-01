@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -183,13 +185,25 @@ class WorkflowPlan:
 
 def generation_device(generation: Path, variant: str) -> str:
     """Read a custom target's device family from its verified base, not its name or host."""
-    from dinkster_supervisor.environment_artifacts import validate_manifest
-    from dinkster_supervisor.environment_state import Generation, content_digest
-
-    record = Generation.read(generation / "generation.json")
-    if record.variant != variant:
+    record = _object(json.loads((generation / "generation.json").read_bytes()), "generation")
+    if record.get("format") != "dinkster.generation/1":
+        raise RequirementError("unsupported generation format")
+    if record.get("variant") != variant:
         raise RequirementError("generation variant differs from workflow target")
-    base = validate_manifest((generation / "base-manifest.json").read_bytes(), record.base, variant)
+    files = _object(record.get("files"), "generation files")
+    base_path = generation / "base-manifest.json"
+    base_data = base_path.read_bytes()
+    if base_path.is_symlink() or "sha256:" + hashlib.sha256(base_data).hexdigest() != files.get(
+        "base-manifest.json"
+    ):
+        raise RequirementError("generation base manifest differs from its inventory")
+    base = _object(json.loads(base_data), "generation base")
+    if (
+        base.get("format") != "dinkster.base/1"
+        or base.get("variant") != variant
+        or base.get("id") != record.get("base")
+    ):
+        raise RequirementError("generation base identity differs from its record")
     wheels = cast("list[dict[str, object]]", base["wheels"])
     torch = next((wheel for wheel in wheels if wheel["name"] == "torch"), None)
     if torch is None:
@@ -203,10 +217,11 @@ def generation_device(generation: Path, variant: str) -> str:
     )
     name = f"python/{library}/torch/version.py"
     path = generation / name
-    if path.is_symlink() or content_digest(path) != dict(record.files).get(name):
+    data = path.read_bytes()
+    if path.is_symlink() or "sha256:" + hashlib.sha256(data).hexdigest() != files.get(name):
         raise RequirementError("generation torch build metadata differs from its inventory")
     metadata: dict[str, object] = {}
-    for statement in ast.parse(path.read_bytes()).body:
+    for statement in ast.parse(data).body:
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
             target, value = statement.target, statement.value
         elif (

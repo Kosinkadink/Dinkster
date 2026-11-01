@@ -289,6 +289,7 @@ def custom_generation(root: Path, device: str) -> Path:
         "user-target",
         1,
         (
+            ("base-manifest.json", content_digest(generation / "base-manifest.json")),
             ("constraints.txt", constraints),
             (version_file.relative_to(generation).as_posix(), content_digest(version_file)),
         ),
@@ -453,12 +454,25 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
                 )
                 assert response.status == 400
                 metadata = generation / "python/lib/python3.14/site-packages/torch/version.py"
+                original_metadata = metadata.read_bytes()
                 metadata.write_text("cuda = '99.0'\n")
                 response = await client.post(
                     "/api/workflows/plan", json={"workflows": [workflow()]}
                 )
                 assert response.status == 400
                 assert "differs from its inventory" in (await response.json())["error"]
+                metadata.write_bytes(original_metadata)
+                base_path = generation / "base-manifest.json"
+                base = json.loads(base_path.read_bytes())
+                base["python"] = "3.12.0"
+                base_path.write_text(json.dumps(base))
+                response = await client.post(
+                    "/api/workflows/plan", json={"workflows": [workflow()]}
+                )
+                assert response.status == 400
+                assert (
+                    "base manifest differs from its inventory" in (await response.json())["error"]
+                )
 
     try:
         asyncio.run(scenario())
