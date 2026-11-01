@@ -1,18 +1,38 @@
 """Animation file hierarchy, channel values and source preservation."""
 
+import asyncio
 import copy
 import json
+import os
 import struct
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_STRING,
+    FILE_3D_TYPE,
+    KIMODO_POSE_DATA_TYPE,
+    MHR_POSE_DATA_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_vision_packet,
+)
+from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
 from dinkster_nodes_comfy.sam3d_bvh import build_bvh
+from dinkster_nodes_comfy.sam3d_export import BuildPoseFile
 from dinkster_nodes_comfy.sam3d_openpose_glb import build_glb_openpose
 from dinkster_nodes_comfy.sam3d_skeletal import build_glb_skeletal
 from scipy.spatial.transform import Rotation
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def _pose(*, branching: bool = False) -> dict[str, Any]:
@@ -253,7 +273,10 @@ def test_skeletal_glb_bones_have_flat_normals_and_dual_skin() -> None:
     assert len(gltf["skins"]) == 1 and "animations" not in gltf
 
 
-def test_skeletal_glb_native_skin_truncation_morphs_and_model_dtype() -> None:
+@pytest.mark.parametrize("public_node", (False, True))
+def test_skeletal_glb_native_skin_truncation_morphs_and_model_dtype(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, public_node: bool
+) -> None:
     pose = _mesh_pose()
     override = pose.pop("_skeleton_override")
     for frame in pose["frames"]:
@@ -285,7 +308,23 @@ def test_skeletal_glb_native_skin_truncation_morphs_and_model_dtype() -> None:
             return vertices, bind
 
     model = SimpleNamespace(model=SimpleNamespace(head_pose=SimpleNamespace(mhr=Rig())))
-    gltf, binary = _glb(build_glb_skeletal(pose, model, track_index=0))
+    if public_node:
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+        monkeypatch.setattr(
+            "dinkster_nodes_comfy.sam3d_export.initialize_inference_process", lambda: None
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "dinkster_inference.model_management",
+            SimpleNamespace(load_model_gpu=lambda model: None),
+        )
+        value = BuildPoseFile.execute(pose_data=pose, sam3d_body_model=model, track_index=0)[
+            "model_3d"
+        ]
+        data = value["source"].read_bytes()
+    else:
+        data = build_glb_skeletal(pose, model, track_index=0)
+    gltf, binary = _glb(data)
     primitive = gltf["meshes"][0]["primitives"][0]
     a = primitive["attributes"]
     first = _accessor(gltf, binary, a["WEIGHTS_0"])
@@ -449,3 +488,198 @@ def test_scail_glb_neck_stub_open_cylinders_and_smooth_material() -> None:
     assert material["doubleSided"] is True
     assert material["pbrMetallicRoughness"]["roughnessFactor"] == 0.3
     assert "animations" not in gltf
+
+
+def _export_pose() -> dict[str, Any]:
+    pose = _mesh_pose()
+    pose["image_size"] = (24, 40)
+    for frame in pose["frames"]:
+        for person in frame:
+            person["pred_keypoints_3d"] = np.arange(210, dtype=np.float32).reshape(70, 3) / 100
+    return pose
+
+
+@pytest.mark.parametrize("mode", ("body_mesh", "bones_only", "openpose", "scail", "bvh"))
+def test_pose_file_public_bytes_and_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    pose = _export_pose()
+    original = copy.deepcopy(pose)
+    options = {"format.mesh_style": mode} if mode != "bvh" else {"format.units": "m"}
+    value = BuildPoseFile.execute(
+        pose_data=pose,
+        format="bvh" if mode == "bvh" else "glb",
+        fps=20,
+        camera_translation="centered",
+        **options,
+    )["model_3d"]
+    _assert_file(mode, value)
+    np.testing.assert_equal(pose, original)
+
+
+def _assert_file(mode: str, value: Any) -> None:
+    assert value["format"] == ("bvh" if mode == "bvh" else "glb")
+    data = value["source"].read_bytes()
+    if mode == "bvh":
+        header, motion = _motion(data)
+        assert "Frames: 2\n" in header
+        assert "Frame Time: 0.050000\n" in data.decode()
+        np.testing.assert_allclose(
+            motion[:, :3], [[0.2, 1.3, 0.4], [0.7, 1.05, -0.6]], atol=1e-5, rtol=0
+        )
+    else:
+        gltf, binary = _glb(data)
+        assert len(gltf["skins"]) == 2
+        if mode in ("body_mesh", "bones_only"):
+            assert len(gltf["skins"][0]["joints"]) == 3
+            inverse = _accessor(gltf, binary, gltf["skins"][0]["inverseBindMatrices"])
+            np.testing.assert_allclose(
+                inverse[0].reshape(4, 4).T[:3, 3], [-0.2, -0.3, -0.4], atol=1e-7
+            )
+        else:
+            assert len(gltf["skins"][0]["joints"]) == (31 if mode == "scail" else 35)
+            if mode == "scail":
+                assert gltf["materials"][0]["doubleSided"] is True
+                assert gltf["materials"][0]["pbrMetallicRoughness"]["roughnessFactor"] == 0.3
+        animation = gltf["animations"][0]
+        channel = next(
+            c for c in animation["channels"] if c["target"] == {"node": 0, "path": "translation"}
+        )
+        sampler = animation["samplers"][channel["sampler"]]
+        np.testing.assert_allclose(
+            _accessor(gltf, binary, sampler["output"]), [[0, 0, 0], [0.5, -0.25, -1]], atol=1e-7
+        )
+        np.testing.assert_array_equal(
+            _accessor(gltf, binary, sampler["input"]).ravel(), np.array([0, 0.1], np.float32)
+        )
+
+
+@pytest.mark.parametrize("mode", ("body_mesh", "bones_only", "bvh"))
+def test_pose_file_requires_model_or_external_rig(mode: str) -> None:
+    with pytest.raises(ValueError, match="sam3d_body_model.*_skeleton_override"):
+        BuildPoseFile.execute(
+            pose_data={"frames": []},
+            format="bvh" if mode == "bvh" else "glb",
+            **{"format.mesh_style": mode},
+        )
+
+
+class ExportSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "export-fixture.source",
+            inputs=(),
+            outputs=(
+                OutputSpec("mhr", TypeExpr.concrete(MHR_POSE_DATA_TYPE)),
+                OutputSpec("kimodo", TypeExpr.concrete(KIMODO_POSE_DATA_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        return cls.outputs(mhr=_export_pose(), kimodo=_export_pose())
+
+
+class ExportInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "export-fixture.inspect",
+            inputs=(
+                *(
+                    InputSpec(mode, TypeExpr.concrete(FILE_3D_TYPE))
+                    for mode in ("body_mesh", "bones_only", "openpose", "scail", "bvh")
+                ),
+                InputSpec("pose", TypeExpr.concrete(MHR_POSE_DATA_TYPE)),
+            ),
+            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, pose: Any, **files: Any) -> Any:
+        for mode, value in files.items():
+            _assert_file(mode, value)
+        np.testing.assert_equal(materialize_vision_packet(pose), _export_pose())
+        return cls.outputs(result="pose file bytes preserved")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_pose_file_ordinary_hosts_and_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    module = f"export_fixture_{int(in_process)}"
+    (tmp_path / f"{module}.py").write_text(
+        "from test_sam3d_export_torch import ExportSource, ExportInspect\n"
+        "from dinkster_api.v1 import register_inference_types as inference_types, "
+        "register_file3d_types, resolver_from_env\n"
+        "NODES = (ExportSource, ExportInspect)\n"
+        "def register_types(registry):\n"
+        "    inference_types(registry)\n"
+        "    register_file3d_types(registry, resolver_from_env())\n",
+        encoding="ascii",
+    )
+    fixture = tmp_path / "fixture.toml"
+    fixture.write_text(
+        '[pack]\nname="export-fixture"\npublisher="dinkster"\nnamespaces=["export-fixture"]\n'
+        f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_types"\n',
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        composer = ServingComposer(
+            pack_scratch_root=tmp_path / "scratch",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+            },
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest, worker_group="export", group_manifests=(native, fixture)
+                    )
+                )
+            nodes = {"source": GraphNode("export-fixture.source")}
+            for index, mode in enumerate(("body_mesh", "bones_only", "openpose", "scail", "bvh")):
+                options: dict[str, Any] = {
+                    "pose_data": Link("source", "mhr" if index % 2 == 0 else "kimodo"),
+                    "fps": 20,
+                    "camera_translation": "centered",
+                }
+                variants = {"format": "bvh" if mode == "bvh" else "glb"}
+                if mode == "bvh":
+                    options["format.units"] = "m"
+                else:
+                    variants["format.mesh_style"] = mode
+                    if mode in ("body_mesh", "bones_only"):
+                        variants["format.mesh_style.bone_vis"] = (
+                            "off" if mode == "body_mesh" else "octahedrons"
+                        )
+                    if mode == "body_mesh":
+                        variants["format.mesh_style.shader"] = "default"
+                nodes[mode] = GraphNode("BuildPoseFile", options, slot_variants=variants)
+            nodes["inspect"] = GraphNode(
+                "export-fixture.inspect",
+                {
+                    **{mode: Link(mode, "model_3d") for mode in nodes if mode != "source"},
+                    "pose": Link("source", "mhr"),
+                },
+            )
+            graph = graph_from_wire(graph_to_wire(Graph(nodes=nodes)))
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["result"].resolve() == "pose file bytes preserved"
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
