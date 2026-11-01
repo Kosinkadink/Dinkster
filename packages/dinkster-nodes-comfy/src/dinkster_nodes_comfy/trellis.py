@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
+    GIBIBYTE,
     LATENT_TYPE,
     SHAPE_SUBDIVIDES_TYPE,
     VAE_TYPE,
@@ -181,7 +182,7 @@ class VaeDecodeTextureTrellis(Node):
         bytes_per_point = 896 * management.dtype_size(vae.vae_dtype) + 27 * 4
         vae.prepare_decode(
             latent["samples"].shape,
-            memory_required=2 * 1024**3 + int(stages[-1].feats.shape[0]) * bytes_per_point,
+            memory_required=2 * GIBIBYTE + int(stages[-1].feats.shape[0]) * bytes_per_point,
         )
         coords = latent["coords"]
         counts = latent.get("coord_counts")
