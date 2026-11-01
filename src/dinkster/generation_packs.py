@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 import zipfile
@@ -119,6 +120,8 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
     variant = record.get("variant")
     if not isinstance(variant, str) or not variant.strip():
         raise CompositionError("generation variant must be a non-empty string")
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None:
+        raise CompositionError("generation variant must be a portable variant name")
     hosting = record.get("inProcessPacks", [])
     if (
         not isinstance(hosting, list)

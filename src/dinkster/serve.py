@@ -168,7 +168,7 @@ from .resolver_api import add_resolver_index_routes
 from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
-from .workflow_requirements_api import VARIANTS, add_workflow_requirement_routes
+from .workflow_requirements_api import add_workflow_requirement_routes
 
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 _SERVING_PYTHON_ENV = "DINKSTER_SERVING_PYTHON"
@@ -1123,7 +1123,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--engine-variant",
-        choices=VARIANTS,
         help="declared engine generation variant for workflow-open planning; "
         "never inferred from hardware",
     )
@@ -1801,8 +1800,6 @@ def main(argv: list[str] | None = None) -> None:
     if args.generation is not None:
         try:
             selected_variant, generation_specs = load_generation_packs(args.generation)
-            if selected_variant not in VARIANTS:
-                raise CompositionError(f"unsupported generation variant: {selected_variant}")
             if args.engine_variant is not None and args.engine_variant != selected_variant:
                 raise CompositionError("--engine-variant differs from selected generation variant")
             args.engine_variant = selected_variant
