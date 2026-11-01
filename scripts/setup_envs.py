@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,8 @@ def bootstrap(root: Path) -> Path:
 def select_base(bases: list[dict], variant: str | None = None) -> dict:
     host = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     arch = {"AMD64": "x86_64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+    if host == "macos" and arch == "x86_64":
+        raise RuntimeError("Intel macOS is unsupported; mac-arm64 requires Apple Silicon.")
     compatible = [base for base in bases if base["platform"] == {"os": host, "arch": arch}]
     mask = os.environ.get("CUDA_VISIBLE_DEVICES", "unset").strip()
     devices = []
@@ -83,9 +86,11 @@ def select_base(bases: list[dict], variant: str | None = None) -> dict:
         if usable(base) and (variant is None or base["variant"] == variant)
     ]
     if not candidates:
+        supported = ", ".join(sorted(base["variant"] for base in bases))
         raise RuntimeError(
-            "No published base supports this machine/selection; see Dinkster-Environments. "
-            "macOS bundle support: https://github.com/Kosinkadink/comfy-vibe-station/issues/575"
+            "No published base supports this machine/selection; "
+            f"supported published variants: {supported}. "
+            "For development/fallback use --from-scratch --variant NAME --python PATH."
         )
     return max(
         candidates,
@@ -102,30 +107,61 @@ def setup(
     variant: str | None = None,
     mirror: str = "https://releases.dinkster.org",
     force: bool = False,
+    from_scratch: bool = False,
+    python_override: Path | None = None,
+    variants: Path | None = None,
 ) -> Path:
     from dinkster_supervisor.environment_artifacts import acquire_base, validate_manifest
     from dinkster_supervisor.environment_constraints import effective_constraints
     from dinkster_supervisor.environment_downloads import read_metadata
     from dinkster_supervisor.environment_state import writer_lock
 
-    selections = json.loads((root / "scripts/base_bundles.json").read_text())
-    bases = [
-        validate_manifest(
-            read_metadata(mirror, f"base/{name}/{identity}/manifest.json"),
-            "sha256:" + identity,
-            name,
+    local = None
+    base = None
+    if from_scratch:
+        from dinkster_supervisor.environment_local import DEFAULT_VARIANTS, local_selection
+
+        if variant is None:
+            raise RuntimeError("--from-scratch requires an explicit --variant")
+        local = local_selection(root, variant, variants or DEFAULT_VARIANTS, python_override)
+        print(f"Resolving uv.lock locally for {variant}; torch index {local['index']}", flush=True)
+    else:
+        if python_override is not None or variants is not None:
+            raise RuntimeError("--python and --variants require --from-scratch")
+        selections = json.loads((root / "scripts/base_bundles.json").read_text())
+        bases = [
+            validate_manifest(
+                read_metadata(mirror, f"base/{name}/{identity}/manifest.json"),
+                "sha256:" + identity,
+                name,
+            )
+            for name, identity in selections.items()
+        ]
+        base = select_base(bases, variant)
+        print(
+            f"Installing {base['variant']} base {base['id']} (Python {base['python']})", flush=True
         )
-        for name, identity in selections.items()
-    ]
-    base = select_base(bases, variant)
-    print(f"Installing {base['variant']} base {base['id']} (Python {base['python']})", flush=True)
     store = root / ".run/environment-store"
     environment = root / ".venv"
     store.mkdir(parents=True, exist_ok=True)
     with writer_lock(store):
-        base_root = acquire_base(
-            base, (f"{mirror.rstrip('/')}/base/{base['variant']}/{base['id'][7:]}",), store
-        )
+        if local is not None:
+            from dinkster_supervisor.environment_local import prepare_local
+
+            inputs = prepare_local(root, local, store)
+            base_root = store / "bases" / inputs["base"][7:]
+            base = json.loads((base_root / "manifest.json").read_text())
+            (base_root / "wheels").mkdir(exist_ok=True)
+            for wheel in base["wheels"]:
+                target = base_root / "wheels" / wheel["filename"]
+                if not target.exists():
+                    shutil.copyfile(store / "wheels" / wheel["sha256"] / wheel["filename"], target)
+        else:
+            assert base is not None
+            base_root = acquire_base(
+                base, (f"{mirror.rstrip('/')}/base/{base['variant']}/{base['id'][7:]}",), store
+            )
+        assert base is not None
         requirements = root / ".run/workspace-requirements.txt"
         command(
             "uv",
@@ -139,7 +175,16 @@ def setup(
             str(requirements),
             root=root,
         )
-        requirements.write_text(effective_constraints(requirements.read_text(), base))
+        from scripts.build_release import engine_base_interfaces
+
+        interfaces = (
+            set(engine_base_interfaces(tomllib.loads((root / "uv.lock").read_text()), base))
+            if local is None
+            else None
+        )
+        requirements.write_text(
+            effective_constraints(requirements.read_text(), base, interfaces=interfaces)
+        )
         receipt = root / ".run/environment-base.json"
         if environment.exists() and (
             force or not receipt.is_file() or json.loads(receipt.read_text())["id"] != base["id"]
@@ -155,6 +200,17 @@ def setup(
             root=root,
         )
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if os.name == "nt":
+            command(
+                str(python),
+                "-I",
+                str(
+                    root / "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
+                ),
+                "--base",
+                str((base_root / base["interpreter"]["executable"]).parent),
+                root=root,
+            )
         command(
             "uv",
             "pip",
@@ -202,6 +258,11 @@ def main() -> int:
     parser.add_argument("--variant")
     parser.add_argument("--mirror", default="https://releases.dinkster.org")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--from-scratch", action="store_true", help="resolve locally; development only"
+    )
+    parser.add_argument("--python", type=Path, help="explicit host interpreter override")
+    parser.add_argument("--variants", type=Path)
     args = parser.parse_args()
     if not shutil.which("uv"):
         parser.error("uv is required: https://docs.astral.sh/uv/")
@@ -215,7 +276,15 @@ def main() -> int:
         )
         return 0
     sys.path.insert(0, str(ROOT))
-    python = setup(ROOT, variant=args.variant, mirror=args.mirror, force=args.force)
+    python = setup(
+        ROOT,
+        variant=args.variant,
+        mirror=args.mirror,
+        force=args.force,
+        from_scratch=args.from_scratch,
+        python_override=args.python,
+        variants=args.variants,
+    )
     print(f"Ready: {python} (use --no-sync with uv run)")
     return 0
 

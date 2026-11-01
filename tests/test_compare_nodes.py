@@ -14,6 +14,55 @@ import pytest
 
 
 @pytest.mark.parametrize(
+    ("widget", "file_input", "passed"),
+    [
+        ({"type": "COMBO", "editableOptions": True}, False, True),
+        ({"type": "COMBO"}, False, False),
+        ({"type": "COMBO", "editableOptions": 1}, False, False),
+        ({"type": "COMBO", "options": []}, False, True),
+        ({"type": "COMBO", "editableOptions": True, "options": ["actual"]}, False, False),
+        (
+            {"type": "COMBO", "editableOptions": True, "remote": {"route": "/api/choices"}},
+            False,
+            False,
+        ),
+        ({"type": "ASSET", "editableOptions": True}, False, False),
+        ({"type": "ASSET", "editableOptions": True}, True, True),
+    ],
+)
+def test_empty_editable_combo_options_preserve_other_choice_contracts(
+    widget: dict[str, Any], file_input: bool, passed: bool
+) -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": "Example",
+                "input_types": {
+                    "required": {"choice": ["COMBO", {"options": [], "file_input": file_input}]}
+                },
+                "return_types": [],
+            }
+        ]
+    }
+    native = {
+        "nodeType": "Example",
+        "interface": [
+            {
+                "role": "input",
+                "id": "choice",
+                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "widget": widget,
+            }
+        ],
+    }
+    result = compare_registry(reference, {"nodes": {"Example": native}})
+    assert result["passed"] is passed
+    assert result["rows"][0]["status"] == ("identical" if passed else "differs")
+
+
+@pytest.mark.parametrize(
     "name,parameter,baseline,observed,passed",
     [
         (
@@ -385,6 +434,31 @@ class NonFile:
 
     def run(self, mode):
         return mode
+
+class V3File:
+    FUNCTION = "EXECUTE_NORMALIZED"
+
+    @classmethod
+    def GET_SCHEMA(cls):
+        raise AssertionError("source inspection must not execute schemas")
+
+    @classmethod
+    def EXECUTE_NORMALIZED(cls, **kwargs):
+        return cls.execute(**kwargs)
+
+    @classmethod
+    def execute(cls, filename, optional_filename, category, mode):
+        path = folder_paths.get_full_path_or_raise(category, filename)
+        optional = folder_paths.get_full_path("models", optional_filename)
+        other = different_owner.get_full_path_or_raise("models", mode)
+        fixed = folder_paths.get_full_path_or_raise("models", "constant.bin")
+        local = "local.bin"
+        ignored = folder_paths.get_full_path_or_raise("models", local)
+        return path, optional, other, fixed, ignored
+
+    @classmethod
+    def validate(cls, mode):
+        return folder_paths.get_full_path_or_raise("models", mode)
 """)
     spec = importlib.util.spec_from_file_location("source_nodes", source)
     assert spec is not None and spec.loader is not None
@@ -392,6 +466,7 @@ class NonFile:
     spec.loader.exec_module(module)
     assert annotated_file_arguments(module.LoadExample) == {"latent"}
     assert annotated_file_arguments(module.NonFile) == set()
+    assert annotated_file_arguments(module.V3File) == {"filename", "optional_filename"}
     assert directory_file_inputs(module.LoadExample) == {"latent"}
     assert directory_file_inputs(module.NonFile) == set()
 

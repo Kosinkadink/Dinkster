@@ -37,6 +37,56 @@ def _freeze(value: object) -> object:
     return value
 
 
+class PreparedRunContext:
+    """Complete worker-side value preparation before publishing to the engine."""
+
+    def __init__(
+        self,
+        context: RunExecutionContext,
+        prepare_values: Callable[[Mapping[str, Value]], Awaitable[Mapping[str, Value]]],
+    ) -> None:
+        self._context = context
+        self._prepare_values = prepare_values
+        self._active = True
+
+    @property
+    def node_id(self) -> str:
+        return self._context.node_id
+
+    @property
+    def inputs(self) -> Mapping[str, Value]:
+        return self._context.inputs
+
+    def close(self) -> None:
+        self._active = False
+
+    def _check_active(self) -> None:
+        if not self._active:
+            raise RuntimeError("execution context is no longer active")
+
+    async def get_graph(self) -> Mapping[str, object]:
+        self._check_active()
+        return await self._context.get_graph()
+
+    async def await_run_value(self, node_id: str) -> Mapping[str, Value]:
+        self._check_active()
+        return await self._context.await_run_value(node_id)
+
+    async def publish_run_value(self, node_id: str, value: Mapping[str, Value]) -> None:
+        self._check_active()
+        value = await self._prepare_values(value)
+        self._check_active()
+        await self._context.publish_run_value(node_id, value)
+
+    async def inhibit(self, node_ids: Sequence[str]) -> None:
+        self._check_active()
+        await self._context.inhibit(node_ids)
+
+    async def override_node(self, node_id: str, inputs: Mapping[str, object]) -> None:
+        self._check_active()
+        await self._context.override_node(node_id, inputs)
+
+
 class BoundaryRunContext:
     """Worker-local proxy for the parent invocation's live run context."""
 

@@ -64,6 +64,7 @@ from dinkster_assets import (
     register_asset_type,
     resolver_from_env,
 )
+from dinkster_assets.scratch import hold_produced_job
 from dinkster_caches import (
     DEFAULT_DISK_CACHE_BYTES,
     DiskCacheStore,
@@ -3946,6 +3947,12 @@ class ServingComposer:
                 generation_provider_nodes=generation_provider_nodes,
             )
 
+        @contextlib.contextmanager
+        def produced_job_context(run_id: str) -> Generator[None]:
+            assert self._pack_scratch_root is not None
+            with contextlib.closing(hold_produced_job(self._pack_scratch_root, run_id)):
+                yield
+
         self._runtime_seat.publish(
             ExecutionRuntime(
                 worker=worker,
@@ -3957,6 +3964,7 @@ class ServingComposer:
                 resolve_providers=resolve_providers,
                 preflight_provider_assets=preflight_provider_assets,
                 run_finished=getattr(self._native_policy, "release_run", None),
+                run_context=produced_job_context if self._pack_scratch_root is not None else None,
                 owner_alive=lambda token: token in self._live_token_owners(topology),
                 extension_snapshot=snapshot,
                 sampler_registry_snapshot=sampler_registry,

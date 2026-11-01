@@ -12,6 +12,7 @@ from .declared import (
     declared_asset,
     install_declared_assets,
     mount_roots_for_kind,
+    produced_output_scratch,
     resolver_from_env,
     use_declared_asset_pack,
 )
@@ -85,6 +86,7 @@ from .library import (
     LocalAssetLibrary,
     load_write_records,
 )
+from .load3d import register_load3d_type
 from .media import (
     MediaClassification,
     RasterImageFacts,
@@ -255,6 +257,7 @@ __all__ = [
     "MountWriteAuthority",
     "MountsError",
     "mount_roots_for_kind",
+    "produced_output_scratch",
     "asset_selection_names",
     "asset_selection_options",
     "resolve_asset_selection",
@@ -321,6 +324,7 @@ __all__ = [
     "probe_handle",
     "rank_transport_candidates",
     "register_asset_type",
+    "register_load3d_type",
     "register_save_target_type",
     "register_audio_value_type",
     "bind_audio_value",

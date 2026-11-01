@@ -108,6 +108,36 @@ The main protocol routes include:
   machine identity or filesystem authority. Verified bytes and their scoped
   transfer observation publish through the same recoverable streaming path
   as named uploads; generic transfers create no classified media authority.
+- `GET`, `PUT`, and `DELETE /api/library/retentions/{owner_kind}/{owner_id}?scope=`
+  persist explicit references for `document`, `history`, `shown-result`, or
+  `preview` owners. `owner_id` is an opaque non-empty identifier of at most
+  512 characters. Reads require `assets:read` in scope; writes require
+  `assets:write`. PUT accepts `{revision, digests, complete?}`, with at most
+  4096 canonical asset digests. Revision zero creates an owner; replacements
+  require the current revision. DELETE requires `revision` in the query and
+  publishes an empty manifest with a newer revision, preserving stale-tab
+  protection even when an identifier is reused. All successful operations
+  return `{scope, ownerKind, ownerId, revision, digests, complete}` with HTTP 200.
+  `complete` is a boolean defaulting to false; incomplete or legacy owner
+  manifests block collection inspection even when their digest list is empty.
+  Missing owners return 404, stale revisions 409, invalid requests 400 and
+  unavailable storage 503. Digests are deduplicated and sorted. Missing bytes
+  may be retained without fetching, copying, cataloging, or granting media
+  access. Associations persist until explicitly replaced or released; there
+  is no age expiry. They do not parse opaque workflow documents, register
+  existing history automatically, or authorize cleanup on their own. Clients
+  must declare complete reference sets; absent associations are not evidence
+  that older documents contain no asset values. Cleanup remains disabled.
+  `HistoryStore.hold_asset_references()` separately holds the history write
+  barrier and reads source-document roots from accepted and terminal jobs in
+  every scope. Terminal writes atomically retain external asset identities
+  from nested target values, saved artifacts and their optional published
+  previews, independently of execution cache retention. These manifests
+  persist until their history rows are removed and grant no byte access.
+  Legacy and interrupted rows with unknown
+  output references block inspection rather than count as empty. History
+  responses do not expose these internal manifests. This does not inspect
+  opaque workflow bytes, retain live previews, or enable deletion.
 - `GET /api/assets/catalog?scope=&project=` lists persistent upload observations,
   grouped by digest, separately from workflow records. `q` searches original
   and stored names and recorded origin details; `kind` and `origin` filter
@@ -151,6 +181,233 @@ The main protocol routes include:
 
 This is the native Dinkster protocol, not ComfyUI's `/prompt` or `/object_info`
 surface.
+
+## Retained asset registration
+
+The retention endpoint acknowledges durable ownership, not display, byte
+availability, read permission or permission to collect. A client declares a
+complete typed identity set before exposing an asset through a document,
+shown result or live preview. `complete: true` certifies only this owner's
+set; it cannot certify the existence or completeness of other owners.
+There is no request that enables destructive cleanup by setting this flag.
+Unknown global ownership keeps cleanup disabled, independently of individual
+complete manifests. Disconnect, restart and elapsed time never release roots.
+
+### Identity and ownership
+
+`digests` contains canonical `blake3:<64 lowercase hex>` external asset
+identities, recursively enumerated using the owning value type's schema.
+Include nested arrays/records, typed document resources and transitively
+owned values. Do not use payload-cache keys, arbitrary fingerprints, image-only
+display helpers or truncated descriptors as an identity census. Known missing
+assets still belong in the set. A successful registration neither fetches nor
+materializes them; check availability separately before displaying bytes.
+Unsupported or opaque value formats require `complete: false`, even if all
+currently understood identities have been listed. Oversized sets must not be
+silently truncated to the endpoint's 4096-identity bound; retain an incomplete
+owner and block collection until a complete declaration is representable.
+
+Use distinct opaque `owner_id` values for independently retained generations,
+not a shared tab label. Scope, owner kind and owner ID together are the key;
+the durable revision prevents stale replacement/release after ID reuse.
+Persist owner IDs and acknowledged revisions with the state they protect.
+
+- `document` covers current, undo/redo and frozen documents, restored sessions,
+  shared-session replacements and imported documents, including graphs not
+  instantiated in the current root. Owners may declare their union or use
+  separate IDs. Closing one view does not release another view's values.
+- `shown-result` covers complete retained result values, including restored
+  results and frozen execution views, not just currently rendered descriptors.
+- `preview` covers the latest retained still, ring frames, pending reads and
+  decoded media lifetimes. Renderer unmount is not a release if any other
+  owner can still display the value.
+- `history` is available for client-owned persisted values. Server terminal
+  targets separately retain their identities with their real history rows;
+  this does not infer dependencies of an opaque workflow `sourceDocument`.
+
+### Acknowledgment and replacement
+
+1. Create a fresh generation with PUT `{revision: 0, digests: [...], complete:
+   true}`. Do not publish it to the document/result/preview until HTTP 200
+   acknowledges the exact canonical set, completeness and new revision.
+2. While replacing a still-retained value, either register a new generation
+   before releasing the old one, or PUT the union of old and new identities
+   at the current revision. Only after acknowledgment may the consumer expose
+   the new value. After all old consumers and pending reads have finished,
+   replace the union with the new set at the acknowledged revision.
+3. DELETE at that revision releases an owner only after all its consumers,
+   undo/redo entries and recoverable persisted state relinquish the values.
+   The acknowledged response is a complete empty set at the next revision,
+   not deletion of the revision counter or of any asset bytes.
+
+If the response is lost, GET the same key and compare the entire canonical
+set, completeness and revision before proceeding. Do not blindly replay a
+mutation after a conflict. HTTP 409 requires reconciliation with the real
+owner; a stale callback must not adopt a newer owner's revision and release
+it. Failure, cancellation or disconnection before acknowledgment leaves the
+old values retained and the new value unpublished. An incomplete manifest
+must be acknowledged before exposing values whose identities are unknown.
+Cleanup cannot reclaim from incomplete or unregistered owner state.
+
+### Backend synchronization
+
+Library and history inspection hold their SQLite write transactions; cache
+inspection holds the cache admission/publication barriers. External roots
+must remain held while library dependency closure is computed and candidates
+are considered. A copied root set after those barriers close is not safe.
+Managed vault writers and verified readers acquire vault-wide OS ownership
+before per-identity ownership, retaining both through their existing lifetime.
+Server jobs retain vault ownership from dispatch through engine/native
+settlement, terminal recovery and durable history publication. Media publication
+workers retain it through their record/reference commit, including when the
+request is cancelled. Scratch writers use job-root ownership instead.
+An exclusive vault claim is nonblocking and must be acquired after all reference
+barriers, then held through the final operation. If a publisher already owns the
+vault while waiting on a reference barrier, inspection refuses the claim and
+releases its barriers rather than waiting in the reverse order. This closes the
+server-job publication-to-history gap, not every possible external handoff.
+Unknown global owner completeness still blocks deletion.
+
+## Storage accounting
+
+`GET /api/library/storage` requires an authenticated human operator and
+`assets:read`. It accepts no query parameters or filesystem destinations and
+returns `Cache-Control: no-store`.
+
+`limitBytes` is the global persisted produced-asset size policy, initially
+21474836480 (20 GiB). Null means unlimited only when `policyAvailable` is true;
+unavailable policy reports false and null instead of inventing a default.
+`PUT /api/library/storage/policy` requires an operator and `assets:write`, and
+accepts exactly `{limitBytes: number | null}` with a positive JSON-safe integer.
+It returns the acknowledged limit and `collectionEnabled:false`. Unknown keys,
+filesystem targets and query parameters are rejected. Changes survive restart
+but do not enable deletion or enforce the limit while ownership is unknown.
+
+`POST /api/library/storage/clear` requires the same operator/write authority and
+an empty JSON object, with no query parameters. It currently returns HTTP409,
+`collectionEnabled:false`, `blocked:["owner_completeness_unknown"]` and zero
+`reclaimedBytes`/`reclaimedFiles`. Repeating Clear is nondestructive. No policy
+request or individual complete owner manifest can bypass this global gate.
+
+Behind the gate, Clear first runs the same inactive-job publication recovery and
+scratch removal as startup and terminal settlement, then the held-root vault
+collector. Its reclaimed byte/file totals include both passes; `scratchRecovery`
+reports the recovery pass separately. A refused job store yields HTTP409 with
+`scratch_recovery_incomplete`, unknown reclaimability and a failed-item count,
+while still reporting any bytes already removed from other safe stores. Live
+jobs remain untouched, offered copies are verified before scratch removal, and
+unoffered temporary data never becomes a produced engine asset. Repeating Clear
+does not count earlier removal again; owner journals remain part of temporary
+accounting for retries and reuse.
+
+The collector retains memory/disk, history and library reference barriers and
+inactive scratch claims and their dependency closure through an exclusive vault
+claim and deletion. Offered scratch-journal identities remain roots until
+scratch removal retires their rows, so Clear cannot break an interrupted
+handoff's retry. Its frontend integration gate is disabled in source, not exposed
+as a request option. Behind that gate, only verified adoption rows are candidates,
+in original adoption order. A supplied byte target stops collection once the
+produced canonical blobs meet the target; untracked downloads do not consume the
+produced limit. Clear has no target. Untracked bytes and retained digests are
+excluded from candidates. Pending inventory blocks collection. Corrupt bytes or unsafe
+sidecars fail the item without dropping its recovery record. The adoption row
+is removed only after vault deletion, so an interrupted deletion can finish on
+the next pass. Reports count deleted blobs and sidecars separately as files and
+include their actual sizes, retained candidates and failed items.
+
+Behind the same disabled gate, a server-owned worker checks the persisted size
+policy after job publication settlement and at least every minute. Each pass reads
+the policy anew; unlimited skips automatic
+deletion, while a finite limit uses the same owner-held oldest-eligible collector
+as Clear. A policy update affects the next pass, not one already underway. The
+worker waits for a settled-job notification or a one-minute fallback. The queue
+keeps its vault lease through terminal history/events and releases it before the
+woken task can run; other active publishers and readers still block collection.
+`lastPolicyCollection` reports the last completed pass, including the limit it
+read, blocked reasons and actual reclaimed counts; null means no completed pass.
+Unavailable policy never means unlimited and never permits deletion. Shutdown
+cancels the worker and waits for an in-progress owned inspection to settle before
+closing stores. Production starts no policy loop while the gate remains false.
+
+`vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
+`adoptedBytes` sums recorded verified adoption sizes. Either is null when its
+state is unavailable. These byte totals are observations, not an atomic
+publication snapshot or evidence that bytes are eligible for deletion.
+When all ownership is known and the integration gate is enabled,
+`reclaimableBytes` measures the remaining eligible produced blobs and their
+sidecars under the same held reference, scratch and vault claims as deletion.
+Accounting uses the collector's digest/size and safe-sidecar checks without
+deleting bytes or retiring inventory rows. A failed candidate makes that total
+null with `candidate_accounting_unavailable`, not a zero or partial estimate.
+After collection, vault/adoption totals are refreshed before releasing ownership;
+reclaimable bytes describe what remains, not what was already reclaimed. Unknown
+frontend ownership or any other blocked inspection keeps reclaimability null.
+`knownRetainedAssets` counts the union of held memory/disk cache, all-scope
+history and library roots plus transitive dependencies. It is null when root
+inspection refuses. A partial known set is not a complete owner census.
+`vaultOwnershipAvailable` observes the exclusive vault claim while these owners
+are held: true means the claim was acquired, false means a managed reader,
+publisher or server job was active (`vault_in_use`), and null means ownership or
+reference state was unavailable. A missing inventory or lease gate reports
+`vault_ownership_state_unavailable`; inspection never creates either. This field
+does not establish complete frontend registration or make bytes reclaimable.
+
+Memory barriers remain held until the blocking disk/history/library inspection
+settles, including repeated request cancellation. Disk roots are deduplicated;
+blocking barriers are acquired and released on the same worker thread.
+`temporaryBytes` observes regular files (including journals, sidecars and
+interrupted ingest files) only inside recognized per-pack/per-group job stores
+under the host-configured scratch root. Unrelated pack scratch is excluded.
+The job/attempt path must match its read-only journal owner. Both host-job and
+store OS claims remain held during each tree walk. Missing ownership, live
+jobs/writers/readers, unreadable walks, symlinks and Windows directory junctions
+return null with `temporary_accounting_unavailable`, not a partial total. An
+explicitly configured but absent scratch tree reports zero without creating it; an unconfigured root
+remains unknown. Normal serve supplies `<library-root>/scratch`.
+`reclaimableBytes` is null, `collectionEnabled` is false, and `blocked` always
+includes `owner_completeness_unknown`. Missing, pending or unreadable state adds
+explicit reasons. An inactive claim is not adoption or deletion authority;
+this endpoint never deletes bytes or treats unknown as zero.
+
+### Interrupted publication recovery
+
+Before serving library requests, startup inspects the host-configured scratch
+stores under the same host-job and store claims as accounting. Only journaled
+publications explicitly offered for handoff are recovered. Missing engine bytes
+stream through the existing digest-verifying vault writer, with pending
+inventory recorded before copying and adoption committed while publication
+ownership remains held. Existing engine bytes must verify their digest and size
+before a pending inventory entry can be completed. Untracked existing engine
+assets are not reclassified as produced assets.
+
+Unknown journals, active owners, unsafe paths, size conflicts and corrupt bytes
+block that store without stopping recovery of another recognized job. An
+unreadable or unsafe directory enumeration stops that enumeration rather than
+guessing what was omitted. Recovery never reruns a workflow, copies mounted
+inputs or creates library records. The disabled frontend integration gate
+preserves all scratch by default, including unoffered bytes.
+The queue also reconciles the finishing job's offered publications after engine
+and native settlement, on success, failure and cancellation. It awaits recovery
+before publishing the terminal transition or releasing its dispatch slot; a
+cancelled offloaded recovery retains ownership until the worker settles.
+Recovery failure does not replace the job's original outcome. Other jobs' stores
+are not recovered by this per-job pass. Both passes preserve the first verified
+adoption timestamp. Behind the integration gate, successful reconciliation
+verifies every offered engine copy, then holds vault-wide ownership through
+removal of that inactive job's scratch files and empty subdirectories. Both
+host-job and scratch-store claims remain held. Offered, unoffered and interrupted
+temporary files are removed only after a complete safe tree walk; symlinks,
+Windows directory junctions and special files refuse removal before any file is
+deleted. Offered rows remain until removal succeeds, permitting retries after
+partial deletion. The small owner journal and external lease gates remain for safe job-attempt reuse;
+regular file descriptors are verified sequentially rather than all held open.
+No active job or reader's scratch is removed, and an untracked engine copy is
+not reclassified by this pass.
+`lastPublicationRecovery` on operator storage status reports the last completed
+startup or per-job pass's `verifiedPublications` and `blockedInspections`, or
+null when no scratch root was configured. These counts are observations, not
+cleanup eligibility or a complete orphan census. GET status itself performs no
+recovery mutation.
 
 ## Learn more
 

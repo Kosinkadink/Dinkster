@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import marshal
 import os
+import shlex
 import shutil
 import struct
 import subprocess
@@ -20,7 +22,7 @@ from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_artifacts import acquire_sources, discover
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
 from supervisor_subprocess import run as run_with_diagnostics
-from test_environment_artifacts import _mirror, _release_sources
+from test_environment_artifacts import _artifact, _json, _mirror, _release_sources, _wheel_payload
 from test_environment_generations import _assert_shared
 from test_environment_runtime import free_port, make_generation
 from test_environment_state import _generation
@@ -38,9 +40,47 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         *arguments,
         "--json",
     ]
+    if os.environ.get("DINKSTER_TEST_FORBID_RESOLUTION"):
+        command[1:3] = [
+            "-c",
+            """
+import runpy, sys
+from pathlib import Path
+from dinkster_supervisor import environment_local
+def forbidden(*args, **kwargs):
+    raise AssertionError("published paths must not resolve locally")
+environment_local.prepare_local = forbidden
+def audit(event, args):
+    if event != "subprocess.Popen":
+        return
+    command = args[1]
+    if isinstance(command, str):
+        import ctypes
+        count = ctypes.c_int()
+        parse = ctypes.windll.shell32.CommandLineToArgvW
+        parse.restype = ctypes.POINTER(ctypes.c_wchar_p)
+        arguments = parse(ctypes.c_wchar_p(command), ctypes.byref(count))
+        try:
+            command = arguments[:count.value]
+        finally:
+            ctypes.windll.kernel32.LocalFree(ctypes.cast(arguments, ctypes.c_void_p))
+    executable = args[0] or command[0]
+    if Path(executable).stem.lower() != "uv":
+        return
+    if "compile" in command:
+        forbidden()
+    if "sync" in command or "install" in command:
+        if "--offline" not in command or "--no-index" not in command:
+            forbidden()
+sys.addaudithook(audit)
+runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
+""",
+        ]
     result = (
         run_with_diagnostics(command)
-        if "move" in arguments or ("doctor" in arguments and "--repair" in arguments)
+        if "setup" in arguments
+        or "move" in arguments
+        or ("doctor" in arguments and "--repair" in arguments)
         else subprocess.run(command, capture_output=True, text=True, timeout=30)
     )
     assert result.stdout, result.stderr
@@ -64,6 +104,109 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
     assert not root.exists()
+
+
+def test_setup_names_published_variants_without_resolving_or_creating_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _mirror(mirror, variant="linux-cpu")
+    code, result = _run(
+        root,
+        "setup",
+        "--variant",
+        "absent-platform",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--data",
+        str(store),
+        "--yes",
+    )
+    assert code != 0
+    assert "does not provide variant absent-platform" in result["error"]
+    assert "supported published variants: linux-cpu" in result["error"]
+    assert "--from-scratch" in result["error"]
+    assert not root.exists()
+    assert not store.exists()
+
+
+@pytest.mark.parametrize("operation", ["setup", "update"])
+def test_incompatible_published_dependency_refuses_before_project_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, store, root = tmp_path / "mirror", tmp_path / "store", tmp_path / "project"
+    base, engine, channel = _mirror(mirror)
+    previous = mirror / "engine" / channel["engine"]["release"][7:]
+    filename = "fixture_engine-2.0-py3-none-any.whl"
+    payload = _wheel_payload("fixture_engine", "2.0", "fixture-base>=2")
+    engine["artifacts"][1] = _artifact(filename, payload)
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    engine["dependencies"] = {
+        "fixture-cpu": {
+            "base": base["id"],
+            "wheels": [{key: base["wheels"][0][key] for key in fields}],
+        }
+    }
+    data = _json(engine)
+    identity = hashlib.sha256(data).hexdigest()
+    release = previous.parent / identity
+    release.mkdir()
+    (release / "release-manifest.json").write_bytes(data)
+    (release / "constraints.txt").write_bytes((previous / "constraints.txt").read_bytes())
+    (release / filename).write_bytes(payload)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"] = [
+        {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+    ]
+    (mirror / "channels/main.json").write_bytes(_json(channel))
+    if operation == "update":
+        _generation(root, 1)
+        (root / "current").write_bytes(b"1\n")
+        (root / "project.json").write_bytes(
+            _json(
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "main",
+                    "variant": "fixture-cpu",
+                    "mirrors": [str(mirror)],
+                    "port": 3639,
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    code, result = _run(
+        root,
+        operation,
+        "--mirror",
+        str(mirror),
+        "--channel",
+        "main",
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--yes",
+    )
+    assert code == 1 and result["status"] == "error"
+    assert (
+        "fixture-engine requires fixture-base>=2; base provides fixture-base 1.0" in result["error"]
+    )
+    assert {
+        path: path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != ".lock"
+    } == before
+    assert not (root / "store").exists()
+    assert not list((root / "journal").glob("*.json"))
+    assert not (store / "projects.json").exists()
+    assert not (tmp_path / "user-data/dinkster/stores.json").exists()
 
 
 def test_status_returns_configured_channel_and_variant_without_starting_anything(tmp_path: Path):
@@ -100,12 +243,22 @@ def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Pat
     assert "project channel" in result["error"]
 
 
-def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(tmp_path: Path):
+@pytest.mark.parametrize("source", ["published", "local"])
+def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
+    tmp_path: Path, source: str
+):
     generation = _generation(tmp_path, 1).parent
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_text())
+    document["source"] = source
+    metadata.write_text(json.dumps(document))
     (tmp_path / "current").write_bytes(b"1\n")
     code, result = _run(tmp_path, "doctor")
     assert code == 0
     assert result["status"] == "clean"
+    if source == "local":
+        assert result["source"] == "local"
+        assert "locally resolved, no base manifest" in result["plan"][0]
     module = generation / "python/module.py"
     module.write_bytes(b"ANSWER = 13\n")
     code, result = _run(tmp_path, "doctor")
@@ -132,6 +285,120 @@ def _runtime_project(root: Path) -> int:
         )
     )
     return port
+
+
+def test_channel_update_refuses_local_generation_before_reading_channel(tmp_path: Path):
+    _runtime_project(tmp_path)
+    settings = tmp_path / "project.json"
+    project = json.loads(settings.read_text())
+    project["mirrors"] = []
+    settings.write_text(json.dumps(project))
+    metadata = tmp_path / "generations/1/generation.json"
+    document = json.loads(metadata.read_text())
+    document["source"] = "local"
+    metadata.write_text(json.dumps(document))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    code, result = _run(tmp_path, "update", "--plan")
+    assert code == 1
+    assert "cannot channel-update a locally resolved generation" in result["error"]
+    assert "fresh published generation" in result["error"]
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_from_scratch_plan_never_reads_release_hosts_or_creates_root(tmp_path: Path):
+    root = tmp_path / "prospective"
+    source = Path(__file__).resolve().parents[1]
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    code, result = _run(
+        root,
+        "setup",
+        "--from-scratch",
+        "--variant",
+        variant,
+        "--source",
+        str(source),
+        "--python",
+        sys.executable,
+        "--mirror",
+        str(tmp_path / "nonexistent-release-host"),
+        "--plan",
+    )
+    assert code == 0
+    assert "resolve" in result["plan"][0]
+    assert "uv.lock" in result["plan"][0]
+    assert any("torch index" in line for line in result["plan"])
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("kind", ["foreign-variant", "pack-lock", "catalog"])
+def test_from_scratch_refuses_incompatible_inputs_before_creation(tmp_path: Path, kind: str):
+    variant = "linux-cpu" if os.name == "nt" else "win-cpu"
+    extra = (
+        ["--python", sys.executable]
+        if kind == "foreign-variant"
+        else ["--pack-lock", str(tmp_path / "pack.json")]
+        if kind == "pack-lock"
+        else ["--catalog-lock", str(tmp_path / "catalog.lock"), "--artifacts", str(tmp_path)]
+    )
+    root = tmp_path / "absent-project"
+    code, result = _run(root, "setup", "--from-scratch", "--variant", variant, *extra, "--plan")
+    assert code == 1
+    assert ("does not match host" if kind == "foreign-variant" else "cannot be combined") in result[
+        "error"
+    ]
+    assert not root.exists()
+
+
+def test_from_scratch_rejects_a_checkout_lock_changed_after_planning(tmp_path: Path):
+    from dinkster_supervisor.environment_local import (
+        DEFAULT_VARIANTS,
+        local_selection,
+        prepare_local,
+    )
+
+    source = Path(__file__).resolve().parents[1]
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = tmp_path / "checkout" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    checkout = tmp_path / "checkout"
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    selection = local_selection(checkout, variant, DEFAULT_VARIANTS, Path(sys.executable))
+    lock = checkout / "uv.lock"
+    lock.write_bytes(lock.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="checkout lock changed after planning"):
+        prepare_local(checkout, selection, tmp_path / "absent-store")
+    assert not (tmp_path / "absent-store").exists()
+
+
+def test_missing_variant_row_requires_explicit_local_interpreter(tmp_path: Path):
+    variants = tmp_path / "variants.toml"
+    variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    root = tmp_path / "prospective"
+    arguments = (
+        "setup",
+        "--from-scratch",
+        "--variant",
+        variant,
+        "--variants",
+        str(variants),
+        "--source",
+        str(Path(__file__).resolve().parents[1]),
+        "--plan",
+    )
+    code, result = _run(root, *arguments)
+    assert code == 1
+    assert f"missing variants.toml row: variants.{variant}" in result["error"]
+    assert "--python" in result["error"]
+    code, result = _run(root, *arguments, "--python", sys.executable)
+    assert code == 0
+    assert any(sys.executable in line for line in result["plan"])
+    assert not root.exists()
 
 
 def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
@@ -309,6 +576,28 @@ def test_named_engine_requires_port_and_invalid_assignment_does_not_mutate(tmp_p
 def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    uv = shutil.which("uv")
+    assert uv is not None
+    tools = tmp_path / "guarded-tools"
+    tools.mkdir()
+    guard = tools / "guard.py"
+    guard.write_text(
+        "import subprocess, sys\n"
+        "args = sys.argv[1:]\n"
+        "if 'compile' in args or (('sync' in args or 'install' in args) and\n"
+        "    ('--offline' not in args or '--no-index' not in args)):\n"
+        "    sys.exit('published paths must not resolve dependencies')\n"
+        f"sys.exit(subprocess.call([{uv!r}, *args]))\n"
+    )
+    shim = tools / ("uv.cmd" if os.name == "nt" else "uv")
+    shim.write_text(
+        f'@"{sys.executable}" "{guard}" %*\n'
+        if os.name == "nt"
+        else f'#!/bin/sh\n{shlex.quote(sys.executable)} {shlex.quote(str(guard))} "$@"\n'
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):
@@ -332,10 +621,13 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     base = json.loads(Path(fixture["baseManifest"]).read_bytes())
     base_id = base["id"][7:]
     port = free_port()
+    package_index = "https://packages.example.org/simple"
     arguments = (
         "setup",
         "--mirror",
         str(mirror),
+        "--package-index",
+        package_index,
         "--channel",
         "main",
         "--variant",
@@ -383,13 +675,13 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     failed_arguments[failed_arguments.index(str(store))] = str(failed_store)
     code, failed = _run(root, *failed_arguments, "--yes")
     assert code == 1 and failed["status"] == "error"
+    assert engine_wheel.name in failed["error"], failed
+    assert "corrupt or short data" in failed["error"], failed
     assert not (root / "project.json").exists() and not (root / "store").exists()
     assert not (failed_store / "projects.json").exists()
     assert not (tmp_path / "user-data/dinkster/stores.json").exists()
     assert any(path.is_file() for path in (failed_store / "bases").rglob("*"))
-    failed_journal = next((root / "journal").glob("*.json"))
-    assert Journal.read(failed_journal).stage == "rolled-back"
-    assert Journal.read(failed_journal).error
+    assert not list((root / "journal").glob("*.json"))
     engine_wheel.write_bytes(original_wheel)
     code, installed = _run(root, *arguments, "--yes")
     assert code == 0, installed
@@ -398,6 +690,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert installed["url"] == f"http://127.0.0.1:{port}"
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "project.json").read_bytes()
+        assert json.loads(initial_settings)["packageIndex"] == package_index
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
         code, second_plan = _run(
@@ -472,6 +765,7 @@ environment.main()
         elapsed = time.monotonic() - started
         assert code == 0, updated
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
+        assert json.loads((root / "project.json").read_bytes())["packageIndex"] == package_index
         assert Journal.read(journals[-1]).stage == "rolled-back"
         assert updated["current"] == 2 and updated["url"] != installed["url"]
         first, second = (root / "generations" / str(n) for n in (1, 2))
@@ -512,15 +806,21 @@ environment.main()
         assert sorted(
             path.read_bytes() for path in (cached_release / "artifacts").glob("*.zip")
         ) == sorted(payload for name, payload in payloads.items() if name.endswith(".zip"))
+        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
         engine = json.loads((mirror / "channels/main.json").read_bytes())["engine"]["release"][7:]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
+        before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
+        before_settings = (root / "project.json").read_bytes()
         code, refused = _run(root, "update", "--yes")
         assert code == 1 and refused["status"] == "error"
         assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
-        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
+        assert {path: path.read_bytes() for path in (root / "journal").glob("*.json")} == (
+            before_journals
+        )
+        assert (root / "project.json").read_bytes() == before_settings
         mirror.rename(tmp_path / "unavailable-mirror")
         damaged = next(first.rglob("fixture_engine.py"))
         damaged.write_text("VALUE = 999\n")

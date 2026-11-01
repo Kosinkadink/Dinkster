@@ -35,6 +35,11 @@
   `--pack` or `--legacy-pack` path resolves once from the server launch directory;
   only its absolute path reaches workers. Doctor reports the absolute path of the
   imported nodes entry and the interpreter that imported it.
+- Generic worker startup discovers optional legacy-checkpoint conversion
+  components without loading Torch. An advertised conversion command means the
+  components are installed, not that their native runtime has been loaded.
+  Conversion validates runtime health on first use; an unavailable converter
+  returns an explicit error and serving can select another capable worker.
 - Linux supports opt-in OS sandboxing for local isolated packs through
   `dinkster-serve --sandbox-packs`. Requested sandboxing fails closed unless full
   user, PID, mount, and network namespace isolation is available. Pack
@@ -49,6 +54,46 @@
   user's filesystem and network authority.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.
+- Boundary workers with configured pack scratch keep produced asset bytes
+  separate for each job attempt. Returning a result still requires verified
+  engine adoption before acknowledgement; this does not delete temporary files.
+- Saved-file previews preserve scratch handoff intent and verified engine
+  adoption state. Host-generated previews also retain adoption inventory;
+  existing untracked vault bytes are not reclassified. Incomplete staging
+  remains pending and does not authorize deletion.
+- Operators can persist a produced-asset size policy, initially 20 GiB or
+  explicitly unlimited. Clear reports blocked while global reference ownership
+  is unknown; neither changing the policy nor clearing deletes files.
+- Completed, failed and cancelled invocation scopes refuse further publication
+  into their job-owned scratch, including from detached tasks and held writers.
+- Produced scratch claims refuse live invocations and open writers, including
+  in another process. Crashed-process locks release without age-based expiry;
+  this does not itself collect or discard produced data.
+- Serving jobs retain scratch ownership between nodes until run settlement,
+  including failure or cancellation. Finishing one job does not release another
+  live job's ownership, and missing host ownership state refuses reconciliation.
+- Open verified produced-asset readers retain their bytes after the producing
+  invocation ends, including readers in another process. Closing the last
+  descriptor or exiting the reader process releases its ownership.
+- Verified managed paths returned during an invocation retain ownership until
+  that invocation ends, even after the verification descriptor closes. Nested
+  calls cannot release their parent's paths; expired invocation contexts refuse
+  new path retention. Paths retained outside that lifetime need a separate
+  owner, and no deletion is enabled.
+- Job scratch retains publication ownership and handoff intent across process
+  exit. Missing ownership state refuses reuse of nonempty scratch; merely
+  inspecting a source does not mark it as offered or adopted.
+- Copying produced sources into the engine vault records pending and verified
+  adoption across restarts. An interrupted inventory commit can be completed
+  from verified destination bytes without the producer. Existing untracked
+  inputs and mounted sources are not reclassified, and no deletion is enabled.
+- Direct in-process results also adopt produced sources before returning when
+  pack scratch is configured. Returned AUDIO and VIDEO sources remain readable
+  from the engine vault after scratch removal; failed adoption preserves scratch
+  bytes.
+- Direct in-process run-value publications use the same durable adoption before
+  another node can receive the value. Failed adoption does not publish a value,
+  and completed invocation contexts cannot publish again.
 - Worker conversations carry typed runtime-expansion results. Present
   values retain ordinary resource ownership, source adoption, saved-artifact
   validation and shared-memory/result acknowledgements. Carrying a fragment

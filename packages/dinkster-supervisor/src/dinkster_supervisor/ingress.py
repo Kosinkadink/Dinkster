@@ -23,7 +23,7 @@ from .limits import (
     INGRESS_EVENT_QUEUE_LIMIT_BYTES,
     INGRESS_JOB_SUBMISSION_LIMIT_BYTES,
 )
-from .supervisor import EngineLink, install_cors
+from .supervisor import EngineLink, install_cors, install_host_validation
 
 
 @dataclass(frozen=True)
@@ -632,6 +632,8 @@ def create_ingress_app(
     primary: str,
     store: LeaseStore,
     *,
+    host: str = "127.0.0.1",
+    allow_hosts: tuple[str, ...] = (),
     allow_origins: tuple[str, ...] = (),
 ) -> web.Application:
     if not members or primary not in members:
@@ -643,6 +645,7 @@ def create_ingress_app(
     )
     app[MEMBERS_KEY], app[PRIMARY_KEY], app[STORE_KEY] = dict(members), primary, store
     app.cleanup_ctx.append(_session)
+    install_host_validation(app, (host, *allow_hosts))
     install_cors(app, frozenset(allow_origins))
     app.router.add_get("/supervisor/status", _status)
     app.router.add_route(

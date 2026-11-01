@@ -2,8 +2,8 @@
 
 The `dinkster` command starts the engine and browser frontend on one loopback
 origin, prepares missing or stale pack catalogs, and opens the editor. These
-source-checkout steps work on Windows x64 and Linux x64. macOS setup waits for
-the [Apple Silicon base bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575).
+source-checkout steps work on Windows x64, Linux x64, and Apple Silicon with
+macOS 14 or newer. Intel macOS is unsupported.
 
 ## Install
 
@@ -33,10 +33,13 @@ The script installs the machine's verified Dinkster-Environments Python/torch
 bundle and locked workspace into `.venv`, builds the pinned frontend,
 creates local state, and opens the
 editor. It does not need the Desktop app or a separate frontend checkout.
+Windows checks the selected runtime's [SQLite mapped-shm recovery](install.md#windows-interpreter)
+and private-base identity before installing workspace dependencies.
 The first run downloads dependencies and can take several minutes.
 Windows NVIDIA machines select a bundle using its manifest's driver and
 compute-capability bounds; otherwise Windows uses its CPU bundle. Linux uses
-the published Linux CPU bundle. An empty `CUDA_VISIBLE_DEVICES` (or `-1`)
+the published Linux CPU bundle; Apple Silicon uses `mac-arm64` with MPS.
+An empty `CUDA_VISIBLE_DEVICES` (or `-1`)
 forces CPU selection. There is no second local torch pin or fallback resolve.
 
 The scripts create the local library and managed-pack roots under `~/.dinkster`

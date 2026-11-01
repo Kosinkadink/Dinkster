@@ -22,12 +22,19 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "secrets." not in text and "vars." not in text
     assert all("if" not in step for step in fast["steps"])
     assert any(step.get("run") == "bash scripts/ci-fast.sh" for step in fast["steps"])
+    gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
+    assert "export UV_OFFLINE=1" in gate
+    assert "-m 'not network'" in gate
+    commands = [step.get("run", "") for step in fast["steps"]]
+    backend = next(command for command in commands if "uv build --package" in command)
+    assert commands.index(backend) < commands.index("bash scripts/ci-fast.sh")
     export = next(
         step for step in fast["steps"] if "DINKSTER_CATALOG_WIRE_OUTPUT" in step.get("env", {})
     )
     assert "test_default_catalog_publishes_only_owned_translation_carriers" in export["run"]
     decode = fast["steps"][-1]
     assert "tools/validate_default_catalog.mjs" in decode["run"]
+    assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     assert decode["env"]["CATALOG"] == export["env"]["DINKSTER_CATALOG_WIRE_OUTPUT"]
     assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
 
@@ -41,10 +48,25 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     jobs = workflow["jobs"]
     assert "coverage" not in jobs
     root = jobs["test"]
+    decode = next(
+        step
+        for step in root["steps"]
+        if "tools/validate_default_catalog.mjs" in step.get("run", "")
+    )
+    assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     linux = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "linux"]
     assert [(row["shard"], row["pytest_args"]) for row in linux] == [
-        (index, f"-p tools.pytest_file_shard --file-shard {index}/4") for index in range(1, 5)
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/6") for index in range(1, 7)
     ]
+    assert [row["run_checks"] for row in linux] == [True, False, False, False, False, False]
+    assert all(row["timeout-minutes"] == 30 for row in linux)
+    windows = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "windows"]
+    assert [row["pytest_args"] for row in windows] == [
+        f"-p tools.pytest_file_shard --file-shard {index}/6"
+        + (" --durations=20" if index == 1 else "")
+        for index in range(1, 7)
+    ]
+    assert [row["run_checks"] for row in windows] == [False, False, True, False, False, False]
     run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
     assert run["if"] == "runner.os == 'Linux'"
     assert "${{ matrix.pytest_args }}" in run["run"]
@@ -55,7 +77,43 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert upload["if"] == "runner.os == 'Linux'"
     assert upload["with"]["path"] == run["env"]["COVERAGE_FILE"]
     assert upload["with"]["if-no-files-found"] == "error"
-    assert set(jobs["coverage-gate"]["needs"]) == {"validation-plan", "test"}
+    gate = jobs["coverage-gate"]
+    assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
+    runtime = jobs["windows-runtime"]
+    assert runtime["strategy"]["matrix"]["shard"] == [1, 2, 3]
+    runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
+    assert "--file-shard ${{ matrix.shard }}/3" in runtime_run["run"]
+    assert "--case-shard-file tests/test_environment_generations.py" in runtime_run["run"]
+    runtime_upload = next(
+        step for step in runtime["steps"] if step.get("uses") == "actions/upload-artifact@v4"
+    )
+    assert runtime_upload["if"] == "always()"
+    assert runtime_upload["with"]["if-no-files-found"] == "error"
+    assert runtime_upload["with"]["include-hidden-files"] is True
+    download = next(
+        step for step in gate["steps"] if step.get("uses") == "actions/download-artifact@v4"
+    )
+    combine = gate["steps"][-1]["run"]
+    assert "*/packages/" in combine
+    assert 'coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data' in combine
+    assert "for shard in 1 2 3 4 5 6; do" in combine
+    assert 'test -f "coverage-data/.coverage.$shard"' in combine
+    assert "coverage report --fail-under=80" in combine
+    assert "for shard in 1 2 3; do" in combine
+    assert 'test -f "coverage-data/.coverage.windows-runtime-$shard"' in combine
+    for shard in runtime["strategy"]["matrix"]["shard"]:
+        coverage_file = runtime_run["env"]["COVERAGE_FILE"].replace(
+            "${{ matrix.shard }}", str(shard)
+        )
+        assert coverage_file == f".coverage.windows-runtime-{shard}"
+        assert (
+            runtime_upload["with"]["path"].replace("${{ matrix.shard }}", str(shard))
+            == coverage_file
+        )
+        artifact_name = runtime_upload["with"]["name"].replace("${{ matrix.shard }}", str(shard))
+        assert artifact_name.startswith(download["with"]["pattern"].removesuffix("*"))
+        assert download["with"]["path"] == "coverage-data"
+        assert download["with"]["merge-multiple"] is True
     assert "model-tests" not in jobs
     assert "model-tests-gate" not in jobs
 

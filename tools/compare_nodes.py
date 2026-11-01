@@ -198,6 +198,12 @@ def _native_inputs(
                         option["value"] if isinstance(option, dict) else option
                         for option in widget["options"]
                     ]
+                elif (
+                    widget.get("type") == "COMBO"
+                    and widget.get("editableOptions") is True
+                    and "remote_route" not in entry
+                ):
+                    entry["options"] = []
                 elif widget.get("type") == "ASSET":
                     entry["file_picker"] = True
                 if entry.get("options"):

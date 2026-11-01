@@ -24,6 +24,8 @@ uv run --no-sync dinkster
 The editor opens at `http://127.0.0.1:3639`. See the
 [browser editor quickstart](docs/quickstart.md) for model folders, execution
 environments, and the first-image walkthrough.
+On Windows, use the [verified Windows interpreter setup](docs/install.md#windows-interpreter)
+instead of the floating Python selector above.
 
 Packs are independently installable Python distributions with a
 `dinkster-pack.toml` manifest. A pack declares its schemas, runtime entry
@@ -60,11 +62,12 @@ compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). Run
 `uv run --no-project python scripts/setup_envs.py` to install the machine's
 verified Dinkster-Environments base and locked editable workspace in `.venv`.
-The base manifest owns Python, torch and its dependency closure. Linux uses
-`linux-cpu`; Windows selects a compatible NVIDIA base or `win-cpu` from the
-manifest's hardware bounds. Use `--variant linux-cpu` or `--variant win-cpu`
-to select CPU explicitly. macOS setup stops until its base bundle is available;
-see [Apple Silicon bundles](https://github.com/Kosinkadink/comfy-vibe-station/issues/575).
+The base manifest owns Python, torch and its dependency closure. Linux selects
+`linux-nvidia` for compatible NVIDIA hardware or `linux-cpu`; Windows selects
+a compatible NVIDIA base or `win-cpu` from the manifest's hardware bounds.
+Apple Silicon on macOS 14 or newer selects
+`mac-arm64` from PyPI with MPS support; Intel macOS is unsupported.
+Use `--variant linux-cpu` or `--variant win-cpu` to select CPU explicitly.
 
 Use `uv run --no-sync` after setup. Project `uv sync` would replace the selected
 base's platform-specific wheels with the universal lock's defaults. Rerun setup

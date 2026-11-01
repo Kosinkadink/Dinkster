@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import os
 import threading
 import time
 import traceback
@@ -19,6 +20,8 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
+from dinkster_assets import AssetError, AssetVault, resolver_from_env
+from dinkster_assets.declared import VAULT_ENV, use_produced_output_job
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
@@ -81,6 +84,7 @@ from dinkster_schema import (
     plan_asset_coercion,
     resolved_type_expr,
     resolved_type_id,
+    schema_signature,
     use_capture_budget,
     use_reporter,
 )
@@ -105,6 +109,8 @@ from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
 from .preview_artifacts import capture_saved_file_previews
+from .produced_assets import ProducedAssetAuthority
+from .run_control import PreparedRunContext
 
 
 async def _run_sync(call: Callable[..., object], /, *args: object, **kwargs: object) -> object:
@@ -397,8 +403,44 @@ class InProcessWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
         """Invoke with the pack context active across all worker-side work."""
-        with self._pack_context():
-            return await self._invoke_in_context(invocation, on_event)
+        with (
+            self._pack_context(),
+            use_produced_output_job(
+                invocation.job_ref or invocation.invocation_id, invocation.attempt_id
+            ) as owns_adoption,
+        ):
+            control: PreparedRunContext | None = None
+            try:
+                authority: ProducedAssetAuthority | None = None
+                if owns_adoption and os.environ.get("DINKSTER_PACK_SCRATCH"):
+                    root = os.environ.get(VAULT_ENV)
+                    vault = AssetVault(root) if root else None
+                    existing_env = dict(os.environ)
+                    existing_env.pop("DINKSTER_PACK_SCRATCH", None)
+                    authority = ProducedAssetAuthority(
+                        vault, resolver_from_env(), resolver_from_env(existing_env)
+                    )
+
+                    async def prepare_values(values: Mapping[str, Value]) -> Mapping[str, Value]:
+                        assert authority is not None
+                        values = dict(values)
+                        await _run_sync(authority.capture, values, None, invocation.inputs)
+                        return values
+
+                    if invocation.run_control is not None:
+                        control = PreparedRunContext(invocation.run_control, prepare_values)
+                        invocation = replace(invocation, run_control=control)
+                result = await self._invoke_in_context(invocation, on_event)
+                if authority is not None and result.outputs is not None:
+                    await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
+                return result
+            except (AssetError, OSError) as error:
+                return InvocationResult(
+                    error=NodeError(invocation.node_id, invocation.node_type, str(error))
+                )
+            finally:
+                if control is not None:
+                    control.close()
 
     async def check_lazy_status(
         self,
@@ -536,6 +578,8 @@ class InProcessWorker:
         schema = invocation.effective_schema
 
         skew = self._check_output_provenance(base_schema, invocation)
+        if skew is None:
+            skew = self._check_input_provenance(base_schema, invocation)
         if skew is not None:
             return InvocationResult(
                 error=NodeError(
@@ -794,6 +838,59 @@ class InProcessWorker:
             await pending_waiter
 
         return reporter, close
+
+    def _check_input_provenance(
+        self, base_schema: NodeSchema, invocation: Invocation
+    ) -> str | None:
+        supplied = dict.fromkeys((*invocation.inputs, *invocation.connected_undemanded_inputs))
+        # Lazy demand changes availability order, not authored family order.
+        stored: dict[str, object] = {
+            spec.id: None for spec in invocation.effective_schema.inputs if spec.id in supplied
+        }
+        stored.update((name, None) for name in supplied if name not in stored)
+        source_ids = {
+            family.count.input for family in base_schema.output_families if family.count is not None
+        }
+        if base_schema.output_descriptors is not None:
+            source_ids.add(base_schema.output_descriptors.input)
+        expressions = [
+            output.type for output in (*base_schema.outputs, *base_schema.output_families)
+        ]
+        while expressions:
+            expression = expressions.pop()
+            if (
+                expression.kind == "tuple_element"
+                and isinstance(expression.index, str)
+                and expression.index in invocation.inputs
+            ):
+                source_ids.add(expression.index)
+            if expression.element is not None:
+                expressions.append(expression.element)
+            expressions.extend(expression.elements)
+        try:
+            for input_id in source_ids:
+                stored[input_id] = invocation.inputs[input_id].resolve()
+            expected = elaborate(
+                base_schema,
+                stored,
+                dict(invocation.output_members),
+                dict(invocation.effective_schema.slot_choices),
+            )
+            # Host-derived menus and display metadata are not input authority.
+            matches = schema_signature(expected) == schema_signature(
+                replace(expected, inputs=invocation.effective_schema.inputs)
+            )
+        except (KeyError, ValueError, UnresolvablePayload) as error:
+            return f"schema skew: invalid authored inputs: {error}"
+        if not matches:
+            return "schema skew: input interface differs from worker projection"
+        admitted = {spec.id for spec in expected.inputs}
+        if any(
+            name not in admitted
+            for name in (*invocation.inputs, *invocation.connected_undemanded_inputs)
+        ):
+            return "schema skew: supplied input is absent from the effective interface"
+        return None
 
     def _check_output_provenance(
         self, base_schema: NodeSchema, invocation: Invocation

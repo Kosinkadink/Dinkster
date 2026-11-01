@@ -635,6 +635,70 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(("index", "expected", "type_id"), [(0, 7, "INT"), (1, "label", "STRING")])
+def test_worker_projects_tuple_selectors_in_output_families(
+    index: int, expected: object, type_id: str
+) -> None:
+    from dinkster_protocol import Invocation
+    from dinkster_schema import OutputFamilySpec, OutputInterface, elaborate
+
+    class Pick(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.family-pick",
+                inputs=(
+                    InputSpec(
+                        "values",
+                        TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("STRING")),
+                    ),
+                    InputSpec("index", TypeExpr.concrete("INT")),
+                ),
+                output_families=(
+                    OutputFamilySpec("picked", TypeExpr.tuple_element("values", "index")),
+                ),
+            )
+
+        @classmethod
+        def execute(
+            cls, *, values: tuple[int, str], index: int, output_spec: OutputInterface
+        ) -> Mapping[str, object]:
+            return cls.outputs(
+                picked={name: values[index] for name in output_spec.family("picked")}
+            )
+
+    async def scenario() -> None:
+        registry = make_registry()
+        schema = elaborate(
+            Pick.define_schema(),
+            {"values": (7, "label"), "index": index},
+            {"picked": ("right",)},
+        )
+        worker = InProcessWorker(build_node_types((Pick,)), registry)
+        try:
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="family-selector",
+                    node_id="pick",
+                    node_type="test.family-pick",
+                    inputs={
+                        "values": registry.wrap("tuple<INT,STRING>", (7, "label")),
+                        "index": registry.wrap("INT", index),
+                    },
+                    effective_schema=schema,
+                    output_members=(("picked", ("right",)),),
+                )
+            )
+            assert result.error is None
+            assert result.outputs is not None
+            assert result.outputs["picked.right"].type_id == type_id
+            assert result.outputs["picked.right"].resolve() == expected
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
 def test_bad_list_output_is_contract_error() -> None:
     async def scenario() -> None:
         registry = make_registry()

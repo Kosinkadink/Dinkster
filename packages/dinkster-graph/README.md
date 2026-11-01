@@ -40,10 +40,13 @@ assert plan(graph, ["double"]) == ["source", "double"]
 ```
 
 Given a mapping of node type to `NodeSchema`, `validate(graph, schemas,
-targets)` returns structured `Diagnostic` objects. Structural errors are
-authoritative; type mismatches are advisory warnings except for the scoped
-`COMBO` boundary, which is hard so strings and combos require explicit
-converter nodes.
+targets)` returns structured `Diagnostic` objects. Structural errors and
+primitive literal payload mismatches are authoritative. `literal-type` errors
+reject values such as strings on FLOAT inputs or booleans on INT inputs,
+including list elements and explicitly stamped payloads. Integer literals
+remain valid on FLOAT inputs; validation never coerces values or runs codecs.
+Link type mismatches remain advisory warnings except for the scoped `COMBO`
+boundary, which is hard so strings and combos require explicit converter nodes.
 
 Loop boundaries are paired innermost-first across the document. Validation
 rejects unmatched boundaries, ambiguous nesting, paths escaping a paired end,

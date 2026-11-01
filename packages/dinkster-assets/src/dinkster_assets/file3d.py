@@ -41,8 +41,8 @@ FILE3D_FORMATS = {
     FILE_3D_SPLAT_TYPE: frozenset({"splat"}),
     FILE_3D_SPZ_TYPE: frozenset({"spz"}),
     FILE_3D_KSPLAT_TYPE: frozenset({"ksplat"}),
-    FILE_3D_SPLAT_ANY_TYPE: frozenset({"ply", "splat", "spz", "ksplat"}),
-    FILE_3D_POINT_CLOUD_ANY_TYPE: frozenset({"ply"}),
+    FILE_3D_SPLAT_ANY_TYPE: frozenset({"", "ply", "splat", "spz", "ksplat"}),
+    FILE_3D_POINT_CLOUD_ANY_TYPE: frozenset({"", "ply"}),
 }
 
 
@@ -87,8 +87,8 @@ def register_file3d_types(
         if set(obj) - {"format", "source", "resources"}:
             raise AssetError("FILE_3D contains unknown fields")
         format_id = obj.get("format")
-        if not isinstance(format_id, str) or re.fullmatch(r"[a-z0-9]+", format_id) is None:
-            raise AssetError("FILE_3D format must be a lowercase file extension")
+        if not isinstance(format_id, str) or re.fullmatch(r"[a-z0-9]*", format_id) is None:
+            raise AssetError("FILE_3D format must be a lowercase file extension or empty")
         resources = obj.get("resources", {})
         if not isinstance(resources, Mapping):
             raise AssetError("FILE_3D resources must map contained relative names to assets")
@@ -144,7 +144,7 @@ def register_file3d_types(
             if dict(metadata) != meta(obj):
                 raise AssetError("FILE_3D metadata does not match encoded source identities")
 
-        return registry.register(
+        spec = registry.register(
             type_id,
             encode=encode,
             decode=lambda data: typed(json.loads(data)),
@@ -153,6 +153,8 @@ def register_file3d_types(
             meta=meta,
             validate_encoded=validate,
         )
+        registry.register_rendition(type_id, "manifest", mime="application/json", render=encode)
+        return spec
 
     return tuple(
         registry.spec(type_id) if type_id in registry else register(type_id, formats)

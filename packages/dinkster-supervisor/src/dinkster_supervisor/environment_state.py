@@ -238,7 +238,12 @@ class Channel:
         for name, sha in self.bases:
             if name == variant:
                 return sha
-        raise EnvironmentError(f"channel does not provide variant {variant}; choose explicitly")
+        supported = ", ".join(sorted(name for name, _ in self.bases))
+        raise EnvironmentError(
+            f"channel does not provide variant {variant}; supported published variants: "
+            f"{supported}. Choose a published variant explicitly; "
+            "--from-scratch is an explicit development option, never an automatic fallback."
+        )
 
 
 @dataclass(frozen=True)
@@ -252,6 +257,7 @@ class Generation:
     worker_protocol: int
     files: tuple[tuple[str, str], ...]
     in_process_packs: tuple[str, ...] = ()
+    source: str = "published"
 
     @classmethod
     def read(cls, path: Path) -> Generation:
@@ -292,6 +298,9 @@ class Generation:
         packs = cast("list[str]", entries)
         if len(set(packs)) != len(packs):
             raise EnvironmentError("inProcessPacks must not repeat a pack")
+        source = value.get("source", "published")
+        if source not in ("published", "local"):
+            raise EnvironmentError("generation source must be published or local")
         return cls(
             generation_number(value.get("generation")),
             digest(value.get("base")),
@@ -302,6 +311,7 @@ class Generation:
             protocol,
             tuple(sorted((relative_file(name), digest(sha)) for name, sha in hashes.items())),
             tuple(packs),
+            cast("str", source),
         )
 
     def write(self, path: Path) -> None:
@@ -317,6 +327,7 @@ class Generation:
                 "workerProtocol": self.worker_protocol,
                 "files": dict(self.files),
                 "inProcessPacks": list(self.in_process_packs),
+                **({"source": "local"} if self.source == "local" else {}),
             },
         )
 

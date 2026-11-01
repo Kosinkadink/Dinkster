@@ -5,8 +5,8 @@ package index. A GitHub 404 can mean that your account does not have access.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
-26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux or
-`.\run.ps1` on Windows. The scripts install uv user-locally if missing;
+26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux
+or Apple Silicon macOS, or `.\run.ps1` on Windows. The scripts install uv user-locally if missing;
 the selected Dinkster-Environments bundle supplies runtime Python. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
@@ -24,15 +24,35 @@ authenticated users can make a local copy with
 
 Each `vX.Y.Z` release contains:
 
-- one wheel for every Dinkster workspace package;
-- the `dinkster` meta-package wheel with its `default` extra;
-- a `dinkster-frontend` wheel containing the built browser application;
+- the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, with the
+  browser application embedded in the engine;
 - `constraints.txt`, exported from `uv.lock` with hashes;
-- `release-manifest.json` and `SHA256SUMS`; and
-- `dinkster-source-X.Y.Z.zip`, a maintainer source archive.
+- `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
+- `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
+- native tools ZIPs with the installer interpreters; and
+- the existing official pack artifacts and per-variant pack locks.
 
-Download all wheels and `constraints.txt` from the same release. A manual
-installation for inspection can be created without Git credentials:
+No third-party wheels are release assets. Finalization rejects unexpected
+payloads and fails above 100,000,000 bytes excluding native tools ZIPs.
+Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
+locked PyPI artifact URLs into the shared wheel store, checking the exact
+filename, size and SHA256. Base-owned names and exact variant-index wheel pins
+come from the selected Environments manifest. Generation construction uses
+only the store, offline, without resolution or source builds.
+
+`setup --package-index https://packages.example.org/simple` selects a simple
+package mirror instead of those locked artifact origins. The index must offer
+the exact locked filename; index hashes cannot change the required size/hash.
+There is no fallback to PyPI or another version. Confirmed setup saves the
+index for updates; `update --package-index URL` changes it transactionally.
+This option is separate from `--mirror`, which selects channel, base and
+Dinkster release artifact locations. Warm shared-store wheels need no index
+access. Repair and move remain offline.
+
+Download the three Dinkster wheels and `constraints.txt` from the same release.
+A manual installation for inspection can be created without Git credentials;
+the command fetches third-party wheels from the package index using the exported
+hashes, rather than selecting a published base:
 
 ```sh
 uv venv --python 3.12 .venv
@@ -42,6 +62,11 @@ uv pip install --python .venv/bin/python --no-deps --require-hashes --find-links
 
 On Windows, use `.venv\Scripts\python.exe`. Do not combine wheels or constraints
 from different releases. Models and accelerator runtimes are not bundled.
+For a variant-specific managed installation, use the
+[native environment tools](environments-and-updates.md#environment-tools-bootstrap)
+and `dinkster-env setup` instead of this generic inspection environment.
+On Windows, first prepare the runtime below and pass its executable to
+`uv venv --python` instead of the floating `3.12` selector.
 
 The registry server is a separate deployment, not part of the Dinkster wheel
 set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
@@ -69,8 +94,9 @@ to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
 The shared Python setup installs only one runtime in `.venv`: the published
-Linux CPU base, or a Windows NVIDIA/CPU base compatible with the detected
-hardware. Exact Python and torch versions come from the verified base manifest,
+Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
+hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
+Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
 content identities from Dinkster-Environments. Hash-locked workspace dependencies
 and editable packages are installed on top without resolving torch again.
@@ -78,9 +104,14 @@ Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;
 `--force` rebuilds its `.venv`, retaining the verified bundle store.
 
-macOS setup stops with an unsupported-platform message until the
-[Apple Silicon bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575)
-is available; it never falls back to a separate dependency resolution.
+`linux-nvidia` supplies the cu132 torch family and its complete Linux CUDA
+closure. It requires Linux x86_64 with glibc 2.28+, NVIDIA driver 580+ and
+compute capability 7.5+. Use `--variant linux-nvidia` to request it explicitly;
+an incompatible machine is refused rather than resolving another CUDA runtime.
+
+The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
+torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
+an explicit message; it never falls back to a separate dependency resolution.
 
 A maintainer evidence checkout is optional. If `DINKSTER_EVIDENCE_ROOT` selects
 one, setup also installs its `dinkster-acceptance` package. The run scripts set
@@ -88,11 +119,88 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 
 | Platform | Execution interpreter |
 | --- | --- |
-| Linux CPU | `$PWD/.venv/bin/python` |
+| Linux NVIDIA or CPU | `$PWD/.venv/bin/python` |
+| Apple Silicon macOS (`mac-arm64`) | `$PWD/.venv/bin/python` |
 | Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
 
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
+
+### Explicit from-scratch development setup
+
+Published bundles remain the supported default. For development or a platform
+without a suitable bundle, setup refuses and names the supported published
+variants. It does not resolve or choose a local replacement automatically.
+`dinkster-env --root /absolute/new-project setup
+--from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
+resolves the checkout lock against the variant's torch index and builds engine
+wheels locally. The plan states that resolution occurs before downloading.
+It does not fetch a channel or an engine/base release. The pinned interpreter
+is downloaded and verified from the producer's interpreter definition, or reused
+from the store's download cache. Populate that cache before denying interpreter
+release access. `--python /absolute/python` explicitly selects a host interpreter
+instead, including when a host interpreter row is missing.
+`--variants /absolute/variants.toml` selects alternate producer definitions.
+
+Contributor setup exposes the same opt-in with `python scripts/setup_envs.py
+--from-scratch --variant linux-cpu` and the same `--python`/`--variants` overrides.
+Neither Desktop nor channel updates choose it automatically. Local generations
+are marked `source: local`; doctor reports their local origin and checks their
+recorded inventory. Channel update refuses them: install a fresh published
+generation in a new root without `--from-scratch` to return to channel updates.
+
+### Windows interpreter
+
+Windows bases use CPython 3.14.10 / cp314 from python-build-standalone 20261026,
+with SQLite 3.53.1 plus the upstream
+[mapped-shm recovery fix](https://sqlite.org/src/info/7c103a0b7d).
+The unmodified interpreter fails WAL reopening while an old shared-memory
+mapping survives ([upstream report](https://sqlite.org/forum/forumpost/f9c68d01e2d7f638)).
+A version string cannot distinguish the patched library. Acquisition and bundle
+extraction require a functional WAL read and integrity check with the mapping
+held open, followed by a released-mapping control.
+
+`scripts/setup_envs.py` installs the published base into its private store and
+uses it for `.venv`. On Windows the selected environment must pass the functional
+check and use that exact private base, including when reusing an existing store
+or environment. Use `--force` to recreate an environment using a different base.
+For manual root-only setup from the checkout:
+
+```powershell
+uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py --output .run/windows-python
+uv sync --python .run/windows-python/python/python.exe --all-packages --frozen
+```
+
+Preparation verifies immutable Dinkster-Environments source pins, the original
+interpreter archive, and the replacement DLL. Zig 0.14.1 is installed in an
+isolated uv environment and verified against its exact Windows wheel SHA-256.
+Only `python/DLLs/sqlite3.dll` changes; uv's interpreter cache is never modified.
+The base manifest records the amalgamation, patch, compiler, flags and DLL
+hashes; Windows bundle CI must reproduce the pinned DLL hash. Linux and macOS
+are unchanged. When a verified upstream interpreter contains the fix, move
+the pins together and remove the override, retaining the functional check.
+
+| Consumer | Interpreter selection | Bundled SQLite |
+| --- | --- | --- |
+| Environments Windows bases and shared contributor setup | PBS 20261026, CPython 3.14.10 / cp314 | 3.53.1 with upstream fix |
+| Environments Linux base and shared contributor setup | PBS 20261026, CPython 3.14.10 / cp314 | 3.53.1 unmodified |
+| Windows full-validation shards, PR runtime job and release install | Verified private Windows interpreter | Patched 3.53.1 |
+| Windows dependency receipt job | Published Windows CPU base | Patched 3.53.1 |
+| Windows acquisition bootstrap | uv CPython 3.14.10; no Dinkster database use | Unpatched bootstrap may carry 3.53.1 |
+| Linux root CI/full-validation and macOS release smoke | Floating uv `3.12` | PBS 20261026 CPython 3.12.14 carries 3.53.1 |
+| Linux release runtime | CPython 3.14.10 | PBS 20261026 carries 3.53.1 |
+| OpenTimelineIO-only dependency checks, including Windows ARM64 | Floating uv `3.14`; no Dinkster stores | PBS 20261026 carries 3.53.1 |
+| Desktop environment client | Published platform base through `dinkster-env` | Windows base carries patched 3.53.1 |
+
+PBS versions come from the
+[20261026 dependency manifest](https://github.com/astral-sh/python-build-standalone/blob/20261026/pythonbuild/downloads.json);
+Windows 3.14.10 was also executed from the size/hash-verified archive.
+Floating selectors can choose other catalog releases or local installations;
+they do not promise a SQLite version. Windows admission checks the interpreter
+actually selected. The legacy Desktop source installer selected floating uv
+`3.12` / cp312 and was exposed when it resolved to affected PBS builds; the
+[environment-client installer](https://github.com/Kosinkadink/Dinkster-Desktop/pull/23)
+uses published base acquisition instead.
 
 ## Model folders
 
@@ -102,9 +210,10 @@ With the default library location this is `<project-root>/dinkster-library/outpu
 `DINKSTER_LIBRARY_ROOT` or `--library-root` can select another location.
 The grant persists in `mounts.toml` and is reported by `GET /api/mounts` as
 `outputMount: "output"` with a `readwrite` mount. Existing output selections,
-read-only grants, and deliberately removed defaults are preserved. This does
-not enable runtime mount editing. A deliberately unconfigured library can
-still report `outputMount: null`.
+read-only grants, and deliberately removed defaults are preserved. Initialization
+alone does not enable runtime mount editing. Managed local `dinkster-env`
+launches also enable operator folder editing; direct server launches remain
+opt-in. A deliberately unconfigured library can still report `outputMount: null`.
 
 `dinkster setup` creates `<DINKSTER_HOME>/library/mounts.toml`, which defaults
 to `~/.dinkster/library/mounts.toml` on Linux and macOS and

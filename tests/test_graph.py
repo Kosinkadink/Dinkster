@@ -295,6 +295,77 @@ def test_plain_literal_on_nonconcrete_input_is_error() -> None:
     assert any(d.code == "literal-on-nonconcrete" and d.severity == "error" for d in diags)
 
 
+@pytest.mark.parametrize(
+    ("type_id", "value", "valid"),
+    [
+        ("INT", True, False),
+        ("INT", 2.5, False),
+        ("INT", -3, True),
+        ("FLOAT", "normal", False),
+        ("FLOAT", False, False),
+        ("FLOAT", 3, True),
+        ("FLOAT", 0.375, True),
+        ("STRING", 3, False),
+        ("STRING", "", True),
+        ("BOOLEAN", 1, False),
+        ("BOOLEAN", False, True),
+        ("COMBO", {"value": "a"}, False),
+        ("COMBO", True, True),
+        ("FLOAT", None, False),
+    ],
+)
+@pytest.mark.parametrize("stamped", [False, True])
+def test_primitive_literal_payload_matches_declared_type(
+    type_id: str, value: object, valid: bool, stamped: bool
+) -> None:
+    schema = NodeSchema(
+        node_type="test.literal", inputs=(InputSpec("value", TypeExpr.concrete(type_id)),)
+    )
+    graph = Graph(
+        nodes={
+            "n": GraphNode(
+                "test.literal", {"value": TypedLiteral(type_id, value) if stamped else value}
+            )
+        }
+    )
+    diagnostics = validate(graph, {"test.literal": schema}, ["n"])
+    assert has_errors(diagnostics) is not valid
+    if not valid:
+        assert any(
+            d.code == "literal-type" and d.node_id == "n" and d.input_id == "value"
+            for d in diagnostics
+        )
+
+
+def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
+    schema = NodeSchema(
+        node_type="test.literal",
+        inputs=(InputSpec("value", TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("INT")))),),
+    )
+    for value in ([[2, True]], TypedLiteral("list<list<INT>>", [[2, True]])):
+        graph = Graph(nodes={"n": GraphNode("test.literal", {"value": value})})
+        assert has_errors(validate(graph, {"test.literal": schema}, ["n"]))
+    assert not has_errors(
+        validate(
+            Graph(nodes={"n": GraphNode("test.literal", {"value": [[2, -3], []]})}),
+            {"test.literal": schema},
+            ["n"],
+        )
+    )
+    scalar = NodeSchema(
+        node_type="test.scalar", inputs=(InputSpec("value", TypeExpr.concrete("FLOAT")),)
+    )
+    assert has_errors(
+        validate(
+            Graph(
+                nodes={"n": GraphNode("test.scalar", {"value": TypedLiteral("STRING", "normal")})}
+            ),
+            {"test.scalar": scalar},
+            ["n"],
+        )
+    )
+
+
 def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
     # The joint-contract case: an explicit stamp makes a literal legal on a
     # variable input (and a list stamp on a list<T> input) - clean document.
@@ -309,6 +380,41 @@ def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
     )
     diags = validate(graph, SCHEMAS, ["m", "l"], known_types={"INT"})
     assert diags == []
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected_code"),
+    (
+        (TypedLiteral("INT", 7), None),
+        (TypedLiteral("STRING", "seven"), None),
+        (7, "literal-on-nonconcrete"),
+        (TypedLiteral("missing.type", 7), "typed-literal-unknown-type"),
+        (TypedLiteral("list<INT>", 7), "literal-shape"),
+    ),
+)
+def test_authored_inputs_use_ordinary_typed_literal_admission(
+    extra: object, expected_code: str | None
+) -> None:
+    schemas = {
+        "test.authored": NodeSchema(
+            node_type="test.authored",
+            inputs=(InputSpec("choice", STRING),),
+            additional_inputs=TypeExpr.wildcard(),
+        )
+    }
+    graph = Graph(
+        nodes={
+            "authored": GraphNode(
+                "test.authored",
+                {"choice": "outside-menu", "2": extra, "9": TypedLiteral("STRING", "nine")},
+            )
+        }
+    )
+    diagnostics = validate(graph, schemas, ["authored"], known_types={"INT", "STRING"})
+    if expected_code is None:
+        assert diagnostics == []
+    else:
+        assert any(d.code == expected_code and d.severity == "error" for d in diagnostics)
 
 
 def test_typed_literal_malformed_type_id_is_error() -> None:

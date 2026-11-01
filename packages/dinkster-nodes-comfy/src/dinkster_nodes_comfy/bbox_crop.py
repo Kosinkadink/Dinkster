@@ -101,6 +101,8 @@ class CropByBBoxes(Node):
             bboxes = [[bboxes]]
         elif not bboxes:
             return cls.outputs(IMAGE=image)
+        elif isinstance(bboxes[0], Mapping):
+            bboxes = [bboxes]
         initialize_inference_process()
         torch = importlib.import_module("torch")
         utils = importlib.import_module("dinkster_inference.utils")

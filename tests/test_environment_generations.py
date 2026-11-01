@@ -12,7 +12,7 @@ import sys
 import sysconfig
 import zipfile
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 from dinkster_supervisor.environment_generations import (
@@ -92,6 +92,258 @@ def _assert_shared(first: Path, second: Path) -> None:
         assert extents[0] == extents[1]
     else:
         pytest.fail("expected shared inode or Linux CoW extents")
+
+
+@pytest.mark.parametrize("directories,root_length", [(154, 117), (500, 200)])
+def test_generation_sync_command_does_not_expand_wheel_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directories: int, root_length: int
+) -> None:
+    deep = tmp_path / ("x" * max(1, root_length - len(str(tmp_path)) - 1))
+    root, store = deep / "project", deep / "store"
+    root.mkdir(parents=True)
+    base = store / "bases" / ("a" * 64) / "python"
+    python = base / ("python.exe" if os.name == "nt" else "bin/python3")
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"interpreter fixture")
+    constraints = deep / "constraints.txt"
+    rows = []
+    for number in range(directories):
+        digest = f"{number:064x}"
+        wheel = store / "wheels" / digest / f"fixture_{number}-1.0-py3-none-any.whl"
+        wheel.parent.mkdir(parents=True)
+        wheel.write_bytes(b"wheel fixture")
+        rows.append(f"fixture-{number}==1.0 --hash=sha256:{digest}")
+    constraints.write_text("\n".join(rows) + "\n")
+
+    windows_root = PureWindowsPath("C:/") / ("r" * (root_length - 3))
+    previous = [
+        "uv",
+        "pip",
+        "sync",
+        "--python",
+        str(windows_root / "project/generations/1/python/python.exe"),
+        "--break-system-packages",
+        "--offline",
+        "--no-index",
+        "--require-hashes",
+        "--only-binary",
+        ":all:",
+        "--link-mode",
+        "hardlink",
+    ]
+    for directory in [
+        windows_root / "store/wheels",
+        *(windows_root / "store/wheels" / f"{number:064x}" for number in range(directories)),
+    ]:
+        previous.extend(["--find-links", str(directory)])
+    previous.append(str(windows_root / "project/generations/1/constraints.txt"))
+    previous_units = len(subprocess.list2cmdline(previous).encode("utf-16-le")) // 2 + 1
+    assert previous_units > 32767
+    if directories == 154:
+        assert previous_units == 32768
+
+    def sync(command, **kwargs):
+        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
+        assert command[1:3] == ["pip", "sync"]
+        assert "--offline" in command and "--no-index" in command
+        assert "--require-hashes" in command and "--only-binary" in command
+        assert command[command.index("--link-mode") + 1] in {"hardlink", "clone"}
+        assert kwargs["input"].count("--find-links ") == directories + 1
+        assert kwargs["input"].endswith(constraints.read_text())
+        raise RuntimeError("sync inspected")
+
+    monkeypatch.setattr(subprocess, "run", sync)
+    with pytest.raises(RuntimeError, match="sync inspected"):
+        build_generation(
+            root=root,
+            number=1,
+            store=store,
+            base="sha256:" + "a" * 64,
+            engine_version="1.0",
+            engine_release="sha256:" + "b" * 64,
+            constraints=constraints,
+            variant="win-cpu" if os.name == "nt" else "linux-cpu",
+            worker_protocol=1,
+        )
+    assert not (root / "generations" / "1").exists()
+
+
+def test_checkout_pack_commands_do_not_expand_wheel_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_local import prepare_local_packs
+    from dinkster_workers.pack_lock import resolve_pack_lock
+
+    store = tmp_path / ("x" * max(1, 200 - len(str(tmp_path)) - 1))
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    constraints = generation / "constraints.txt"
+    constraints.write_text(
+        "\n".join(f"fixture-{number}==1.0 --hash=sha256:{number:064x}" for number in range(500))
+        + "\n"
+    )
+    links = [store / "wheels" / f"{number:064x}" for number in range(500)]
+
+    def captured(command, **kwargs):
+        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
+        if "--find-links-stdin" in command:
+            assert json.loads(kwargs["input"]) == [str(path) for path in links]
+        else:
+            source = Path(command[3]).read_text()
+            assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
+            assert "--no-index" in command
+        raise RuntimeError("command inspected")
+
+    monkeypatch.setattr(subprocess, "run", captured)
+    with pytest.raises(RuntimeError, match="command inspected"):
+        prepare_local_packs(
+            generation,
+            source=tmp_path / "source",
+            store=store,
+            release="sha256:" + "a" * 64,
+            selection={"version": "1.0", "variant": "win-cpu", "workerProtocol": 1},
+        )
+    with pytest.raises(RuntimeError, match="command inspected"):
+        resolve_pack_lock(
+            pack="fixture",
+            variant="win-cpu",
+            requirements=["fixture-0==1.0"],
+            python=interpreter(generation),
+            constraints=constraints,
+            find_links=links,
+        )
+
+
+@pytest.mark.parametrize("provisioner", ["current", "cached-without-acquire", "without-acquire"])
+def test_public_setup_acquires_pack_wheel_absent_from_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provisioner: str
+) -> None:
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from dinkster_workers import pack_environment
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_environment import venv_python
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_environment_cli import _run
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments import build as publisher
+
+    original = publisher.standalone_tree
+    encode = publisher.canonical_json
+
+    def canonical_json(document: dict) -> bytes:
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    def standalone(root: Path) -> None:
+        original(root)
+        python = root / ("python.exe" if os.name == "nt" else "bin/python3")
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+        )
+        site.mkdir(parents=True, exist_ok=True)
+        (site / "fixture.pth").write_text(
+            "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+        )
+        if provisioner != "current":
+            target = site / "dinkster_workers"
+            shutil.copytree(
+                Path(pack_environment.__file__).parent,
+                target,
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            module = target / "pack_environment.py"
+            text = module.read_text()
+            text = text.replace(
+                'choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")',
+                'choices=("preflight", "rebuild", "doctor", "terminal", "references")',
+            )
+            module.write_text(text)
+
+    monkeypatch.setattr(publisher, "standalone_tree", standalone)
+    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "release", "fixture-cpu", free_port())
+    mirror = Path(fixture["mirror"])
+    index = tmp_path / "pypi"
+    index.mkdir()
+    wheel, sha = _wheel(index, "fixture_flatbuffers", "25.12.19", 73)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(index))
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    root, store = Path(fixture["root"]), Path(fixture["store"])
+    if provisioner == "cached-without-acquire":
+        cache = store / "wheels" / sha / wheel.name
+        cache.parent.mkdir(parents=True)
+        shutil.copyfile(wheel, cache)
+    try:
+        channel_path = mirror / "channels/main.json"
+        channel = json.loads(channel_path.read_bytes())
+        release = mirror / "engine" / channel["engine"]["release"][7:]
+        lock_path = release / "example-1.0-fixture-cpu.pack-lock.json"
+        PackLock(
+            "example",
+            "fixture-cpu",
+            ">=3.12",
+            ("fixture-flatbuffers==25.12.19",),
+            (),
+            (
+                LockedDistribution(
+                    "fixture-flatbuffers",
+                    "25.12.19",
+                    (
+                        LockedWheel(
+                            wheel.name,
+                            wheel.stat().st_size,
+                            sha,
+                            f"http://127.0.0.1:{server.server_port}/{wheel.name}",
+                        ),
+                    ),
+                ),
+            ),
+        ).write(lock_path)
+        manifest = json.loads((release / "release-manifest.json").read_bytes())
+        manifest["artifacts"].append(publisher.artifact(lock_path.name, lock_path.read_bytes()))
+        assert wheel.name not in {row["name"] for row in manifest["artifacts"]}
+        data = publisher.canonical_json(manifest) + b"\n"
+        (release / "release-manifest.json").write_bytes(data)
+        identity = hashlib.sha256(data).hexdigest()
+        release.rename(release.parent / identity)
+        channel["engine"]["release"] = "sha256:" + identity
+        channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
+        channel_path.write_bytes(publisher.canonical_json(channel))
+        code, result = _run(root, *fixture["commands"]["setup"][5:], "--yes")
+        if provisioner == "without-acquire":
+            assert code == 1, result
+            assert "selected engine cannot acquire missing pack wheels" in result["error"]
+            assert result["current"] is None
+            assert not (root / "generations/1").exists()
+            return
+        assert code == 0, result
+        assert result["current"] == 1
+        assert (store / "wheels" / sha / wheel.name).read_bytes() == wheel.read_bytes()
+        python = venv_python(root / "generations/1/packs/example")
+        assert (
+            subprocess.check_output(
+                [str(python), "-c", "import fixture_flatbuffers; print(fixture_flatbuffers.VALUE)"],
+                text=True,
+            ).strip()
+            == "73"
+        )
+    finally:
+        _run(root, "stop", "--yes")
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 @pytest.mark.parametrize(
@@ -616,7 +868,7 @@ environment.main()
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, store = tmp_path / "project", tmp_path / "data"
+    root, store = tmp_path / "project", tmp_path / "data with space # %"
     root.mkdir()
     base = store / "bases" / ("a" * 64) / "python"
     _standalone_tree(base)
@@ -625,6 +877,21 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     _, stable_hash = _wheel(wheels, "stable_fixture", "1.0", 40)
     _, first_hash = _wheel(wheels, "changed_fixture", "1.0", 2)
     _, second_hash = _wheel(wheels, "changed_fixture", "2.0", 7)
+    for path in wheels.glob("*.whl"):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        destination = wheels / digest / path.name
+        destination.parent.mkdir()
+        path.rename(destination)
+    other_build = tmp_path / "other-build"
+    other_build.mkdir()
+    stale, stale_hash = _wheel(other_build, "changed_fixture", "2.0", 999)
+    (wheels / stale_hash).mkdir()
+    stale.rename(wheels / stale_hash / stale.name)
+    decoy, decoy_hash = _wheel(other_build, "changed_fixture", "3.0", 101)
+    (wheels / ("d" * 64)).mkdir()
+    shutil.copyfile(decoy, wheels / ("d" * 64) / decoy.name)
+    (wheels / ("f" * 64)).mkdir()
+    decoy.rename(wheels / ("f" * 64) / decoy.name)
     constraints = tmp_path / "constraints.txt"
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
@@ -675,9 +942,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             catalog_lock=tmp_path / "catalog.lock" if source_inputs else None,
             artifacts=tmp_path / "artifacts" if source_inputs else None,
             prepare_packs=prepare_packs,
+            in_process_packs=("fixture",),
         )
 
     first = build(1, "1.0", first_hash)
+    assert first.in_process_packs == ("fixture",)
     first_dir = root / "generations" / "1"
     set_current(root, 1)
     second = build(2, "2.0", second_hash)
@@ -711,8 +980,9 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     set_current(root, 1)
     assert read_current(root) == 1
 
-    with pytest.raises(EnvironmentError, match="offline generation sync failed"):
-        build(3, "3.0", "f" * 64)
+    for digest in (decoy_hash, "f" * 64):
+        with pytest.raises(EnvironmentError, match="offline generation sync failed"):
+            build(3, "3.0", digest)
     assert read_current(root) == 1
     assert not (root / "generations" / "3").exists()
     with pytest.raises(EnvironmentError, match="later pack refused after interpreter staging"):

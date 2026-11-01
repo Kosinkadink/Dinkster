@@ -45,6 +45,7 @@ from dinkster_assets import (
     resolver_from_env,
     use_declared_asset_pack,
 )
+from dinkster_assets.declared import use_produced_output_job
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     AcceleratorMemoryPolicy,
@@ -159,7 +160,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
-from .produced_assets import source_asset_files
+from .produced_assets import offer_source_assets, source_asset_files
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
 from .run_control import BoundaryRunContext
@@ -181,25 +182,13 @@ _AIMDO_HEADROOM_TARGET_ENV = "COMFY_AIMDO_HEADROOM_TARGET"
 
 
 def _legacy_checkpoint_conversion_capable() -> bool:
-    """Advertise conversion only from a worker with the complete runtime."""
+    """Discover installed components; the converter validates runtime health on use."""
     try:
-        if not all(
+        return all(
             importlib.util.find_spec(module) is not None
             for module in ("dinkster_compat_comfy", "torch", "safetensors.torch")
-        ):
-            return False
-        legacy_sources = importlib.import_module("dinkster_compat_comfy.legacy_sources")
-        torch = importlib.import_module("torch")
-        safetensors_torch = importlib.import_module("safetensors.torch")
-        return (
-            callable(getattr(legacy_sources, "resolve_weight_source", None))
-            and callable(getattr(legacy_sources, "classify_conversion_error", None))
-            and isinstance(getattr(legacy_sources, "LegacyCheckpointError", None), type)
-            and callable(getattr(torch, "load", None))
-            and isinstance(getattr(torch, "Tensor", None), type)
-            and callable(getattr(safetensors_torch, "save_file", None))
         )
-    except Exception:  # noqa: BLE001 - broken optional runtime omits capability
+    except Exception:  # noqa: BLE001 - unavailable optional components omit capability
         return False
 
 
@@ -882,6 +871,8 @@ async def serve_many(
                 )
             )
 
+    connected = asyncio.Barrier(len(loaded))
+
     async def one(endpoint: str, item: tuple[Any, ...]) -> None:
         (
             manifest,
@@ -898,6 +889,14 @@ async def serve_many(
             schemas,
         ) = item
         reader, writer = await connect_endpoint(endpoint)
+        try:
+            # Capability imports must not delay another peer's authentication.
+            await connected.wait()
+        except BaseException:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            raise
         with use_declared_asset_pack(manifest.name):
             await serve_connection(
                 reader,
@@ -1375,6 +1374,7 @@ async def serve_connection(
         event_tasks: list[asyncio.Task[None]] = []
         event_window_open = True
         event_loop = asyncio.get_running_loop()
+        produced_context = contextlib.ExitStack()
 
         async def send_event(event: InvocationEvent) -> None:
             frame: dict[str, object] = {
@@ -1401,6 +1401,11 @@ async def serve_connection(
         try:
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
+            produced_context.enter_context(
+                use_produced_output_job(
+                    invocation.job_ref or invocation.invocation_id, invocation.attempt_id
+                )
+            )
             if consumed:
                 await send({"type": "shmAck", "segments": consumed})
             # Memory lease (DESIGN 3.10): the pack's planner names what this
@@ -1483,6 +1488,7 @@ async def serve_connection(
                 refs = inflight_control_refs.setdefault(invocation_id, set())
                 for value in values.values():
                     refs.update(value_resource_ids(value))
+                offer_source_assets(values)
                 if blob_transfer is not None:
                     files = source_asset_files(values, resolver_from_env())
                     if files:
@@ -1583,6 +1589,8 @@ async def serve_connection(
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()
                 result_send_locked = True
+            if result.outputs:
+                offer_source_assets(result.outputs)
             source_files = (
                 source_asset_files(result.outputs, resolver_from_env())
                 if blob_transfer is not None and result.outputs
@@ -1694,6 +1702,7 @@ async def serve_connection(
                     }
                 )
         finally:
+            produced_context.close()
             context = run_contexts.pop(invocation_id, None)
             if context is not None:
                 context.close()
