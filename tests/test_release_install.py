@@ -2105,6 +2105,27 @@ def test_official_publication_submits_only_from_trusted_main(
     assert eval(submission["if"].replace("&&", " and "), {"github": github}) is allowed
 
 
+def test_official_publication_refuses_missing_credential_before_submission(tmp_path: Path) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    submission = next(
+        step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
+    )
+    environment = {**os.environ, "DINKSTER_REGISTRY_TOKEN": ""}
+    result = subprocess.run(
+        ["bash", "-e", "-c", submission["run"]],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == (
+        "Official pack submission refused: DINKSTER_REGISTRY_TOKEN is unavailable"
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("problem", [None, "range", "tag", "missing", "digest"])
 def test_official_publication_workflow_prepares_verified_published_engine_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None

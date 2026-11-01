@@ -216,7 +216,10 @@ jobs:
         env:
           DINKSTER_REGISTRY_TOKEN: ${{ secrets.DINKSTER_REGISTRY_TOKEN }}
         run: |
-          test -n "$DINKSTER_REGISTRY_TOKEN"
+          if [ -z "$DINKSTER_REGISTRY_TOKEN" ]; then
+            echo 'Official pack submission refused: DINKSTER_REGISTRY_TOKEN is unavailable' >&2
+            exit 1
+          fi
           arguments=()
           for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
