@@ -165,8 +165,71 @@ def test_load_file3d_explicit_obj_dependencies_and_missing_extra_controls(tmp_pa
     assert source.read_bytes() == b"mtllib materials/model.mtl\nv 2 3 5\n"
 
 
+@pytest.mark.parametrize("format_id", ["gltf", "glb"])
+def test_load_file3d_explicit_gltf_resources_decode_uri_names(
+    tmp_path: Path, format_id: str
+) -> None:
+    vault = AssetVault(tmp_path / "assets")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest_bytes(data), name, len(data), resolver=vault)
+
+    document = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"uri": "data/mesh%20data.bin"}],
+        "images": [{"uri": "textures/albedo%20map.png"}],
+    }
+    primary = json.dumps(document).encode()
+    if format_id == "glb":
+        primary += b" " * (-len(primary) % 4)
+        primary = (
+            struct.pack("<4sIIII", b"glTF", 2, 20 + len(primary), len(primary), 0x4E4F534A)
+            + primary
+        )
+    source = publish(primary, "scene." + format_id)
+    mesh = publish(b"asymmetric mesh bytes", "mesh data.bin")
+    texture = publish(b"different texture bytes", "albedo map.png")
+    resources = {"data/mesh data.bin": mesh, "textures/albedo map.png": texture}
+    packet = load_file3d(source, resources=resources)
+    assert packet == {"format": format_id, "source": source, "resources": resources}
+    registry = TypeRegistry()
+    register_file3d_types(registry, vault)
+    codec = registry.spec(FILE_3D_TYPE)
+    restored = cast("dict[str, object]", codec.decode(codec.encode(packet)))
+    assert cast(AssetRef, restored["source"]).read_bytes() == primary
+    assert {
+        name: ref.read_bytes()
+        for name, ref in cast("dict[str, AssetRef]", restored["resources"]).items()
+    } == {
+        "data/mesh data.bin": b"asymmetric mesh bytes",
+        "textures/albedo map.png": b"different texture bytes",
+    }
+    for missing in ({}, {"data/mesh data.bin": mesh}):
+        with pytest.raises(AssetError, match="requires an explicit"):
+            load_file3d(source, resources=missing)
+    with pytest.raises(AssetError, match="undeclared"):
+        load_file3d(source, resources={**resources, "unused.bin": mesh})
+
+
 @pytest.mark.parametrize(
-    "uri", ["../secret.bin", "/secret.bin", "https://host/file.bin", "%2e%2e/file.bin"]
+    "uri",
+    [
+        "../secret.bin",
+        "/secret.bin",
+        "https://host/file.bin",
+        "%2e%2e/file.bin",
+        "%252e%252e/file.bin",
+        "data/%2e%2e/secret.bin",
+        "%2fsecret.bin",
+        "data%5csecret.bin",
+        "data.bin?remote=1",
+        "data.bin#fragment",
+        "data/%00secret.bin",
+        "\tdata.bin",
+    ],
 )
 def test_load_file3d_cannot_follow_resource_paths(tmp_path: Path, uri: str) -> None:
     vault = AssetVault(tmp_path / "assets")

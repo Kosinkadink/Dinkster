@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import cast
+from urllib.parse import unquote, urlsplit
 
 from dinkster_values import TypeRegistry, TypeSpec, stable_hash
 from dinkster_values.builtin_types import (
@@ -59,10 +60,20 @@ def _resource_name(name: object) -> str:
         or PurePosixPath(name).is_absolute()
         or str(PurePosixPath(name)) != name
         or ".." in PurePosixPath(name).parts
-        or any(char in name for char in "\\:%?#\x00")
+        or any(char in name for char in "\\:%?#")
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
     ):
         raise AssetError("FILE_3D resource name must be a canonical contained relative path")
     return name
+
+
+def _gltf_resource_name(uri: object) -> str:
+    if not isinstance(uri, str) or any(ord(char) < 32 or ord(char) == 127 for char in uri):
+        raise AssetError("FILE_3D resource URI must be a contained relative path")
+    parsed = urlsplit(uri)
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        raise AssetError("FILE_3D resource URI must be a contained relative path")
+    return _resource_name(unquote(parsed.path, errors="strict"))
 
 
 def load_file3d(
@@ -137,7 +148,7 @@ def load_file3d(
             for entry in document.get(section, []):
                 uri = entry.get("uri")
                 if uri is not None and not (isinstance(uri, str) and uri.startswith("data:")):
-                    bind(_resource_name(uri))
+                    bind(_gltf_resource_name(uri))
     elif format_id == "obj":
         for line in source.read_bytes().decode("utf-8-sig").splitlines():
             words = line.split(maxsplit=1)
