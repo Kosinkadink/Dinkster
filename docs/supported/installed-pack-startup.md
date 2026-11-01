@@ -59,6 +59,10 @@
   It returns a verified source lock and digest-addressed archives without
   changing a project or generation. Unavailable packs normally refuse the
   operation; optional missing-default reporting can return an empty source set.
+- Published dependency-lock preparation verifies each selected registry
+  archive's exact base binding, lock size and BLAKE3, and pack/variant identity.
+  It exposes the complete set only after every lock verifies, without resolving
+  dependencies, modifying the source selection or activating a generation.
 - Installed-source preparation re-resolves official registry packs against the
   target engine without adding defaults, dropping installed packs or downgrading
   them. Recorded registries remain authoritative; third-party, local and git

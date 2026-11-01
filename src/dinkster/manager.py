@@ -100,6 +100,7 @@ from .registries import (
     default_pack_minimums,
     load_registries,
     parse_registry_spec,
+    prepare_registry_pack_locks,
     prepare_registry_sources,
     prepare_registry_update_sources,
     publish_release,
@@ -1129,6 +1130,23 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
+    config = _registry_config(args)
+    try:
+        sources = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        paths = prepare_registry_pack_locks(
+            config,
+            sources,
+            args.output.resolve(),
+            variant=args.variant,
+            base_id=args.base_id,
+            selected=select_registry(config, args.registry) if args.registry else None,
+        )
+    except OSError as exc:
+        raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
+    print(json.dumps({"locks": [str(path) for path in paths]}))
+
+
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .comfy_compose import comfy_compat_specs
     from .compose import default_pack_specs
@@ -1282,6 +1300,16 @@ def main() -> None:
         "--allow-missing", action="store_true", help="report unavailable fresh defaults"
     )
     sources.set_defaults(handler=_cmd_prepare_registry_sources)
+
+    locks = commands.add_parser(
+        "prepare-registry-locks",
+        help="acquire published dependency locks for exact selected sources and base",
+    )
+    locks.add_argument("--catalog-lock", type=Path, required=True)
+    locks.add_argument("--output", type=Path, required=True)
+    locks.add_argument("--variant", required=True)
+    locks.add_argument("--base-id", required=True)
+    locks.set_defaults(handler=_cmd_prepare_registry_locks)
 
     for name, help_text, handler in (
         ("doctor", "lint installed packs and refresh schema catalogs", _cmd_doctor),

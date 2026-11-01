@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import tomllib
 import urllib.error
@@ -71,12 +72,15 @@ from dinkster_registry import (
     InstallError,
     LockedPack,
     Lockfile,
+    artifact_digest,
     unpack_artifact,
     validate_artifact_digest,
     validate_version,
 )
 from dinkster_schema import PackCompatibility, canonical_claim, canonical_name, validate_name
 from dinkster_workers import ManifestError, load_manifest
+from dinkster_workers.pack_lock import PackLock
+from dinkster_workers.provision import ProvisionError
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -725,6 +729,103 @@ def prepare_registry_update_sources(
                 f"for engine {engine_version} refused: {exc}"
             ) from exc
     return Lockfile.of(entries)
+
+
+def prepare_registry_pack_locks(
+    config: RegistryConfig,
+    sources: Lockfile,
+    output: Path,
+    *,
+    variant: str,
+    base_id: str,
+    selected: NamedRegistry | None = None,
+    timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+) -> tuple[Path, ...]:
+    """Acquire published dependency locks for exact selected sources and base.
+
+    Refuse the whole set before exposing output if any binding or bytes differ.
+    No dependency resolution or generation mutation occurs here.
+    """
+    if output.exists():
+        raise InstallError("published lock output directory already exists")
+    if (
+        re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", base_id) is None
+    ):
+        raise InstallError("published locks require a variant and exact sha256 base identity")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(dir=output.parent, prefix="published-locks-") as directory:
+            staged = Path(directory)
+            names: list[str] = []
+            for entry in sources.packs:
+                if entry.source != "registry" and not entry.source.startswith("registry:"):
+                    raise InstallError(f"{entry.pack}: published lock requires registry provenance")
+                registry = config.registry_for(entry, selected)
+                subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
+                path = f"/v1/packs/{entry.pack}/versions/{entry.version}"
+                fields = _index_get(
+                    registry,
+                    path,
+                    action="acquiring published lock",
+                    subject=subject,
+                    timeout=timeout,
+                )
+                bindings = fields.get("installLocks")
+                binding = (
+                    cast("dict[str, object]", bindings).get(variant)
+                    if isinstance(bindings, dict)
+                    else None
+                )
+                if (
+                    fields.get("packName") != entry.pack
+                    or fields.get("version") != entry.version
+                    or fields.get("state") not in ("active", "yanked")
+                    or not isinstance(fields.get("artifact"), dict)
+                    or cast("dict[str, object]", fields["artifact"]).get("digest")
+                    != entry.artifact_digest
+                    or not isinstance(binding, dict)
+                ):
+                    raise InstallError(f"{subject}: selected release or published binding differs")
+                facts = cast("dict[str, object]", binding)
+                digest, size = facts.get("digest"), facts.get("size")
+                lock_path = path + "/locks/" + urllib.parse.quote(variant, safe="")
+                if (
+                    facts.get("baseId") != base_id
+                    or facts.get("artifactDigest") != entry.artifact_digest
+                    or facts.get("url") != lock_path
+                    or not isinstance(digest, str)
+                    or validate_artifact_digest(digest)
+                    or type(size) is not int
+                    or not 1 <= cast("int", size) <= 1024 * 1024
+                ):
+                    raise InstallError(f"{subject}: invalid archive/base/lock binding")
+                headers = {"User-Agent": "dinkster-pack"}
+                token = registry.token()
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                request = urllib.request.Request(
+                    registry.endpoint
+                    + lock_path
+                    + "?"
+                    + urllib.parse.urlencode({"baseId": base_id}),
+                    headers=headers,
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                    payload = response.read(cast("int", size) + 1)
+                if len(payload) != size or artifact_digest(payload) != digest:
+                    raise InstallError(f"{subject}: published lock bytes differ from binding")
+                name = entry.pack + ".pack-lock.json"
+                destination = staged / name
+                destination.write_bytes(payload)
+                lock = PackLock.read(destination)
+                if lock.pack != entry.pack or lock.variant != variant:
+                    raise InstallError(f"{subject}: dependency lock pack or variant differs")
+                names.append(name)
+            staged.rename(output)
+        return tuple(output / name for name in names)
+    except (OSError, ValueError, ProvisionError) as exc:
+        raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
 
 
 @dataclass(frozen=True)

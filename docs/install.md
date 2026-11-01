@@ -103,6 +103,15 @@ registry. Other installed selections are preserved for admission. Update
 preparation refuses unavailable compatible releases and does not allow
 `--allow-missing`.
 
+For a source lock containing registry packs, `prepare-registry-locks` accepts
+`--catalog-lock`, a new `--output` directory, `--variant` and the exact
+`--base-id sha256:...`. It downloads the dependency locks already published
+for those exact source archives and base, verifies their size, BLAKE3 and
+pack/variant identities, and reports their paths as JSON. It never resolves
+dependencies. Any missing or mismatched lock refuses the whole set without
+creating the output directory or changing an installed generation. This is
+preparation only, not automatic setup/update integration.
+
 Pack versions are independent of engine versions. A pack's `[pack] version`
 and `engine` fields declare its version and PEP 440 engine range; excluded
 engines refuse installation, including an identical-lock no-op. See

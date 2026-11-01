@@ -3156,6 +3156,99 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         assert Version(minimum) <= Version(compatibility.version)
 
 
+@pytest.mark.parametrize(
+    "problem",
+    [None, "base", "archive", "release", "digest", "size", "url", "pack", "variant", "missing"],
+)
+def test_cli_acquires_published_locks_for_exact_sources_and_base(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
+) -> None:
+    from dinkster_registry import artifact_digest
+    from dinkster_workers.pack_lock import PackLock
+
+    base = "sha256:" + "1" * 64
+    files: dict[str, bytes] = {}
+    entries = []
+    expected = {}
+    for pack in ("demo", "z-other"):
+        fault = problem if pack == "z-other" else None
+        entry = LockedPack(
+            pack, "1.2.3", "blake3:" + ("a" if pack == "demo" else "b") * 64, "acme", ()
+        )
+        entries.append(entry)
+        lock = {
+            "format": "dinkster.pack-lock/1",
+            "pack": "substitute" if fault == "pack" else pack,
+            "variant": "win-cpu" if fault == "variant" else "linux-cpu",
+            "requiresPython": ">=3.12" if pack == "demo" else ">=3.14",
+            "requirements": [],
+            "indexes": [],
+            "packages": [],
+        }
+        payload = json.dumps(lock).encode()
+        expected[pack] = payload
+        path = f"/v1/packs/{pack}/versions/1.2.3"
+        lock_path = path + "/locks/linux-cpu"
+        binding = {
+            "baseId": "sha256:" + "2" * 64 if fault == "base" else base,
+            "artifactDigest": "blake3:" + "c" * 64 if fault == "archive" else entry.artifact_digest,
+            "digest": "blake3:" + "d" * 64 if fault == "digest" else artifact_digest(payload),
+            "size": len(payload) + 1 if fault == "size" else len(payload),
+            "url": "https://other.test/lock" if fault == "url" else lock_path,
+        }
+        files[path] = _release_record(
+            entry,
+            state="active",
+            artifact={"digest": "blake3:" + "e" * 64}
+            if fault == "release"
+            else {"digest": entry.artifact_digest},
+            installLocks={} if fault == "missing" else {"linux-cpu": binding},
+        )
+        files[lock_path + "?baseId=sha256%3A" + "1" * 64] = payload
+    server = _serve_artifacts(files, [])
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "current").write_text("7\n")
+    source = tmp_path / "dinkster.lock"
+    source.write_text(Lockfile.of(entries).record_json())
+    original = source.read_bytes()
+    output = tmp_path / "published-locks"
+    args = (
+        "--root",
+        str(root),
+        "--registry",
+        f"http://127.0.0.1:{server.server_port}",
+        "prepare-registry-locks",
+        "--catalog-lock",
+        str(source),
+        "--output",
+        str(output),
+        "--variant",
+        "linux-cpu",
+        "--base-id",
+        base,
+    )
+    try:
+        if problem:
+            with pytest.raises(SystemExit):
+                run_cli(*args)
+            assert "z-other" in capsys.readouterr().err
+            assert not output.exists()
+        else:
+            run_cli(*args)
+            report = json.loads(capsys.readouterr().out)
+            assert report["locks"] == [str(output / f"{pack}.pack-lock.json") for pack in expected]
+            for pack, payload in expected.items():
+                path = output / f"{pack}.pack-lock.json"
+                assert path.read_bytes() == payload
+                assert PackLock.read(path).pack == pack
+        assert source.read_bytes() == original
+        assert (root / "current").read_text() == "7\n"
+        assert sorted(path.name for path in root.iterdir()) == ["current"]
+    finally:
+        server.shutdown()
+
+
 @pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])
 def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
