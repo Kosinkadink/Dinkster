@@ -9,15 +9,23 @@ from typing import Any, cast
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     LATENT_TYPE,
+    MESH_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    VAE_TYPE,
     VOXEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
+    TriangleMeshBatch,
     TypeExpr,
     initialize_inference_process,
+    materialize_latent,
+    materialize_shape_subdivides,
     materialize_voxel,
 )
+
+from .trellis import flatten_sparse_samples
 
 
 class Trellis2ShapeStage(Node):
@@ -107,3 +115,111 @@ class Trellis2ShapeStage(Node):
             "model_frame": "y_up" if proj_pack is not None else "z_up",
         }
         return outputs
+
+
+class VaeDecodeShapeTrellis(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="VaeDecodeShapeTrellis",
+            display_name="Trellis2 VAE Decode Shape",
+            category="model/latent/trellis",
+            inputs=(
+                InputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+            outputs=(
+                OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),
+                OutputSpec("shape_subdivides", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, samples: object, vae: Any) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        formats = importlib.import_module("dinkster_inference.latent_formats")
+        sparse = importlib.import_module("dinkster_inference.ldm.trellis2.vae")
+        latent = materialize_latent(samples)
+        coord_resolution = latent.get("coord_resolution")
+        resolution = (
+            int(coord_resolution) * 16
+            if coord_resolution is not None
+            else int(vae.first_stage_model.resolution.item())
+        )
+        values, coords = latent["samples"], latent["coords"]
+        estimate = resolution * resolution * 5 // 4
+        vae.prepare_decode(
+            values.shape,
+            memory_required=2 * 1024**3
+            + estimate * (896 * management.dtype_size(vae.vae_dtype) + 27 * 4),
+        )
+        device = management.get_torch_device()
+        counts = latent.get("coord_counts")
+        items: list[tuple[Any, Any]]
+        if counts is None:
+            features = values.squeeze(-1).transpose(1, 2)
+            items = [(features.reshape(-1, features.shape[-1]), coords)]
+        else:
+            if counts.ndim != 1:
+                raise ValueError(
+                    f"Trellis2 coord_counts must be 1D, got shape {tuple(counts.shape)}"
+                )
+            lengths = [int(count) for count in counts.tolist()]
+            if any(count < 0 for count in lengths):
+                raise ValueError(f"Trellis2 coord_counts must be non-negative, got {lengths}")
+            if sum(lengths) != coords.shape[0]:
+                raise ValueError(
+                    f"Trellis2 coord_counts total {sum(lengths)} "
+                    f"does not match coords rows {coords.shape[0]}"
+                )
+            features = flatten_sparse_samples(values, coords, counts)
+            order = torch.argsort(coords[:, 0].to(torch.int64), stable=True)
+            sorted_coords = coords.index_select(0, order)
+            items = list(zip(features.split(lengths), sorted_coords.split(lengths), strict=True))
+
+        shape_format = formats.Trellis2ShapeSLAT()
+        meshes: list[Any] = []
+        stages_per_item: list[Any] = []
+        for features, item_coords in items:
+            item_coords = item_coords.to(device)
+            if counts is not None:
+                item_coords = item_coords.clone()
+                item_coords[:, 0] = 0
+            slat = sparse.SparseTensor(
+                feats=shape_format.process_out(features.to(device)), coords=item_coords
+            )
+            mesh, stages = vae.first_stage_model.decode_shape_slat(
+                slat.to(vae.vae_dtype), resolution
+            )
+            meshes.extend(mesh if counts is None else [mesh[0]])
+            stages_per_item.append(stages)
+        stages = stages_per_item[0]
+        if counts is not None:
+            stages = [
+                sparse.SparseTensor.from_tensor_list(
+                    [item[index].feats for item in stages_per_item],
+                    [item[index].coords for item in stages_per_item],
+                )
+                for index in range(len(stages))
+            ]
+        vertices: list[Any] = []
+        faces: list[Any] = []
+        for vertex, face in meshes:
+            if latent.get("model_frame", "y_up") == "z_up":
+                vertex = torch.stack((vertex[..., 0], vertex[..., 2], -vertex[..., 1]), dim=-1)
+            vertices.append(vertex.float().cpu())
+            faces.append(face.int().cpu())
+        equal = all(v.shape == vertices[0].shape for v in vertices) and all(
+            f.shape == faces[0].shape for f in faces
+        )
+        mesh = TriangleMeshBatch(
+            vertices=torch.nn.utils.rnn.pad_sequence(vertices, batch_first=True),
+            faces=torch.nn.utils.rnn.pad_sequence(faces, batch_first=True),
+            vertex_counts=None if equal else torch.tensor([v.shape[0] for v in vertices]),
+            face_counts=None if equal else torch.tensor([f.shape[0] for f in faces]),
+        )
+        output_device = management.intermediate_device()
+        stages = [stage.to(output_device) for stage in materialize_shape_subdivides(stages)]
+        return cls.outputs(mesh=mesh, shape_subdivides=stages)

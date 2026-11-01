@@ -602,6 +602,7 @@ namespaces = [
     "VAEDecodeHunyuan3D",
     "Trellis2ShapeStage",
     "VaeDecodeStructureTrellis2",
+    "VaeDecodeShapeTrellis",
     "Trellis2TextureStage",
     "PaintMesh",
     "WeldVertices",
