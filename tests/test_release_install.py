@@ -1400,16 +1400,28 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         "workerProtocol": 11,
         "platform": {"os": "linux"},
         "interpreter": {"executable": "python/bin/python3"},
-        "archive": {"parts": []},
+        "archive": {"parts": [{"filename": "base.tar.zst.001", "size": 17, "sha256": "a" * 64}]},
         "wheels": [],
         "nvidia": None,
     }
+    if not legacy:
+        base["label"] = "2026-10-31-py3.14.10-torch2.14.1-bbbbbbbb"
     manifest = tmp_path / "base.json"
     manifest.write_text(json.dumps(base))
     monkeypatch.setattr(builder, "qualify", lambda *args: base)
     monkeypatch.setattr(builder.platform, "system", lambda: "Linux")
     monkeypatch.setattr(builder, "extract_base", lambda *args, **kwargs: None)
     monkeypatch.setattr(builder, "effective_constraints", lambda *args: "constraints\n")
+
+    def fetch(sources, filename, destination, digest, size):
+        name = base.get("label", "b" * 64)
+        assert sources == (
+            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/"
+            f"base-linux-cpu-{name}",
+        )
+        return destination
+
+    monkeypatch.setattr(builder, "fetch_artifact", fetch)
 
     def build_pack(root, output, **kwargs):
         output.mkdir()
@@ -1634,8 +1646,9 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
 
 @pytest.mark.parametrize("system", ["windows", "macos"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
+@pytest.mark.parametrize("labelled", [False, True])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str, labelled: bool
 ) -> None:
     from copy import deepcopy
 
@@ -1744,6 +1757,18 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         )
         manifest["signature"] = None
         requested = f"base-{variant}-{identity}"
+        if labelled or change.startswith("label-"):
+            label = f"2026-10-31-py{python}-torch2.14.1-{identity[:8]}"
+            if change == "label-hash":
+                label = label[:-8] + "0" * 8
+            elif change == "label-path":
+                label = "../" + label
+            manifest["label"] = label
+            requested = f"base-{variant}-{label}"
+            if change == "label-tag":
+                requested = requested.replace("2026-10-31", "2026-10-30")
+            elif change == "label-variant":
+                requested = requested.replace(f"base-{variant}-", "base-other-")
         if change == "identity":
             manifest["workerProtocol"] = 12
         payload = (json.dumps(manifest, indent=3) + "\n").encode()
@@ -1848,6 +1873,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         "stream-corrupt",
         "stream-short",
         "stream-error",
+        "label-hash",
+        "label-path",
+        "label-tag",
+        "label-variant",
     ):
         destination = tmp_path / change
         with pytest.raises((ValueError, subprocess.CalledProcessError)):

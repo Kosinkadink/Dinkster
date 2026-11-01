@@ -25,7 +25,8 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
     """Keep source payloads unchanged while adding native per-variant lock bytes."""
     raw = json.loads(manifest.read_bytes())
     variant = raw["variant"]
-    base = qualify(root, manifest, f"base-{variant}-{raw['id'][7:]}")
+    base_tag = f"base-{variant}-{raw.get('label', raw['id'][7:])}"
+    base = qualify(root, manifest, base_tag)
     system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     if base["platform"]["os"] != system:
         raise ValueError("pack locks must be resolved on the selected base's native host")
@@ -43,8 +44,7 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
         work = Path(directory)
         archive = base["archive"]
         mirror = (
-            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/"
-            f"base-{variant}-{base['id'][7:]}"
+            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/" + base_tag
         )
         parts = tuple(
             fetch_artifact(

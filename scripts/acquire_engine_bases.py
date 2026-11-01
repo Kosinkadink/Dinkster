@@ -21,12 +21,23 @@ from scripts.build_release import LINUX_PLATFORMS, read_base_manifest
 
 REPOSITORY = "Kosinkadink/Dinkster-Environments"
 TORCH_PACKAGES = {"torch", "torchvision"}
+BASE_LABEL = (
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}-py[0-9][A-Za-z0-9.]*"
+    r"-torch[0-9][A-Za-z0-9.]*(?:-cu[0-9]+)?-[0-9a-f]{8}"
+)
 
 
 def qualify(root: Path, path: Path, tag: str) -> dict:
     manifest = read_base_manifest(path)
     variant = manifest["variant"]
-    if tag != f"base-{variant}-{manifest['id'].removeprefix('sha256:')}":
+    identity = manifest["id"].removeprefix("sha256:")
+    label = manifest.get("label")
+    if tag != f"base-{variant}-{identity}" and not (
+        isinstance(label, str)
+        and re.fullmatch(BASE_LABEL, label)
+        and label.endswith("-" + identity[:8])
+        and tag == f"base-{variant}-{label}"
+    ):
         raise ValueError("base tag does not match its variant and canonical id")
     platform = manifest["platform"]
     if platform not in (
@@ -143,8 +154,10 @@ def acquire(root: Path, tags: list[str], output: Path) -> list[Path]:
         staged = Path(temporary) / "selected"
         staged.mkdir()
         for tag in tags:
-            selection = re.fullmatch(r"base-([a-z0-9-]+)-[0-9a-f]{64}", tag)
-            if selection is None:
+            if (
+                re.fullmatch(rf"base-[a-z0-9]+(?:-[a-z0-9]+)*-(?:[0-9a-f]{{64}}|{BASE_LABEL})", tag)
+                is None
+            ):
                 raise ValueError("base selection requires an exact variant/id release tag")
             endpoint = f"repos/{REPOSITORY}/releases/tags/{tag}"
             release = json.loads(subprocess.check_output(["gh", "api", endpoint]))
