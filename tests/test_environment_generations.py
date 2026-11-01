@@ -495,7 +495,13 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         channel["engine"]["release"] = "sha256:" + identity
         channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
         channel_path.write_bytes(publisher.canonical_json(channel))
-        code, result = _run(root, *fixture["commands"]["setup"][5:], "--yes")
+        code, result = _run(
+            root,
+            *fixture["commands"]["setup"][5:],
+            "--pack-lock",
+            str(release.parent / identity / lock_path.name),
+            "--yes",
+        )
         if provisioner == "without-acquire":
             assert code == 1, result
             assert "selected engine cannot acquire missing pack wheels" in result["error"]
