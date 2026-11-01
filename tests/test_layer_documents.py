@@ -1863,6 +1863,142 @@ def test_load_layers_node_creates_documents_from_raster_assets(
     assert flatten(loaded)[0].shape == (1, 2, 3, 4 if alpha_mode == "straight" else 3)
 
 
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+def test_lazy_document_input_retains_vault_until_hook_settles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    from contextlib import suppress
+
+    from dinkster_assets.scratch import claim_inactive_produced_scratch, hold_produced_vault
+    from dinkster_nodes_foundation.routing import RouteGate
+    from dinkster_nodes_image.compositor_types import (
+        CompositorSourceLayer,
+        LayerStack,
+        decode_layer_stack,
+        encode_layer_stack,
+        layer_stack_meta,
+    )
+    from dinkster_protocol import LazyStatusInvocation
+    from dinkster_values import CORE_BOOLEAN
+    from dinkster_workers.host import serve_connection
+    from dinkster_workers.session import BoundarySession
+
+    root = tmp_path / "vault"
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(root))
+    with closing(hold_produced_vault(root)):
+        pass
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_media_types(registry)
+    register_image_types(registry)
+    old = TypeRegistry()
+    old.register(
+        "dinkster.layers",
+        encode=encode_layer_stack,
+        decode=decode_layer_stack,
+        meta=layer_stack_meta,
+    )
+    pixels = np.random.default_rng(41).random((1, 64, 64, 3), dtype=np.float32)
+    source = old.wrap(
+        "dinkster.layers",
+        LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
+    )
+    blobs: list[bytes] = []
+    wire, _ = ValueCodec(old, use_shm=False).encode(source, blobs, [])
+    source, _ = ValueCodec(registry, use_shm=False).decode(wire, blobs, [])
+
+    async def run() -> None:
+        entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class MeasuredGate(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return RouteGate.define_schema()
+
+            @classmethod
+            async def check_lazy_status(cls, *, condition: bool, value: object) -> tuple[str, ...]:
+                assert isinstance(value, ImageDocument)
+                resource = next(iter(value.to_record()["resources"].values()))
+                assert "inline" not in resource
+                assert value.read_resource(resource) == raster_png(pixels[0])
+                entered.set()
+                try:
+                    await release.wait()
+                    if outcome == "error":
+                        raise ValueError("controlled lazy hook failure")
+                    return RouteGate.check_lazy_status(condition=condition, value=value)
+                finally:
+                    settled.set()
+
+        worker = InProcessWorker(build_node_types([MeasuredGate]), registry)
+        accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
+
+        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            accepted.set_result(task)
+            await serve_connection(
+                reader,
+                writer,
+                pack_name="lazy-document",
+                worker=worker,
+                schemas=worker.schemas,
+                planner=None,
+                consumers={},
+                codec=ValueCodec(registry, use_shm=False),
+            )
+
+        server = await asyncio.start_server(accept, "127.0.0.1", 0)
+        reader, writer = await asyncio.open_connection(*server.sockets[0].getsockname())
+        host_task = await accepted
+        session = BoundarySession(
+            registry, role="test", pack="lazy-document", codec=ValueCodec(registry, use_shm=False)
+        )
+        try:
+            await session.begin(reader, writer, timeout=5)
+            schema = RouteGate.define_schema()
+            request = asyncio.create_task(
+                session.check_lazy_status(
+                    LazyStatusInvocation(
+                        "lazy-document",
+                        "gate",
+                        schema.node_type,
+                        {"condition": registry.wrap(CORE_BOOLEAN, True), "value": source},
+                        (),
+                        schema,
+                    )
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 5)
+            with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
+                assert not inactive
+            if outcome == "cancel":
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+                await asyncio.wait_for(settled.wait(), 5)
+            else:
+                release.set()
+                result = await asyncio.wait_for(request, 5)
+                if outcome == "error":
+                    assert result.error is not None
+                    assert "controlled lazy hook failure" in result.error.message
+                else:
+                    assert result.error is None and result.requested_inputs == ()
+            with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
+                assert inactive
+        finally:
+            release.set()
+            with suppress(Exception):
+                await session.send({"type": "shutdown"}, [])
+            await session.close()
+            await asyncio.wait_for(host_task, 5)
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     "case", ["modern", "legacy", "missing", "truncated", "corrupt", "host-missing"]
 )

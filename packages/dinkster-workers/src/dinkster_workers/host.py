@@ -1833,7 +1833,13 @@ async def serve_connection(
             "requestId": request_id,
         }
         cancelled = False
+        produced_context = contextlib.ExitStack()
         try:
+            vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+            if vault_root:
+                produced_context.enter_context(
+                    contextlib.closing(hold_produced_vault(Path(vault_root)))
+                )
             if request_id != str(header.get("invocationId", "")):
                 raise ValueError("lazy-protocol-skew: request id mismatch")
             consumed: list[str] = []
@@ -1905,6 +1911,7 @@ async def serve_connection(
                 "traceback": traceback.format_exc(),
             }
         finally:
+            produced_context.close()
             if not cancelled:
                 try:
                     await send(reply)
