@@ -81,6 +81,18 @@ def test_render_mesh_shading_and_counted_padding(mode: str) -> None:
     torch.testing.assert_close(image[0, 32, 40], expected)
 
 
+def test_render_mesh_single_triangle() -> None:
+    mesh = source()
+    mesh.vertices[0, 2] = torch.tensor([0.0, 1.0, 0.0])
+    mesh.vertex_counts = torch.tensor([3])
+    mesh.face_counts = torch.tensor([1])
+    result = RenderMesh.execute(mesh=mesh, **parameters())
+    image, mask = result["IMAGE"], result["MASK"]
+    assert mask[0, 32, 40] == 1 and mask[0, 0, 0] == 0
+    torch.testing.assert_close(image[0, 32, 40], torch.tensor([0.1, 0.7, 0.3]))
+    torch.testing.assert_close(image[0, 0, 0], torch.tensor([32, 64, 128]) / 255)
+
+
 def test_render_mesh_camera_zoom_transform_and_auto_fallback() -> None:
     mesh = source()
     args = parameters()

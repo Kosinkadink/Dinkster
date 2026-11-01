@@ -33,6 +33,16 @@ def build_bvh(tri: Any) -> dict[str, Any]:
 
     count = tri.shape[0]
     amin, amax = tri.amin(1), tri.amax(1)
+    if count == 1:
+        return dict(
+            LEAF=0,
+            left=torch.empty(0, dtype=torch.int32, device=tri.device),
+            right=torch.empty(0, dtype=torch.int32, device=tri.device),
+            nmin=amin,
+            nmax=amax,
+            order=torch.zeros(1, dtype=torch.int32, device=tri.device),
+            T=count,
+        )
     center = (amin + amax) * 0.5
     lo, hi = center.amin(0), center.amax(0)
     quantized = (
