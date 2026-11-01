@@ -39,7 +39,7 @@ def _coord_layout(coords: Any) -> tuple[int, Any, int]:
     return batch_size, counts, int(counts.max().item())
 
 
-def _flatten_sparse_samples(samples: Any, coords: Any, counts: Any) -> Any:
+def flatten_sparse_samples(samples: Any, coords: Any, counts: Any) -> Any:
     torch = importlib.import_module("torch")
     samples = samples.squeeze(-1).transpose(1, 2)
     batch_ids = coords[:, 0].to(torch.int64)
@@ -102,7 +102,7 @@ class Trellis2TextureStage(Node):
         batch_size, counts, max_tokens = _coord_layout(coords)
         shape_samples = shape["samples"]
         if shape_samples.ndim == 4:
-            shape_samples = _flatten_sparse_samples(shape_samples, coords, counts)
+            shape_samples = flatten_sparse_samples(shape_samples, coords, counts)
 
         proj_pack: Any = None
         if positive:
