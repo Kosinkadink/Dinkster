@@ -73,6 +73,7 @@ from .sparse import (
 from .types import (
     materialize_clip_vision_output,
     materialize_mesh,
+    materialize_shape_subdivides,
     materialize_splat,
     materialize_voxel,
     register_inference_types,
@@ -90,6 +91,7 @@ __all__ = [
     "SigmaSchedule",
     "materialize_clip_vision_output",
     "materialize_mesh",
+    "materialize_shape_subdivides",
     "materialize_splat",
     "materialize_voxel",
     "nvidia_compute_dtypes",

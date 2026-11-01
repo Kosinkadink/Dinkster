@@ -63,6 +63,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_shape_subdivides",
     "materialize_splat",
     "materialize_svg",
     "materialize_voxel",
@@ -315,6 +316,7 @@ GOLDEN_V1_SURFACE = (
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",
+    "register_box_types",
     "register_curve_type",
     "register_resource_handle_type",
     "render_audio_wav",
@@ -459,7 +461,9 @@ GOLDEN_V1_SURFACE = (
     "copy_media_semantics",
     "mask_array_meta",
     "media_semantics",
+    "validate_bounding_box_encoded",
     "validate_image_encoded",
+    "validate_placement_array_encoded",
 )
 
 

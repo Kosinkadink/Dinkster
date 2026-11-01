@@ -91,7 +91,9 @@ from .image_file_tools import (
     SaveImage,
 )
 from .image_filters import IMAGE_FILTER_NODES
+from .image_histogram import ImageHistogram
 from .image_layers import AddLayer
+from .image_model_upscale import ImageUpscaleWithModel
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -138,7 +140,9 @@ from .mesh_holes import FillHoles
 from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
+from .mesh_remesh import RemeshMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
+from .mesh_unwrap import UnwrapMesh
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -188,6 +192,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -203,6 +208,7 @@ from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
+from .splat_files import File3DToSplat, SplatToFile3D
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -212,9 +218,11 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .text_overlay import TextOverlay
 from .trellis import Trellis2TextureStage
 from .trellis_conditioning import Trellis2Conditioning
 from .trellis_shape import Trellis2ShapeStage
+from .trellis_structure import VaeDecodeStructureTrellis2
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -529,18 +537,29 @@ COMFY_NODES: tuple[type[Node], ...] = (
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
+    VaeDecodeStructureTrellis2,
     Trellis2TextureStage,
     PaintMesh,
     WeldVertices,
     MeshTextureToImage,
     MeshSmoothNormals,
     RenderUVAtlas,
+    UnwrapMesh,
     ApplyTextureToMesh,
     FillHoles,
     Get3DComponents,
     DecimateMesh,
+    RemeshMesh,
     MeshToFile3D,
     SaveGLB,
+    Save3DAdvanced,
+    SaveGaussianSplat,
+    SavePointCloud,
+    SplatToFile3D,
+    File3DToSplat,
+    ImageUpscaleWithModel,
+    ImageHistogram,
+    TextOverlay,
 )
 
 

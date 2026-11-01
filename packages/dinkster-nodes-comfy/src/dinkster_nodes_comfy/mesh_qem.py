@@ -1173,3 +1173,58 @@ def qem_simplify(
         final_f.to(in_f_dtype),
         final_c.to(in_c_dtype) if final_c is not None else None,
     )
+
+
+def qem_cluster_decimate(
+    vertices: Any,
+    faces: Any,
+    target_verts: int = 1_000_000,
+    colors: Any = None,
+    face_chunk: int = 4_000_000,
+) -> tuple[Any, Any, Any]:
+    """Grid-cluster huge inputs, averaging vertex attributes before field queries."""
+    torch = importlib.import_module("torch")
+    if vertices.shape[0] == 0 or faces.shape[0] == 0:
+        return vertices, faces, colors
+
+    device = vertices.device
+    bbox = vertices.max(dim=0)[0] - vertices.min(dim=0)[0]
+    bbox_min = vertices.min(dim=0)[0]
+    # Surface occupancy is about one third of the bounding grid.
+    cell_count_target = max(target_verts * 3, 1000)
+    extent_max = float(bbox.max().item())
+    cells_per_axis = cell_count_target ** (1 / 3)
+    cell_size = extent_max / max(1.0, cells_per_axis)
+    scale = 1.0 / max(cell_size, 1e-20)
+
+    q = ((vertices - bbox_min) * scale).floor().to(torch.int64)
+    extent = (bbox * scale).floor().to(torch.int64) + 2
+    key = (q[:, 0] * extent[1] + q[:, 1]) * extent[2] + q[:, 2]
+    unique_key, inv = torch.unique(key, return_inverse=True)
+    n_unique = unique_key.shape[0]
+    counts = torch.zeros(n_unique, dtype=vertices.dtype, device=device)
+    counts.scatter_add_(0, inv, torch.ones(vertices.shape[0], dtype=vertices.dtype, device=device))
+    counts_div = counts.unsqueeze(-1).clamp_min(1.0)
+
+    new_verts = torch.zeros((n_unique, 3), dtype=vertices.dtype, device=device)
+    new_verts.scatter_add_(0, inv.unsqueeze(-1).expand_as(vertices), vertices)
+    new_verts = new_verts / counts_div
+
+    new_colors = None
+    if colors is not None:
+        new_colors = torch.zeros((n_unique, colors.shape[1]), dtype=colors.dtype, device=device)
+        new_colors.scatter_add_(0, inv.unsqueeze(-1).expand_as(colors), colors)
+        new_colors = new_colors / counts_div.to(colors.dtype)
+
+    out_chunks: list[Any] = []
+    for start in range(0, faces.shape[0], face_chunk):
+        cf = inv[faces[start : start + face_chunk].long()]
+        nondeg = (cf[:, 0] != cf[:, 1]) & (cf[:, 1] != cf[:, 2]) & (cf[:, 0] != cf[:, 2])
+        if nondeg.any():
+            out_chunks.append(cf[nondeg])
+    new_faces = (
+        torch.cat(out_chunks, dim=0)
+        if out_chunks
+        else torch.empty((0, 3), dtype=faces.dtype, device=device)
+    )
+    return new_verts, _drop_duplicate_faces(new_faces).to(faces.dtype), new_colors

@@ -14,8 +14,10 @@ from typing import cast
 import dinkster_nodes_media_io.model3d as model3d_module
 import pytest
 from dinkster_api.v1 import (
+    CORE_STRING,
     FILE_3D_GLB_TYPE,
     FILE_3D_GLTF_TYPE,
+    FILE_3D_PLY_TYPE,
     FILE_3D_TYPE,
     LOAD_3D_TYPE,
     InputSpec,
@@ -42,6 +44,7 @@ from dinkster_assets.declared import produced_output_scratch
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_nodes_comfy.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from dinkster_nodes_media_io import LoadModel3D, PreviewModel3D, SaveModel3D, register_media_types
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, decode_model3d, register_core_types
@@ -92,6 +95,65 @@ def _bound(ref: AssetRef, snapshot: Path) -> AssetRef:
         ref.virtual_path,
         MountSnapshotResolver(snapshot),
     )
+
+
+@pytest.mark.parametrize("node", [Save3DAdvanced, SaveGaussianSplat, SavePointCloud])
+@pytest.mark.parametrize("override", [False, True])
+def test_advanced_3d_saves_preserve_file_and_viewport_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    node: type[Save3DAdvanced | SaveGaussianSplat | SavePointCloud],
+    override: bool,
+) -> None:
+    from dinkster_schema.reporting import capture_saved_artifacts
+
+    output, _ = _mount(tmp_path, monkeypatch)
+    payload = b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
+    digest = digest_bytes(payload)
+    vault = AssetVault(tmp_path / "vault")
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        writer.commit()
+    source = AssetRef(digest, "original.ply", len(payload), "application/ply", resolver=vault)
+    model = {"format": "ply", "source": source}
+    camera = {
+        "position": {"x": 1.0, "y": 2.0, "z": -3.0},
+        "target": {"x": 0.0, "y": 1.0, "z": 0.0},
+        "zoom": 2.5,
+        "cameraType": "perspective",
+    }
+    placement = [
+        {
+            "position": {"x": 3.0, "y": -2.0, "z": 1.0},
+            "quaternion": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "scale": {"x": 1.0, "y": 2.0, "z": 0.5},
+        }
+    ]
+    viewport = {"camera_info": camera, "model_3d_info": placement}
+    unchanged_viewport = json.loads(json.dumps(viewport))
+    explicit_camera = {**camera, "zoom": 0.75}
+    with capture_saved_artifacts() as claims:
+        result = node.execute(
+            model_3d=model,
+            viewport_state=viewport,
+            filename_prefix="scene/model",
+            mount="comfy-output",
+            width=789,
+            height=321,
+            camera_info=explicit_camera if override else None,
+            model_3d_info=[] if override else None,
+        )
+    assert result == {
+        "model_3d": model,
+        "camera_info": explicit_camera if override else viewport["camera_info"],
+        "model_3d_info": [] if override else viewport["model_3d_info"],
+        "width": 789,
+        "height": 321,
+    }
+    assert result["model_3d"] is model
+    assert (output / "scene/model_00001.ply").read_bytes() == payload
+    assert len(claims) == 1 and claims[0]["digest"] == digest
+    assert viewport == unchanged_viewport
 
 
 def test_save_then_load_round_trips_glb_bytes(
@@ -202,6 +264,126 @@ def test_worker_hands_load_the_asset_and_decodes_it_for_preview(tmp_path: Path) 
         expected = decode_model3d(data)
         assert result.outputs["load"]["model"].resolve() == expected
         assert result.outputs["preview"]["model"].resolve() == expected
+
+    asyncio.run(scenario())
+
+
+class Advanced3DFileSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "advanced-3d-source.make",
+            inputs=(InputSpec("case", TypeExpr.concrete(CORE_STRING), default="viewport"),),
+            outputs=(
+                OutputSpec("file", TypeExpr.concrete(FILE_3D_PLY_TYPE)),
+                OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, case: str = "viewport") -> Mapping[str, object]:
+        vault = produced_output_scratch()
+        assert vault is not None
+        payload = b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
+        digest = digest_bytes(payload)
+        with vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        ref = AssetRef(digest, "source.ply", len(payload), "application/ply", resolver=vault)
+        if case != "viewport":
+            return cls.outputs(
+                file={"format": "ply", "source": ref},
+                viewport={"model_3d_info": None} if case == "null_placement" else {},
+            )
+        return cls.outputs(
+            file={"format": "ply", "source": ref},
+            viewport={
+                "camera_info": {
+                    "position": {"x": 1.0, "y": 2.0, "z": -3.0},
+                    "target": {"x": 0.0, "y": 1.0, "z": 0.0},
+                    "zoom": 2.5,
+                    "cameraType": "perspective",
+                },
+                "model_3d_info": [],
+            },
+        )
+
+
+@pytest.mark.parametrize("in_process", [True, False])
+@pytest.mark.parametrize("case", ["viewport", "empty", "null_placement"])
+def test_advanced_3d_save_ordinary_hosts_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, case: str
+) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("output", output, mode="readwrite"))
+    table.scan("output")
+    table.select_output_mount("output")
+    vault = tmp_path / "vault"
+    environment = {
+        "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+        "DINKSTER_ASSET_VAULT": str(vault),
+        "DINKSTER_ACCELERATOR": "cpu",
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    module = f"advanced_source_{case}"
+    (tmp_path / f"{module}.py").write_text(
+        "from test_model3d_io import Advanced3DFileSource\n"
+        "from dinkster_nodes_comfy import register_inference_types\n"
+        "NODES=(Advanced3DFileSource,)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "source.toml"
+    manifest.write_text(
+        '[pack]\nname="advanced-3d-source"\npublisher="dinkster"\n'
+        'namespaces=["advanced-3d-source"]\n[pack.entry]\n'
+        f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=environment)
+        try:
+            for path in (
+                Path(__file__).resolve().parents[1]
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml",
+                manifest,
+            ):
+                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
+            graph = Graph(
+                {
+                    "source": GraphNode("advanced-3d-source.make", {"case": case}),
+                    "save": GraphNode(
+                        "Save3DAdvanced",
+                        {
+                            "model_3d": Link("source", "file"),
+                            "viewport_state": Link("source", "viewport"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in (1, 2):
+                result = await engine.run(graph, ["save"])
+                assert "save" in result.executed and len(result.artifacts) == 1
+                file = output / f"3d/ComfyUI_{attempt:05d}.ply"
+                assert file.read_bytes() == (
+                    b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
+                )
+                camera = result.outputs["save"]["camera_info"].resolve()
+                if case == "viewport":
+                    assert cast(dict[str, object], camera)["zoom"] == 2.5
+                else:
+                    assert camera is None
+                assert result.outputs["save"]["model_3d_info"].resolve() == (
+                    None if case == "null_placement" else []
+                )
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 
@@ -364,28 +546,82 @@ def test_file3d_source_cannot_introduce_filesystem_authority(source: object) -> 
         ("FILE_3D_SPLAT_ANY", "spz"),
         ("FILE_3D_SPLAT_ANY", "ksplat"),
         ("FILE_3D_POINT_CLOUD_ANY", "ply"),
+        ("FILE_3D", ""),
+        ("FILE_3D_SPLAT_ANY", ""),
+        ("FILE_3D_POINT_CLOUD_ANY", ""),
     ),
 )
 def test_file3d_format_families_retain_original_format(type_id: str, format_id: str) -> None:
     registry = TypeRegistry()
     register_file3d_types(registry)
     ref = AssetRef(digest_bytes(b"original"), "source", 8)
-    obj = {"format": format_id, "source": ref}
+    resource = AssetRef(digest_bytes(b"sidecar"), "data.bin", 7)
+    obj = {"format": format_id, "source": ref, "resources": {"mesh/data.bin": resource}}
     spec = registry.spec(type_id)
-    decoded = cast("dict[str, object]", spec.decode(spec.encode(obj)))
-    assert decoded == {**obj, "resources": {}}
-    rendition = registry.render(registry.wrap(type_id, obj), "manifest")
+    encoded = spec.encode(obj)
+    decoded = cast("dict[str, object]", spec.decode(encoded))
+    assert decoded == obj
+    value = registry.wrap(type_id, obj)
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(encoded, value.meta.entries)
+    assert dict(value.meta.entries) == {
+        "format": format_id,
+        "asset_refs": [ref.to_wire(), resource.to_wire()],
+    }
+    rendition = registry.render(value, "manifest")
     assert json.loads(rendition.data) == {
         "format": format_id,
         "source": ref.to_wire(),
-        "resources": {},
+        "resources": {"mesh/data.bin": resource.to_wire()},
     }
     assert spec.fingerprint is not None
     assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
-    wrong = {**obj, "format": "glb" if format_id != "glb" else "gltf"}
+    wrong = {**obj, "format": "gltf" if type_id == FILE_3D_GLB_TYPE else "glb"}
     if type_id != FILE_3D_TYPE:
         with pytest.raises(AssetError, match="does not accept"):
             spec.encode(wrong)
+
+
+@pytest.mark.parametrize("format_id", (None, False, 0, ".ply", "PLY", "../ply"))
+def test_file3d_unspecified_format_does_not_accept_malformed_formats(format_id: object) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"original"), "source", 8)
+    obj = {"format": format_id, "source": ref}
+    spec = registry.spec(FILE_3D_TYPE)
+    with pytest.raises(AssetError, match="format"):
+        spec.encode(obj)
+    payload = json.dumps({**obj, "source": ref.to_wire()}).encode()
+    with pytest.raises(AssetError, match="format"):
+        spec.decode(payload)
+
+
+@pytest.mark.parametrize(
+    "type_id",
+    (
+        "FILE_3D_GLB",
+        "FILE_3D_GLTF",
+        "FILE_3D_FBX",
+        "FILE_3D_OBJ",
+        "FILE_3D_STL",
+        "FILE_3D_USDZ",
+        "FILE_3D_PLY",
+        "FILE_3D_SPLAT",
+        "FILE_3D_SPZ",
+        "FILE_3D_KSPLAT",
+    ),
+)
+def test_file3d_concrete_formats_require_declared_format(type_id: str) -> None:
+    registry = TypeRegistry()
+    register_file3d_types(registry)
+    ref = AssetRef(digest_bytes(b"original"), "source", 8)
+    obj = {"format": "", "source": ref}
+    spec = registry.spec(type_id)
+    with pytest.raises(AssetError, match="does not accept"):
+        spec.encode(obj)
+    payload = json.dumps({**obj, "source": ref.to_wire()}).encode()
+    with pytest.raises(AssetError, match="does not accept"):
+        spec.decode(payload)
 
 
 FILE3D_SOURCE = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
