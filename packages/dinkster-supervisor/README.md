@@ -458,6 +458,20 @@ Status returns configured `channel`/`variant` and observed `engines`, never
 starts a process and never creates a prospective root. Doctor reports content
 and pack drift without repair and exits nonzero on drift or errors.
 
+Published setup/update reads the engine's per-variant dependency lock and checks
+its exact base id and wheel identities against the producer manifest. Non-base
+wheels are fetched from their locked origins into the shared wheel store using
+exact filenames, sizes and SHA256; generation construction stays offline.
+Before constructing a generation, acquired non-base wheel metadata is checked
+against base-owned versions using its dependency specifiers, target Python
+markers and requested transitive extras. Incompatible or absent base
+distributions fail with the requiring distribution, specifier and base version.
+`--package-index URL` selects a simple package mirror offering those same locked
+filenames, without resolution, source builds, hash overrides or origin fallback.
+Confirmed setup saves it as project `packageIndex`; updates preserve it or change
+it through the existing activation transaction. This is independent of channel
+and Dinkster artifact `--mirror`. Intact cached wheels require no index access.
+
 `doctor --repair [--plan | --yes]` rebuilds the same release offline into a new
 generation using the existing `repair` activation journal. Plans are read-only;
 apply requires confirmation. It rejects absolute, escaping or cyclic base links,

@@ -82,8 +82,10 @@ def test_unavailable_driver_selects_cpu_and_explicit_variant_cannot_bypass_bound
 
 def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Linux")
-    with pytest.raises(RuntimeError, match="No published base"):
+    with pytest.raises(RuntimeError, match="No published base") as error:
         setup_envs.select_base(bases)
+    assert "supported published variants: cpu, newer, older" in str(error.value)
+    assert "--from-scratch" in str(error.value)
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
     with pytest.raises(RuntimeError, match="Intel macOS is unsupported"):
         setup_envs.select_base(bases)
@@ -99,6 +101,30 @@ def test_from_scratch_contributor_setup_names_missing_host_row(tmp_path: Path):
     variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
     with pytest.raises(ValueError, match=r"missing variants.toml row: variants.absent-host"):
         setup_envs.setup(root, from_scratch=True, variant="absent-host", variants=variants)
+
+
+def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Path, monkeypatch):
+    from test_environment_artifacts import _mirror
+
+    mirror, root = tmp_path / "mirror", tmp_path / "checkout"
+    base, _, _ = _mirror(mirror)
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: base["id"][7:]}))
+    (root / "pyproject.toml").write_text('[project]\nname = "fixture"\nversion = "1.0"\n')
+    (root / "uv.lock").write_text("[[package]]\nname = 'fixture-base'\nversion = '9.0'\n")
+
+    def command(*args, **kwargs):
+        if args[:2] == ("uv", "export"):
+            (root / ".run/workspace-requirements.txt").write_text(
+                "fixture-base==9.0 --hash=sha256:" + "a" * 64 + "\n"
+            )
+
+    monkeypatch.setattr(setup_envs, "command", command)
+    setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+    assert (root / ".run/workspace-requirements.txt").read_text() == (
+        "fixture-base==1.0 --hash=sha256:" + base["wheels"][0]["sha256"] + "\n"
+    )
+    assert json.loads((root / ".run/environment-base.json").read_text())["id"] == base["id"]
 
 
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
@@ -172,6 +198,7 @@ def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, mat
     root = tmp_path / "checkout"
     (root / "scripts").mkdir(parents=True)
     (root / "scripts/base_bundles.json").write_text('{"win-cpu": "identity"}')
+    (root / "uv.lock").write_text("package = []\n")
     gate = "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
     (root / gate).parent.mkdir(parents=True)
     shutil.copyfile(Path(setup_envs.__file__).resolve().parents[1] / gate, root / gate)
@@ -179,6 +206,7 @@ def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, mat
     base = {
         "id": "sha256:identity",
         "variant": "win-cpu",
+        "platform": {"os": "windows", "arch": "x86_64"},
         "python": sys.version.split()[0],
         "interpreter": {"executable": Path(sys.base_prefix).name + "/python.exe"},
         "wheels": [
