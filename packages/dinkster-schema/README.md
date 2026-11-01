@@ -6,9 +6,9 @@ public release; after that point, a wire change will add a new version with an
 explicit compatibility decoder and a documented support window.
 
 `dinkster-schema` is the typed, V3-native node interface model and node-authoring
-surface. It depends only on `dinkster-values`; graph validation, workers, the
-engine, the extension API, and protocol layers consume its schemas rather than
-maintaining parallel interface descriptions.
+surface. It depends on `dinkster-values` and Python `packaging`; graph validation,
+workers, the engine, the extension API, and protocol layers consume its schemas
+rather than maintaining parallel interface descriptions.
 
 ## Setup
 
@@ -20,6 +20,19 @@ uv sync --all-packages
 ```
 
 The package is not published separately yet and provides no console script.
+
+## Pack versions and engine compatibility
+
+`PackCompatibility` is the shared declaration for `[pack] version` and
+`[pack] engine` in `dinkster-pack.toml`. The version is a normalized public
+PEP 440 version, independent of the engine's version. The engine field is a
+nonempty PEP 440 specifier set, for example `>=0.0.2,<0.1`. Both fields must
+be present together. Unpublished local sources may omit both.
+
+`require_engine(pack_id, engine_version)` rejects an excluded engine and
+names the pack id, pack version, declared range and target engine version.
+Development engines are tested with prereleases enabled; local engine version
+segments retain Python packaging's normal comparison rules.
 
 ## Use
 
