@@ -88,6 +88,9 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `Pixal3DConditioning` and `Pixal3DMultiViewConditioning` combine DINO
+  vision tokens, optional NAF features, and per-view camera projection features
+  for single images or a fixed front/left/back/right orbit rig.
 - Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
   or an explicit quaternion, with roll, field of view, zoom, and projection.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
