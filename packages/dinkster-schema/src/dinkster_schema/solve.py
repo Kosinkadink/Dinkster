@@ -60,6 +60,8 @@ def bind_type_variables(
     for spec in specs:
         type_id = input_types.get(spec.id)
         if type_id is not None:
+            if spec.accepts_list and spec.type.kind != "list":
+                type_id = parse_list_type_id(type_id) or type_id
             _unify(spec.id, spec.type, type_id, bindings)
     return bindings
 

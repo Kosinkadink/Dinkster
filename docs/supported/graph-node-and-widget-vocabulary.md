@@ -29,8 +29,9 @@
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
   child input conversion and resident-resource discovery retain each child's
-  concrete identity; concrete `list<T>` remains homogeneous. This does not
-  claim native CreateList or frontend editor/importer support.
+  concrete identity; concrete `list<T>` remains homogeneous. Native CreateList
+  concatenates scalar and list envelopes in member order, and GetItemFromList
+  selects an original typed child using a scalar index or the first list index.
 - Backend schemas describe fixed positional tuples, derive tuple outputs from
   independently typed input families in document order, and select a position's
   type using a stored integer index. Tuple declarations round-trip through the

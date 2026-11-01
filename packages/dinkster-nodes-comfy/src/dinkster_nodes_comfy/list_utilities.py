@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from dinkster_api.v1 import (
     CORE_INT,
@@ -22,6 +23,14 @@ _ITEM = TypeExpr.wildcard()
 _ITEMS = TypeExpr.list_of(_ITEM)
 
 
+def _execution_items(value: Value) -> tuple[Value, ...]:
+    if TypeExpr.runtime_cardinality(value.type_id) != "list":
+        return (value,)
+    children = list_children(value)
+    assert children is not None
+    return children
+
+
 class CreateList(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -32,7 +41,7 @@ class CreateList(Node):
             input_families=(
                 InputFamilySpec(
                     "inputs",
-                    (InputSpec("input", _ITEMS),),
+                    (InputSpec("input", _ITEM),),
                     min_members=1,
                     max_members=10,
                     member_prefix="input",
@@ -47,13 +56,11 @@ class CreateList(Node):
 
     @classmethod
     def execute(
-        cls, *, inputs: Mapping[str, list[object]], input_values: Mapping[str, Value]
+        cls, *, inputs: Mapping[str, object], input_values: Mapping[str, Value]
     ) -> Mapping[str, object]:
         items: list[Value] = []
         for name in inputs:
-            children = list_children(input_values[f"inputs.{name}"])
-            assert children is not None
-            items.extend(children)
+            items.extend(_execution_items(input_values[f"inputs.{name}"]))
         return cls.outputs(list=items)
 
 
@@ -65,11 +72,12 @@ class GetItemFromList(Node):
             display_name="Get Item From List",
             category="utilities",
             inputs=(
-                InputSpec("list", _ITEMS),
+                InputSpec("list", _ITEM),
                 InputSpec(
                     "index",
                     TypeExpr.concrete(CORE_INT),
                     default=0,
+                    accepts_list=True,
                 ),
             ),
             outputs=(OutputSpec("item", _ITEM, display_name="*"),),
@@ -78,11 +86,13 @@ class GetItemFromList(Node):
 
     @classmethod
     def execute(
-        cls, *, list: list[object], index: int, input_values: Mapping[str, Value]
+        cls, *, list: object, index: object, input_values: Mapping[str, Value]
     ) -> Mapping[str, object]:
-        children = list_children(input_values["list"])
-        assert children is not None
-        return cls.outputs(item=children[index])
+        selected_index = _execution_items(input_values["index"])[0]
+        if selected_index.type_id != CORE_INT:
+            raise TypeError("index requires an INT or a list of INT values")
+        children = _execution_items(input_values["list"])
+        return cls.outputs(item=children[cast("int", selected_index.resolve())])
 
 
 LIST_UTILITY_NODES = (CreateList, GetItemFromList)
