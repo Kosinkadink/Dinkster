@@ -762,15 +762,14 @@ os._exit(0)
 
 
 def test_confirmed_project_apply_revalidates_and_materializes_only_approved_assets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     from dinkster_supervisor.environment_generations import project_operation
-    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
-    from test_environment_generations import _standalone_tree
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from test_environment_generations import _workspace_tree
 
     from dinkster.generation_packs import stage_generation_packs
 
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
     root, source, target = tmp_path / "project", tmp_path / "source", tmp_path / "target"
     root.mkdir()
     source.mkdir()
@@ -806,24 +805,8 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
         )
     )
     for directory in (source, target):
-        _standalone_tree(directory / "python")
-        packages = Path(
-            subprocess.check_output(
-                [
-                    str(interpreter(directory)),
-                    "-I",
-                    "-B",
-                    "-c",
-                    "import site; print(site.getsitepackages()[0])",
-                ],
-                text=True,
-            ).strip()
-        )
+        packages = _workspace_tree(directory / "python")
         assert packages.is_relative_to(directory / "python")
-        packages.mkdir(parents=True, exist_ok=True)
-        (packages / "installed-workspace.pth").write_text(
-            "\n".join(str(Path(path).resolve()) for path in sys.path) + "\n"
-        )
     project = root / "project.json"
     settings = {
         "format": "dinkster.project/1",
