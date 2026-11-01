@@ -23,6 +23,9 @@
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
+  Generic and aggregate sockets preserve an empty format for consumers that
+  detect the original container from its contents. Concrete format sockets
+  require their declared format; conflicting explicit formats remain rejected.
   A JSON manifest rendition preserves the source and named resource identities
   when reading completed job outputs; local bindings remain host-granted rather
   than becoming content digests.
@@ -274,7 +277,8 @@
   splat PLY files. Shared inference and media packs preserve optional per-item
   counts, empty Gaussian tensors and floating dtype across ordinary worker
   boundaries; live tensors retain their device and storage. Empty splats can
-  cross workers but cannot be exported to PLY.
+  be loaded from zero-vertex PLY files and cross workers, but cannot be exported
+  to PLY.
 - Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
   honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights

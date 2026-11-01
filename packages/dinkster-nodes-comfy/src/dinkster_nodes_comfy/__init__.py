@@ -91,7 +91,9 @@ from .image_file_tools import (
     SaveImage,
 )
 from .image_filters import IMAGE_FILTER_NODES
+from .image_histogram import ImageHistogram
 from .image_layers import AddLayer
+from .image_model_upscale import ImageUpscaleWithModel
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -214,9 +216,11 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .text_overlay import TextOverlay
 from .trellis import Trellis2TextureStage
 from .trellis_conditioning import Trellis2Conditioning
 from .trellis_shape import Trellis2ShapeStage
+from .trellis_structure import VaeDecodeStructureTrellis2
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -531,6 +535,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
+    VaeDecodeStructureTrellis2,
     Trellis2TextureStage,
     PaintMesh,
     WeldVertices,
@@ -547,6 +552,9 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveGaussianSplat,
     SavePointCloud,
     SplatToFile3D,
+    ImageUpscaleWithModel,
+    ImageHistogram,
+    TextOverlay,
 )
 
 
