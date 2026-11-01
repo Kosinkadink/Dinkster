@@ -37,6 +37,9 @@ size limits are checked before output is written. Symlinks are rejected;
 version-control, environment, cache, dependency, and build directories are
 omitted at every depth.
 
+Store pack resources in a form the admission scanner can read; compressed
+resource files (gzip, ZIP, zstd, xz, tar) are held for review.
+
 ## The manifest: dinkster-pack.toml
 
 ```toml
