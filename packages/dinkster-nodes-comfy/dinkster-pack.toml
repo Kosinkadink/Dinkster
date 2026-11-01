@@ -624,6 +624,7 @@ namespaces = [
     "Get3DComponents",
     "DecimateMesh",
     "RemeshMesh",
+    "RenderMesh",
     "MeshToFile3D",
     "SaveGLB",
     "Save3DAdvanced",

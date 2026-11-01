@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `RenderMesh` produces a single image and coverage mask from the first
+  counted mesh, with texture, vertex-color, clay, normal and depth modes,
+  authored model transforms, supplied cameras and automatic framing.
 - Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
   preserve original-file assets and sidecars while returning viewport camera,
   model placement and dimensions, with explicit metadata inputs taking priority.
