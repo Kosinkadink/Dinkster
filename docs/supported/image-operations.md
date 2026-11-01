@@ -89,6 +89,8 @@
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- DA3, MediaPipe face-detection and SAM3D Body model values retain their
+  complete model wrappers in the holding worker when passed between nodes.
 - Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
   optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional

@@ -28,6 +28,11 @@ resident pool and preserves an already registered type spec. Interpolation
 model objects stay in their holding process; normal value transport carries
 their resident identity, not model contents.
 
+`DA3_MODEL`, `FACE_DETECTION_MODEL` and `SAM3D_BODY_MODEL` use the same
+governed holding-process identity path. Complete model wrappers and their
+patchers stay in the holding process, and prior registration authority is
+preserved. Their constants are exported through `dinkster_api.v1`.
+
 `MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
 uses the structural latent codec without requiring a `samples` entry. Geometry
 tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
