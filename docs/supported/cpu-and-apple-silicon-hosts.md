@@ -3,6 +3,8 @@
 - Apple Silicon on macOS 14+ uses the `mac-arm64` Python/torch bundle with
   MPS for contributor and published environment setup. Native tools provide
   their own Python and uv for setup, doctor, engine start, update and rollback.
+  Fresh `dinkster-env setup` selects `mac-arm64` automatically on Apple Silicon;
+  explicit variants and existing project selections take precedence.
   Intel macOS and CUDA on macOS are unsupported.
 - The Apple Silicon Desktop app is unsigned. Gatekeeper may require
   right-click Open or removal of the quarantine attribute from the verified

@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from platform import machine
 from typing import cast
 
 from .environment_artifacts import acquire, acquire_pack_locks, acquire_sources, discover
@@ -225,6 +226,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     snapshot = (root / "project.json").read_bytes() if settings else None
     channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")
     variant = args.variant or (cast("str", settings["variant"]) if settings else None)
+    if variant is None and sys.platform == "darwin" and machine().lower() == "arm64":
+        variant = "mac-arm64"
     mirrors = tuple(args.mirror or (cast("list[str]", settings["mirrors"]) if settings else ()))
     package_index = args.package_index or (settings.get("packageIndex") if settings else None)
     port = (
