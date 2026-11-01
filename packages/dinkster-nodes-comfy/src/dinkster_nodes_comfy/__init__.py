@@ -135,6 +135,7 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from .mesh import MESH_NODES
 from .mesh_decimate import DecimateMesh
 from .mesh_holes import FillHoles
@@ -495,6 +496,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     DA3Inference,
     DA3Render,
     DA3GeometryToMesh,
+    MediaPipeFaceMeshVisualize,
+    MediaPipeFaceMask,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
     TripoSplatConditioning,

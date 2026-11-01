@@ -126,6 +126,9 @@
 - Native `DA3Render` visualizes raw or normalized depth, confidence and sky.
   `DA3GeometryToMesh` unprojects one frame with confidence/sky filtering,
   stride and discontinuity selection, UVs and optional source-image texture.
+- Native `MediaPipeFaceMeshVisualize` draws selected face connections, points
+  or a filled outline on an optional image. `MediaPipeFaceMask` unions selected
+  face regions into one binary mask per frame, including empty frames.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
 - Structural tensor values preserve unsigned 16-bit joint indices and unsigned
