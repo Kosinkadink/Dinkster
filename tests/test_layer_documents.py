@@ -58,6 +58,7 @@ from dinkster_nodes_media_io import register_media_types
 from dinkster_protocol import InvocationResult, SavedArtifact
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import (
+    RenditionUnavailable,
     TypeRegistry,
     annotate_image,
     annotate_mask,
@@ -1859,6 +1860,141 @@ def test_load_layers_node_creates_documents_from_raster_assets(
     )
     assert loaded.read_resource(resource) == payload
     assert flatten(loaded)[0].shape == (1, 2, 3, 4 if alpha_mode == "straight" else 3)
+
+
+@pytest.mark.parametrize(
+    "case", ["modern", "legacy", "missing", "truncated", "corrupt", "host-missing"]
+)
+def test_isolated_document_rendition_adopts_all_resources_before_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from dinkster_assets import AssetError, AssetVault, digest_bytes
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_nodes_image.compositor_types import (
+        CompositorSourceLayer,
+        LayerStack,
+        decode_layer_stack,
+        encode_layer_stack,
+        layer_stack_meta,
+    )
+
+    producer = AssetVault(tmp_path / "producer")
+    host = AssetVault(tmp_path / "host")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(host.root))
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_media_types(registry)
+    register_image_types(registry)
+    codec = ValueCodec(registry, use_shm=False)
+    pixels = np.random.default_rng(41).random((1, 64, 64, 3), dtype=np.float32)
+    expected = raster_png(pixels[0])
+    if case == "legacy":
+        old = TypeRegistry()
+        old.register(
+            "dinkster.layers",
+            encode=encode_layer_stack,
+            decode=decode_layer_stack,
+            meta=layer_stack_meta,
+        )
+        source = old.wrap(
+            "dinkster.layers",
+            LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
+        )
+        blobs, segments = [], []
+        wire, _ = ValueCodec(old, use_shm=False).encode(source, blobs, segments)
+        source, _ = codec.decode(wire, blobs, [])
+    else:
+        digest = digest_bytes(expected)
+        with producer.writer(digest) as writer:
+            writer.write(expected)
+            writer.commit()
+        if case != "host-missing":
+            with host.writer(digest) as writer:
+                writer.write(expected)
+                writer.commit()
+        path = producer.resolve(digest)
+        assert path is not None
+        if case == "missing":
+            path.unlink()
+        elif case == "truncated":
+            path.write_bytes(expected[:-1])
+        elif case == "corrupt":
+            path.write_bytes(expected[:-1] + bytes([expected[-1] ^ 1]))
+        record = empty_document(64, 64).to_record()
+        record["allocation"]["nextOrdinal"] = 1
+        record["resources"]["r0"] = {
+            "id": "r0",
+            "kind": "raster",
+            "digest": digest,
+            "byteSize": len(expected),
+            "mediaType": "image/png",
+            "width": 64,
+            "height": 64,
+            "colorSpace": "srgb",
+            "channelDepth": 8,
+            "alphaMode": "opaque",
+        }
+        source = registry.wrap("dinkster.layers", ImageDocument.from_record(record))
+
+    before_blobs, before_segments = [], []
+    before, _ = codec.encode(source, before_blobs, before_segments)
+    fingerprint = source.fingerprint
+
+    async def run() -> None:
+        packages = Path(__file__).parents[1] / "packages"
+        group = GroupIsolatedWorker(
+            "rendition-test",
+            [
+                packages / name / "dinkster-pack.toml"
+                for name in (
+                    "dinkster-nodes-foundation",
+                    "dinkster-nodes-media-io",
+                    "dinkster-nodes-image",
+                )
+            ],
+            registry,
+            extra_env={"DINKSTER_ASSET_VAULT": str(producer.root)},
+        )
+        await group.start()
+        try:
+            worker = group.members["dinkster-nodes-image"]
+            if case in ("missing", "truncated", "corrupt", "host-missing"):
+                error = AssetError if case == "host-missing" else RenditionUnavailable
+                with pytest.raises(error):
+                    await worker.render_rendition(source, "document", {})
+                assert (
+                    await worker.resolve_rendition_mime(
+                        source.type_id, "document", source.meta.entries
+                    )
+                    == "application/vnd.dinkster.image-document+json"
+                )
+                return
+            rendered = await worker.render_rendition(source, "document", {})
+        finally:
+            await group.close()
+        record = ImageDocument(rendered.data).to_record()
+        resources = list(record["resources"].values())
+        assert len(resources) == 1
+        descriptor = resources[0]
+        assert "inline" not in descriptor
+        assert descriptor["digest"] == digest_bytes(expected)
+        assert descriptor["byteSize"] == len(expected)
+        path = host.resolve(descriptor["digest"])
+        assert path is not None
+        assert path.read_bytes() == expected
+        inventory = ProducedAssetInventory(host.root)
+        if case == "legacy":
+            assert [entry.digest for entry in inventory.entries()] == [descriptor["digest"]]
+        else:
+            with pytest.raises(AssetError, match="inventory is unavailable"):
+                inventory.entries()
+
+    asyncio.run(run())
+    after_blobs, after_segments = [], []
+    after, _ = codec.encode(source, after_blobs, after_segments)
+    assert (after, after_blobs) == (before, before_blobs)
+    assert source.fingerprint == fingerprint
+    assert not registry.spec("dinkster.layers").asset_references_complete
 
 
 @pytest.mark.parametrize("large", [False, True])

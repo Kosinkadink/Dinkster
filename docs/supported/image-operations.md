@@ -169,6 +169,10 @@
   source references without reading or publishing raster files; auxiliary
   references are retained. Legacy layer stacks validate without publishing,
   but their migrated resource lifetimes do not qualify for cleanup.
+- Isolated document retrieval retains newly derived external rasters in the
+  serving host vault before returning, without changing the original layer
+  value or treating caller-owned inputs as newly produced assets. Missing,
+  truncated, or corrupt external resources refuse retrieval.
 - Isolated GLSL ES 3.00 image rendering through ANGLE with up to five image
   inputs, typed scalar and curve uniforms, four render targets, custom output
   dimensions, and 1-32 passes; Linux and Windows x86-64/ARM64 and macOS ARM64

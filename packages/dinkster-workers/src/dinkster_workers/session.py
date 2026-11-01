@@ -79,6 +79,8 @@ from dinkster_schema import (
     validate_name,
 )
 from dinkster_values import (
+    IMAGE_DOCUMENT_TYPE,
+    EncodedPayload,
     InvalidRenditionRequest,
     Rendition,
     RenditionUnavailable,
@@ -111,7 +113,12 @@ from .manifest import (
     generation_providers_from_wire,
     vision_providers_from_wire,
 )
-from .produced_assets import ProducedAssetAuthority, result_asset_digests, source_asset_files
+from .produced_assets import (
+    DOCUMENT_RENDITION_MIME,
+    ProducedAssetAuthority,
+    result_asset_digests,
+    source_asset_files,
+)
 from .relay import MemoryRelay, ReleaseGuard, WorkerFullReleaseResult
 from .resume import InvocationKey
 from .run_control import dispatch_run_control
@@ -481,6 +488,7 @@ class BoundarySession:
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._route_request_index = 0
         self._rendition_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._rendition_asset_pins: dict[str, object] = {}
         self._rendition_request_index = 0
         # Asset staging (declared assets on a remote daemon): request
         # futures for assetQuery/stageAssets replies, plus per-request
@@ -1269,6 +1277,7 @@ class BoundarySession:
             {"typeId": value.type_id, "value": value_wire, "parameters": dict(parameters)},
             blobs,
             segments,
+            inputs={"source": value},
         )
         self._raise_rendition_error(reply)
         mime = reply.get("mime")
@@ -1289,6 +1298,8 @@ class BoundarySession:
         fields: Mapping[str, object],
         blobs: Sequence[bytes],
         segments: Sequence[SharedMemory] = (),
+        *,
+        inputs: Mapping[str, Value] | None = None,
     ) -> tuple[dict[str, Any], list[bytes]]:
         if not self._alive:
             raise WorkerDied()
@@ -1298,15 +1309,58 @@ class BoundarySession:
             asyncio.get_running_loop().create_future()
         )
         self._rendition_pending[request_id] = future
+        acknowledged = False
+        consumed: list[str] = []
         try:
             await self.send(
                 {"type": frame_type, "requestId": request_id, "kind": kind, **fields},
                 blobs,
                 segments,
             )
-            return await future
+            reply, result_blobs = await future
+            self._raise_rendition_error(reply)
+            if frame_type == "renderRendition" and reply.get("mime") == DOCUMENT_RENDITION_MIME:
+                decoded, _ = decode_result(self._codec, reply, result_blobs, consumed)
+                outputs = decoded.outputs or {}
+                document = outputs.get("document")
+                blob = reply.get("dataBlob")
+                if (
+                    set(outputs) != {"document"}
+                    or document is None
+                    or document.type_id != IMAGE_DOCUMENT_TYPE
+                    or not isinstance(document.payload, EncodedPayload)
+                    or type(blob) is not int
+                    or not 0 <= blob < len(result_blobs)
+                    or document.payload.data != result_blobs[blob]
+                ):
+                    raise BoundaryError("document rendition has no matching declared envelope")
+
+                def adopt_document() -> None:
+                    with use_produced_output_job(f"{self._instance_token}-{request_id}", 1):
+                        self._produced_assets.capture(outputs, self._blob_store, inputs)
+                        # Caller-owned roots are not adopted, but must be readable here.
+                        source_asset_files(outputs, resolver_from_env())
+
+                adoption = asyncio.create_task(asyncio.to_thread(adopt_document))
+                self._asset_adoptions.add(adoption)
+                adoption.add_done_callback(self._asset_adoptions.discard)
+                await await_file_operation(adoption)
+                await self.send({"type": "renditionAck", "requestId": request_id}, [])
+                acknowledged = True
+            return reply, result_blobs
         finally:
             self._rendition_pending.pop(request_id, None)
+            try:
+                if consumed:
+                    with contextlib.suppress(WorkerDied):
+                        await self.send({"type": "shmAck", "segments": consumed}, [])
+                if not acknowledged:
+                    with contextlib.suppress(WorkerDied):
+                        await self.send({"type": "cancelRendition", "requestId": request_id}, [])
+            finally:
+                owner = self._rendition_asset_pins.pop(request_id, None)
+                if owner is not None and self._blob_store is not None:
+                    self._blob_store.unpin(owner)
 
     @staticmethod
     def _raise_rendition_error(reply: Mapping[str, object]) -> None:
@@ -2123,6 +2177,21 @@ class BoundarySession:
                 # notices and unwinds - nothing for this task to add.
                 await self.send({"type": "heartbeat"}, [])
 
+    def _receive_rendition(self, header: Mapping[str, object], blobs: list[bytes]) -> None:
+        request_id = str(header.get("requestId"))
+        future = self._rendition_pending.get(request_id)
+        if future is None or future.done():
+            return
+        if self._blob_store is not None and "outputs" in header:
+            try:
+                digests = result_asset_digests(header, blobs)
+            except AssetError as exc:
+                raise BoundaryError(str(exc)) from exc
+            owner = object()
+            self._rendition_asset_pins[request_id] = owner
+            self._blob_store.pin(owner, digests)
+        future.set_result((dict(header), blobs))
+
     async def _read_loop(self) -> None:
         assert self._reader is not None
         transport_loss = True
@@ -2295,9 +2364,7 @@ class BoundarySession:
                     if future is not None and not future.done():
                         future.set_result(header)
                 elif kind == "renditionResult":
-                    future = self._rendition_pending.pop(str(header.get("requestId")), None)
-                    if future is not None and not future.done():
-                        future.set_result((header, blobs))
+                    self._receive_rendition(header, blobs)
                 elif kind in ("assetQueryResult", "stageAssetsResult"):
                     future = self._staging_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():

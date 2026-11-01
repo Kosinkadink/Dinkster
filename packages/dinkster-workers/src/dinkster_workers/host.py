@@ -46,6 +46,7 @@ from dinkster_assets import (
     use_declared_asset_pack,
 )
 from dinkster_assets.declared import use_produced_output_job
+from dinkster_assets.scratch import hold_produced_vault
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     AcceleratorMemoryPolicy,
@@ -160,7 +161,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
-from .produced_assets import offer_source_assets, source_asset_files
+from .produced_assets import offer_source_assets, rendition_values, source_asset_files
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
 from .run_control import BoundaryRunContext
@@ -2501,6 +2502,7 @@ async def serve_connection(
     workgroup_tasks: set[asyncio.Task[None]] = set()
     route_tasks: dict[str, asyncio.Task[None]] = {}
     rendition_tasks: dict[str, asyncio.Task[None]] = {}
+    rendition_receipts: dict[str, asyncio.Future[None]] = {}
     pack_routes = {route.id: route for _, item in extension_contributions for route in item.routes}
 
     async def run_pack_route(header: Mapping[str, Any]) -> None:
@@ -2541,6 +2543,9 @@ async def serve_connection(
         request_id = str(header.get("requestId", ""))
         reply: dict[str, object] = {"type": "renditionResult", "requestId": request_id}
         result_blobs: list[bytes] = []
+        result_segments: list[SharedMemory] = []
+        ownership = contextlib.ExitStack()
+        transfer_locked = False
         try:
             spec = requested_rendition(header)
             parameters_raw = header.get("parameters", {})
@@ -2562,6 +2567,14 @@ async def serve_connection(
                 if header.get("normalize") is True:
                     reply["parameters"] = dict(spec.normalize_parameters(parameters, meta))
             else:
+                ownership.enter_context(
+                    use_produced_output_job(f"{process_instance_token()}-{request_id}", 1)
+                )
+                vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+                if vault_root:
+                    ownership.enter_context(
+                        contextlib.closing(hold_produced_vault(Path(vault_root)))
+                    )
                 value_wire = header.get("value")
                 if not isinstance(value_wire, Mapping):
                     raise InvalidRenditionRequest("rendition value is missing")
@@ -2575,15 +2588,45 @@ async def serve_connection(
                 reply["mime"] = rendition.mime
                 reply["dataBlob"] = 0
                 result_blobs.append(rendition.data)
+                outputs = await run_sync_resource(rendition_values, worker.registry, rendition)
+                if outputs:
+                    await result_transfer_lock.acquire()
+                    transfer_locked = True
+                    offer_source_assets(outputs)
+                    files = await run_sync_resource(
+                        source_asset_files, outputs, resolver_from_env()
+                    )
+                    # Use a self-contained codec: the document projection must not
+                    # borrow a conversation entry that the caller has not decoded.
+                    projection_codec = ValueCodec(worker.registry, use_shm=False)
+                    reply["outputs"] = {
+                        name: projection_codec.encode(output, result_blobs, result_segments)[0]
+                        for name, output in outputs.items()
+                    }
+                    if files and blob_transfer is not None:
+                        await ensure_peer_holds(files)
+                    rendition_receipts[request_id] = asyncio.get_running_loop().create_future()
+            await send(reply, result_blobs, result_segments)
+            if transfer_locked:
+                result_transfer_lock.release()
+                transfer_locked = False
+            receipt = rendition_receipts.get(request_id)
+            if receipt is not None:
+                await receipt
         except InvalidRenditionRequest as exc:
             reply.update(error="invalid-request", message=str(exc))
-        except RenditionUnavailable as exc:
+        except (RenditionUnavailable, AssetError) as exc:
             reply.update(error="unavailable", message=str(exc))
         except Exception as exc:
             reply.update(error="failed", message=f"{type(exc).__name__}: {exc}")
         finally:
+            if transfer_locked:
+                result_transfer_lock.release()
+            rendition_receipts.pop(request_id, None)
+            ownership.close()
             rendition_tasks.pop(request_id, None)
-        await send(reply, result_blobs)
+        if "error" in reply:
+            await send({key: reply[key] for key in ("type", "requestId", "error", "message")})
 
     async def run_workgroup(command: WorkGroupMessage) -> None:
         assert workgroup_handler is not None
@@ -2708,6 +2751,15 @@ async def serve_connection(
                 rendition_tasks[request_id] = track_resource_task(
                     asyncio.create_task(run_rendition(header, blobs))
                 )
+            elif kind == "renditionAck":
+                receipt = rendition_receipts.get(str(header.get("requestId", "")))
+                if receipt is None or receipt.done():
+                    raise BoundaryError("rendition acknowledgement names no pending transfer")
+                receipt.set_result(None)
+            elif kind == "cancelRendition":
+                task = rendition_tasks.get(str(header.get("requestId", "")))
+                if task is not None:
+                    task.cancel()
             elif kind == "invoke":
                 invocation_id = str(header["invocationId"])
                 if maintenance_operations:
