@@ -251,7 +251,8 @@ tools or release artifacts.
 --base-manifest BASE_MANIFEST --channel main --output-root MIRROR_DIRECTORY
 --minimum-desktop-version X.Y.Z` builds a local channel document. Repeat
 `--base-manifest` for every selected variant; `--channel stable` uses the same
-builder. It hashes the final release manifest bytes, retains its exact tag,
+builder. It hashes the final release manifest bytes, derives the labelled location
+for a new manifest or retains the embedded tag for a legacy manifest,
 verifies every listed local engine artifact, validates each unchanged base
 manifest and checks worker protocol and effective constraint compatibility.
 Only after all inputs pass does it atomically replace `channels/<name>.json`.
