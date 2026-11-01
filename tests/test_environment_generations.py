@@ -26,6 +26,7 @@ from dinkster_supervisor.environment_state import (
     interpreter,
     read_current,
     set_current,
+    write_document,
 )
 
 
@@ -388,7 +389,6 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     custom = None
     if problem == "custom":
         from dinkster_supervisor.environment_custom import prepare_custom_pack_locks
-        from dinkster_supervisor.environment_state import write_document
 
         custom = {
             "source": "user-defined",
@@ -461,7 +461,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 },
             )
             with monkeypatch.context() as context:
-                context.chdir(scratch)
+                context.chdir(tmp_path / "scratch")
                 snapshot = project_operation(
                     root, generation=target, variant=variant, requirements_only=True
                 )
