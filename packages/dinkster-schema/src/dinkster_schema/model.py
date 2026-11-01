@@ -1252,6 +1252,7 @@ class InputSpec:
     source_filename: SourceFilenameSpec | None = None
     accepts_storage: bool = False
     accepts_stream: bool = False
+    accepts_list: bool = False
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
@@ -1274,6 +1275,10 @@ class InputSpec:
 
     ``accepts_storage`` declares that the consumer accepts compact storage
     dtypes without input conversion. It joins execution identity only when true.
+
+    ``accepts_list`` admits a whole list of the declared input type as well as
+    one value. The node consumes the unchanged envelope; this never requests
+    repeated execution or scalar wrapping.
 
     ``on_absent`` is what happens when this input's *linked* value arrives absent
     (DESIGN 3.15). Applied by the engine before invocation - node code never
@@ -1306,6 +1311,8 @@ class InputSpec:
             raise ValueError(f"input {self.id}: accepts_storage must be a bool")
         if type(self.accepts_stream) is not bool:
             raise ValueError(f"input {self.id}: accepts_stream must be a bool")
+        if type(self.accepts_list) is not bool:
+            raise ValueError(f"input {self.id}: accepts_list must be a bool")
         _validate_media_policy(self.alpha_policy, self.mask_polarity, self.mask_semantic)
         descriptors = (
             tuple(item.widget for item in self.widget.representations)

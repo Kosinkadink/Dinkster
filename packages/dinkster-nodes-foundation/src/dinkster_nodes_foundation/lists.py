@@ -127,13 +127,18 @@ class ConcatLists(Node):
             category="list",
             input_families=(InputFamilySpec("lists", LIST_T, min_members=1),),
             outputs=(OutputSpec("list", LIST_T),),
+            input_values=True,
         )
 
     @classmethod
-    def execute(cls, *, lists: Mapping[str, Sequence[object]]) -> Mapping[str, object]:
-        combined: list[object] = []
-        for part in lists.values():
-            combined.extend(part)
+    def execute(
+        cls, *, lists: Mapping[str, Sequence[object]], input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        combined: list[Value] = []
+        for name in lists:
+            children = list_children(input_values[f"lists.{name}"])
+            assert children is not None
+            combined.extend(children)
         return cls.outputs(list=combined)
 
 

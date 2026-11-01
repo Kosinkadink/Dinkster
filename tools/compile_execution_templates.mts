@@ -25,6 +25,17 @@ for (const path of templates) {
   if (imported.document === undefined || imported.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
     throw new Error(`${basename(path)} import failed: ${JSON.stringify(imported.diagnostics)}`)
   }
+  const nodes = Object.values(imported.document.graphs).flatMap((graph) => Object.values(graph.nodes))
+  const definitions = (workflow['definitions'] as JsonObject | undefined)?.['subgraphs'] as JsonObject[] | undefined
+  const authored = [workflow, ...(definitions ?? [])].flatMap((graph) => graph['nodes'] as JsonObject[])
+  for (const type of ['CreateList', 'GetItemFromList']) {
+    const expected = authored.filter((node) => node['type'] === type).length
+    const actual = nodes.filter((node) => node.type === type).length
+    if (actual !== expected) throw new Error(`${basename(path)} ${type}: imported ${actual}, authored ${expected}`)
+  }
+  if (nodes.some((node) => node.id.startsWith('list_wrap_') || node.id.startsWith('list_index_'))) {
+    throw new Error(`${basename(path)} inserted a collection wrapper`)
+  }
   const compiled = compile({
     document: imported.document,
     revision: 1,
