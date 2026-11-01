@@ -98,7 +98,7 @@ def openpose_render_keypoints(
     map_key, weight_key, mhr_map = _MAPS[part]
     override: Any = pose_data.get("_skeleton_override") if pose_data is not None else None
     external_map = override.get(map_key) if override is not None else None
-    if external_map is not None:
+    if override is not None and external_map is not None:
         joints = person.get("pred_joint_coords")
         if joints is None:
             return None
