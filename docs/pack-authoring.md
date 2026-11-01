@@ -101,6 +101,14 @@ Entries are `module:attr` strings resolved inside the worker process, with
 the pack directory on `sys.path`. Loading the manifest itself never imports
 pack code.
 
+Packs whose nodes come from a remote gateway catalog declare
+`node-source = "remote-gateway-catalog"` in `[pack]`. This is the only supported
+node-source value; omit it for static entry schemas. A declared catalog-driven
+pack may expose zero static nodes while offline. Doctor reports the declaration
+as `nodeSource` in JSON and does not warn about that empty static node list;
+entry imports and all other checks still run and must succeed. The declaration
+does not grant network access or bypass registry integrity or ownership checks.
+
 ## Static frontend assets and settings
 
 `[pack.frontend] assets` names a directory relative to `dinkster-pack.toml`.
