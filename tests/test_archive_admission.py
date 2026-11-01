@@ -21,8 +21,11 @@ from dinkster_workers import ManifestError, load_manifest
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
 @pytest.mark.parametrize("name", ["example-pack", "color-tools"])
-def test_service_fixture_archive_contract(tmp_path: Path, name: str) -> None:
+def test_service_fixture_archive_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, platform: str
+) -> None:
     root = FIXTURES / name
     archive = tmp_path / "pack.zip"
     digest = build_artifact(root, archive)
@@ -48,8 +51,18 @@ def test_service_fixture_archive_contract(tmp_path: Path, name: str) -> None:
         )
     else:
         assert metadata.data["templates"] == []
-    doctor = run_doctor_static(root)
-    assert doctor.findings == ()
+    with monkeypatch.context() as platform_context:
+        platform_context.setattr(sys, "platform", platform)
+        doctor = run_doctor_static(root)
+    expected_findings = (
+        [("environment.platform-excluded", "info", "signal")]
+        if name == "example-pack" and platform == "win32"
+        else []
+    )
+    assert [
+        (item.code, item.severity, item.effect) for item in doctor.findings
+    ] == expected_findings
+    assert not doctor.blocked and not doctor.review
     assert doctor.data is not None
     assert (doctor.data["status"], doctor.data["errorCount"], doctor.data["warningCount"]) == (
         "passed",

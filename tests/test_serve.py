@@ -2673,6 +2673,8 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
         (True, "read-only", "linux-cpu"),
         (True, "removed", "linux-cpu"),
         (True, "fresh", "linux-nvidia"),
+        (True, "fresh", "mac-arm64"),
+        (False, "fresh", "mac-arm64"),
     ],
 )
 def test_serve_explicit_generation_uses_only_its_sources(

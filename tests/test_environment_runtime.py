@@ -10,6 +10,7 @@ import sys
 import time
 import venv
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.request import Request, urlopen
 
 import pytest
@@ -266,6 +267,42 @@ def test_start_status_idempotence_and_stop(
     finally:
         stop_engine(tmp_path, "main")
     assert engine_status(tmp_path)[0]["state"] == "stopped"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process liveness without procfs")
+def test_macos_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_generation(tmp_path)
+    row = start_engine(tmp_path, 1, "main", free_port())
+    original_read = Path.read_text
+
+    def read_text(path: Path, *args, **kwargs):
+        if path.is_relative_to("/proc"):
+            raise FileNotFoundError(path)
+        return original_read(path, *args, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                "dinkster_supervisor.environment_runtime.sys",
+                SimpleNamespace(platform="darwin", executable=sys.executable),
+            )
+            patch.setattr(Path, "read_text", read_text)
+            assert engine_status(tmp_path) == (row,)
+            record_path = tmp_path / "runtime/1/main.json"
+            original = record_path.read_text()
+            record = json.loads(original)
+            record["instance"] = "not-the-supervisor"
+            record_path.write_text(json.dumps(record))
+            try:
+                with pytest.raises(EnvironmentError, match="refusing to stop"):
+                    stop_engine(tmp_path, "main")
+            finally:
+                record_path.write_text(original)
+            assert engine_status(tmp_path) == (row,)
+            stop_engine(tmp_path, "main")
+            assert engine_status(tmp_path)[0]["state"] == "stopped"
+    finally:
+        stop_engine(tmp_path, "main")
 
 
 def test_start_engine_uses_generation_built_from_a_virtual_environment(tmp_path: Path) -> None:

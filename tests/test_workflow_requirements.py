@@ -225,6 +225,10 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
     ]
     assert plan("win-nvidia", gpu=True).to_wire() == cpu
     assert plan("linux-nvidia", gpu=True, devices=("cuda",)).to_wire() == cpu
+    assert plan("mac-arm64", gpu=True, devices=("mps",)).to_wire() == cpu
+    assert plan("mac-arm64", devices=("cuda",)).to_wire()["errors"] == [
+        "pack tools-a: node a.load declares devices cuda; mps is not supported"
+    ]
     assert plan("linux-nvidia", devices=("cpu",)).to_wire()["errors"] == [
         "pack tools-a: node a.load declares devices cpu; cuda is not supported"
     ]
