@@ -135,6 +135,7 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from .mesh import MESH_NODES
 from .mesh_decimate import DecimateMesh
 from .mesh_holes import FillHoles
@@ -196,6 +197,7 @@ from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
+from .sam3d_body import SAM3DBody_Smooth
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
@@ -496,6 +498,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     DA3Inference,
     DA3Render,
     DA3GeometryToMesh,
+    MediaPipeFaceMeshVisualize,
+    MediaPipeFaceMask,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
     TripoSplatConditioning,
@@ -523,6 +527,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetVideoComponents,
     ConditioningLoader,
     SaveConditioning,
+    SAM3DBody_Smooth,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
