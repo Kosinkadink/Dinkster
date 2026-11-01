@@ -354,6 +354,12 @@ the unsealed target's `constraints.txt`, using repeated `--index` and
 paths. This mode does not admit sources, change the source lock or seal the
 generation. The caller retains the scratch directory through provisioning and
 removes it afterward; no custom lock schema or store path is introduced.
+`environment_custom.prepare_custom_pack_locks` invokes this mode in the acquired
+target interpreter with cached constraint wheels, the custom extras index and
+PyPI fallback. The engine's accelerator selection honors `DINKSTER_ACCELERATOR`
+before host detection when including pack extras. It returns scratch lock paths
+only; the existing generation builder still owns preflight, provisioning, source
+admission and sealing.
 
 `environment_archives.extract_base(parts, destination, platform=..., executable=...,
 expected_parts=...)` verifies every ordered part's size and SHA-256 before streaming

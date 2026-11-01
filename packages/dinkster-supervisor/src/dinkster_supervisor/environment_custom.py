@@ -20,8 +20,15 @@ import zstandard
 from packaging.version import InvalidVersion, Version
 
 from .environment_artifacts import acquire_base, validate_manifest
+from .environment_constraints import requirement_hashes
 from .environment_local import retain_wheels, run_local_command
-from .environment_state import EnvironmentError, content_digest, read_document, write_document
+from .environment_state import (
+    EnvironmentError,
+    content_digest,
+    interpreter,
+    read_document,
+    write_document,
+)
 
 
 def variant_file(root: Path, store: Path, explicit: Path | None) -> Path | None:
@@ -286,3 +293,64 @@ def build_custom_base(
             },
         )
         return base
+
+
+def prepare_custom_pack_locks(
+    generation: Path,
+    *,
+    store: Path,
+    base: dict[str, Any],
+    catalog_lock: Path,
+    artifacts: Path,
+    output: Path,
+) -> tuple[Path, ...]:
+    """Resolve standard locks in the acquired target interpreter before activation."""
+    hashes = requirement_hashes((generation / "constraints.txt").read_text(encoding="utf-8"))
+    wheels = store / "wheels"
+    links = [
+        wheels,
+        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+    ]
+    command = [
+        str(interpreter(generation)),
+        "-B",
+        "-m",
+        "dinkster.generation_packs",
+        "--generation",
+        str(generation),
+        "--catalog-lock",
+        str(catalog_lock),
+        "--artifacts",
+        str(artifacts),
+        "--prepare-locks",
+        str(output),
+        "--variant",
+        base["variant"],
+        "--accelerator",
+        "auto",
+        "--index",
+        "https://pypi.org/simple",
+        "--json",
+    ]
+    extras = base["localBuild"]["extrasIndex"]
+    if extras.rstrip("/") != "https://pypi.org/simple":
+        command.extend(["--index", extras])
+    for path in links:
+        command.extend(["--find-links", str(path)])
+    response: object = json.loads(run_local_command(command, cwd=generation))
+    if not isinstance(response, dict):
+        raise EnvironmentError("custom pack preparation did not return an object")
+    document = cast("dict[str, object]", response)
+    paths = document.get("locks")
+    if (
+        document.get("errors") != []
+        or not isinstance(paths, list)
+        or any(not isinstance(path, str) for path in cast("list[object]", paths))
+    ):
+        raise EnvironmentError("custom pack preparation did not return dependency lock paths")
+    locks = tuple(Path(path) for path in cast("list[str]", paths))
+    if len(set(locks)) != len(locks) or any(
+        not path.is_absolute() or path.parent != output or not path.is_file() for path in locks
+    ):
+        raise EnvironmentError("custom dependency lock output escapes its scratch directory")
+    return locks

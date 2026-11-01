@@ -235,6 +235,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         "missing",
         "variant",
         "wheel",
+        "custom",
         "repair",
         "repair-extra",
         "repair-missing",
@@ -305,11 +306,22 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     artifacts.mkdir()
     entries, locks = [], []
     wheel_sha: str | None = None
-    variant = "win-cpu" if os.name == "nt" else "linux-cpu"
+    variant = (
+        "studio-cuda" if problem == "custom" else "win-cpu" if os.name == "nt" else "linux-cpu"
+    )
     for name in ("healthy", "other"):
         source = tmp_path / name
         source.mkdir()
-        (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST.replace("healthy", name))
+        manifest_text = HEALTHY_MANIFEST.replace("healthy", name)
+        if problem == "custom":
+            manifest_text = manifest_text.replace("numpy>=1.26", "stable-fixture>=1")
+            if name == "healthy":
+                manifest_text = manifest_text.replace('requires = ["stable-fixture>=1"]', "")
+                manifest_text += (
+                    '\n[pack.extra-requires]\ncpu = ["stable-fixture>=1"]\n'
+                    'cuda = ["unavailable-cuda-fixture>=1"]\n'
+                )
+        (source / "dinkster-pack.toml").write_text(manifest_text)
         (source / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
         archive = artifacts / "staging.zip"
         identity = build_artifact(source, archive)
@@ -372,6 +384,34 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         artifacts=artifacts,
         source_generation=previous,
     )
+    custom = None
+    if problem == "custom":
+        from dinkster_supervisor.environment_custom import prepare_custom_pack_locks
+        from dinkster_supervisor.environment_state import write_document
+
+        custom = {
+            "source": "user-defined",
+            "variant": variant,
+            "workerProtocol": PROTOCOL_VERSION,
+            "localBuild": {"extrasIndex": "https://pypi.org/simple"},
+        }
+        write_document(base.parent / "manifest.json", custom)
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        shutil.copytree(base, scratch / "python", copy_function=os.link)
+        shutil.copyfile(constraints, scratch / "constraints.txt")
+        resolved = prepare_custom_pack_locks(
+            scratch,
+            store=store,
+            base=custom,
+            catalog_lock=catalog,
+            artifacts=artifacts,
+            output=tmp_path / "custom-locks",
+        )
+        assert sorted(path.name for path in scratch.iterdir()) == ["constraints.txt", "python"]
+        invoke = partial(invoke, pack_locks=resolved)
     repairs = {"repair", "repair-extra", "repair-missing"}
     moves = {
         "move",
@@ -383,7 +423,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         "move-cross-volume-missing-resource",
         "move-cross-volume-corrupt-wheel-cache",
     }
-    if problem is not None and problem not in {"update", "extra"} | repairs | moves:
+    if problem is not None and problem not in {"update", "extra", "custom"} | repairs | moves:
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -398,11 +438,28 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         assert generation.drift(target) == ()
         assert not (target / "packs/healthy/bin").exists()
         assert venv_python(target / "packs/other").is_file()
+        if problem == "custom":
+            assert json.loads((target / "base-manifest.json").read_text()) == custom
+            assert json.loads((target / "dinkster.lock").read_text()) == json.loads(
+                catalog.read_text()
+            )
+            set_current(root, 1)
+            next(artifacts.glob("*.zip")).write_bytes(b"damaged selected archive")
+            with pytest.raises(EnvironmentError, match="pack source staging refused"):
+                invoke(number=2, source_generation=target)
+            assert read_current(root) == 1
+            assert not (root / "generations/2").exists()
+            assert generation.drift(target) == ()
         for name in ("healthy", "other"):
             assert f"packs/{name}/pack-lock.json" in dict(generation.files)
             recorded = PackLock.read(target / "packs" / name / "pack-lock.json")
+            assert recorded.variant == variant
             assert tuple(package.name for package in recorded.packages) == (
-                ("unavailable-extra",) if problem == "extra" and name == "other" else ()
+                ("stable-fixture",)
+                if problem == "custom"
+                else ("unavailable-extra",)
+                if problem == "extra" and name == "other"
+                else ()
             )
             manifest = load_manifest(target / "pack-sources" / name / "dinkster-pack.toml")
             prepared = read_catalog(manifest)
@@ -742,7 +799,7 @@ environment.main()
                 ).strip()
                 == b"73"
             )
-    assert read_current(root) == (1 if problem == "update" else None)
+    assert read_current(root) == (1 if problem in {"update", "custom"} else None)
 
 
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(

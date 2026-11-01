@@ -22,6 +22,7 @@ from dinkster_registry import (
 )
 from dinkster_schema import canonical_claim, canonical_name
 from dinkster_workers import ManifestError, PackManifest, load_manifest
+from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.pack_lock import resolve_pack_lock
 from dinkster_workers.provision import ProvisionError
 
@@ -224,13 +225,14 @@ def main() -> int:
                 variant=args.variant,
                 indexes=args.index,
                 find_links=args.find_links,
-                accelerator=args.accelerator,
+                accelerator=resolve_accelerator(args.accelerator) if args.accelerator else None,
                 uv=args.uv,
             )
         else:
             stage_generation_packs(args.generation, lock, artifacts)
         packs = [entry.pack for entry in lock.packs]
     except (
+        AcceleratorError,
         ArtifactError,
         CompositionError,
         InstallError,
