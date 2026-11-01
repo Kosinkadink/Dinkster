@@ -99,6 +99,7 @@ def pack_operation(
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster_workers.pack_environment",
@@ -195,6 +196,7 @@ def project_operation(
     """Plan or apply workflow requirements through the generation's core adapter."""
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster.workflow_requirements",
@@ -259,6 +261,7 @@ def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path)
     result = subprocess.run(
         [
             str(interpreter(generation)),
+            "-I",
             "-B",
             "-m",
             "dinkster.generation_packs",
@@ -303,6 +306,7 @@ def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -
     """Prepare admitted pack catalogs in the target before sealing its file inventory."""
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster.manager",
