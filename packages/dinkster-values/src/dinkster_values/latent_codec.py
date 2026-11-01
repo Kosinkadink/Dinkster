@@ -20,6 +20,8 @@ LATENT_CODEC_VERSION = 1
 _DTYPE_SIZES = {
     "bool": 1,
     "uint8": 1,
+    "uint16": 2,
+    "uint32": 4,
     "int8": 1,
     "int16": 2,
     "int32": 4,
