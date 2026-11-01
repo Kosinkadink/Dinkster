@@ -1,4 +1,4 @@
-from dinkster_values import MEBIBYTE, CustomWidgetDescriptor
+from dinkster_values import CustomWidgetDescriptor
 
 from .capture import (
     install_stream_capture,
@@ -185,7 +185,6 @@ from .wire import (
 )
 
 __all__ = [
-    "MEBIBYTE",
     "PackCompatibility",
     "RunExecutionContext",
     "Expansion",
