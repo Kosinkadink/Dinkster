@@ -55,6 +55,8 @@
   coordinate tensors, explicit shapes and exact rational scales, without caches.
 - Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
   occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
+- Native `VaeDecodeShapeTrellis` decodes sparse shape latents into Y-up meshes
+  and portable subdivision stages, retaining per-item geometry lengths.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
   extracts basic or surface-net meshes, retaining variable per-item lengths
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
@@ -64,6 +66,9 @@
   targets from the batch-grouped shape latents emitted by native Trellis stages.
   Nonstandard custom latents with interleaved coordinate rows retain the source
   limitation: padded features flatten in batch order without reordering coordinates.
+- Native `VaeDecodeTextureTrellis` decodes sparse texture latents with portable
+  shape subdivisions, retaining all six material channels and batch IDs in
+  sparse voxels, with resolution-aware Z-up to Y-up coordinate conversion.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
