@@ -26,6 +26,9 @@
   outlines and straight-alpha compositing for transparent images.
 - Native `DecimateMesh` reduces face counts using midpoint or QEM placement,
   with optional line and feature-edge quadrics and retained vertex colors.
+- Native `RemeshMesh` re-extracts meshes using unsigned, oriented or graph-cut
+  solid distance fields, with optional sharp-feature placement, component
+  filtering, smoothing and retained vertex colors and per-item batch counts.
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
   merging transformed scene geometry and retaining the first material's textures
   and factors. External glTF data must be included in the FILE_3D resource map.
@@ -35,6 +38,8 @@
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
+- Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining
+  seam vertex colors, source textures and variable batch lengths.
 - Native `MeshSmoothNormals` computes area-weighted smooth normals, welding
   coincident positions or splitting hard creases while retaining mesh attributes.
 - Native `MeshTextureToImage` extracts baked base color, metallic, roughness,
@@ -51,8 +56,12 @@
   converting clamped RGB colors to linear space and respecting sparse batch IDs.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
+- Portable shape-subdivision values retain ordered sparse stages, feature and
+  coordinate tensors, explicit shapes and exact rational scales, without caches.
 - Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
   occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
+- Native `VaeDecodeShapeTrellis` decodes sparse shape latents into Y-up meshes
+  and portable subdivision stages, retaining per-item geometry lengths.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
   extracts basic or surface-net meshes, retaining variable per-item lengths
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.

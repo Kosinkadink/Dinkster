@@ -83,6 +83,7 @@ from .media_wire import (
 from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
+from .shape_subdivides_wire import materialize_shape_subdivides, register_shape_subdivides_type
 from .splat_wire import materialize_splat
 from .vision_packet_wire import materialize_vision_packet, register_vision_packet_types
 from .vision_wire import (
@@ -244,6 +245,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     registered.append(register_mesh_type(registry))
     registered.append(register_splat_type(registry))
     registered.append(register_voxel_type(registry))
+    registered.append(register_shape_subdivides_type(registry))
     register_video_edit_type(registry)
     registered.append(registry.spec(VIDEO_EDIT_TYPE))
     return tuple(registered)
@@ -263,6 +265,7 @@ __all__ = [
     "materialize_image",
     "materialize_latent",
     "materialize_mesh",
+    "materialize_shape_subdivides",
     "materialize_splat",
     "materialize_vision_packet",
     "materialize_voxel",

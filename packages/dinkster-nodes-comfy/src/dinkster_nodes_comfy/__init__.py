@@ -140,7 +140,9 @@ from .mesh_holes import FillHoles
 from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
+from .mesh_remesh import RemeshMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
+from .mesh_unwrap import UnwrapMesh
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -206,7 +208,7 @@ from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
-from .splat_files import SplatToFile3D
+from .splat_files import File3DToSplat, SplatToFile3D
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -219,7 +221,7 @@ from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .text_overlay import TextOverlay
 from .trellis import Trellis2TextureStage
 from .trellis_conditioning import Trellis2Conditioning
-from .trellis_shape import Trellis2ShapeStage
+from .trellis_shape import Trellis2ShapeStage, VaeDecodeShapeTrellis
 from .trellis_structure import VaeDecodeStructureTrellis2
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
@@ -536,22 +538,26 @@ COMFY_NODES: tuple[type[Node], ...] = (
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
     VaeDecodeStructureTrellis2,
+    VaeDecodeShapeTrellis,
     Trellis2TextureStage,
     PaintMesh,
     WeldVertices,
     MeshTextureToImage,
     MeshSmoothNormals,
     RenderUVAtlas,
+    UnwrapMesh,
     ApplyTextureToMesh,
     FillHoles,
     Get3DComponents,
     DecimateMesh,
+    RemeshMesh,
     MeshToFile3D,
     SaveGLB,
     Save3DAdvanced,
     SaveGaussianSplat,
     SavePointCloud,
     SplatToFile3D,
+    File3DToSplat,
     ImageUpscaleWithModel,
     ImageHistogram,
     TextOverlay,
