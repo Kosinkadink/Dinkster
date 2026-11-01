@@ -5,6 +5,25 @@ It builds and verifies BLAKE3-addressed pack archives, records lockfiles and
 installation plans, and supports the umbrella package's client for the
 registry service. It contains no server, database, or registry command.
 
+`dinkster_registry.archive_admission` provides deterministic archive ingest,
+safe extraction, manifest admission, static doctor, a bounded isolated executable
+probe and fast security checks. Stage results distinguish blocking findings,
+required review and informational signals; review is not acceptance. Ingest
+verifies length, BLAKE3, portable bounded paths and canonical ZIP serialization
+through the existing artifact builder. Manifest admission validates canonical ids,
+normalized public versions, license, repository, contracts and reserved claims.
+An optional `engine_version` gates the shared pack compatibility declaration;
+returned metadata retains that declaration. These checks do not consult or mutate
+registry ownership, namespace grants, catalog versions, dependency availability
+or publication state; those observations remain the service caller's responsibility.
+
+`ProbeSettings` bounds time, output and operator tails. The probe provisions
+declared CPU dependencies as wheels with a stripped environment, refuses direct
+URLs, and requires the full Linux jail by default. Missing or degraded isolation
+blocks rather than falling back. `require_isolation=False` is for controlled tests
+only. Public findings do not expose arbitrary probe diagnostics; bounded tails
+remain separate operator data.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.

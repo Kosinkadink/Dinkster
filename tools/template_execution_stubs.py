@@ -43,6 +43,8 @@ CONTROLS = {
     "LoopResult",
 }
 PURE = CONTROLS | {
+    "CreateList",
+    "GetItemFromList",
     "PrimitiveInt",
     "PrimitiveFloat",
     "PrimitiveBoolean",
@@ -218,6 +220,12 @@ def _stub(row: Mapping[str, Any]) -> type[Node]:
                 value = NoiseSelection(1)
             elif atom == "SAMPLER":
                 value = BuiltinSamplerSelection("euler", ())
+            elif node_type == "CreateBoundingBoxes" and atom == "BOUNDING_BOX":
+                value = [
+                    {"x": column, "y": row, "width": 1, "height": 1}
+                    for row in range(4)
+                    for column in range(4)
+                ]
             elif node_type == "CreateBoundingBoxes" and atom == "ARRAY":
                 value = [
                     {
@@ -287,8 +295,6 @@ def configure(reference: Path, templates: Sequence[Path]) -> None:
         }
     )
     for name in sorted(needed):
-        if name in {"CreateList", "GetItemFromList"}:
-            continue
         if name in PURE:
             if name not in real:
                 raise RuntimeError(f"template requires native computation node {name}")
