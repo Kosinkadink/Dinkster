@@ -211,11 +211,13 @@ def project_operation(
         command.extend(["--catalog-lock", str(catalog_lock)])
     if artifacts is not None:
         command.extend(["--artifacts", str(artifacts)])
+    if target_generation is not None:
+        command[0] = str(interpreter(target_generation))
+        command.extend(["--generation", str(target_generation)])
     if approved is not None:
         if target_generation is None:
             raise EnvironmentError("workflow execution requires a target generation")
-        command[0] = str(interpreter(target_generation))
-        command.extend(["--yes", "--generation", str(target_generation)])
+        command.append("--yes")
     result = subprocess.run(
         command,
         input=json.dumps(approved) if approved is not None else None,

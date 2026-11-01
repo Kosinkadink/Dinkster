@@ -135,6 +135,7 @@ def plan_project_requirements(
     *,
     variant: str,
     source_generation: Path | None = None,
+    target_generation: Path | None = None,
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
 ) -> dict[str, object]:
@@ -146,9 +147,10 @@ def plan_project_requirements(
     """
     device = None
     if variant not in VARIANT_DEVICES:
-        if source_generation is None:
-            raise RequirementError("custom workflow target requires a source generation")
-        device = generation_device(source_generation, variant)
+        selected = target_generation if target_generation is not None else source_generation
+        if selected is None:
+            raise RequirementError("custom workflow target requires a generation")
+        device = generation_device(selected, variant)
     requirements, inputs = load_project_requirements(root)
     installed = (
         Lockfile.from_record_json((source_generation / "dinkster.lock").read_text("utf-8"))
@@ -237,6 +239,7 @@ def apply_project_requirements(
         root,
         variant=variant,
         source_generation=source_generation,
+        target_generation=generation,
         catalog_lock=catalog_lock,
         artifacts=artifacts,
     )

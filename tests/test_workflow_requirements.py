@@ -660,6 +660,20 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
         assert json.loads(custom.stdout)["plan"]["errors"] == (
             ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
         )
+        selected_target = run_plan("user-target", "--generation", str(selected))
+        assert selected_target.returncode == custom.returncode, selected_target.stderr
+        assert selected_target.stdout, selected_target.stderr
+        assert json.loads(selected_target.stdout) == json.loads(custom.stdout)
+    for device in ("cpu", "cuda"):
+        selected = tmp_path / device / "generation"
+        previous = tmp_path / ("cuda" if device == "cpu" else "cpu") / "generation"
+        switched = run_plan(
+            "user-target", "--generation", str(selected), source_generation=previous
+        )
+        assert switched.returncode == (1 if device == "cpu" else 0), switched.stderr
+        assert json.loads(switched.stdout)["plan"]["errors"] == (
+            ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
+        )
     absent_target = tmp_path / "not-created"
     absent = run_plan("win-nvidia", "--generation", str(absent_target))
     assert absent.returncode == 0 and absent.stdout == run_plan("win-nvidia").stdout
