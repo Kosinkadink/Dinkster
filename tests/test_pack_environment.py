@@ -288,7 +288,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
 
     from scripts.build_official_packs import build
 
-    wheels = tmp_path / "wheels"
+    wheels = tmp_path / "wheels with space # %"
     wheels.mkdir()
     pinned = _wheel(wheels, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
     _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
@@ -326,6 +326,35 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         constraints=constraints,
         find_links=[wheels],
     )
+    scripts = source / "scripts"
+    scripts.mkdir()
+    script = scripts / "build_official_packs.py"
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / script.name, script)
+    cli_output = tmp_path / "cli-payloads"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--version",
+            "1.2.3",
+            "--output",
+            str(cli_output),
+            "--variant",
+            "linux-cpu",
+            "--generation-python",
+            sys.executable,
+            "--constraints",
+            str(constraints),
+            "--find-links-stdin",
+        ],
+        input=json.dumps([str(wheels)]),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert (cli_output / "official-packs.lock").read_bytes() == (
+        output / "official-packs.lock"
+    ).read_bytes()
     assert len(payloads) == 11
     assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
@@ -340,6 +369,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         assert entry.version == "1.2.3"
         lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
         lock = PackLock.read(lock_path)
+        assert PackLock.read(cli_output / lock_path.name) == lock
         assert lock.pack == entry.pack
         assert lock.variant == "linux-cpu"
         assert lock.requires_python == ">=3.12"
