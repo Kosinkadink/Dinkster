@@ -62,9 +62,10 @@ compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). Run
 `uv run --no-project python scripts/setup_envs.py` to install the machine's
 verified Dinkster-Environments base and locked editable workspace in `.venv`.
-The base manifest owns Python, torch and its dependency closure. Linux uses
-`linux-cpu`; Windows selects a compatible NVIDIA base or `win-cpu` from the
-manifest's hardware bounds. Apple Silicon on macOS 14 or newer selects
+The base manifest owns Python, torch and its dependency closure. Linux selects
+`linux-nvidia` for compatible NVIDIA hardware or `linux-cpu`; Windows selects
+a compatible NVIDIA base or `win-cpu` from the manifest's hardware bounds.
+Apple Silicon on macOS 14 or newer selects
 `mac-arm64` from PyPI with MPS support; Intel macOS is unsupported.
 Use `--variant linux-cpu` or `--variant win-cpu` to select CPU explicitly.
 

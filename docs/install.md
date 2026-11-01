@@ -94,7 +94,7 @@ to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
 The shared Python setup installs only one runtime in `.venv`: the published
-Linux CPU base, a Windows NVIDIA/CPU base compatible with the detected
+Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
 hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
 Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
@@ -103,6 +103,11 @@ and editable packages are installed on top without resolving torch again.
 Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;
 `--force` rebuilds its `.venv`, retaining the verified bundle store.
+
+`linux-nvidia` supplies the cu132 torch family and its complete Linux CUDA
+closure. It requires Linux x86_64 with glibc 2.28+, NVIDIA driver 580+ and
+compute capability 7.5+. Use `--variant linux-nvidia` to request it explicitly;
+an incompatible machine is refused rather than resolving another CUDA runtime.
 
 The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
 torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
@@ -114,7 +119,7 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 
 | Platform | Execution interpreter |
 | --- | --- |
-| Linux CPU | `$PWD/.venv/bin/python` |
+| Linux NVIDIA or CPU | `$PWD/.venv/bin/python` |
 | Apple Silicon macOS (`mac-arm64`) | `$PWD/.venv/bin/python` |
 | Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
 
@@ -124,7 +129,9 @@ runtime when the native or compatibility worker is provisioned.
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform
-without a suitable bundle, `dinkster-env --root /absolute/new-project setup
+without a suitable bundle, setup refuses and names the supported published
+variants. It does not resolve or choose a local replacement automatically.
+`dinkster-env --root /absolute/new-project setup
 --from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.

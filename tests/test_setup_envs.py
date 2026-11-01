@@ -82,8 +82,10 @@ def test_unavailable_driver_selects_cpu_and_explicit_variant_cannot_bypass_bound
 
 def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Linux")
-    with pytest.raises(RuntimeError, match="No published base"):
+    with pytest.raises(RuntimeError, match="No published base") as error:
         setup_envs.select_base(bases)
+    assert "supported published variants: cpu, newer, older" in str(error.value)
+    assert "--from-scratch" in str(error.value)
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
     with pytest.raises(RuntimeError, match="Intel macOS is unsupported"):
         setup_envs.select_base(bases)

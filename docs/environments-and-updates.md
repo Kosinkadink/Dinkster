@@ -15,7 +15,7 @@ command line. Developers who change Dinkster itself work from a checkout
 |---|---|---|
 | Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive, native tools and official pack artifacts; no third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
-| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
+| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu`, `mac-arm64` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
@@ -31,8 +31,17 @@ command line. Developers who change Dinkster itself work from a checkout
 
 The base bundle and the engine release change at very different rates. A bug
 fix produces a new engine release of a few tens of megabytes; the base bundle
-changes when torch or another heavy pin moves. That split is the whole reason
-updates are cheap.
+changes when Python, torch's variant index/family or another base-owned pin
+moves, not for each engine release. `comfy-kitchen` and `comfy-aimdo` are
+engine-side dependencies and never trigger a base publication. The producer's
+per-variant manifest `replaces` list defines distribution-name ownership;
+engine builders and installers do not maintain another list. That split is
+the whole reason updates are cheap.
+
+A platform without a published base is not an engine release target. Published
+setup refuses an absent variant and names the variants the selected channel
+actually provides. It never resolves a replacement environment automatically;
+the development `--from-scratch` path remains explicitly opt-in.
 
 ## Environment tools bootstrap
 
@@ -246,12 +255,20 @@ such a mirror refuses an unsigned or wrongly signed document.
 
 `Dinkster-Environments` holds one definition per variant: the python
 version, the python-build-standalone release, the torch index and CUDA tag,
-and the list of lock entries that belong to the base rather than the engine.
+and the base root pins. The published manifest's `replaces` list is the sole
+ownership-by-distribution-name contract: selected wheels plus the source lock's
+base-root closure, including remove-only names for other platforms.
 Its build workflow:
 
-1. Reads the lock from the Dinkster commit it is building for.
-2. Downloads the base wheels for the variant from their indexes into a
-   staging directory and verifies them against the lock hashes.
+1. Reads the lock from the named Dinkster source commit and computes interface
+   names: base-owned distributions that non-base engine packages depend on for
+   the target, including applicable normal and optional dependency edges.
+2. Resolves binary base wheels at the producer's root pins and variant index,
+   constraining only interface names to the engine lock's versions. Base-only
+   CUDA closure names follow the variant index, not the development lock's
+   incompatible CUDA versions. Every artifact records its exact URL, size and
+   SHA-256; downloads verify those bytes. An exact engine-lock artifact match
+   is lock-verified, otherwise provenance is explicitly index-verified.
 3. Writes the base manifest: `format: dinkster.base/1`, variant, python
    version, every wheel with its filename, size, sha256 and source index,
    the `workerProtocol` the engine wheels in this lock declare, the minimum
@@ -271,10 +288,14 @@ and safe permission bits are preserved; traversal, absolute paths, hardlinks,
 devices and duplicate paths are refused. The manifest interpreter must run in
 isolation before promotion. A missing execute bit is repaired with a warning.
 
-The base is rebuilt only when its part of the lock changes. The workflow
-compares the base-relevant lock entries with the newest published base
-manifest and skips the build when they match, so a tag that only touches
-Dinkster code produces no new base.
+The workflow compares Python, interpreter, root pins, torch index, interface
+versions and compatibility metadata with the newest published base manifest,
+and skips rebuilding and publication when they match. A generic development-lock
+change to a base-only CUDA dependency does not override the published base.
+Engine releases never trigger base publication; changes to engine-side
+comfy-kitchen, comfy-aimdo or other non-base dependencies do not produce a base.
+Protocol, archive, hardware or replacement-membership changes still require
+compatible content identity.
 
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
@@ -286,21 +307,24 @@ the matching torchvision, numpy 2.5, `opencv-contrib-python-headless` 5.0.
 Python 3.14 receives bug fixes until late 2027 and security fixes until
 2030; every dependency of the engine and of the popular ComfyUI packs
 ships a cp314 or abi3 Windows wheel; `comfy-kitchen` and `triton-windows`
-are abi3 against 3.12 and run unchanged. The pins move together, by one
-change to the lock, and a change that moves them produces a new base. The
+are abi3 against 3.12 and run unchanged. Root pin changes belong to the producer
+definition and produce a new base; engine consumers use that base's exact
+variant selection, not the generic workspace CUDA closure. The
 one exception is `win-nvidia-cu126`: torch 2.14.1 is the last release with
 cu126 wheels, so that variant keeps torch 2.14.1 and the matching
 torchvision when the others move, and receives only the pins that still
 build against it.
 
-Supported variants: `win-nvidia` (cu132), `win-nvidia-cu126`, `win-cpu` and
-`linux-cpu`. The CPU variants run everything, an order of magnitude slower
+Published variants: `win-nvidia` and `linux-nvidia` (cu132),
+`win-nvidia-cu126`, `win-cpu`, `linux-cpu` and `mac-arm64` (Apple Silicon MPS).
+The Linux NVIDIA base carries the complete CUDA closure, including toolkit,
+NVIDIA libraries and triton; these are base-owned, not engine release payloads.
+The CPU variants run everything, an order of magnitude slower
 than the slowest GPU; they serve users who run the engine locally with
 remote workers, and CI and development machines without a GPU. Adding a
-variant is a new row, not new machinery: `linux-nvidia` is the same two
-rows on Linux wheels, `win-rocm` is torch from AMD's
+variant is a new row, not new machinery: a prospective `win-rocm` uses AMD's
 `stable.repo.amd.com/rocm/whl-next/` index with a per-architecture extra,
-and `win-xpu` is torch from the `xpu` index.
+and a prospective `win-xpu` uses torch from the `xpu` index.
 
 ### Choosing the NVIDIA variant
 
@@ -847,8 +871,8 @@ Settled:
   Packs over a local base resolve against that generation's constraints rather
   than selecting a published variant pack lock.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
-  `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
-  for wheels compiled against one torch triple.
+  `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu` and `mac-arm64`;
+  a per-variant extras index for wheels compiled against one torch triple.
 - NVIDIA variant chosen by driver, then by the lowest compute capability
   among the engine's assigned GPUs, detected with `nvidia-smi` and a WMI
   fallback, with an override; CPU is offered explicitly when no NVIDIA
