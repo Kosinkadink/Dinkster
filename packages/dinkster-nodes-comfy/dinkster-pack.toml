@@ -645,6 +645,8 @@ namespaces = [
     "ImageHistogram",
     "TextOverlay",
     "SAM3DBody_Render",
+    "LoadMediaPipeFaceLandmarker",
+    "MediaPipeFaceLandmarker",
 ]
 
 [pack.sandbox]

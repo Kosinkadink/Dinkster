@@ -144,6 +144,11 @@
 - Native `MediaPipeFaceMeshVisualize` draws selected face connections, points
   or a filled outline on an optional image. `MediaPipeFaceMask` unions selected
   face regions into one binary mask per frame, including empty frames.
+- `LoadMediaPipeFaceLandmarker` and `MediaPipeFaceLandmarker` expose bound
+  checkpoint loading and short/full detector selection with missing-frame
+  fallback. Controlled CPU state loading and detection dispatch are tested;
+  execution requires the published inference MediaPipe modules, unavailable
+  in the currently pinned release. Real-weight detection is not verified.
 - DA3, MediaPipe face-detection and SAM3D Body model values retain their
   complete model wrappers in the holding worker when passed between nodes.
 - Native `SAM3DBody_Smooth` reduces temporal pose jitter with Gaussian or
