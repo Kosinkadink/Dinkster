@@ -43,6 +43,8 @@ CONTROLS = {
     "LoopResult",
 }
 PURE = CONTROLS | {
+    "CreateList",
+    "GetItemFromList",
     "PrimitiveInt",
     "PrimitiveFloat",
     "PrimitiveBoolean",
@@ -287,8 +289,6 @@ def configure(reference: Path, templates: Sequence[Path]) -> None:
         }
     )
     for name in sorted(needed):
-        if name in {"CreateList", "GetItemFromList"}:
-            continue
         if name in PURE:
             if name not in real:
                 raise RuntimeError(f"template requires native computation node {name}")
