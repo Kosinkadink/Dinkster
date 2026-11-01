@@ -17,14 +17,13 @@ from dinkster_workers import PackManifest
 from .mounts_api import MOUNTS_KEY, MountService
 from .project_folders import ProjectFolders
 from .workflow_requirements import (
+    VARIANTS,
     PackRequirement,
     RequirementError,
     manifest_unavailability,
     plan_workflow_requirements,
     project_requirements,
 )
-
-VARIANTS = ("linux-cpu", "win-cpu", "win-nvidia", "win-nvidia-cu126")
 
 
 def _asset_present(
