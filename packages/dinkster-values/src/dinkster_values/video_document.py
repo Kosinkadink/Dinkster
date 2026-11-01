@@ -307,6 +307,9 @@ def document_meta(value: object) -> dict[str, object]:
             else [ref["asset"], *ref.get("resources", [])]
         )
         for asset in cast(list[dict[str, Any]], assets):
+            previous = refs.get(asset["digest"])
+            if previous is not None and previous["size"] != asset["size"]:
+                raise TimelineError("invalid_source", "sources", "conflicting asset size")
             refs[asset["digest"]] = asset
     return {"version": 1, "asset_refs": [refs[k] for k in sorted(refs)]}
 

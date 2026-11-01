@@ -16,6 +16,7 @@ import pytest
 from av.error import FFmpegError, InvalidDataError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
+from dinkster_assets.value import value_asset_references
 from dinkster_nodes_media_io.video_ops import CropVideo, TrimVideo, VideoInfo
 from dinkster_values import (
     EncodedPayload,
@@ -24,10 +25,12 @@ from dinkster_values import (
     edit_video,
     effective_video_facts,
     encode_video,
+    validate_video_encoded,
     video_fingerprint,
     video_from_source,
     video_meta,
 )
+from dinkster_values.audio_codec import audio_from_source
 from dinkster_values.storage import image_input
 from dinkster_video import assemble_video, concatenate_video, disassemble_video, save_video_stream
 
@@ -303,6 +306,12 @@ def test_inline_v2_roundtrip_and_v1_migration() -> None:
     assert decode_video(data) == value
     assert video_meta(value)["codec_version"] == 2
     assert video_fingerprint(VIDEO_TYPE)(value) == video_fingerprint(VIDEO_TYPE)(decode_video(data))
+    metadata = {"container": video_meta(value)["container"], "byte_size": len(data)}
+    validate_video_encoded(data, metadata)
+    with pytest.raises(ValueError, match="asset_refs"):
+        validate_video_encoded(
+            data, {**metadata, "asset_refs": [{"digest": "blake3:" + "1" * 64, "size": 1}]}
+        )
 
 
 def test_asset_codec_does_not_open_and_rebinds_at_destination(
@@ -325,10 +334,52 @@ def test_asset_codec_does_not_open_and_rebinds_at_destination(
     registry = TypeRegistry()
     register_video_value_type(registry, VIDEO_TYPE, vault)
     decoded = registry.spec(VIDEO_TYPE).decode(encoded)
+    audio_refs = []
+    for count in (16, 24):
+        buffer = io.BytesIO()
+        buffer.write(struct.pack("<Q", 8000))
+        np.save(buffer, np.ones((1, 1, count), np.float32), allow_pickle=False)
+        audio_data = buffer.getvalue()
+        audio_digest = digest_bytes(audio_data)
+        with vault.writer(audio_digest) as writer:
+            writer.write(audio_data)
+            writer.commit()
+        audio_refs.append(AssetRef(audio_digest, "track.pcm", len(audio_data), resolver=vault))
+    component = assemble_video(
+        np.zeros((1, 32, 64, 3), np.uint8), fps=10, audio=audio_from_source(audio_refs[0])
+    )
+    compound = {
+        **value,
+        "edits": [{"concat": [component]}],
+        "complete_audio": audio_from_source(audio_refs[1]),
+    }
+    wrapped = registry.wrap(VIDEO_TYPE, compound)
+    assert value_asset_references({"video": wrapped}, complete_registry=registry) == {
+        item.digest: item for item in (ref, *audio_refs)
+    }
+    compound_wire = encode_video(compound)
+    validate_video_encoded(compound_wire, wrapped.meta.entries)
+    restored = registry.wrap(VIDEO_TYPE, decode_video(compound_wire))
+    assert value_asset_references({"video": restored}, complete_registry=registry) == {
+        item.digest: item for item in (ref, *audio_refs)
+    }
+    with pytest.raises(ValueError, match="asset_refs"):
+        validate_video_encoded(
+            compound_wire,
+            {key: item for key, item in wrapped.meta.entries.items() if key != "asset_refs"},
+        )
     with monkeypatch.context() as patch:
         patch.setattr(AssetRef, "open", lambda self: pytest.fail("admitted edits must not probe"))
         assert video_meta(decoded)["asset_refs"] == [ref.to_wire()]
         edit_video(decoded, {"trim": {"start_time": 0.5, "duration": 1}})
+        conflicting = {
+            **value,
+            "edits": [{"concat": [{**value, "source": {**ref.to_wire(), "size": ref.size + 1}}]}],
+        }
+        with pytest.raises(ValueError, match="size"):
+            video_meta(conflicting)
+        with pytest.raises(ValueError, match="size"):
+            video_meta(decode_video(encode_video(conflicting)))
     result = io.BytesIO()
     save_video_stream(decoded, result)
     assert result.getvalue() == data
@@ -501,6 +552,14 @@ def test_deferred_components_are_exact_across_codec_and_cropped() -> None:
     assert np.array_equal(cast(np.ndarray, result["images"]), images[:, 2:22, 10:34])
     assert result["bit_depth"] == 10
     assert result["color_space"] == "HDR PQ"
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE)
+    assert (
+        value_asset_references(
+            {"video": registry.wrap(VIDEO_TYPE, value)}, complete_registry=registry
+        )
+        == {}
+    )
 
 
 @pytest.mark.parametrize("channels,layout", [(3, "3.0"), (6, "5.1")])

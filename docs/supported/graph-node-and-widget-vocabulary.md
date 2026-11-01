@@ -113,6 +113,13 @@
   list with no length or positivity restriction through shared structural
   transport. Ordered `dinkster.layers`, strict versioned `dinkster.compositor`,
   parametric `list<T>` and `asset<T>`
+- Primitive values reject mismatched runtime types and noncanonical encoded
+  payloads. INT retains large integer seeds; FLOAT accepts integers and finite
+  floats but not booleans. Primitive values, HISTOGRAM and core.absent retain
+  declared auxiliary asset dependencies without hiding assets in their payloads.
+- CURVE transport validates its numeric structure before exposing received
+  values, preserves shorthand source records and declared auxiliary asset
+  dependencies, and does not impose the preview rendition's point limit.
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable

@@ -20,9 +20,11 @@ from dinkster_api.v1 import (
     validate_bounding_box_encoded,
     validate_placement_array_encoded,
 )
+from dinkster_assets import AssetError, AssetRef, digest_bytes
+from dinkster_assets.value import value_asset_references
 from dinkster_compat_comfy.translate import CompatTranslation, comfy_value_type_id
 from dinkster_nodes_image import register_image_types
-from dinkster_values import default_encode, register_core_types
+from dinkster_values import EncodedPayload, default_encode, register_core_types
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
 BOX = {"x": -3, "y": 2.5, "width": 0, "height": 7.0}
@@ -84,6 +86,10 @@ def test_box_contract_preserves_values_nesting_numeric_kinds_and_canonical_ident
         registry.wrap(type_id, spec.decode(encoded)).fingerprint
         == registry.wrap(type_id, value).fingerprint
     )
+    assert (
+        value_asset_references({"boxes": registry.wrap(type_id, value)}, complete_registry=registry)
+        == {}
+    )
     assert value == before
 
 
@@ -139,6 +145,58 @@ def test_placement_contract_refuses_mixed_or_malformed_elements(invalid: object)
         registry.wrap(BOUNDING_BOX_TYPE, [ELEMENT])
 
 
+@pytest.mark.parametrize("type_id", (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE))
+def test_box_reference_census_preserves_auxiliary_roots_without_inventing_payload_sources(
+    type_id: str,
+) -> None:
+    registry = TypeRegistry()
+    register_box_types(registry)
+    first = AssetRef(digest_bytes(b"first source"), "first", 12)
+    second = AssetRef(digest_bytes(b"second"), "second", 6)
+    box = {**BOX, "metadata": {"desc": first.digest, "text": "/not/a/source.png"}}
+    obj = [[], [box]] if type_id == BOUNDING_BOX_TYPE else [[ELEMENT, box], []]
+    value = registry.wrap(type_id, obj)
+    assert value_asset_references({"boxes": value}, complete_registry=registry) == {}
+    codec = ValueCodec(registry, use_shm=False, accept_shm=False)
+    blobs: list[bytes] = []
+    wire, _ = codec.encode(value, blobs, [])
+    payload = wire["payload"]
+    assert isinstance(payload, dict)
+    payload_index = payload["blob"]
+    metadata_index = wire["metaBlob"]
+    assert isinstance(payload_index, int) and isinstance(metadata_index, int)
+    noncanonical = b"json:" + json.dumps(obj, indent=2).encode()
+    blobs[payload_index] = noncanonical
+    metadata = {**value.meta.entries, "asset_refs": [second.to_wire(), first.to_wire()]}
+    blobs[metadata_index] = default_encode(metadata)
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == obj
+    assert received.fingerprint == value.fingerprint
+    assert isinstance(received.payload, EncodedPayload)
+    assert received.payload.data == noncanonical
+    assert value_asset_references({"boxes": received}, complete_registry=registry) == {
+        first.digest: first,
+        second.digest: second,
+    }
+    relay: list[bytes] = []
+    relayed, _ = codec.encode(received, relay, [])
+    relayed_payload = relayed["payload"]
+    assert isinstance(relayed_payload, dict)
+    relayed_payload_index = relayed_payload["blob"]
+    relayed_metadata_index = relayed["metaBlob"]
+    assert isinstance(relayed_payload_index, int) and isinstance(relayed_metadata_index, int)
+    assert relay[relayed_payload_index] == noncanonical
+    assert relay[relayed_metadata_index] == blobs[metadata_index]
+    metadata["asset_refs"] = [first.to_wire(), {**first.to_wire(), "size": first.size + 1}]
+    blobs[metadata_index] = default_encode(metadata)
+    conflicting, _ = codec.decode(wire, blobs, [])
+    with pytest.raises(AssetError, match="disagree"):
+        value_asset_references({"boxes": conflicting}, complete_registry=registry)
+    blobs[payload_index] = default_encode([{**BOX, "metadata": {"source": first.to_wire()}}])
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
+
+
 def _reconstruct(marker: str) -> list[object]:
     Path(marker).write_text("reconstructed", encoding="ascii")
     return []
@@ -182,6 +240,7 @@ def test_all_registration_orders_refuse_pickle_at_real_boundary_admission(
     wire, _ = codec.encode(registry.wrap(type_id, [BOX]), blobs, [])
     restored, _ = codec.decode(wire, blobs, [])
     assert restored.resolve() == [BOX]
+    assert value_asset_references({"boxes": restored}, complete_registry=registry) == {}
     payload = wire["payload"]
     assert isinstance(payload, dict)
     marker = tmp_path / "marker.txt"
@@ -217,6 +276,7 @@ def test_global_array_and_preexisting_type_authority_are_unchanged() -> None:
     register_box_types(registry)
     assert registry.spec(BOUNDING_BOX_TYPE) is foreign
     assert registry.spec(ARRAY_TYPE) is generic
+    assert not foreign.asset_references_complete
     values: list[Any] = ["not a box", {"arbitrary": True}]
     assert generic.decode(generic.encode(values)) == values
     assert comfy_value_type_id("ARRAY") == COMFY_ARRAY_TYPE != ARRAY_TYPE

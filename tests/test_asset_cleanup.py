@@ -8,7 +8,7 @@ import os
 import sqlite3
 import subprocess
 import threading
-from collections.abc import Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
@@ -16,8 +16,16 @@ from pathlib import Path
 from typing import Literal, cast
 
 import pytest
+from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes, open_verified
+from dinkster_assets import (
+    AssetRef,
+    AssetVault,
+    LibraryStore,
+    digest_bytes,
+    open_verified,
+    register_asset_type,
+)
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
@@ -28,6 +36,8 @@ from dinkster_assets.scratch import (
 )
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_engine import Engine, EventListener
+from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE, ImageDocument
+from dinkster_image_document.document import empty_document
 from dinkster_server import (
     STATE_KEY,
     HistoryStore,
@@ -40,9 +50,27 @@ from dinkster_server import (
 from dinkster_server.auth import StaticBearerAuthenticator
 from dinkster_server.cleanup import inspect_cleanup, recover_produced_publications
 from dinkster_server.library import run_media_publication, run_owned_thread
-from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta
+from dinkster_server.queue import JobState
+from dinkster_values import (
+    EncodedPayload,
+    Rendition,
+    RenditionUnavailable,
+    TypeRegistry,
+    Value,
+    ValueMeta,
+)
 from test_history import make_record
-from test_server import SCHEMAS, Sleeper, echo_graph, make_engine, reset_sleeper, wait_for_state
+from test_image_document_rendering import _png, _resource
+from test_server import (
+    SCHEMAS,
+    Sleeper,
+    echo_graph,
+    finish_job,
+    make_engine,
+    reset_sleeper,
+    values_url,
+    wait_for_state,
+)
 
 from tests.platform_support import symlink_or_skip
 
@@ -91,6 +119,345 @@ def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Pa
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failure", ["", "missing", "corrupt", "size"])
+def test_native_saved_document_retains_all_resources_before_catalog_acknowledgment(
+    tmp_path: Path, failure: str
+) -> None:
+    from dinkster_assets import AssetError, AssetWriter, MountDef, MountTable
+    from dinkster_engine import RunResult
+    from dinkster_graph import Graph
+    from dinkster_protocol import AssetFolderContext, SavedArtifact
+    from dinkster_server.library import recover_asset_observations
+    from dinkster_server.queue import JobKey
+
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = MountTable()
+    mounts.add(MountDef("out", output, "readwrite"))
+    mounts.scan("out")
+    vault = AssetVault(tmp_path / "vault")
+    data = _png([[(73, 21, 190, 255)]])
+    unused = _png([[(21, 73, 190, 255)]])
+    for body in (data, unused):
+        with vault.writer(digest_bytes(body)) as writer:
+            writer.write(body)
+            writer.commit()
+    record = empty_document(1, 1).to_record()
+    record["allocation"]["nextOrdinal"] = 2
+    record["resources"] = {
+        "r0": _resource("r0", data, 1, 1),
+        "r1": _resource("r1", unused, 1, 1),
+    }
+    if failure == "size":
+        record["resources"]["r1"]["byteSize"] = len(unused) + 1
+    document = ImageDocument.from_record(record)
+    saved = AssetWriter(mounts).save_bytes(
+        {"mount": "out", "prefix": "kept"},
+        document.data,
+        suffix=".json",
+        media_type=IMAGE_DOCUMENT_MEDIA_TYPE,
+    )
+    resource = vault.resolve(digest_bytes(unused))
+    assert resource is not None
+    if failure == "missing":
+        resource.unlink()
+    elif failure == "corrupt":
+        resource.write_bytes(b"corrupt")
+    database = tmp_path / "library.sqlite"
+    store = LibraryStore(database)
+    library = ServerLibrary(
+        vault,
+        store,
+        upload_writer=AssetWriter(mounts),
+        local_resolver=mounts,
+        project_folders_for=lambda _project: AssetFolderContext(("out",), "out"),
+    )
+    job = Job(JobKey("client", "save"), Graph(nodes={}), (), 0, "saved", "fingerprint")
+    artifact = SavedArtifact(
+        "save", saved.digest, saved.name, saved.size, saved.media_type, saved.virtual_path
+    )
+    result = RunResult("saved", {}, (), (), (), artifacts=(artifact,))
+    try:
+        if failure:
+            with pytest.raises(AssetError):
+                library.record_saved_outputs(job, result)
+            assert store.query_assets("local") == []
+            assert store.get_dependencies(saved.digest) is None
+            assert list(vault.root.glob(".upload-observations/*.json"))
+            if failure == "size":
+                return
+            resource.write_bytes(unused)
+            recover_asset_observations(library)
+        else:
+            assert library.record_saved_outputs(job, result) == result
+        assert store.query_assets("local")[0][0].asset.digest == saved.digest
+        assert not list(vault.root.glob(".upload-observations/*.json"))
+    finally:
+        store.close()
+    with closing(LibraryStore(database)) as restarted:
+        with restarted.hold_asset_references() as roots:
+            assert roots == {saved.digest, digest_bytes(data), digest_bytes(unused)}
+        assert restarted.media_grant("local", digest_bytes(data), "media/image") is None
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_document_rendition_commits_source_roots_before_response_or_cancellation(
+    tmp_path: Path, cancelled: bool
+) -> None:
+    async def scenario() -> None:
+        entered, release = threading.Event(), threading.Event()
+        data = _png([[(73, 21, 190, 255)]])
+        digest = digest_bytes(data)
+
+        class DelayedStore(LibraryStore):
+            def record_result_rendition(
+                self,
+                scope: str,
+                token: str,
+                cache_key: str,
+                document_digest: str,
+                digests: list[str],
+            ) -> bool:
+                entered.set()
+                assert release.wait(10)
+                return super().record_result_rendition(
+                    scope, token, cache_key, document_digest, digests
+                )
+
+        vault = AssetVault(tmp_path / "vault")
+        store = DelayedStore(tmp_path / "library")
+        library = ServerLibrary(vault, store)
+        record = empty_document(1, 1).to_record()
+        # Unused resources still belong to the returned document.
+        record["allocation"]["nextOrdinal"] = 1
+        record["resources"] = {"r0": _resource("r0", data, 1, 1)}
+        document = ImageDocument.from_record(record).data
+        record["lineage"] = "other rendition parameters"
+        other_document = ImageDocument.from_record(record).data
+        handlers: list[asyncio.Task[None]] = []
+
+        async def mime(_metadata: Mapping[str, object]) -> str:
+            return IMAGE_DOCUMENT_MEDIA_TYPE
+
+        async def resolve(
+            _metadata: Mapping[str, object], parameters: Mapping[str, str]
+        ) -> tuple[str, Mapping[str, str]]:
+            return IMAGE_DOCUMENT_MEDIA_TYPE, parameters
+
+        async def render(_value: Value, parameters: Mapping[str, str]) -> Rendition:
+            inventory = ProducedAssetInventory(vault.root)
+            inventory.pending(digest, len(data))
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            inventory.adopted(digest, len(data))
+            return Rendition(
+                "document",
+                IMAGE_DOCUMENT_MEDIA_TYPE,
+                other_document if parameters["variant"] == "two" else document,
+            )
+
+        def factory(on_event: EventListener) -> Engine:
+            engine = make_engine(on_event)
+            engine.registry.register_relayed_rendition(
+                "STRING",
+                "document",
+                mime=IMAGE_DOCUMENT_MEDIA_TYPE,
+                default=False,
+                version="1",
+                parameters=("variant",),
+                defaults={"variant": "one"},
+                limits=None,
+                owner="worker",
+                resolve_mime=mime,
+                resolve=resolve,
+                render=render,
+            )
+            return engine
+
+        @web.middleware
+        async def observe(
+            request: web.Request,
+            handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+        ) -> web.StreamResponse:
+            if request.path == "/api/values":
+                assert request.task is not None
+                handlers.append(request.task)
+            return await handler(request)
+
+        app = create_app(factory, SCHEMAS, library=library)
+        app.middlewares.append(observe)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        pending: asyncio.Future[ClientResponse] | None = None
+        try:
+            status = await finish_job(client, echo_graph(), ["s"])
+            source = status["resultOffers"]["s"]["out"]
+            assert source["digests"] == [] and source["complete"]
+            pending = asyncio.ensure_future(
+                client.get(values_url("s", rendition="document"), headers={"If-None-Match": "*"})
+            )
+            assert await asyncio.to_thread(entered.wait, 10)
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+            if cancelled:
+                for _ in range(2):
+                    handlers[-1].cancel()
+                    await asyncio.sleep(0)
+                assert not handlers[-1].done()
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
+            release.set()
+            if cancelled:
+                result = await asyncio.gather(handlers[-1], return_exceptions=True)
+                assert isinstance(result[0], asyncio.CancelledError)
+            else:
+                assert (await pending).status == 304
+            with store.hold_asset_references() as roots:
+                assert roots == {digest}
+            original = store.result_asset_offer("local", source["token"])
+            assert original is not None and original.to_wire() == source
+            response = await client.get(values_url("s", rendition="document"))
+            assert response.status == 200 and await response.read() == document
+            response = await client.get(values_url("s", rendition="document", variant="two"))
+            assert response.status == 200 and await response.read() == other_document
+            asset = await client.get(f"/api/assets/{digest}")
+            assert asset.status == 200 and await asset.read() == data
+            assert store.claim_result_assets("local", source["token"], "shown-result", "view")
+            store.release_assets("local", "shown-result", "view", revision=1)
+            response = await client.get(
+                values_url("s", rendition="document"), headers={"If-None-Match": "*"}
+            )
+            assert response.status == 404
+            with store.hold_asset_references() as roots:
+                assert roots == set()
+        finally:
+            release.set()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["complete", "cancel", "unavailable", "cancel-unavailable"])
+def test_completed_rendition_retains_vault_until_renderer_settles(
+    tmp_path: Path, outcome: str
+) -> None:
+    async def scenario() -> None:
+        cancelled = outcome.startswith("cancel")
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        library = ServerLibrary(vault, store)
+        data = b"retained rendition source"
+        digest = digest_bytes(data)
+        inventory = ProducedAssetInventory(vault.root)
+        inventory.pending(digest, len(data))
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        inventory.adopted(digest, len(data))
+        ref = AssetRef(digest, "source", len(data), resolver=vault)
+        entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        handlers: list[asyncio.Task[None]] = []
+
+        async def mime(_metadata: Mapping[str, object]) -> str:
+            return "application/octet-stream"
+
+        async def resolve(
+            _metadata: Mapping[str, object], parameters: Mapping[str, str]
+        ) -> tuple[str, Mapping[str, str]]:
+            return "application/octet-stream", parameters
+
+        async def render(_value: Value, _parameters: Mapping[str, str]) -> Rendition:
+            entered.set()
+            try:
+                await release.wait()
+                if outcome.endswith("unavailable"):
+                    raise RenditionUnavailable("source no longer available")
+                return Rendition("held", "application/octet-stream", ref.read_bytes())
+            finally:
+                settled.set()
+
+        def factory(on_event: EventListener) -> Engine:
+            engine = make_engine(on_event)
+            engine.registry.register_relayed_rendition(
+                "STRING",
+                "held",
+                mime="application/octet-stream",
+                default=False,
+                version=None,
+                parameters=(),
+                defaults=None,
+                limits=None,
+                owner="worker",
+                resolve_mime=mime,
+                resolve=resolve,
+                render=render,
+            )
+            return engine
+
+        @web.middleware
+        async def observe(
+            request: web.Request,
+            handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+        ) -> web.StreamResponse:
+            if request.path == "/api/values":
+                assert request.task is not None
+                handlers.append(request.task)
+            return await handler(request)
+
+        app = create_app(factory, SCHEMAS, library=library)
+        app.middlewares.append(observe)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        pending: asyncio.Future[ClientResponse] | None = None
+        try:
+            await finish_job(client, echo_graph(), ["s"])
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
+            pending = asyncio.ensure_future(client.get(values_url("s", rendition="held")))
+            async with asyncio.timeout(10):
+                await entered.wait()
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+            if cancelled:
+                for _ in range(2):
+                    handlers[0].cancel()
+                    checkpoint = asyncio.Event()
+                    asyncio.get_running_loop().call_soon(checkpoint.set)
+                    await checkpoint.wait()
+                assert not handlers[0].done()
+                assert not settled.is_set()
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
+            # The request's lifetime cannot release a separate descriptor owner.
+            with ref.open() as independent:
+                release.set()
+                async with asyncio.timeout(10):
+                    await settled.wait()
+                if not cancelled:
+                    response = await pending
+                    assert response.status == (404 if outcome == "unavailable" else 200)
+                    if outcome == "complete":
+                        assert await response.read() == data
+                else:
+                    result = await asyncio.gather(handlers[0], return_exceptions=True)
+                    assert isinstance(result[0], asyncio.CancelledError)
+                with claim_inactive_produced_vault(vault.root) as inactive:
+                    assert not inactive
+                assert independent.read() == data
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
+        finally:
+            release.set()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellation(
     tmp_path: Path,
 ) -> None:
@@ -102,7 +469,8 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
             entered.set()
             assert release.wait(10)
 
-        async def settle(job: Job) -> None:
+        async def settle(job: Job, terminal_state: JobState) -> None:
+            assert terminal_state == "completed"
             await run_owned_thread(work)
 
         vault = AssetVault(tmp_path / "vault")
@@ -618,8 +986,11 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
                 writer.commit()
                 if index < 2:
                     inventory.adopted(digest, len(data))
+        registry = TypeRegistry()
+        register_asset_type(registry)
+        registry.register("file", asset_references_complete=True)
         memory = MemoryLRUCache()
-        disk = DiskCacheStore(tmp_path / "cache", TypeRegistry())
+        disk = DiskCacheStore(tmp_path / "cache", registry)
         for cache, digest, data in zip((memory, disk), digests[:2], payloads[:2], strict=True):
             ref = AssetRef(digest, "source", len(data))
             value = Value(
@@ -630,15 +1001,13 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             )
             await cache.put("key", {"out": value})
         # A second store sharing the disk root must not acquire the same file lock twice.
-        cache = LayeredCache(
-            memory, disk, DiskCacheStore(disk.root / ".." / "cache", TypeRegistry())
-        )
+        cache = LayeredCache(memory, disk, DiskCacheStore(disk.root / ".." / "cache", registry))
         store.create("private", "kept", digests[2], "application/octet-stream")
         history.put(make_record("run", scope="another", asset_digests=(digests[3],)))
         store.put_dependencies(digests[0], [{"digest": digests[4]}])
         store.put_dependencies(digest_bytes(b"orphan"), [{"digest": digest_bytes(b"not a root")}])
         try:
-            status = await inspect_cleanup(vault, store, history, cache)
+            status = await inspect_cleanup(vault, store, history, cache, registry=registry)
             assert status == {
                 "temporaryBytes": None,
                 "vaultBytes": 33,
@@ -652,11 +1021,11 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             held_path = vault.resolve(digests[0])
             assert held_path is not None
             with open_verified(held_path, digests[0]):
-                reading = await inspect_cleanup(vault, store, history, cache)
+                reading = await inspect_cleanup(vault, store, history, cache, registry=registry)
                 assert reading["vaultOwnershipAvailable"] is False
                 assert "vault_in_use" in cast(list[str], reading["blocked"])
             store.retain_assets("unrelated", "preview", "unknown", [], revision=0)
-            blocked = await inspect_cleanup(vault, store, history, cache)
+            blocked = await inspect_cleanup(vault, store, history, cache, registry=registry)
             assert blocked["knownRetainedAssets"] is None
             assert "reference_state_unavailable" in cast(list[str], blocked["blocked"])
             assert not blocked["collectionEnabled"]
@@ -1104,6 +1473,9 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
         store = LibraryStore(tmp_path / "library")
         history = HistoryStore(tmp_path / "history")
         memory = MemoryLRUCache()
+        registry = TypeRegistry()
+        register_asset_type(registry)
+        registry.register("file", asset_references_complete=True)
         inventory = ProducedAssetInventory(vault.root)
         data = [b"old", b"newest bytes", b"kept", b"u"]
         digests = [digest_bytes(value) for value in data]
@@ -1145,7 +1517,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                 if path.name.split(".", 1)[0] in eligible_names
             )
             accounting = await inspect_cleanup(
-                vault, store, history, memory, scratch_root=tmp_path / "scratch"
+                vault, store, history, memory, registry=registry, scratch_root=tmp_path / "scratch"
             )
             assert accounting["collectionEnabled"]
             assert accounting["reclaimableBytes"] == eligible_bytes
@@ -1159,7 +1531,13 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             assert path is not None
             with open_verified(path, digests[0]):
                 busy = await inspect_cleanup(
-                    vault, store, history, memory, scratch_root=tmp_path / "scratch", collect=True
+                    vault,
+                    store,
+                    history,
+                    memory,
+                    registry=registry,
+                    scratch_root=tmp_path / "scratch",
+                    collect=True,
                 )
                 assert busy["reclaimedBytes"] == 0
                 assert busy["reclaimableBytes"] is None
@@ -1170,6 +1548,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                 store,
                 history,
                 memory,
+                registry=registry,
                 scratch_root=tmp_path / "scratch",
                 collect=True,
                 limit_bytes=limit,
@@ -1194,6 +1573,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
                 store,
                 history,
                 memory,
+                registry=registry,
                 scratch_root=tmp_path / "scratch",
                 collect=True,
                 limit_bytes=limit,

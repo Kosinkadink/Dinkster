@@ -287,6 +287,8 @@ class ExecutionRuntime:
     known_types: Container[str] | None = None
     placement_worker: Callable[[str], str | None] | None = None
     """Run-local worker attribution for placed nodes without a dispatch selection."""
+    publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None
+    """Persist host ownership before exposing this runtime node's output descriptors."""
     publish_preview_artifacts: (
         Callable[[str, Sequence[EncodedPreviewArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
         | None
@@ -1749,6 +1751,8 @@ class Engine:
                 else outputs
             )
             cached.append(label)
+            if publisher := self._runtime().publish_outputs:
+                await publisher(run_id, label, produced[node_id])
             self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
             self._emit(
                 EngineEvent(
@@ -1805,6 +1809,8 @@ class Engine:
                     else hit
                 )
                 cached.append(label)
+                if publisher := self._runtime().publish_outputs:
+                    await publisher(run_id, label, produced[node_id])
                 future.set_result(hit)
                 self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
                 cache_detail: dict[str, object] = {}
@@ -2075,6 +2081,8 @@ class Engine:
             else:
                 produced[node_id] = result.outputs
             executed.append(label)
+            if publisher := self._runtime().publish_outputs:
+                await publisher(run_id, label, produced[node_id])
             if use_cache:
                 await self._cache.put(key, entry)
             future.set_result(entry)

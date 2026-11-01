@@ -128,6 +128,115 @@ def test_end_to_end_and_cache_behavior() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("reuse", ["fresh", "cached", "coalesced"])
+def test_output_publication_is_awaited_before_descriptors(reuse: str) -> None:
+    async def scenario() -> None:
+        events: list[EngineEvent] = []
+        engine = make_engine(events)
+        graph = image_graph(ratio=0.25)
+        if reuse == "cached":
+            await engine.run(graph, ["s"])
+            events.clear()
+        entered = {name: asyncio.Event() for name in ("owner", "waiter")}
+        release = {name: asyncio.Event() for name in entered}
+
+        async def publish(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+            if node_id == "g":
+                assert outputs["image"].type_id == "dev.image"
+                entered[run_id].set()
+                await release[run_id].wait()
+
+        execution = replace(engine.pin_execution(), publish_outputs=publish)
+        tasks = [asyncio.create_task(engine.run(graph, ["s"], run_id="owner", execution=execution))]
+        if reuse == "coalesced":
+            tasks.append(
+                asyncio.create_task(engine.run(graph, ["s"], run_id="waiter", execution=execution))
+            )
+        try:
+            async with asyncio.timeout(10):
+                await entered["owner"].wait()
+                assert not any(
+                    e.node_id == "g" and e.kind in {"node_finished", "node_cached"} for e in events
+                )
+                release["owner"].set()
+                if reuse == "coalesced":
+                    await entered["waiter"].wait()
+                    assert not any(
+                        e.run_id == "waiter"
+                        and e.node_id == "g"
+                        and e.kind in {"node_finished", "node_cached"}
+                        for e in events
+                    )
+                    release["waiter"].set()
+                results = await asyncio.gather(*tasks)
+            assert all(
+                result.outputs["s"]["mean"].resolve() == pytest.approx(0.5) for result in results
+            )
+            if reuse == "cached":
+                assert results[0].executed == ()
+            if reuse == "coalesced":
+                assert results[1].cached
+                assert any(
+                    e.run_id == "waiter" and e.node_id == "g" and e.detail.get("coalesced") is True
+                    for e in events
+                )
+        finally:
+            for barrier in release.values():
+                barrier.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("reuse", ["fresh", "cached"])
+@pytest.mark.parametrize("outcome", ["refused", "cancelled"])
+def test_unpublished_outputs_never_escape_failed_or_cancelled_runs(
+    reuse: str, outcome: str
+) -> None:
+    async def scenario() -> None:
+        events: list[EngineEvent] = []
+        engine = make_engine(events)
+        graph = image_graph(ratio=0.25)
+        if reuse == "cached":
+            await engine.run(graph, ["s"])
+            events.clear()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def publish(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+            if node_id == "g":
+                entered.set()
+                await release.wait()
+                raise RuntimeError("publication refused")
+
+        execution = replace(engine.pin_execution(), publish_outputs=publish)
+        task = asyncio.create_task(engine.run(graph, ["s"], execution=execution))
+        try:
+            async with asyncio.timeout(10):
+                await entered.wait()
+                assert not any(e.kind in {"node_finished", "node_cached"} for e in events)
+                if outcome == "cancelled":
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                else:
+                    release.set()
+                    with pytest.RaisesGroup(
+                        pytest.RaisesExc(RuntimeError, match="publication refused")
+                    ):
+                        await task
+            assert not any(e.kind in {"node_finished", "node_cached"} for e in events)
+            recovered = await engine.run(graph, ["s"])
+            assert recovered.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
+            assert set(recovered.executed) | set(recovered.cached) == {"g", "i", "b", "s"}
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 def test_no_cache_reexecutes_without_replacing_warm_cache_entries() -> None:
     async def scenario() -> None:
         engine = make_engine()

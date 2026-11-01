@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from importlib import import_module
+from typing import cast
 
 import numpy as np
 import pytest
@@ -131,8 +133,65 @@ def test_detection_codec_round_trip_with_mask() -> None:
     assert decoded.mask.shape == (3, 4)
 
 
+@pytest.mark.parametrize(
+    ("module", "register"),
+    [
+        ("dinkster_nodes_image", "register_image_types"),
+        ("dinkster_nodes_vision.detr.nodes", "register_types"),
+        ("dinkster_nodes_vision.efficient_sam.nodes", "register_types"),
+        ("dinkster_nodes_vision.rtdetr.nodes", "register_types"),
+        ("dinkster_nodes_vision.sam31.nodes", "register_types"),
+    ],
+)
+def test_spatial_registration_dependencies_survive_encoded_admission(module, register) -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_values import default_encode
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    register_types = getattr(import_module(module), register)
+    register_types(registry)
+    reference = AssetRef(digest_bytes(b"source"), "source.bin", 6)
+    for type_id, item in (
+        ("REGION", Region(-2, 1.5, 0, 4)),
+        (DETECTION_TYPE, Detection("cat", 0.625, Region(-2, 1, 0, 4))),
+        (DETECTION_TYPE, Detection("cat", 0.625, Region(-2, 1, 0, 4), _mask())),
+    ):
+        wrapped = registry.wrap(type_id, item)
+        assert value_asset_references({"item": wrapped}, complete_registry=registry) == {}
+        codec = ValueCodec(registry)
+        blobs, segments = [], []
+        wire, _ = codec.encode(wrapped, blobs, segments)
+        blobs[cast(int, wire["metaBlob"])] = default_encode(
+            {**wrapped.meta.entries, "asset_refs": [reference.to_wire()]}
+        )
+        received, _ = codec.decode(wire, blobs, [])
+        assert received.resolve() == item
+        assert received.fingerprint == wrapped.fingerprint
+        if type_id == "REGION":
+            assert registry.spec(type_id).encode(received.resolve()) == (
+                b'{"height":4,"width":0,"x":-2,"y":1.5}'
+            )
+        assert value_asset_references({"item": received}, complete_registry=registry) == {
+            reference.digest: reference
+        }
+        payload = cast("dict[str, object]", wire["payload"])
+        blobs[cast(int, payload["blob"])] = b"invalid spatial payload"
+        with pytest.raises(EncodedPayloadValidationError):
+            codec.decode(wire, blobs, [])
+        first = TypeRegistry()
+        first_spec = first.register(type_id)
+        register_types(first)
+        assert first.spec(type_id) is first_spec
+        assert not first.spec(type_id).asset_references_complete
+
+
 def test_detection_codec_rejects_invalid_frames() -> None:
-    spec = _registry().spec(DETECTION_TYPE)
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = _registry()
+    spec = registry.spec(DETECTION_TYPE)
     detection = Detection(label="cat", score=1.0, region=Region(0, 0, 4, 3), mask=_mask())
     encoded = spec.encode(detection)
     with pytest.raises(ValueError, match="invalid DETECTION codec framing"):
@@ -144,6 +203,20 @@ def test_detection_codec_rejects_invalid_frames() -> None:
         spec.decode(encoded[:-4])
     with pytest.raises(ValueError, match="unexpected trailing bytes"):
         spec.decode(spec.encode(Detection("cat", 1.0, Region(0, 0, 4, 3))) + b"junk")
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap(DETECTION_TYPE, detection), blobs, segments)
+    payload = cast("dict[str, object]", wire["payload"])
+    for invalid in (
+        b"not a detection",
+        encoded[:version_offset] + bytes((99,)) + encoded[version_offset + 1 :],
+        encoded[:-4],
+        encoded[:-4] + np.array([2.0], dtype="<f4").tobytes(),
+        spec.encode(Detection("cat", 1.0, Region(0, 0, 4, 3))) + b"junk",
+    ):
+        blobs[cast(int, payload["blob"])] = invalid
+        with pytest.raises(EncodedPayloadValidationError):
+            codec.decode(wire, blobs, [])
 
 
 def test_detection_coercion_and_meta() -> None:

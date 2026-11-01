@@ -28,6 +28,10 @@
   first-frame selection, source-size zero fallback and canvas-based conversion.
   `CropByBBoxes` broadcasts a single box or flat box list across image frames;
   per-frame lists retain last-frame repetition and per-frame union cropping.
+  Box and placement payloads have no external resource fields; declared
+  auxiliary asset references remain retained across worker boundaries.
+  Conflicting sizes for one identity refuse reference accounting. Cleanup
+  remains disabled.
 - Native `PadImageNode` pads image batches by explicit dimensions, a multiplier,
   or a size multiple, using solid-color feathering or repeated mirrored edges.
 - Native `ImageUpscaleWithModel` runs tiled single-image model upscaling with
@@ -196,7 +200,9 @@
   stage B prior conditioning, and super-resolution control inputs
 - Typed `dinkster.region` rectangle values for shared crop and placement geometry
 - Typed per-frame `dinkster.pose` keypoint and skeleton values, including
-  OpenPose/controlnet_aux JSON import and export and human/AP10K rendering
+  OpenPose/controlnet_aux JSON import and export and human/AP10K rendering;
+  received pose values reject malformed data before exposure and retain
+  declared source dependencies
 - Image or mask resize by dimensions, one side, longest or shortest side, scale
   factor, total pixels, or an image-or-mask reference; stretch, fit, fill, and
   pad modes with apply conditions and anchors; constant, edge-average,
@@ -223,6 +229,21 @@
   rendering, per-layer previews, flatten/split, structural editing nodes, and
   safe native-placement fallback for stale edits; CPU reference rendering is
   bounded to 4,194,304 canvas pixels and 67,108,864 layer/mask work-pixels
+- Received image documents validate every non-inline resource against declared
+  source references without reading or publishing raster files; auxiliary
+  references are retained. Legacy layer stacks validate without publishing,
+  but their migrated resource lifetimes do not qualify for cleanup.
+- Isolated document retrieval retains newly derived external rasters in the
+  serving host vault before returning, without changing the original layer
+  value or treating caller-owned inputs as newly produced assets. Missing,
+  truncated, or corrupt external resources refuse retrieval.
+- Native document saves retain every external resource through their catalog
+  dependency manifest, including unused resources. Isolated saves transfer
+  newly derived resources into the host vault before producer acknowledgment,
+  without changing the saved file's identity or copying caller-owned inputs.
+  Missing, corrupt, or
+  size-mismatched resources refuse catalog acknowledgment and remain recoverable
+  when the declared bytes become available; retention does not grant media access.
 - Isolated GLSL ES 3.00 image rendering through ANGLE with up to five image
   inputs, typed scalar and curve uniforms, four render targets, custom output
   dimensions, and 1-32 passes; Linux and Windows x86-64/ARM64 and macOS ARM64
@@ -301,6 +322,10 @@
   inspection, label/score/area filtering with result limits, stable
   multi-key sorting, and conversion to per-detection plus combined union
   masks with box rasterization and signed dilation
+- Region and detection transport rejects malformed numeric records, framed
+  bytes and masks before exposing received values. Negative region origins,
+  zero dimensions, optional full-frame soft masks and declared auxiliary
+  asset dependencies remain supported across image and vision providers.
 - COCO object detection (`Detect Objects`) through the standard, digest-pinned
   float32 CPU vision components
   (DETR ResNet-50); the prompt filters the fixed COCO class set by

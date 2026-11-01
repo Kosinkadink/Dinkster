@@ -12,7 +12,14 @@ from typing import Any, cast
 
 import numpy as np
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, resolver_from_env
-from dinkster_values import annotate_image, annotate_mask, media_semantics, render_image_png
+from dinkster_assets.value import metadata_asset_references
+from dinkster_values import (
+    IMAGE_DOCUMENT_TYPE,
+    annotate_image,
+    annotate_mask,
+    media_semantics,
+    render_image_png,
+)
 from dinkster_values.image_codec import image_color
 from PIL import Image
 
@@ -247,6 +254,18 @@ def document_meta(document: ImageDocument) -> Mapping[str, object]:
         ],
         "cost": {"ram": len(document.data)},
     }
+
+
+def validate_image_document_encoded(data: bytes, metadata: Mapping[str, object]) -> None:
+    """Validate document structure and declared roots without resource I/O."""
+    parsed = decode_document(data)
+    references: dict[str, int] = {}
+    for reference in metadata_asset_references(IMAGE_DOCUMENT_TYPE, metadata):
+        if references.setdefault(reference.digest, reference.size) != reference.size:
+            raise InvalidDocument("document references disagree about byte size")
+    for dependency in parsed.dependencies:
+        if references.get(cast(str, dependency["digest"])) != dependency["byteSize"]:
+            raise InvalidDocument("document resource is missing from metadata asset_refs")
 
 
 def flatten(document: ImageDocument, selector: str = "composite") -> tuple[np.ndarray, np.ndarray]:

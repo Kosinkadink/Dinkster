@@ -41,6 +41,7 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_assets.declared import produced_output_scratch
+from dinkster_assets.value import value_asset_references
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
@@ -590,6 +591,8 @@ def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     register_file3d_types(receiver, vault)
     obj = {"format": "gltf", "source": model, "resources": {"mesh/data.bin": buffer}}
     value = sender.wrap(FILE_3D_GLTF_TYPE, obj)
+    expected_refs = {model.digest: model, buffer.digest: buffer}
+    assert value_asset_references({"model": value}, complete_registry=sender) == expected_refs
     payload = sender.spec(FILE_3D_GLTF_TYPE).encode(obj)
     assert len(payload) < 1000 and source not in payload and resource not in payload
     spec = receiver.spec(FILE_3D_GLTF_TYPE)
@@ -600,8 +603,13 @@ def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     assert (
         cast("dict[str, AssetRef]", restored["resources"])["mesh/data.bin"].read_bytes() == resource
     )
-    assert receiver.wrap(FILE_3D_GLTF_TYPE, restored).fingerprint == value.fingerprint
-    manifest = receiver.render(receiver.wrap(FILE_3D_GLTF_TYPE, restored), "manifest")
+    restored_value = receiver.wrap(FILE_3D_GLTF_TYPE, restored)
+    assert restored_value.fingerprint == value.fingerprint
+    assert (
+        value_asset_references({"model": restored_value}, complete_registry=receiver)
+        == expected_refs
+    )
+    manifest = receiver.render(restored_value, "manifest")
     assert manifest.mime == "application/json"
     assert json.loads(manifest.data) == {
         "format": "gltf",
@@ -622,6 +630,10 @@ def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
         wrong_format.decode(payload)
     with pytest.raises(AssetError, match="metadata"):
         spec.validate_encoded(payload, {**value.meta.entries, "asset_refs": []})
+    with pytest.raises(AssetError, match="metadata"):
+        spec.validate_encoded(
+            payload, {key: item for key, item in value.meta.entries.items() if key != "asset_refs"}
+        )
 
 
 @pytest.mark.parametrize(
@@ -756,6 +768,9 @@ def test_file3d_format_families_retain_original_format(type_id: str, format_id: 
     }
     assert spec.fingerprint is not None
     assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
+    assert value_asset_references(
+        {"model": registry.wrap(type_id, decoded)}, complete_registry=registry
+    ) == {ref.digest: ref, resource.digest: resource}
     wrong = {**obj, "format": "gltf" if type_id == FILE_3D_GLB_TYPE else "glb"}
     if type_id != FILE_3D_TYPE:
         with pytest.raises(AssetError, match="does not accept"):

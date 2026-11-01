@@ -29,6 +29,8 @@ from dinkster_api.v1 import (
     encode_region,
     region_meta,
     register_box_types,
+    validate_detection_encoded,
+    validate_region_encoded,
 )
 
 from .compositor_types import (
@@ -291,6 +293,10 @@ def _decode_pose(data: bytes) -> object:
     return _coerce_pose(record)
 
 
+def _validate_pose_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    _decode_pose(data)
+
+
 def _pose_meta(obj: object) -> Mapping[str, object]:
     pose = _coerce_pose(obj)
     return {
@@ -325,8 +331,8 @@ def register_image_types(registry: TypeRegistry) -> None:
         validate_image_encoded,
     )
 
-    from .layer_document import decode_layers, layer_meta, migrate_layers
-    from .layer_recipe import coerce_delta, decode_delta, encode_delta
+    from .layer_document import decode_layers, layer_meta, migrate_layers, validate_layers_encoded
+    from .layer_recipe import coerce_delta, decode_delta, encode_delta, validate_delta_encoded
 
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
@@ -347,6 +353,7 @@ def register_image_types(registry: TypeRegistry) -> None:
                 input_convert=image_input,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
+                asset_references_complete=True,
             )
             registry.register_rendition(
                 type_id,
@@ -375,6 +382,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=decode_region,
             coerce=coerce_region,
             meta=region_meta,
+            validate_encoded=validate_region_encoded,
+            asset_references_complete=True,
         )
     if DETECTION_TYPE not in registry:
         registry.register(
@@ -383,6 +392,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=decode_detection,
             coerce=coerce_detection,
             meta=detection_meta,
+            validate_encoded=validate_detection_encoded,
+            asset_references_complete=True,
         )
     if POSE_TYPE not in registry:
         registry.register(
@@ -391,6 +402,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=_decode_pose,
             coerce=_coerce_pose,
             meta=_pose_meta,
+            validate_encoded=_validate_pose_encoded,
+            asset_references_complete=True,
         )
     if LAYERS_TYPE not in registry:
         registry.register(
@@ -399,6 +412,7 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=lambda data: coerce_document(decode_layers(data)),
             coerce=coerce_document,
             meta=layer_meta,
+            validate_encoded=validate_layers_encoded,
         )
         registry.register_rendition(
             LAYERS_TYPE,
@@ -419,6 +433,8 @@ def register_image_types(registry: TypeRegistry) -> None:
             decode=decode_delta,
             coerce=coerce_delta,
             meta=lambda obj: {"version": coerce_delta(obj)["version"]},
+            validate_encoded=validate_delta_encoded,
+            asset_references_complete=True,
         )
     register_comfy_layers(registry)
     register_comfy_compositor(registry)

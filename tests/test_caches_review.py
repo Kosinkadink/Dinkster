@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_assets import AssetError, AssetRef, digest_bytes
+from dinkster_assets import AssetError, AssetRef, digest_bytes, register_asset_type
 from dinkster_caches import DiskCacheStore, DiskCAS, MemoryLRUCache
 from dinkster_caches.wire import entry_from_wire
 from dinkster_protocol import CachedResult, SavedArtifact
@@ -133,8 +133,50 @@ def test_memory_cache_hit_cannot_mutate_stored_outputs() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("declared", [None, False, True])
+def test_cache_reference_inspection_requires_complete_atoms(
+    tmp_path: Path, declared: bool | None
+) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        if declared is not None:
+            registry.register("test.opaque", asset_references_complete=declared)
+        value = Value(
+            "test.opaque",
+            "unchanged",
+            ValueMeta(),
+            EncodedPayload("test.opaque", b"original codec bytes", None),
+        )
+        outputs = {"out": make_list_value("test.opaque", [value])}
+        memory = MemoryLRUCache()
+        await memory.put("one", outputs)
+        if declared:
+            async with memory.hold_asset_references(registry) as roots:
+                assert roots == set()
+        else:
+            with pytest.raises(AssetError, match="incomplete"):
+                async with memory.hold_asset_references(registry):
+                    pytest.fail("opaque RAM atoms were certified empty")
+        disk = DiskCacheStore(tmp_path, registry)
+        await disk.put("one", outputs)
+        restarted = DiskCacheStore(tmp_path, registry)
+        if declared:
+            with restarted.hold_asset_references() as roots:
+                assert roots == set()
+        else:
+            with pytest.raises(AssetError, match="incomplete"):
+                with restarted.hold_asset_references():
+                    pytest.fail("opaque cached atoms were certified empty")
+
+    asyncio.run(scenario())
+
+
 def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_path: Path) -> None:
     async def scenario() -> None:
+        registry = TypeRegistry()
+        register_asset_type(registry)
+        for type_id in ("VIDEO", "file"):
+            registry.register(type_id, asset_references_complete=True)
         media = AssetRef(digest_bytes(b"video source"), "clip", 12)
         asset = AssetRef(digest_bytes(b"asset source"), "data", 12)
         decoy = digest_bytes(b"not a reference")
@@ -177,19 +219,19 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
             started.set()
             await memory.put("one", {"out": leaf})
 
-        async with memory.hold_asset_references() as roots:
+        async with memory.hold_asset_references(registry) as roots:
             assert roots == {media.digest, asset.digest, saved.digest, preview_digest}
             assert decoy not in roots
             replacement = asyncio.create_task(replace_memory())
             await started.wait()
             assert not replacement.done()
         await replacement
-        async with memory.hold_asset_references() as roots:
+        async with memory.hold_asset_references(registry) as roots:
             assert roots == {media.digest}
-        disk = DiskCacheStore(tmp_path, TypeRegistry())
+        disk = DiskCacheStore(tmp_path, registry)
         await disk.put("one", outputs)
         await disk.put("two", {"out": leaf})
-        restarted = DiskCacheStore(tmp_path, TypeRegistry())
+        restarted = DiskCacheStore(tmp_path, registry)
         with restarted.hold_asset_references() as roots:
             assert roots == {media.digest, asset.digest, saved.digest, preview_digest}
         restarted.discard("one")
@@ -199,7 +241,7 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
         with restarted.hold_asset_references() as roots:
             assert roots == set()
         memory.clear()
-        async with memory.hold_asset_references() as roots:
+        async with memory.hold_asset_references(registry) as roots:
             assert roots == set()
 
     asyncio.run(scenario())

@@ -21,13 +21,31 @@ from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import hold_produced_vault
 from dinkster_assets.value import value_asset_references
 from dinkster_values import (
+    IMAGE_DOCUMENT_TYPE,
     MEBIBYTE,
+    Rendition,
+    TypeRegistry,
     Value,
     default_decode,
     iter_value_tree,
 )
 
 _COPY_BYTES = MEBIBYTE
+DOCUMENT_RENDITION_MIME = "application/vnd.dinkster.image-document+json"
+
+
+def rendition_values(registry: TypeRegistry, rendition: Rendition) -> dict[str, Value]:
+    """Declare the returned modern document, never restamp its legacy source."""
+    if rendition.mime != DOCUMENT_RENDITION_MIME:
+        return {}
+    spec = registry.spec(IMAGE_DOCUMENT_TYPE)
+    if not rendition.data.startswith(b"{") or spec.validate_encoded is None:
+        raise AssetError("document rendition requires the declared modern document codec")
+    value = registry.wrap(IMAGE_DOCUMENT_TYPE, spec.decode(rendition.data))
+    if spec.encode(value.resolve()) != rendition.data:
+        raise AssetError("document rendition does not match its declared envelope")
+    spec.validate_encoded(rendition.data, value.meta.entries)
+    return {"document": value}
 
 
 def _references(raw: object, resolver: AssetResolver | None = None) -> Iterator[AssetRef]:

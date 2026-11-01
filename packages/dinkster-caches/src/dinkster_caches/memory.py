@@ -14,6 +14,7 @@ from dinkster_protocol import CachedResult, CacheKey
 from dinkster_values import (
     COST_META_KEY,
     RESOURCE_ID_META_KEY,
+    TypeRegistry,
     Value,
     iter_value_tree,
     value_resource_ids,
@@ -82,13 +83,13 @@ class MemoryLRUCache:
         return self._max_bytes
 
     @asynccontextmanager
-    async def hold_asset_references(self) -> AsyncGenerator[frozenset[str]]:
+    async def hold_asset_references(self, registry: TypeRegistry) -> AsyncGenerator[frozenset[str]]:
         """Keep admissions and spill mutations outside a retained-root inspection."""
         async with self._mutation_lock:
             yield frozenset(
                 digest
                 for entry in self._entries.values()
-                for digest in value_asset_references(entry)
+                for digest in value_asset_references(entry, complete_registry=registry)
             ) | frozenset(
                 item.digest
                 for entry in self._entries.values()

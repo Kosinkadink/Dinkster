@@ -33,6 +33,9 @@ from dinkster_api.v1 import (
     mask_array_meta,
     prepare_image_array_encoding,
     region_meta,
+    validate_detection_encoded,
+    validate_image_encoded,
+    validate_region_encoded,
 )
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -117,6 +120,9 @@ def _register_array(registry: TypeRegistry, type_id: str) -> None:
             fingerprint=image_array_fingerprint(type_id),
             meta=mask_array_meta if type_id == MASK_TYPE else image_array_meta,
             input_convert=image_input,
+            validate_encoded=validate_image_encoded,
+            validate_encoded_buffer=validate_image_encoded,
+            asset_references_complete=True,
         )
 
 
@@ -130,6 +136,8 @@ def register_types(registry: TypeRegistry) -> None:
             decode=decode_region,
             coerce=coerce_region,
             meta=region_meta,
+            validate_encoded=validate_region_encoded,
+            asset_references_complete=True,
         )
     if DETECTION_TYPE not in registry:
         registry.register(
@@ -138,6 +146,8 @@ def register_types(registry: TypeRegistry) -> None:
             decode=decode_detection,
             coerce=coerce_detection,
             meta=detection_meta,
+            validate_encoded=validate_detection_encoded,
+            asset_references_complete=True,
         )
 
 

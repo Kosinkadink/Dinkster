@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import get_context
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Protocol, cast
 
 import pytest
 from dinkster_assets import (
@@ -74,6 +74,17 @@ def test_save_target_valid_shapes() -> None:
 def test_save_target_rejects_unsafe(mount: str, prefix: str) -> None:
     with pytest.raises(AssetError):
         SaveTarget(mount=mount, prefix=prefix)
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    register_save_target_type(registry)
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap("SAVE_TARGET", SaveTarget("out", "safe")), blobs, segments)
+    payload = cast(dict[str, object], wire["payload"])
+    blobs[cast(int, payload["blob"])] = json.dumps({"mount": mount, "prefix": prefix}).encode()
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
 
 
 def test_save_target_wire_is_strict() -> None:
@@ -85,7 +96,7 @@ def test_save_target_wire_is_strict() -> None:
         SaveTarget.from_wire({"mount": "out", "prefix": 3})  # wrong type
 
 
-def test_save_target_type_registration_round_trip() -> None:
+def test_save_target_type_registration_round_trip(tmp_path: Path) -> None:
     registry = TypeRegistry()
     register_save_target_type(registry)
     spec = registry.spec("SAVE_TARGET")
@@ -101,6 +112,55 @@ def test_save_target_type_registration_round_trip() -> None:
     assert spec.encode({"mount": "out", "prefix": "renders/scene"}) == encoded
     with pytest.raises(AssetError):
         spec.encode("out/renders/scene")  # raw strings never name destinations
+
+    from dinkster_assets import AssetRef
+    from dinkster_assets.value import value_asset_references
+    from dinkster_values import default_encode
+    from dinkster_workers.boundary import ValueCodec
+
+    assert encoded == b'{"mount":"out","prefix":"renders/scene"}'
+    assert as_wire.fingerprint == "SAVE_TARGET:out/renders/scene"
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(as_wire, blobs, segments)
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == target
+    assert received.fingerprint == as_wire.fingerprint
+    assert value_asset_references({"target": received}, complete_registry=registry) == {}
+    auxiliary = AssetRef(digest_bytes(b"source"), "source.txt", 6)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**as_wire.meta.entries, "asset_refs": [auxiliary.to_wire()]}
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == target
+    assert value_asset_references({"target": received}, complete_registry=registry) == {
+        auxiliary.digest: auxiliary
+    }
+    payload = cast(dict[str, object], wire["payload"])
+    blobs[cast(int, payload["blob"])] = b'{ "prefix": "renders/scene", "mount": "out" }'
+    noncanonical, _ = codec.decode(wire, blobs, [])
+    assert noncanonical.resolve() == target
+    writer = AssetWriter(MountSnapshotWriter(tmp_path / "missing.json"))
+    with pytest.raises(AssetError, match="no readable mounts snapshot"):
+        writer.save_bytes(noncanonical.resolve(), b"not granted", suffix=".bin")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"not json", b"[]", b'{"mount":"out"}', b'{"mount":"out","prefix":"a","path":"/x"}'],
+)
+def test_save_target_boundary_refuses_invalid_encoding(data: bytes) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    register_save_target_type(registry)
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap("SAVE_TARGET", SaveTarget("out", "safe")), blobs, segments)
+    payload = cast(dict[str, object], wire["payload"])
+    blobs[cast(int, payload["blob"])] = data
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
 
 
 # ---------------------------------------------------------------------------

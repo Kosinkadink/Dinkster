@@ -13,6 +13,7 @@ import opentimelineio as otio
 import pytest
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
+from dinkster_assets.value import register_video_value_type, value_asset_references
 from dinkster_nodes_image.drawing import DrawText
 from dinkster_nodes_media_io import register_media_types
 from dinkster_nodes_media_io.video_document import VIDEO_DOCUMENT_NODES
@@ -378,8 +379,27 @@ def test_layer_source_uses_declared_resources_and_shared_renderer(media_assets):
     with Image.open(io.BytesIO(expected.png)) as image:
         np.testing.assert_array_equal(result, np.asarray(image, dtype=np.float32) / 255)
     assert len(cast(list, video_meta(TimelineVideo(doc))["asset_refs"])) == 2
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE)
+    roots = value_asset_references(
+        {"video": registry.wrap(VIDEO_TYPE, TimelineVideo(doc))}, complete_registry=registry
+    )
+    assert roots == {item.digest: item for item in (asset, raster)}
     with pytest.raises(TimelineError, match="explicitly declared"):
         next(SourceMedia(factory).frames({**reference, "resources": []}, Fraction(0), Fraction(1)))
+    conflicting = mutate(
+        doc,
+        "bind_source",
+        {
+            "source": "layer",
+            "reference": {
+                **reference,
+                "resources": [{**asset.to_wire(), "size": asset.size + 1}],
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="size"):
+        video_meta(TimelineVideo(conflicting))
 
 
 def test_audio_windows_gain_crossfade_and_silence(bound_video):

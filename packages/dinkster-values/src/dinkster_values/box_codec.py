@@ -172,6 +172,7 @@ def register_box_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
                 decode=partial(_decode_boxes, normalized=normalized),
                 coerce=partial(_coerce_boxes, normalized=normalized),
                 validate_encoded=validator,
+                asset_references_complete=True,
             )
         )
     return tuple(specs)
