@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from dinkster_workers import MEBIBYTE
+from dinkster_schema import MEBIBYTE
 
 
 def _apply_limits() -> None:

@@ -26,6 +26,7 @@ from typing import Any, Literal, cast
 
 from blake3 import blake3
 from dinkster_schema import (
+    MEBIBYTE,
     SCHEMA_WIRE_VERSION,
     canonical_name,
     reserved_root,
@@ -34,7 +35,6 @@ from dinkster_schema import (
     validate_claim,
     validate_name,
 )
-from dinkster_workers import MEBIBYTE
 from dinkster_workers import doctor as dinkster_doctor
 from dinkster_workers.doctor import (
     _check_assets,  # pyright: ignore[reportPrivateUsage]

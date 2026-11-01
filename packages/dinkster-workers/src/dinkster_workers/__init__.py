@@ -1,5 +1,5 @@
 from dinkster_protocol import CompatGateDiagnostic
-from dinkster_values import MEBIBYTE, EncodedPayload
+from dinkster_values import EncodedPayload
 
 from .accelerator import (
     AcceleratorError,
@@ -102,7 +102,6 @@ from .workgroup_config import WorkGroupLaneCandidate, build_workgroup_configurat
 __all__ = [
     "DEFAULT_SHM_THRESHOLD",
     "KNOWN_ACCELERATORS",
-    "MEBIBYTE",
     "PACK_AUTHOR_API_CONTRACT",
     "PACK_HOST_CONTRACT",
     "PACK_INFERENCE_CONTRACT",
