@@ -1,5 +1,13 @@
 ## Image operations
 
+- Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
+  preserve original-file assets and sidecars while returning viewport camera,
+  model placement and dimensions, with explicit metadata inputs taking priority.
+- `DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
+  transport depth, source images and cameras, per-frame face and body detections,
+  face topology, masks, canonical colors and external rig state without dropping
+  optional fields or converting NumPy arrays to tensors. Numeric dtypes, scalar
+  arrays, frame order and unsigned rig indices survive transport.
 - `BOUNDING_BOX` transports single, flat or per-frame pixel boxes; `comfy.ARRAY`
   transports flat or per-frame pixel boxes and normalized prompt elements.
   Both accept JSON only, retaining frame order, integer/float coordinates,
@@ -27,6 +35,9 @@
 - Native `Get3DComponents` imports GLB, glTF, OBJ and STL into editable meshes,
   merging transformed scene geometry and retaining the first material's textures
   and factors. External glTF data must be included in the FILE_3D resource map.
+- `FILE_3D` and its format-specific types preserve a null file value when a loader
+  has no selected model. Null files retain their declared type and have no assets;
+  downstream consumers still execute rather than receiving engine absence.
 - Native `FillHoles` fills small boundary components under perimeter and vertex
   limits, with optional pre-welding and open-chain filling.
 - Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
@@ -55,6 +66,8 @@
   coordinate tensors, explicit shapes and exact rational scales, without caches.
 - Native `VaeDecodeStructureTrellis2` decodes batched structure latents to dense
   occupancy voxels at 32 or 64 resolution for the Trellis shape stage.
+- Native `VaeDecodeShapeTrellis` decodes sparse shape latents into Y-up meshes
+  and portable subdivision stages, retaining per-item geometry lengths.
 - Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
   extracts basic or surface-net meshes, retaining variable per-item lengths
   in padded batches. The deprecated `VoxelToMeshBasic` remains available.
@@ -64,6 +77,9 @@
   targets from the batch-grouped shape latents emitted by native Trellis stages.
   Nonstandard custom latents with interleaved coordinate rows retain the source
   limitation: padded features flatten in batch order without reordering coordinates.
+- Native `VaeDecodeTextureTrellis` decodes sparse texture latents with portable
+  shape subdivisions, retaining all six material channels and batch IDs in
+  sparse voxels, with resolution-aware Z-up to Y-up coordinate conversion.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
@@ -78,8 +94,14 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `Pixal3DConditioning` and `Pixal3DMultiViewConditioning` combine DINO
+  vision tokens, optional NAF features, and per-view camera projection features
+  for single images or a fixed front/left/back/right orbit rig.
 - Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
   or an explicit quaternion, with roll, field of view, zoom, and projection.
+- Native `RenderSplat` renders gaussian splats as images and coverage masks,
+  with camera-controlled turntables, background plates, and color, clay,
+  depth, or normal shading.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
@@ -90,12 +112,24 @@
   with density selection and seeded point sampling.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored
+  depth, OpenGL or DirectX normals, or an RGB mask.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
 - Native `MoGePanoramaInference` estimates spherical geometry for a single
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- Native `LoadDA3Model` loads one bound Depth Anything 3 model file with optional
+  weight dtype selection. `DA3Inference` predicts monocular or multi-view depth,
+  optional confidence and sky, and multi-view cameras at the source image size.
+- Native `DA3Render` visualizes raw or normalized depth, confidence and sky.
+  `DA3GeometryToMesh` unprojects one frame with confidence/sky filtering,
+  stride and discontinuity selection, UVs and optional source-image texture.
+- DA3, MediaPipe face-detection and SAM3D Body model values retain their
+  complete model wrappers in the holding worker when passed between nodes.
+- Structural tensor values preserve unsigned 16-bit joint indices and unsigned
+  32-bit mesh faces without narrowing their values to a signed integer range.
 - Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
   optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional

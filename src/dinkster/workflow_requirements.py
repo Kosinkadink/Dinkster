@@ -9,6 +9,14 @@ from typing import cast
 from dinkster_assets import AssetRef, AssetSource, PackagedSource, RemoteSource
 from dinkster_workers import PackManifest
 
+VARIANTS = {
+    "linux-cpu": "cpu",
+    "linux-nvidia": "cuda",
+    "win-cpu": "cpu",
+    "win-nvidia": "cuda",
+    "win-nvidia-cu126": "cuda",
+}
+
 
 class RequirementError(ValueError):
     """A workflow cannot provide an unambiguous requirement set."""
@@ -175,15 +183,9 @@ def manifest_unavailability(
     requirement: PackRequirement, manifest: PackManifest, variant: str
 ) -> str | None:
     """Only manifest-declared resource needs can make portable packs hardware-specific."""
-    devices = {
-        "linux-cpu": "cpu",
-        "win-cpu": "cpu",
-        "win-nvidia": "cuda",
-        "win-nvidia-cu126": "cuda",
-    }
-    if variant not in devices:
+    if variant not in VARIANTS:
         raise RequirementError(f"unknown engine variant: {variant}")
-    device = devices[variant]
+    device = VARIANTS[variant]
     if manifest.sandbox.gpu and device == "cpu":
         return "pack.sandbox.gpu requires a GPU"
     for provider in manifest.vision_providers:

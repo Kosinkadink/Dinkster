@@ -3,11 +3,20 @@
 How Dinkster ships Python environments, updates engine code without rebuilding
 them, keeps packs with extra dependencies from breaking the engine, and lets a
 user roll back. Dinkster owns all of it; Dinkster Desktop is a client that
-adds a Windows installer, code signing, the Electron shell updater, and window
+adds platform installers, the Electron shell updater, and window
 management. Nothing described here is Desktop-only: `dinkster-env` gives a
 user without Desktop the same generations, channels, and rollback from the
 command line. Developers who change Dinkster itself work from a checkout
 ([install.md](install.md)) and use none of this.
+
+Apple Silicon macOS 14+ is supported with the `mac-arm64` base and MPS.
+The native tools ZIP supplies Python and uv independently of the host.
+The arm64 Desktop app is unsigned; Gatekeeper may require right-click Open
+or removal of `com.apple.quarantine` from the verified app. Apple signing and
+notarization are separate work in
+[Apple signing](https://github.com/Kosinkadink/comfy-vibe-station/issues/501),
+not a dependency of engine setup or updates. Intel Macs and CUDA on macOS
+are not supported. See [installation](install.md#apple-silicon-macos).
 
 ## Vocabulary
 
@@ -60,6 +69,29 @@ are materialized, requiring no Windows symlink privilege. It invokes
 `python/python.exe`) and prepends `python/bin` (Windows `python/Scripts`) to
 that child's PATH for bundled uv. Desktop performs no package installation,
 resolution or fallback to a host Python/package manager.
+
+Desktop installers bundle their platform's tools ZIP and its hash-pinned engine
+manifest. The tools pin is independent of the engine being installed: the
+supervisor is engine-independent, and a newer engine alone does not require new
+tools. Desktop extracts into its own user-data directory keyed by the tools
+archive SHA256, reuses that completed tree across launches, and retains it on
+shutdown. A changed tools digest is verified and extracted before the old tree
+is removed. Starting an installed engine, status, doctor and stop do not need
+channel metadata or a runtime tools download; first setup and engine update
+still need their engine/base payloads unless the configured mirror is local.
+
+Development may select `DINKSTER_TOOLS_PYTHON` or `DINKSTER_ENV`, or supply
+`DINKSTER_TOOLS_MANIFEST`, `DINKSTER_TOOLS_MANIFEST_SHA256` (alias
+`DINKSTER_TOOLS_SHA256`) and `DINKSTER_TOOLS_RELEASE` for verified runtime
+acquisition. These explicit overrides take precedence over bundled tools.
+Before setup, update or catalog starts an environment command, packaged Desktop
+checks the selected channel's `minimumDesktopVersion` and refuses with
+`DesktopVersionTooOld` if the shell must update. A trusted channel can explicitly
+select newer tools using an optional `tools` object containing the immutable
+engine `manifest` location, its `sha256`, and the `release` directory. Locations
+are absolute paths or credential-free HTTPS, and the selected tools ZIP must
+match its engine manifest's size and hash. Without that object, bundled tools
+remain the default. This does not change engine artifact selection or updates.
 
 The native build/acquisition command and input pinning are documented in
 [the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
@@ -692,7 +724,7 @@ directory is the build artifact used by installation checks and publication:
 | `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
-| `dinkster-tools-<os>-x86_64.zip` | Extraction-only environment client for Linux and Windows; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
+| `dinkster-tools-<os>-<arch>.zip` | Extraction-only environment client for Linux/Windows x86_64 and macOS arm64; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
 
 The workflow also builds the official pack source ZIPs and `official-packs.lock`
 with `scripts/build_official_packs.py` and admits them through repeated
@@ -845,13 +877,10 @@ boundaries but are not separate PyPI publications.
 
 ## What Desktop adds
 
-- The NSIS installer and Windows code signing; the macOS app bundle, Developer
-  ID signing and notarization. The signing workflows run on `vX.Y.Z` tag
-  push and their signing jobs target a GitHub environment that holds the
-  signing credentials and requires the repository owner's approval, so an
-  agent can tag, build and test, and only the owner's approval produces a
-  signed installer. A run dispatched by hand targets the same environment
-  and waits for the same approval.
+- The NSIS installer and Windows code signing; an unsigned Apple Silicon
+  macOS app ZIP. The hosted macOS build requires neither an Apple signing
+  identity nor notarization. Apple signing remains separate from the native
+  tools and engine. Windows signing uses its existing signing environment.
 - The Electron shell updater: checks on startup only, installs on the next
   startup rather than at quit, records each attempt in a sidecar marker and
   stops retrying the same version after three failures, and keeps the previous

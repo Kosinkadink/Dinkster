@@ -1,7 +1,7 @@
 # Install Dinkster
 
-Dinkster is pre-release. Release assets are private and are not published to a
-package index. A GitHub 404 can mean that your account does not have access.
+Dinkster is pre-release. Use the manifest and checksums from the same engine
+release for every installation input.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
@@ -11,14 +11,10 @@ the selected Dinkster-Environments bundle supplies runtime Python. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
 
-The Desktop app installs an
-exact backend release from its wheel set and constraints file. Desktop builds
-are not yet available; see the
-[Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
-for the current platform boundaries.
-Until that repository becomes public, the guide requires repository access;
-authenticated users can make a local copy with
-`gh repo clone Kosinkadink/Dinkster-Frontend`.
+The Desktop app installs an exact backend release through the environment
+client. See the
+[Desktop guide](https://github.com/Kosinkadink/Dinkster-Desktop#readme)
+for platform artifacts and the unsigned Apple Silicon installation procedure.
 
 ## Inspect a wheel release
 
@@ -172,6 +168,27 @@ an incompatible machine is refused rather than resolving another CUDA runtime.
 The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
 torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
 an explicit message; it never falls back to a separate dependency resolution.
+
+### Apple Silicon macOS
+
+Apple Silicon on macOS 14 or newer is supported through the `mac-arm64` base.
+The native `dinkster-tools-macos-arm64.zip` contains its own Python and uv;
+environment setup, doctor, engine start, update and rollback do not require
+host Python or uv. Verify the ZIP against the same release's manifest and
+`SHA256SUMS`, then extract it with executable permissions preserved. Invoke
+`python/bin/python3 -I -m dinkster_supervisor.environment` from that tree,
+prepending its absolute `python/bin` directory to that command's PATH so it
+uses the bundled uv. Do not change the global PATH.
+Setup selects `mac-arm64` automatically; select the `main` channel to use a
+pre-release engine. Intel Macs and CUDA on macOS are not supported.
+
+The arm64 Desktop ZIP contains an unsigned `.app`. Extract it and copy the app
+to a directory you control. macOS may require right-click **Open** or removal
+of the `com.apple.quarantine` attribute from that verified app before launch.
+This is an unsigned-build procedure, not a signature or notarization check.
+Apple signing and notarization are tracked separately in
+[Apple signing](https://github.com/Kosinkadink/comfy-vibe-station/issues/501);
+they are not prerequisites for the tools or engine environment.
 
 A maintainer evidence checkout is optional. If `DINKSTER_EVIDENCE_ROOT` selects
 one, setup also installs its `dinkster-acceptance` package. The run scripts set

@@ -177,6 +177,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
         {"os": "linux", "runner": "ubuntu-latest"},
         {"os": "windows", "runner": "windows-latest"},
+        {"os": "macos", "runner": "macos-latest"},
     ]
     locks = workflow["jobs"]["pack-locks"]
     assert locks["runs-on"] == "${{ matrix.runner }}"
@@ -1336,9 +1337,10 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
         check_release(tmp_path, 100_000_000)
 
 
+@pytest.mark.parametrize("platform", ["windows-x86_64", "linux-x86_64", "macos-arm64"])
 @pytest.mark.parametrize("corruption", [None, "payload", "sums", "extra", "duplicate"])
 def test_native_payload_finalization_preserves_and_verifies_existing_release(
-    tmp_path: Path, corruption: str | None
+    tmp_path: Path, corruption: str | None, platform: str
 ) -> None:
     output = tmp_path / "release"
     output.mkdir()
@@ -1372,7 +1374,7 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
             for path in [*original, metadata]
         )
     )
-    candidate = tmp_path / "dinkster-tools-windows-x86_64.zip"
+    candidate = tmp_path / f"dinkster-tools-{platform}.zip"
     candidate.write_bytes(b"native archive")
     if corruption == "payload":
         wheel.write_bytes(b"wrong supervisor wheel")

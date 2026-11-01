@@ -23,7 +23,7 @@ from dinkster_supervisor.environment_artifacts import acquire_sources, discover
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
 from supervisor_subprocess import run as run_with_diagnostics
 from test_environment_artifacts import _artifact, _json, _mirror, _release_sources, _wheel_payload
-from test_environment_generations import _assert_shared
+from test_environment_generations import _assert_shared, _workspace_tree
 from test_environment_runtime import free_port, make_generation
 from test_environment_state import _generation
 
@@ -409,17 +409,8 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
     _mirror(mirror, variant="linux-cpu")
     _runtime_project(root)
-    python = root / "generations/1/python"
-    shutil.copyfile(Path(sys.prefix) / "pyvenv.cfg", python / "pyvenv.cfg")
-    packages = python / (
-        "Lib/site-packages"
-        if os.name == "nt"
-        else f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-    )
-    packages.mkdir(parents=True, exist_ok=True)
-    (packages / "installed-workspace.pth").write_text(
-        "\n".join(str(Path(path).resolve()) for path in sys.path) + "\n"
-    )
+    shutil.rmtree(root / "generations/1/python")
+    _workspace_tree(root / "generations/1/python")
     (root / "store").write_text(str(store) + "\n")
     settings = json.loads((root / "project.json").read_bytes())
     asset = AssetRef(digest_bytes(b"required bytes"), "required.bin", 14).to_wire()

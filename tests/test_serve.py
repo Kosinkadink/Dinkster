@@ -2665,11 +2665,18 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
 
 
 @pytest.mark.parametrize(
-    ("in_process", "output_configuration"),
-    [(False, "fresh"), (True, "fresh"), (True, "custom"), (True, "read-only"), (True, "removed")],
+    ("in_process", "output_configuration", "variant"),
+    [
+        (False, "fresh", "linux-cpu"),
+        (True, "fresh", "linux-cpu"),
+        (True, "custom", "linux-cpu"),
+        (True, "read-only", "linux-cpu"),
+        (True, "removed", "linux-cpu"),
+        (True, "fresh", "linux-nvidia"),
+    ],
 )
 def test_serve_explicit_generation_uses_only_its_sources(
-    tmp_path: Path, in_process: bool, output_configuration: str
+    tmp_path: Path, in_process: bool, output_configuration: str, variant: str
 ) -> None:
     import venv
 
@@ -2691,7 +2698,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
-                "variant": "linux-cpu",
+                "variant": variant,
                 "inProcessPacks": [pack] if in_process else [],
             }
         )
@@ -2732,7 +2739,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
                 "--generation",
                 str(generation),
                 "--strict-packs",
-                *(["--engine-variant", "linux-cpu"] if in_process else []),
+                *(["--engine-variant", variant] if in_process else []),
             ),
             cwd=tmp_path,
             stdout=output,
@@ -2786,10 +2793,10 @@ def test_serve_explicit_generation_uses_only_its_sources(
                             "packs": {pack: {"version": "1.2.3"}},
                         },
                     }
-                    for variant in (None, "win-nvidia"):
+                    for plan_variant in (None, "win-nvidia", "linux-nvidia"):
                         body: dict[str, object] = {"workflows": [workflow]}
-                        if variant is not None:
-                            body["variant"] = variant
+                        if plan_variant is not None:
+                            body["variant"] = plan_variant
                         async with client.post(
                             f"http://127.0.0.1:{port}/api/workflows/plan", json=body
                         ) as response:

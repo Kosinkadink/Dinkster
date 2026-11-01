@@ -225,6 +225,27 @@ def test_generation_retains_verified_engine_manifest(
     assert read_current(root) is None
 
 
+def _workspace_tree(root: Path) -> Path:
+    _standalone_tree(root)
+    site = Path(
+        subprocess.check_output(
+            [
+                str(interpreter(root.parent)),
+                "-I",
+                "-B",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+    )
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "fixture.pth").write_text(
+        "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+    )
+    return site
+
+
 def _assert_shared(first: Path, second: Path) -> None:
     if first.samefile(second):
         return
@@ -1176,7 +1197,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     run = subprocess.run
 
     def refused_sources(command, *args, **kwargs):
-        if command[1:4] == ["-B", "-m", "dinkster.generation_packs"]:
+        if command[1:5] == ["-I", "-B", "-m", "dinkster.generation_packs"]:
             target = Path(command[command.index("--generation") + 1])
             sources = target / "pack-sources"
             sources.mkdir()
@@ -1194,11 +1215,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert not (root / "generations" / "5").exists()
 
     def refused_catalog(command, *args, **kwargs):
-        if command[1:4] == ["-B", "-m", "dinkster.generation_packs"]:
+        if command[1:5] == ["-I", "-B", "-m", "dinkster.generation_packs"]:
             target = Path(command[command.index("--generation") + 1])
             (target / "dinkster.lock").write_text("admitted source inventory\n")
             return subprocess.CompletedProcess(command, 0, '{"packs": [], "errors": []}', "")
-        if command[1:4] == ["-B", "-m", "dinkster.manager"]:
+        if command[1:5] == ["-I", "-B", "-m", "dinkster.manager"]:
             return subprocess.CompletedProcess(command, 1, "", "pack import failed")
         return run(command, *args, **kwargs)
 
@@ -1210,7 +1231,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert not (root / "generations" / "6").exists()
 
     def missing_lock(command, *args, **kwargs):
-        if command[1:4] == ["-B", "-m", "dinkster.generation_packs"]:
+        if command[1:5] == ["-I", "-B", "-m", "dinkster.generation_packs"]:
             target = Path(command[command.index("--generation") + 1])
             (target / "dinkster.lock").write_text("admitted source inventory\n")
             return subprocess.CompletedProcess(

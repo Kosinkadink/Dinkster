@@ -22,6 +22,7 @@ from dinkster_supervisor.environment_runtime import (
     stop_engine,
 )
 from dinkster_supervisor.environment_state import EnvironmentError
+from test_environment_generations import _workspace_tree
 
 SERVE = """
 import argparse
@@ -74,17 +75,7 @@ def free_port() -> int:
 
 def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
     generation = root / "generations" / str(number)
-    python = generation / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
-    python.parent.mkdir(parents=True)
-    if os.name == "nt":
-        python.write_bytes(Path(sys.executable).read_bytes())
-        if sys.prefix != sys.base_prefix:
-            # Windows venv executables redirect through their adjacent configuration.
-            (python.parent / "pyvenv.cfg").write_bytes(
-                (Path(sys.prefix) / "pyvenv.cfg").read_bytes()
-            )
-    else:
-        python.symlink_to(sys.executable)
+    site = _workspace_tree(generation / "python")
     (generation / "generation.json").write_text(
         json.dumps(
             {
@@ -105,6 +96,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         package.mkdir(exist_ok=True)
         (package / "__init__.py").write_text("")
         (package / "serve.py").write_text(SERVE)
+        (site / "000-project.pth").write_text(str(root.resolve()) + "\n")
     (root / "queue.json").write_text('{"running": [], "queued": []}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
@@ -133,6 +125,8 @@ def test_managed_generation_command_uses_local_project_options(
     command = commands[0]
     assert command[command.index("--") + 1 :] == [
         str(root / "generations/1/python" / ("python.exe" if os.name == "nt" else "bin/python3")),
+        "-I",
+        "-B",
         "-m",
         "dinkster.serve",
         "--generation",
@@ -144,8 +138,9 @@ def test_managed_generation_command_uses_local_project_options(
     ]
 
 
+@pytest.mark.parametrize("host_contamination", [False, True])
 def test_managed_generation_persists_folder_grant_across_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_contamination: bool
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
@@ -154,9 +149,6 @@ def test_managed_generation_persists_folder_grant_across_restart(
     from dinkster.generation_packs import stage_generation_packs
 
     monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
-    monkeypatch.setenv(
-        "PYTHONPATH", os.pathsep.join(str(Path(path).resolve()) for path in sys.path if path)
-    )
     root = tmp_path / "project"
     generation = root / "generations/1"
     generation.mkdir(parents=True)
@@ -171,6 +163,11 @@ def test_managed_generation_persists_folder_grant_across_restart(
         source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
     ).ok
     make_generation(root, fake_serve=False)
+    if host_contamination:
+        shadow = root / "dinkster"
+        shadow.mkdir()
+        (shadow / "__init__.py").write_text("raise RuntimeError('host engine shadow imported')\n")
+        monkeypatch.setenv("PYTHONPATH", str(root))
     record = json.loads((generation / "generation.json").read_text())
     record["inProcessPacks"] = [pack]
     (generation / "generation.json").write_text(json.dumps(record))

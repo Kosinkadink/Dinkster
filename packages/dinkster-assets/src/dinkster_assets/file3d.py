@@ -80,7 +80,9 @@ def register_file3d_types(
             )
         return AssetRef.from_wire(wire, resolver)
 
-    def coerce(value: object) -> dict[str, object]:
+    def coerce(value: object) -> dict[str, object] | None:
+        if value is None:
+            return None
         if not isinstance(value, Mapping):
             raise AssetError("FILE_3D requires format, source and optional resources")
         obj = cast("Mapping[str, object]", value)
@@ -109,8 +111,10 @@ def register_file3d_types(
             bound[name] = asset(ref)
         return {"format": format_id, "source": asset(obj.get("source")), "resources": bound}
 
-    def wire(value: object) -> dict[str, object]:
+    def wire(value: object) -> dict[str, object] | None:
         obj = coerce(value)
+        if obj is None:
+            return None
         source = cast("AssetRef | LocalAssetRef", obj["source"])
         resources = cast("dict[str, AssetRef | LocalAssetRef]", obj["resources"])
         return {
@@ -121,6 +125,8 @@ def register_file3d_types(
 
     def meta(value: object) -> dict[str, object]:
         obj = coerce(value)
+        if obj is None:
+            return {"asset_refs": []}
         refs = [obj["source"], *cast("dict[str, object]", obj["resources"]).values()]
         return {
             "format": obj["format"],
@@ -128,9 +134,9 @@ def register_file3d_types(
         }
 
     def register(type_id: str, formats: frozenset[str] | None) -> TypeSpec:
-        def typed(value: object) -> dict[str, object]:
+        def typed(value: object) -> dict[str, object] | None:
             obj = coerce(value)
-            if formats is not None and obj["format"] not in formats:
+            if obj is not None and formats is not None and obj["format"] not in formats:
                 raise AssetError(f"{type_id} does not accept format {obj['format']!r}")
             return obj
 

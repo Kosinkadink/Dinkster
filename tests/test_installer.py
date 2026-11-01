@@ -229,8 +229,12 @@ def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, mess
     assert not (generation / "official-packs.lock").exists()
 
 
-@pytest.mark.parametrize("problem", [None, "isolated", "missing", "tampered", "sealed", "import"])
-def test_unsealed_generation_catalog_preparation(tmp_path: Path, problem: str | None) -> None:
+@pytest.mark.parametrize(
+    "problem", [None, "isolated", "host-contamination", "missing", "tampered", "sealed", "import"]
+)
+def test_unsealed_generation_catalog_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
     from dinkster_supervisor.environment_generations import prepare_pack_catalogs
     from dinkster_supervisor.environment_state import EnvironmentError, interpreter
     from dinkster_workers import load_manifest
@@ -293,7 +297,16 @@ def test_unsealed_generation_catalog_preparation(tmp_path: Path, problem: str | 
             invoke()
         assert not catalog_path(manifest).exists()
     else:
-        invoke()
+        with monkeypatch.context() as host:
+            if problem == "host-contamination":
+                shadow = tmp_path / "host-packages"
+                (shadow / "dinkster").mkdir(parents=True)
+                (shadow / "dinkster/__init__.py").write_text(
+                    "raise RuntimeError('host package shadow imported')\n"
+                )
+                host.setenv("PYTHONPATH", str(shadow))
+                host.chdir(shadow)
+            invoke()
         catalog = read_catalog(load_manifest(manifest))
         assert catalog is not None
         assert set(catalog.schemas) == {"healthy.doubler", "healthy.tagger"}
