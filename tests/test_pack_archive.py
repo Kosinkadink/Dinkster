@@ -809,6 +809,35 @@ def test_publication_client_preserves_archive_and_lock_bytes(tmp_path: Path, mod
         thread.join()
 
 
+def test_official_publication_declarations_match_archive_admission(tmp_path: Path) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_registry.archive_admission import run_ingest_integrity, run_manifest_admission
+
+    root = Path(__file__).resolve().parents[1]
+    first = build_official_packs(root, tmp_path / "first")
+    second = build_official_packs(root, tmp_path / "second")
+    assert {path.name: path.read_bytes() for path in first} == {
+        path.name: path.read_bytes() for path in second
+    }
+    catalog = Lockfile.from_record_json(first[-1].read_text())
+    assert len(catalog.packs) == 14
+    for pack in catalog.packs:
+        archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
+        data = archive.read_bytes()
+        assert not run_ingest_integrity(data, len(data), pack.artifact_digest).blocked
+        source = unpack_artifact(archive, tmp_path / "sources" / pack.pack, pack.artifact_digest)
+        accepted = run_manifest_admission(
+            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.3.dev123"
+        )
+        assert not accepted.blocked, accepted.findings
+        for engine in ("0.0.1", "0.1"):
+            refused = run_manifest_admission(
+                source, pack.pack, pack.version, publisher="dinkster", engine_version=engine
+            )
+            assert refused.blocked
+            assert refused.findings[0].code == "manifest.invalid"
+
+
 def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
     import asyncio
     import json
