@@ -5,6 +5,14 @@ It builds and verifies BLAKE3-addressed pack archives, records lockfiles and
 installation plans, and supports the umbrella package's client for the
 registry service. It contains no server, database, or registry command.
 
+`dinkster_registry.archive_admission` provides deterministic archive ingest,
+safe extraction and fast security checks. Its stage results distinguish
+blocking findings, required review and informational signals. Ingest verifies
+declared length and BLAKE3, portable bounded paths, canonical ZIP metadata and
+serialization through the existing artifact builder. Security checks preserve
+block versus review outcomes; a review is not an accepted archive. These checks
+do not consult or mutate registry ownership, catalog or publication state.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.

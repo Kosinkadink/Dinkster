@@ -810,3 +810,78 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
             await composer.close()
 
     asyncio.run(execute())
+
+
+@pytest.mark.parametrize("problem", [None, "path", "case", "compression", "order", "junk"])
+def test_registry_archive_admission_requires_canonical_bytes(problem: str | None) -> None:
+    from dinkster_registry import artifact_digest
+    from dinkster_registry.archive_admission import extracted_archive, run_ingest_integrity
+
+    files = [("dinkster-pack.toml", MANIFEST.encode()), ("nodes.py", b"NODES = []\n")]
+    if problem == "path":
+        files.append(("../escape.py", b"escape"))
+    elif problem == "case":
+        files.append(("NODES.py", b"collision"))
+    elif problem == "order":
+        files.reverse()
+    elif problem == "junk":
+        files.append(("build/output.py", b"ignored"))
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for name, payload in files:
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = 0o644 << 16
+            if problem == "compression":
+                info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, payload)
+    data = output.getvalue()
+    digest = artifact_digest(data)
+    result = run_ingest_integrity(data, len(data), digest)
+    assert result.blocked is (problem is not None)
+    if problem is None:
+        assert result.data == {"artifactDigest": digest, "size": len(data)}
+        with extracted_archive(data) as root:
+            assert (root / "nodes.py").read_bytes() == b"NODES = []\n"
+        assert not root.exists()
+        assert run_ingest_integrity(data, len(data) + 1, digest).findings[0].code == (
+            "integrity.size-mismatch"
+        )
+        assert run_ingest_integrity(data, len(data), artifact_digest(b"other")).findings[
+            0
+        ].code == ("integrity.digest-mismatch")
+    else:
+        assert result.findings[0].code == "integrity.invalid-archive"
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload", "code", "effect"),
+    [
+        ("clean.py", b"NODES = []", None, None),
+        ("secret.txt", b"-----BEGIN PRIVATE KEY-----", "security.confirmed-secret", "block"),
+        ("bad.txt", b"dinkster-known-bad-test-payload", "security.known-bad-file", "block"),
+        ("native.bin", b"MZbinary", "security.native-binary", "review"),
+        ("nested.bin", b"\x1f\x8bgzip", "security.nested-archive", "review"),
+        ("nodes.pyc", b"bytecode", "security.obfuscated-code", "review"),
+    ],
+)
+def test_registry_archive_security_preserves_block_and_review(
+    tmp_path: Path, filename: str, payload: bytes, code: str | None, effect: str | None
+) -> None:
+    from dinkster_registry import build_artifact
+    from dinkster_registry.archive_admission import run_fast_security
+
+    root = write_pack(tmp_path / "pack")
+    (root / filename).write_bytes(payload)
+    archive = tmp_path / "pack.zip"
+    build_artifact(root, archive)
+    result = run_fast_security(archive.read_bytes())
+    assert [(finding.code, finding.effect) for finding in result.findings] == (
+        [] if code is None else [(code, effect)]
+    )
+    assert result.blocked is (effect == "block")
+    assert result.review is (effect == "review")
+    assert result.data == {
+        "status": "failed" if effect == "block" else "warning" if effect else "passed",
+        "policyVersion": "registry-scan/1",
+    }

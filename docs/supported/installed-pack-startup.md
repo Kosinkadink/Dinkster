@@ -66,6 +66,9 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Missing defaults, rejected packs and security
   review requirements fail the check without publishing any pack.
+- Public archive admission verifies deterministic source ZIPs with bounded
+  portable paths and distinguishes security blocks from files requiring review,
+  without a registry database or publication credentials.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified
