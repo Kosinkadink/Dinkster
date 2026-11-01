@@ -8,7 +8,11 @@ from typing import Any, cast
 
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
+    GIBIBYTE,
     LATENT_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    VAE_TYPE,
+    VOXEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -16,6 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
     materialize_latent,
+    materialize_shape_subdivides,
 )
 
 
@@ -140,4 +145,97 @@ class Trellis2TextureStage(Node):
             positive=_conditioning_extras(positive, extras),
             negative=_conditioning_extras(negative, extras),
             LATENT=latent,
+        )
+
+
+class VaeDecodeTextureTrellis(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="VaeDecodeTextureTrellis",
+            display_name="Trellis2 VAE Decode Texture",
+            category="model/latent/trellis",
+            inputs=(
+                InputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+                InputSpec(
+                    "shape_subdivides",
+                    TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE),
+                    doc="Shape information used to guide higher-detail reconstruction "
+                    "during decoding. "
+                    "Helps preserve structure consistency at higher resolutions.",
+                ),
+            ),
+            outputs=(OutputSpec("voxel_colors", TypeExpr.concrete(VOXEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, samples: Any, vae: Any, shape_subdivides: Any) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        sparse = importlib.import_module("dinkster_inference.ldm.trellis2.vae")
+        formats = importlib.import_module("dinkster_inference.latent_formats")
+        latent = materialize_latent(samples)
+        stages = materialize_shape_subdivides(shape_subdivides)
+        device = management.get_torch_device()
+        bytes_per_point = 896 * management.dtype_size(vae.vae_dtype) + 27 * 4
+        vae.prepare_decode(
+            latent["samples"].shape,
+            memory_required=2 * GIBIBYTE + int(stages[-1].feats.shape[0]) * bytes_per_point,
+        )
+        coords = latent["coords"]
+        counts = latent.get("coord_counts")
+        if counts is None:
+            features = latent["samples"].squeeze(-1).transpose(1, 2)
+            features = features.reshape(-1, features.shape[-1])
+        else:
+            features = flatten_sparse_samples(latent["samples"], coords, counts)
+            order = torch.argsort(coords[:, 0].to(torch.int64), stable=True)
+            coords = coords.index_select(0, order)
+        sample = sparse.SparseTensor(
+            feats=formats.Trellis2TexSLAT().process_out(features.to(device)),
+            coords=coords.to(device),
+        )
+        stages = [
+            sparse.SparseTensor(
+                feats=stage.feats.to(device),
+                coords=stage.coords.to(device),
+                shape=stage.shape,
+                scale=stage._scale,
+            )
+            for stage in stages
+        ]
+        voxel = vae.first_stage_model.decode_tex_slat(sample.to(vae.vae_dtype), stages)
+        coords = voxel.coords
+        resolution = latent.get("coord_resolution")
+        if resolution is not None:
+            resolution = int(resolution) * 16
+        elif coords.numel() > 0 and coords.shape[-1] >= 3:
+            spatial = coords[:, -3:] if coords.shape[-1] == 4 else coords
+            max_index = int(spatial.max().item()) + 1
+            resolution = next(
+                (r for r in (256, 512, 1024, 1536, 2048) if r >= max_index), max_index
+            )
+        else:
+            resolution = 1024
+        if (
+            latent.get("model_frame", "y_up") == "z_up"
+            and coords.numel() > 0
+            and coords.shape[-1] >= 3
+        ):
+            spatial = coords[:, -3:]
+            rotated = torch.stack(
+                [spatial[:, 0], spatial[:, 2], resolution - 1 - spatial[:, 1]], dim=-1
+            )
+            coords = (
+                torch.cat([coords[:, :1], rotated], dim=-1) if coords.shape[-1] == 4 else rotated
+            )
+        output_device = management.intermediate_device()
+        return cls.outputs(
+            voxel_colors={
+                "data": coords.to(output_device),
+                "colors": voxel.feats.to(output_device),
+                "resolution": resolution,
+            }
         )
