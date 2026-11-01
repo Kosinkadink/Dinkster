@@ -388,6 +388,29 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     asyncio.run(scenario())
 
 
+def test_file3d_null_roundtrip_preserves_type_and_declares_no_assets() -> None:
+    registry = TypeRegistry()
+    for spec in register_file3d_types(registry):
+        value = registry.wrap(spec.type_id, None)
+        assert value.type_id == spec.type_id
+        assert value.resolve() is None
+        assert value.meta.entries == {"asset_refs": []}
+        assert spec.encode(None) == b"null"
+        assert spec.decode(b"null") is None
+        assert spec.validate_encoded is not None
+        spec.validate_encoded(b"null", value.meta.entries)
+        with pytest.raises(AssetError, match="metadata"):
+            spec.validate_encoded(b"null", {"asset_refs": [], "format": "glb"})
+        restored = registry.wrap(spec.type_id, spec.decode(spec.encode(None)))
+        assert restored.fingerprint == value.fingerprint
+        rendition = registry.render(value, "manifest")
+        assert rendition.mime == "application/json"
+        assert rendition.data == b"null"
+        for malformed in (False, 0, "none", {"format": "glb", "source": None}):
+            with pytest.raises(AssetError):
+                registry.wrap(spec.type_id, malformed)
+
+
 def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     tmp_path: Path,
 ) -> None:
@@ -637,11 +660,14 @@ class File3DProducer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="file3d-source.make",
+            inputs=(InputSpec("empty", TypeExpr.concrete("BOOLEAN"), default=False),),
             outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_GLTF_TYPE)),),
         )
 
     @classmethod
-    def execute(cls) -> Mapping[str, object]:
+    def execute(cls, *, empty: bool = False) -> Mapping[str, object]:
+        if empty:
+            return cls.outputs(file=None)
         vault = produced_output_scratch()
         assert vault is not None
         refs = []
@@ -666,17 +692,19 @@ class File3DConsumer(Node):
         )
 
     @classmethod
-    def execute(cls, *, file: dict[str, object]) -> Mapping[str, object]:
-        assert cast(AssetRef, file["source"]).read_bytes() == FILE3D_SOURCE
-        assert (
-            cast(dict[str, AssetRef], file["resources"])["mesh/data.bin"].read_bytes()
-            == FILE3D_SIDECAR
-        )
+    def execute(cls, *, file: dict[str, object] | None) -> Mapping[str, object]:
+        if file is not None:
+            assert cast(AssetRef, file["source"]).read_bytes() == FILE3D_SOURCE
+            assert (
+                cast(dict[str, AssetRef], file["resources"])["mesh/data.bin"].read_bytes()
+                == FILE3D_SIDECAR
+            )
         return cls.outputs(file=file)
 
 
+@pytest.mark.parametrize("empty", (False, True))
 def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty: bool
 ) -> None:
     vault = AssetVault(tmp_path / "engine-vault")
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
@@ -703,7 +731,7 @@ def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
     async def scenario() -> None:
         graph = Graph(
             nodes={
-                "source": GraphNode("file3d-source.make"),
+                "source": GraphNode("file3d-source.make", {"empty": empty}),
                 "consumer": GraphNode("file3d-consumer.read", {"file": Link("source", "file")}),
             }
         )
@@ -739,6 +767,11 @@ def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
             finally:
                 await composer.close()
             shutil.rmtree(tmp_path / "scratch")
+            if empty:
+                assert value.type_id == FILE_3D_GLTF_TYPE
+                assert value.resolve() is None
+                assert value.meta.entries == {"asset_refs": []}
+                continue
             restored = cast(dict[str, object], value.resolve())
             source = cast(AssetRef, restored["source"])
             sidecar = cast(dict[str, AssetRef], restored["resources"])["mesh/data.bin"]
