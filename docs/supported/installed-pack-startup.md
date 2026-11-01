@@ -76,6 +76,10 @@
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.
+- Windows contributor setup and interpreter preparation require uv 0.13.6 or
+  newer for pinned CPython 3.14.10. An older uv is refused before those scripts
+  download inputs or create environments; the error names both versions and
+  the interpreter. Setup never upgrades uv automatically.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
