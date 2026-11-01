@@ -21,6 +21,7 @@ from dinkster_workers import load_manifest
 from packaging.specifiers import SpecifierSet
 
 from dinkster.registries import NamedRegistry, default_pack_minimums, prepare_registry_sources
+from scripts.run_selected_pack_tests import run_selected_tests
 
 
 def _require_accepted(result: StageResult, identity: str) -> None:
@@ -87,6 +88,7 @@ def check_defaults(registry: NamedRegistry, *, engine_version: str) -> dict[str,
             results.append(
                 {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
             )
+        run_selected_tests(Path(__file__).resolve().parents[1], catalog, artifacts)
         return {"engineVersion": engine_version, "packs": results}
 
 

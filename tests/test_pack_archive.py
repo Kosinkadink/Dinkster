@@ -987,3 +987,67 @@ def test_registry_probe_refuses_degraded_isolation(
     result = run_executable_probe(root)
     assert result.blocked and result.findings[0].code == "probe.isolation-unavailable"
     assert result.operator_details == {"jail": "degraded"}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
+@pytest.mark.parametrize("problem", [None, "broken", "missing", "skipped"])
+def test_selected_pack_tests_cannot_fall_back_to_checkout(
+    tmp_path: Path, problem: str | None
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    engine = tmp_path / "engine"
+    tests = engine / "tests"
+    tests.mkdir(parents=True)
+    checkout_module = engine / "packages/dinkster-nodes-image/src/dinkster_nodes_image"
+    checkout_module.mkdir(parents=True)
+    (checkout_module / "__init__.py").write_text("VALUE = 47\n")
+    (tests / "test_image_nodes.py").write_text(
+        "import importlib.metadata\nimport subprocess\nimport sys\nimport pytest\n"
+        "from dinkster_nodes_image import VALUE\n"
+        + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
+        + "def test_selected_value():\n"
+        "    assert VALUE == 47\n"
+        "    subprocess.run([sys.executable, '-I', '-c', "
+        "'from dinkster_nodes_image import VALUE; assert VALUE == 47'], check=True)\n"
+        "    with pytest.raises(importlib.metadata.PackageNotFoundError):\n"
+        "        importlib.metadata.distribution('dinkster-nodes-image')\n"
+    )
+    subprocess.run(["git", "init", "-q", str(engine)], check=True)
+    subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+    source = tmp_path / "selected"
+    source.mkdir()
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
+    )
+    if problem != "missing":
+        module = source / "dinkster_nodes_image"
+        module.mkdir()
+        (module / "__init__.py").write_text(
+            f"VALUE = {13 if problem == 'broken' else 47}\nNODES = []\n"
+        )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "pack.zip"
+    digest = build_artifact(source, archive)
+    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of(
+        [
+            LockedPack(
+                pack="dinkster-nodes-image",
+                version="1.2.3",
+                artifact_digest=digest,
+                publisher="dinkster",
+                claims=(),
+                source="registry:https://registry.invalid",
+            )
+        ]
+    )
+    if problem is None:
+        run_selected_tests(engine, catalog, artifacts)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            run_selected_tests(engine, catalog, artifacts)
