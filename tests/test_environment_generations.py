@@ -508,7 +508,6 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 Generation,
                 Journal,
                 content_digest,
-                write_document,
             )
             from test_environment_cli import _run
 
@@ -728,7 +727,6 @@ environment.main()
         if problem in repairs:
             from dataclasses import replace
 
-            from dinkster_supervisor.environment_state import write_document
             from test_environment_cli import _run
 
             monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
@@ -797,7 +795,6 @@ environment.main()
             return
         if problem == "extra":
             from dinkster_supervisor.environment_collection import store_collection_plan
-            from dinkster_supervisor.environment_state import write_document
 
             (root / "store").write_text(str(store) + "\n")
             for cached in wheels.glob("*.whl"):
