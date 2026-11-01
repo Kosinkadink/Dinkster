@@ -1021,11 +1021,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + "def test_selected_value():\n"
         "    assert VALUE == 47\n"
         "    subprocess.run([sys.executable, '-I', '-c', "
-        "\"from pathlib import Path; import sys; import dinkster_nodes_image as pack; "
+        '"from pathlib import Path; import sys; import dinkster_nodes_image as pack; '
         "expected = Path(pack.__file__).resolve(); "
         "sys.path.insert(0, str(expected.parents[2])); "
         "del sys.modules['dinkster_nodes_image']; import dinkster_nodes_image as pack; "
-        "assert Path(pack.__file__).resolve() == expected; assert pack.VALUE == 47\"], "
+        'assert Path(pack.__file__).resolve() == expected; assert pack.VALUE == 47"], '
         "check=True)\n"
         "    with pytest.raises(importlib.metadata.PackageNotFoundError):\n"
         "        importlib.metadata.distribution('dinkster-nodes-image')\n"
