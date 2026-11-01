@@ -333,6 +333,9 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
             fetch_artifact(
                 (str(source.parent),), source.name, destination, sha, cast("int", row["size"])
             )
+        manifest = base_root / "manifest.json"
+        if not manifest.exists():
+            atomic_write(manifest, json.dumps(base, sort_keys=True, ensure_ascii=True) + "\n")
     except BaseException:
         if created:
             shutil.rmtree(base_root)

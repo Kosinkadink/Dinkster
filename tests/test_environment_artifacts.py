@@ -312,6 +312,39 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     assert retained.read_bytes() == _json(engine) + b"\n"
 
 
+def test_acquisition_retains_published_base_metadata_without_replacing_custom_provenance(
+    tmp_path: Path,
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    base, _, _ = _mirror(mirror)
+    base.update(
+        label="2026-11-01-py3.14.10-torch2.14.1",
+        builtAt="2026-11-01T00:00:00Z",
+        torchVersion="2.14.1",
+        torchIndex="https://pypi.org/simple",
+        lockSource={
+            "repository": "https://github.com/Kosinkadink/Dinkster-Environments",
+            "commit": "f" * 40,
+        },
+    )
+    (mirror / "base/fixture-cpu" / base["id"][7:] / "manifest.json").write_bytes(_json(base))
+    catalog = discover((str(mirror),), "main")
+    acquire(catalog, "fixture-cpu", store)
+    retained = store / "bases" / base["id"][7:] / "manifest.json"
+    assert json.loads(retained.read_bytes()) == base
+    custom = _json({**base, "source": "user-defined", "build": {"sourceDigest": "a" * 64}})
+    retained.write_bytes(custom)
+    acquire(catalog, "fixture-cpu", store)
+    assert retained.read_bytes() == custom
+    retained.unlink()
+    wheel = store / "bases" / base["id"][7:] / "wheels" / base["wheels"][0]["filename"]
+    wheel.write_bytes(b"damaged cached base")
+    with pytest.raises(EnvironmentError, match="extracted base wheel differs"):
+        acquire(catalog, "fixture-cpu", store)
+    assert not retained.exists()
+    assert all(base["label"] not in part for path in store.rglob("*") for part in path.parts)
+
+
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-16"])
 def test_acquisition_retains_original_discovery_bytes_without_refetch(
     tmp_path: Path, encoding: str

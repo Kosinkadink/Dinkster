@@ -289,8 +289,12 @@ corrupt metadata falls through to the next configured location.
 
 Under the caller's store writer lock, `acquire(catalog, variant, store)` fetches
 and verifies base parts, safely extracts a missing base, verifies its selected
-wheels and populates `wheels/<sha256 hex>/<filename>`. Engine-owned wheel and
-constraints artifacts are verified through the same downloader. Base-owned
+wheels and populates `wheels/<sha256 hex>/<filename>`. After wheel verification,
+it atomically retains the producer base document at `bases/<base hex>/manifest.json`
+if absent, preserving an existing document's custom provenance. Base identity
+remains the producer's canonical fields, independent of JSON formatting.
+Engine-owned wheel and constraints artifacts are verified through the same
+downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
 the generation. Effective constraints are stored under
 `engines/<release hex>/constraints-<variant>.txt`. The original verified engine
