@@ -34,6 +34,7 @@ from dinkster_schema import (
     validate_claim,
     validate_name,
 )
+from dinkster_values import MEBIBYTE
 from dinkster_workers import doctor as dinkster_doctor
 from dinkster_workers.doctor import (
     _check_assets,  # pyright: ignore[reportPrivateUsage]
@@ -59,12 +60,12 @@ from .artifact import MANIFEST_FILENAME, build_artifact
 from .model import artifact_digest
 
 SCAN_POLICY_VERSION = "registry-scan/1"
-ARCHIVE_LIMIT = 64 * 1024 * 1024
-EXPANDED_LIMIT = 256 * 1024 * 1024
-FILE_LIMIT = 64 * 1024 * 1024
+ARCHIVE_LIMIT = 64 * MEBIBYTE
+EXPANDED_LIMIT = 256 * MEBIBYTE
+FILE_LIMIT = 64 * MEBIBYTE
 ENTRY_LIMIT = 10_000
 PATH_BYTE_LIMIT = 512
-MANIFEST_LIMIT = 1024 * 1024
+MANIFEST_LIMIT = MEBIBYTE
 _SKIP_DIRECTORIES = frozenset(
     {".git", ".hg", ".svn", ".tox", ".venv", "__pycache__", "build", "dist", "node_modules"}
 )
@@ -402,14 +403,14 @@ class ProbeSettings:
     probe_timeout_seconds: int = 30
     probe_dependency_timeout_seconds: int = 300
     probe_package_index_url: str = "https://pypi.org/simple"
-    probe_output_limit_bytes: int = 2 * 1024 * 1024
+    probe_output_limit_bytes: int = 2 * MEBIBYTE
     probe_operator_tail_bytes: int = 8 * 1024
 
     def __post_init__(self) -> None:
         bounds = (
             ("probe_timeout_seconds", self.probe_timeout_seconds, 1, 600),
             ("probe_dependency_timeout_seconds", self.probe_dependency_timeout_seconds, 1, 1800),
-            ("probe_output_limit_bytes", self.probe_output_limit_bytes, 4096, 4 * 1024 * 1024),
+            ("probe_output_limit_bytes", self.probe_output_limit_bytes, 4096, 4 * MEBIBYTE),
             (
                 "probe_operator_tail_bytes",
                 self.probe_operator_tail_bytes,
