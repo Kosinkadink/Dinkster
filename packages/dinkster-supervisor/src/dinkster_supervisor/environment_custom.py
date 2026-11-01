@@ -325,6 +325,7 @@ def prepare_custom_pack_locks(
     ]
     command = [
         str(interpreter(generation)),
+        "-I",
         "-B",
         "-m",
         "dinkster.generation_packs",

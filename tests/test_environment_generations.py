@@ -403,6 +403,9 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         scratch.mkdir()
         shutil.copytree(base, scratch / "python", copy_function=os.link)
         shutil.copyfile(constraints, scratch / "constraints.txt")
+        (scratch / "dinkster.py").write_text(
+            "raise RuntimeError('custom pack preparation imported the working directory')\n"
+        )
         resolved = prepare_custom_pack_locks(
             scratch,
             store=store,
@@ -411,7 +414,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             artifacts=artifacts,
             output=tmp_path / "custom-locks",
         )
-        assert sorted(path.name for path in scratch.iterdir()) == ["constraints.txt", "python"]
+        assert sorted(path.name for path in scratch.iterdir()) == [
+            "constraints.txt",
+            "dinkster.py",
+            "python",
+        ]
         invoke = partial(invoke, pack_locks=resolved)
     repairs = {"repair", "repair-extra", "repair-missing"}
     moves = {
