@@ -1,0 +1,227 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-sd15",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "Stable Diffusion 1.5 Starter",
+      "nodes": {
+        "checkpoint": {
+          "id": "checkpoint",
+          "type": "CheckpointLoaderSimple",
+          "values": {
+            "ckpt_name": "v1-5-pruned-emaonly-fp16.safetensors"
+          }
+        },
+        "positive": {
+          "id": "positive",
+          "type": "CLIPTextEncode",
+          "values": {
+            "text": "a cinematic landscape, detailed lighting"
+          }
+        },
+        "negative": {
+          "id": "negative",
+          "type": "CLIPTextEncode",
+          "values": {
+            "text": "blurry, low quality"
+          }
+        },
+        "latent": {
+          "id": "latent",
+          "type": "EmptyLatentImage",
+          "values": {
+            "width": 512,
+            "height": 512,
+            "batch_size": 1
+          }
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "KSampler",
+          "values": {
+            "seed": 91,
+            "steps": 20,
+            "cfg": 8.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "denoise": 1.0
+          }
+        },
+        "decode": {
+          "id": "decode",
+          "type": "VAEDecode",
+          "values": {}
+        },
+        "save": {
+          "id": "save",
+          "type": "SaveImage",
+          "values": {
+            "mount": "mac-readiness-output",
+            "filename_prefix": "sd15"
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "checkpoint",
+            "port": "CLIP"
+          },
+          "to": {
+            "node": "positive",
+            "port": "clip"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "checkpoint",
+            "port": "CLIP"
+          },
+          "to": {
+            "node": "negative",
+            "port": "clip"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "checkpoint",
+            "port": "MODEL"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "positive",
+            "port": "CONDITIONING"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "negative",
+            "port": "CONDITIONING"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "latent",
+            "port": "LATENT"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "sampler",
+            "port": "LATENT"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "checkpoint",
+            "port": "VAE"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "decode",
+            "port": "IMAGE"
+          },
+          "to": {
+            "node": "save",
+            "port": "images"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 17
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "checkpoint": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "positive": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "negative": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "latent": {
+            "position": {
+              "x": 380,
+              "y": 680
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 720,
+              "y": 380
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1060,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "Stable Diffusion 1.5 Starter",
+    "family": "dinkster.sd15"
+  }
+}
