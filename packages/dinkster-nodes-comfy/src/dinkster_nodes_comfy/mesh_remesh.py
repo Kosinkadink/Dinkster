@@ -174,8 +174,8 @@ class RemeshMesh(Node):
         initialize_inference_process()
         torch = importlib.import_module("torch")
         management = importlib.import_module("dinkster_inference.model_management")
-        from dinkster_native.model3d.mesh_ops.qem_decimate import qem_cluster_decimate
 
+        from .mesh_qem import qem_cluster_decimate
         from .mesh_remesh_ops import remesh_narrow_band_dc
 
         source: Any = materialize_mesh(mesh)

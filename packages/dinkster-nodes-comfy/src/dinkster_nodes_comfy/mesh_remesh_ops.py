@@ -11,21 +11,22 @@ from __future__ import annotations
 import functools
 import math
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-import numpy as np
-import scipy.spatial
-import torch
 from dinkster_api.v1 import report_progress
-from dinkster_inference.model_management import throw_exception_if_processing_interrupted
-from tqdm import tqdm as _tqdm
 
 from .mesh_qem import _connected_labels, _kitchen_op, _sorted_edge_halfedges, _split_touching_sheets
+
+if TYPE_CHECKING:
+    import torch
 
 
 def _point_tri_closest(
     points: torch.Tensor, tris: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Closest point and squared distance per (point, triangle) pair (Ericson's region test); points (N, 3), tris (N, 3, 3)."""
+    import torch
+
     a = tris[:, 0]
     b = tris[:, 1]
     c = tris[:, 2]
@@ -85,6 +86,8 @@ def _split_long_triangles(tri_verts: torch.Tensor, max_edge: float):
     """Bisect triangles on their longest edge until no edge exceeds `max_edge`; returns (pieces (M, 3, 3), source index (M,)).
 
     Keeps the centroid kNN in _udf_exact from missing the closest triangle on low-poly inputs; pieces keep their source's winding."""
+    import torch
+
     src = torch.arange(tri_verts.shape[0], device=tri_verts.device)
     while True:
         e = (tri_verts.roll(-1, 1) - tri_verts).norm(dim=-1)  # edge k runs from vertex k to k + 1
@@ -107,6 +110,9 @@ def _split_long_triangles(tri_verts: torch.Tensor, max_edge: float):
 
 def _build_udf_tree(tri_verts: torch.Tensor):
     """Closest-triangle index for _udf_exact: comfy-kitchen's mesh BVH when available, else a cKDTree over triangle centroids."""
+    import scipy.spatial
+    import torch
+
     mesh_bvh = _kitchen_op("mesh_bvh", tri_verts)
     if mesh_bvh is not None and tri_verts.dtype == torch.float32:
         return mesh_bvh(tri_verts)
@@ -121,6 +127,10 @@ def _udf_exact(
     """Unsigned distance to the triangles; returns (dist (N,), closest point (N, 3), triangle index (N,)).
 
     The cKDTree path only tests the `k` nearest centroids, so long triangles must be split first (_split_long_triangles)."""
+    import numpy as np
+    import scipy.spatial
+    import torch
+
     if tree is None:
         tree = _build_udf_tree(tri_verts)
     if not isinstance(tree, scipy.spatial.cKDTree):
@@ -165,6 +175,9 @@ def _build_narrow_band_voxels(
     progress_callback=None,
 ) -> tuple[torch.Tensor, object]:
     """Returns voxel coords (Nv, 3) in [0, resolution) whose centre is within half a cell diagonal + eps of the surface, and the distance tree."""
+    import torch
+    from dinkster_inference.model_management import throw_exception_if_processing_interrupted
+
     device = tri_verts.device
     tree = _build_udf_tree(tri_verts)
 
@@ -253,6 +266,8 @@ def _voxel_key(coords, resolution):
 
 
 def _decode_key(keys, resolution):
+    import torch
+
     r1 = resolution + 1
     return torch.stack([keys // (r1 * r1), keys // r1 % r1, keys % r1], dim=1)
 
@@ -272,6 +287,8 @@ def _dual_contour(
     corner values change sign.
 
     Verts go to the QEF minimiser when tri_face_normals and qef_query are given, else to the centroid of the edge crossings."""
+    import torch
+
     device = vox_keys.device
     CORNER_OFFS = torch.tensor(_CUBE_CORNERS, dtype=torch.long, device=device)
     EDGES = torch.tensor(_CUBE_EDGES, dtype=torch.long, device=device)
@@ -439,6 +456,8 @@ def _dual_contour(
 @functools.cache
 def _build_mdc_lut() -> tuple[torch.Tensor, torch.Tensor]:
     """Per 8-corner sign pattern: patch count K (256,) and per-edge patch id `group` (256, 12), -1 if not crossing."""
+    import torch
+
     K = torch.zeros(256, dtype=torch.int64)
     group = torch.full((256, 12), -1, dtype=torch.int64)
 
@@ -495,6 +514,8 @@ def _dual_contour_manifold(
     corner_valid: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Manifold DC: like _dual_contour but with one dual vert per patch (1-4 per voxel), centroid placement only."""
+    import torch
+
     device = voxel_coords.device
     Nv = voxel_coords.shape[0]
 
@@ -658,6 +679,8 @@ def _filter_components(
     drop_enclosed: bool = True,
 ) -> torch.Tensor:
     """Drop tiny, inside-out and enclosed connected components; returns the kept faces."""
+    import torch
+
     device = faces.device
     V = verts.shape[0]
 
@@ -752,6 +775,9 @@ def _taubin_smooth(
     progress_callback=None,
 ) -> torch.Tensor:
     """Taubin lambda/mu smoothing with uniform weights, a low-pass filter that limits shrinkage."""
+    import torch
+    from dinkster_inference.model_management import throw_exception_if_processing_interrupted
+
     if iters <= 0 or verts.numel() == 0 or faces.numel() == 0:
         return verts
     device = verts.device
@@ -788,6 +814,8 @@ def _fix_poles(
     verts: torch.Tensor, faces: torch.Tensor, colors: torch.Tensor | None = None
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Collapse adjacent interior valence-3 vertex pairs (DC pole artifacts) to their midpoint; returns (verts, faces, colors)."""
+    import torch
+
     device = verts.device
     V = verts.shape[0]
     if V == 0 or faces.numel() == 0:
@@ -865,6 +893,8 @@ def _fix_poles(
 def _merge_sorted(keys: torch.Tensor, new_keys: torch.Tensor, *columns):
     """Merge sorted, disjoint `new_keys` into sorted `keys` without re-sorting; each (old, new) column in `columns`
     follows its keys. A key's slot is its own index plus the count of the other array's keys below it."""
+    import torch
+
     device = keys.device
     columns = ((keys, new_keys),) + columns
     merged = [
@@ -898,6 +928,8 @@ def _close_band(
 
     `vox_keys` are the band's sorted voxel keys and `field(points)` gives the SDF at new corners. Returns the grown,
     still sorted (vox_keys, corner_keys, corner_sdf)."""
+    import torch
+
     device = vox_keys.device
     corner_offs = torch.tensor(_CUBE_CORNERS, dtype=torch.long, device=device)
     edges = torch.tensor(_CUBE_EDGES, dtype=torch.long, device=device)
@@ -961,6 +993,9 @@ def _min_cut(
     """Data-parallel push-relabel min s-t cut; returns the source side as a bool mask (N,).
 
     nbr (N, 4) holds neighbour ids (-1 = none) with symmetric capacities `cap` (N, 4); s_cap / t_cap are per-node terminal capacities."""
+    import torch
+    from dinkster_inference.model_management import throw_exception_if_processing_interrupted
+
     min_cut = _kitchen_op("min_cut", nbr)
     if min_cut is not None:
         return min_cut(nbr, cap.float(), s_cap.float(), t_cap.float())
@@ -1028,6 +1063,8 @@ def _tet_locator(
 
     Tests run in the float64 of `tet_pts`, on its device: in float32 the faces of near-flat hull tets enclose points far
     outside them. The tet ids come back on the points' device."""
+    import torch
+
     device = tet_pts.device
     N = tets.shape[0]
     tet_faces = torch.tensor(_TET_FACES, device=device)
@@ -1107,6 +1144,9 @@ def _solid_partition(shell_v: torch.Tensor, tri_verts: torch.Tensor, tree, eps: 
 
     Returns (tet points, tets, neighbours, solid per tet, outward boundary triangles (M, 3, 3)); the last two on the
     device of shell_v, the tetrahedralization on the CPU when that device has no float64."""
+    import scipy.spatial
+    import torch
+
     device = shell_v.device
     # sites: one shell vertex per block of 4 cells and offset direction, so both sides of a thin sheet keep theirs and
     # a corner gets one per facing; about the 5% a decimation kept, without its edges and quadrics
@@ -1233,6 +1273,9 @@ def remesh_narrow_band_dc(
     and erodes the eps offset back to half a cell: a closing, so creases are filleted and gaps bridged at eps while the
     surface sits half a cell outside the input.
     """
+    import torch
+    from tqdm import tqdm as _tqdm
+
     assert vertices.ndim == 2 and vertices.shape[1] == 3
     assert faces.ndim == 2 and faces.shape[1] == 3
     device = vertices.device

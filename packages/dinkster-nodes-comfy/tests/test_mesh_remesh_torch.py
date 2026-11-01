@@ -108,6 +108,27 @@ def test_projected_vertices_retain_interpolated_colors() -> None:
     assert float(distance_to_planes.amin(-1).amax()) < 1e-6
 
 
+def test_preclustering_averages_colors_and_removes_duplicate_and_degenerate_faces() -> None:
+    mesh = source()
+    expected = materialize_mesh(RemeshMesh.execute(mesh=mesh, sign_mode="sdf", **options())["mesh"])
+    duplicated = source()
+    duplicated.vertices = mesh.vertices.repeat_interleave(2, dim=1)
+    duplicated.vertex_colors = mesh.vertex_colors.repeat_interleave(2, dim=1)
+    duplicated.vertex_colors[:, ::2] -= 0.125
+    duplicated.vertex_colors[:, 1::2] += 0.125
+    duplicated.faces = torch.cat(
+        [mesh.faces * 2, mesh.faces * 2 + 1, torch.tensor([[[0, 1, 2]]], dtype=torch.int32)],
+        dim=1,
+    )
+    duplicated.uvs = duplicated.normals = None
+    args = options()
+    args["precluster_max_verts"] = 4
+    result = materialize_mesh(RemeshMesh.execute(mesh=duplicated, sign_mode="sdf", **args)["mesh"])
+    torch.testing.assert_close(result.vertices, expected.vertices, rtol=0, atol=0)
+    torch.testing.assert_close(result.faces, expected.faces, rtol=0, atol=0)
+    torch.testing.assert_close(result.vertex_colors, expected.vertex_colors, rtol=0, atol=1e-6)
+
+
 def test_solid_fill_changes_openings_and_ragged_batches() -> None:
     mesh = source(open_top=True)
     filled = materialize_mesh(
