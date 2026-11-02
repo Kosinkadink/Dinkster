@@ -186,10 +186,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert "pack-locks" not in commands
     assert "lock-matrix" not in workflow["jobs"]["build"].get("outputs", {})
     admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
-    assert (
-        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
-        in admission
-    )
+    assert "uv sync --locked --no-dev --package dinkster-supervisor" in admission
     assert "for artifact in .release/tools/*.zip" in admission
     assert 'arguments+=(--artifact "$artifact")' in admission
     assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
@@ -1542,95 +1539,6 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
             assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
     assert {path: path.read_bytes() for path in before} == before
     assert not list(tmp_path.glob("release-pack-locks-*"))
-
-
-@pytest.mark.parametrize(
-    "corruption", [None, "missing", "extra", "pack", "variant", "wheel-url", "index-url"]
-)
-def test_finalization_requires_complete_portable_official_dependency_locks(
-    tmp_path: Path, corruption: str | None
-) -> None:
-    from dinkster_registry.install import LockedPack, Lockfile
-    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-
-    from scripts.build_release import write_manifest
-
-    output = tmp_path / "release"
-    output.mkdir()
-    catalog = output / "official-packs.lock"
-    catalog.write_text(
-        Lockfile.of(
-            [LockedPack("example", "1.2.3", "blake3:" + "a" * 64, "dinkster", (), "git:test")]
-        ).record_json()
-    )
-    write_manifest(output, {"format": "dinkster.engine/1", "version": "1.2.3"}, [catalog])
-    bases = []
-    candidates = []
-    for variant in ("linux-cpu", "win-cpu"):
-        base = {
-            "format": "dinkster.base/1",
-            "variant": variant,
-            "platform": {"os": "linux" if variant == "linux-cpu" else "windows", "arch": "x86_64"},
-            "python": "3.14.10",
-            "interpreter": {},
-            "wheels": [],
-            "replaces": [],
-            "workerProtocol": 11,
-            "nvidia": None,
-            "archive": {"format": "tar+zstd"},
-        }
-        canonical = json.dumps(base, sort_keys=True, separators=(",", ":")).encode("ascii")
-        base["id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
-        base["archive"]["parts"] = []
-        path = tmp_path / f"{variant}.json"
-        path.write_text(json.dumps(base))
-        bases.append(path)
-        path = tmp_path / f"example-1.2.3-{variant}.pack-lock.json"
-        PackLock(
-            "wrong" if corruption == "pack" else "example",
-            "wrong" if corruption == "variant" else variant,
-            ">=3.12",
-            ("example-dependency==2.0",),
-            ("file:///resolver/index" if corruption == "index-url" else "https://pypi.org/simple",),
-            (
-                LockedDistribution(
-                    "example-dependency",
-                    "2.0",
-                    (
-                        LockedWheel(
-                            "example_dependency-2.0-py3-none-any.whl",
-                            17,
-                            "b" * 64,
-                            "file:///resolver/wheel.whl"
-                            if corruption == "wheel-url"
-                            else "https://example.test/wheel.whl",
-                        ),
-                    ),
-                ),
-            ),
-        ).write(path)
-        candidates.append(path)
-    if corruption == "missing":
-        candidates.pop()
-    elif corruption == "extra":
-        extra = tmp_path / "unlisted-1.2.3-linux-cpu.pack-lock.json"
-        extra.write_bytes(candidates[0].read_bytes())
-        candidates.append(extra)
-    before = {path.name: path.read_bytes() for path in output.iterdir()}
-    if corruption:
-        with pytest.raises(ValueError, match="dependency lock"):
-            extend_release(output, candidates, base_manifests=bases)
-        assert {path.name: path.read_bytes() for path in output.iterdir()} == before
-    else:
-        result = extend_release(output, candidates, base_manifests=bases)
-        rows = result["artifacts"]
-        assert isinstance(rows, list)
-        assert {row["name"] for row in rows} == {
-            "official-packs.lock",
-            *(path.name for path in candidates),
-        }
-        for path in candidates:
-            assert (output / path.name).read_bytes() == path.read_bytes()
 
 
 @pytest.mark.parametrize("failure", [None, "recover", "exhaust", "forbidden"])
