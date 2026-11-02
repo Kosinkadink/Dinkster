@@ -4,26 +4,234 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import importlib
 import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
+import torch
 from dinkster_api.v1 import (
     CORE_STRING,
     MHR_POSE_DATA_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_vision_packet,
 )
+from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_comfy.sam3d_body import SAM3DBody_Smooth
+from dinkster_nodes_comfy.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
+from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+@pytest.mark.parametrize(
+    ("storage_dtype", "mixed", "missing", "unexpected"),
+    (
+        (torch.float32, False, [], []),
+        (torch.float16, False, [], []),
+        (torch.float32, True, [], []),
+        (torch.float32, False, ["z", "a"], []),
+        (torch.float32, False, [], ["y", "b"]),
+        (torch.float32, False, ["z", "a"], ["y", "b"]),
+    ),
+)
+def test_bound_sam3d_loader_state_policy_and_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    storage_dtype: Any,
+    mixed: bool,
+    missing: list[str],
+    unexpected: list[str],
+) -> None:
+    """Real checkpoint IO and CPU policy, with only model construction controlled."""
+    initialize_inference_process()
+    from dinkster_inference.model_patcher import ModelPatcher
+
+    class ControlledModel(torch.nn.Module):
+        def __init__(self, *, dtype: Any, operations: Any) -> None:
+            super().__init__()
+            self.constructor_dtype = dtype
+            self.operations = operations
+
+        def load_state_dict(self, state_dict: Any, strict: bool = True, **kwargs: Any) -> Any:
+            assert strict is False
+            assert sorted(state_dict) == (
+                ["probe.layers.0.comfy_quant", "probe.layers.0.weight"]
+                if mixed
+                else ["probe.layers.0.weight"]
+            )
+            torch.testing.assert_close(
+                state_dict["probe.layers.0.weight"].float(),
+                torch.tensor([[1.0, -2.0, 5.0], [8.0, 0.5, -4.0]]),
+                rtol=0,
+                atol=0,
+            )
+            assert hasattr(self.operations, "_quant_config") == mixed
+            if mixed:
+                assert self.operations._quant_config == {"mixed_ops": True}
+            return missing, unexpected
+
+    original_import = importlib.import_module
+
+    def controlled_import(name: str, package: str | None = None) -> Any:
+        if name == "dinkster_inference.ldm.sam3d_body.model.model":
+            return SimpleNamespace(SAM3DBody=ControlledModel)
+        return original_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", controlled_import)
+    state = {
+        "probe.layers.0.0.weight": torch.tensor(
+            [[1.0, -2.0, 5.0], [8.0, 0.5, -4.0]], dtype=storage_dtype
+        ),
+        "hand_cls_embed.weight": torch.tensor([17.0], dtype=storage_dtype),
+        "hand_cls_embed.bias": torch.tensor([19.0], dtype=storage_dtype),
+    }
+    if mixed:
+        state["probe.layers.0.0.comfy_quant"] = torch.tensor([123, 125], dtype=torch.uint8)
+    path = tmp_path / "model.safetensors"
+    save_file(state, path)
+    before = path.read_bytes()
+    mounts = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    mounts.add(MountDef(id="detection", path=tmp_path), kind="model/detection")
+    asset = mounts.bind_name(path.name, "model/detection")
+    if missing or unexpected:
+        with pytest.raises(RuntimeError) as error:
+            SAM3DBody_Loader.execute(model_file=asset)
+        assert str(error.value) == (
+            f"SAM3D-Body checkpoint key mismatch: missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)}"
+        )
+    else:
+        patcher = SAM3DBody_Loader.execute(model_file=asset)["sam3d_body_model"]
+        assert isinstance(patcher, ModelPatcher)
+        assert patcher.load_device.type == patcher.offload_device.type == "cpu"
+        assert patcher.model.backbone_dtype == patcher.model.constructor_dtype == torch.float32
+        if not mixed:
+            assert patcher.model.operations.__name__ == "disable_weight_init"
+    assert path.read_bytes() == before
+
+
+def test_sam3d_loader_rejects_unbound_file() -> None:
+    with pytest.raises(TypeError, match="model_file must be an AssetRef or LocalAssetRef"):
+        SAM3DBody_Loader.execute(model_file="model.safetensors")
+
+
+class LoaderModel(torch.nn.Module):
+    def __init__(self, *, dtype: Any, operations: Any) -> None:
+        super().__init__()
+        self.probe = torch.nn.Module()
+        self.probe.layers = torch.nn.ModuleList([torch.nn.Linear(3, 2, bias=False, dtype=dtype)])
+
+
+class ModelInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="sam3d-loader-fixture.inspect",
+            inputs=(InputSpec("model", TypeExpr.concrete(SAM3D_BODY_MODEL_TYPE)),),
+            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any) -> Any:
+        torch.testing.assert_close(
+            model.model.probe.layers[0].weight,
+            torch.tensor([[1.0, -2.0, 5.0], [8.0, 0.5, -4.0]]),
+            atol=0,
+            rtol=0,
+        )
+        assert model.model.backbone_dtype == torch.float32
+        assert model.load_device.type == model.offload_device.type == "cpu"
+        return cls.outputs(result="checkpoint values and CPU patcher preserved")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_sam3d_loader_ordinary_hosts_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    """Controlled architecture only; this does not certify the unmocked model import."""
+    model_module = "dinkster_inference.ldm.sam3d_body.model.model"
+    monkeypatch.setitem(sys.modules, model_module, SimpleNamespace(SAM3DBody=LoaderModel))
+    path = tmp_path / "model.safetensors"
+    save_file({"probe.layers.0.0.weight": torch.tensor([[1.0, -2.0, 5.0], [8.0, 0.5, -4.0]])}, path)
+    before = path.read_bytes()
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
+    table.add(MountDef(id="detection", path=tmp_path), kind="model/detection")
+    table.scan("detection")
+    asset = table.bind_name(path.name, "model/detection")
+    assert asset is not None
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
+    module = f"sam3d_loader_fixture_{int(in_process)}"
+    (tmp_path / f"{module}.py").write_text(
+        "import sys\nfrom types import SimpleNamespace\n"
+        "from test_sam3d_body_torch import LoaderModel, ModelInspect\n"
+        "from dinkster_api.v1 import register_inference_types\n"
+        f"sys.modules[{model_module!r}] = SimpleNamespace(SAM3DBody=LoaderModel)\n"
+        "NODES = (ModelInspect,)\n",
+        encoding="ascii",
+    )
+    fixture = tmp_path / "fixture.toml"
+    fixture.write_text(
+        '[pack]\nname="sam3d-loader-fixture"\npublisher="dinkster"\n'
+        'namespaces=["sam3d-loader-fixture"]\n'
+        f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(tmp_path / "mounts.json"),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest, worker_group="loader", group_manifests=(native, fixture)
+                    )
+                )
+            graph = graph_from_wire(
+                graph_to_wire(
+                    Graph(
+                        nodes={
+                            "load": GraphNode("SAM3DBody_Loader", {"model_file": asset.to_wire()}),
+                            "inspect": GraphNode(
+                                "sam3d-loader-fixture.inspect",
+                                {"model": Link("load", "sam3d_body_model")},
+                            ),
+                        }
+                    )
+                )
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["result"].resolve() == (
+                    "checkpoint values and CPU patcher preserved"
+                )
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    assert path.read_bytes() == before
 
 
 def _pose() -> dict[str, Any]:

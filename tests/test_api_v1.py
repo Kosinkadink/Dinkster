@@ -448,6 +448,7 @@ GOLDEN_V1_SURFACE = (
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",
+    "load_file3d",
     "register_file3d_types",
     "register_video_edit_type",
     "DITHERS",
