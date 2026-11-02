@@ -556,39 +556,6 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     assert snapshot() == before
 
 
-def test_explicit_source_refusal_without_workflows_leaves_update_state_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    from tests.fixtures.environments.build import build
-
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
-    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
-    setup = subprocess.run(fixture["commands"]["setup"], capture_output=True, text=True, timeout=60)
-    assert setup.returncode == 0, setup.stdout + setup.stderr
-    try:
-        assert _run(root, "stop", "--yes")[0] == 0
-        (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
-        catalog, artifacts = tmp_path / "selected.lock", tmp_path / "selected-artifacts"
-        catalog.write_text("invalid catalog")
-        artifacts.mkdir()
-        paths = [root / name for name in ("current", "project.json", "store")]
-        paths += [store / "projects.json", *(root / "journal").iterdir()]
-        before = {path: path.read_bytes() for path in paths}
-        journals = set((root / "journal").iterdir())
-        code, refused = _run(
-            root, "update", "--catalog-lock", str(catalog), "--artifacts", str(artifacts), "--yes"
-        )
-        assert code == 1 and "pack source staging" in refused["error"], refused
-        assert {path: path.read_bytes() for path in paths} == before
-        assert set((root / "journal").iterdir()) == journals
-        assert not (root / "generations/2").exists()
-        assert not list(store.glob(".workflow-*"))
-    finally:
-        _run(root, "stop", "--yes")
-
-
 @pytest.mark.parametrize("explicit", [False, True])
 def test_workflow_update_prepares_target_registry_inputs_before_journaling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
@@ -979,6 +946,10 @@ environment.main()
         source_release, payloads = _release_sources(mirror)
         supplied = acquire_sources(discover((str(mirror),), "main"), store)
         assert supplied is not None
+        before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
+        state_paths = [root / name for name in ("current", "project.json", "store")]
+        state_paths.append(store / "projects.json")
+        before_state = {path: path.read_bytes() for path in state_paths}
         code, source_refused = _run(
             root,
             "update",
@@ -1000,7 +971,11 @@ environment.main()
         assert sorted(
             path.read_bytes() for path in (cached_release / "artifacts").glob("*.zip")
         ) == sorted(payload for name, payload in payloads.items() if name.endswith(".zip"))
-        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
+        assert {path: path.read_bytes() for path in (root / "journal").glob("*.json")} == (
+            before_journals
+        )
+        assert {path: path.read_bytes() for path in state_paths} == before_state
+        assert not list(store.glob(".workflow-*"))
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
         engine = json.loads((mirror / "channels/main.json").read_bytes())["engine"]["release"][7:]
