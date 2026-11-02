@@ -36,6 +36,7 @@ from .environment_generations import (
     prepare_engine_interpreter,
     prepare_registry_inputs,
     project_operation,
+    stage_pack_sources,
     verify_base_inputs,
 )
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
@@ -587,6 +588,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             if custom is not None
                             else acquire_pack_locks(catalog, variant, store)
                         )
+                    stage_pack_sources(
+                        scratch, catalog_lock=catalog_lock, artifacts=source_artifacts
+                    )
             revalidate()
             target = next_generation(root)
             journal = (
