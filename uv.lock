@@ -1401,6 +1401,7 @@ source = { editable = "packages/dinkster-registry" }
 dependencies = [
     { name = "blake3" },
     { name = "dinkster-schema" },
+    { name = "dinkster-workers" },
     { name = "packaging" },
 ]
 
@@ -1408,7 +1409,8 @@ dependencies = [
 requires-dist = [
     { name = "blake3", specifier = ">=0.4" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
-    { name = "packaging", specifier = ">=24" },
+    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
+    { name = "packaging", specifier = ">=25" },
 ]
 
 [[package]]
@@ -1417,10 +1419,14 @@ version = "0.0.2"
 source = { editable = "packages/dinkster-schema" }
 dependencies = [
     { name = "dinkster-values" },
+    { name = "packaging" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "dinkster-values", editable = "packages/dinkster-values" }]
+requires-dist = [
+    { name = "dinkster-values", editable = "packages/dinkster-values" },
+    { name = "packaging", specifier = ">=24" },
+]
 
 [[package]]
 name = "dinkster-server"

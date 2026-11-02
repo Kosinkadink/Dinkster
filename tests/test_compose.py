@@ -1221,7 +1221,7 @@ def test_compose_defaults_only(
             )
             assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
             assert len(FOUNDATION_NODES) == 54
-            assert len(IMAGE_NODES) == 87
+            assert len(IMAGE_NODES) == 89
             assert len(MEDIA_IO_NODES) == 66
             assert {
                 node_type
@@ -1352,19 +1352,19 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:2ff45dde1588339d578f615422c36cea93dd2f312dea6a3339241c6790b39f97",
+            "blake3:c3eccc6a6e2a8f6f51a571454d502fd79c6f01f40c60b6167b388cac5f9a11cf",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:62f4b5905d372f5a68471935e9c558b5e2f76584f6e52d94bb398fcc519f7f2b",
+            "blake3:c24231f8757beccad2cc20b186ddf11fb4eb7bb1d3faea636466fb3cb992f1fd",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:741b16c12200c14a295940b8621d25b87c45504199e0f0d636d3b406cfa1a1bd",
+            "blake3:d29bcf9258197069f83d845847f629574c539bafb8df9459b4f33dbdc1cd1098",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:b3710f2c80803ab0f5f524cf1e7f29940b3d5ada8fa1aac84a6b7a76703ebc46",
+            "blake3:e4d4f3234b1aff19f8f5802485f21659ef8b83929faaefd84f2b12477e8fc22e",
         ),
     ],
 )
@@ -1695,7 +1695,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:189f1e12c17fd137290d2c061e78bd82b0680d95e14b547553a5f0a166613efd")
+    assert expected == ("blake3:17abaff653c06945f694f46e185d28db12f4a54dd68a20b4af173a635b0c5dc9")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))

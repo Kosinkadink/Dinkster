@@ -1,11 +1,25 @@
 ## Image operations
 
+- Native `ImageCompare` previews each nonempty image batch independently without
+  adding graph outputs. The existing two-output image comparison remains available.
+- Native `GLSLShader` renders four ordered image outputs with bounded image and
+  scalar/curve input families, source-order uniform assignment and custom sizing.
+  The existing prefixed shader remains available with its original member names.
+- Native `Painter` composites a granted uploaded RGBA image over the first base
+  frame or a solid background, resizes paint with LANCZOS and returns the painted
+  alpha mask. An omitted paint asset returns the base and a zero mask. Combined
+  base, paint, resampling and preview memory must fit the image working-set limit.
+  The native body does not read ambient filenames; frontend paint editing and
+  legacy empty filename import are separate integration requirements.
 - Native `BakeAmbientOcclusion` bakes high-poly occlusion into a low-poly UV
   layout, with counted mesh batches, surface projection, distance, bias and
   strength controls, cosine-weighted rays and filled UV gutters.
 - Native `RenderMesh` produces a single image and coverage mask from the first
   counted mesh, with texture, vertex-color, clay, normal and depth modes,
   authored model transforms, supplied cameras and automatic framing.
+- Native `SAM3DBody_Render` renders MHR and external rig pose frames as meshes,
+  silhouettes, 2D or 3D OpenPose skeletons, or SCAIL capsules with hand/face
+  overlays, optional backgrounds, aspect-derived sizing and camera overrides.
 - Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
   preserve original-file assets and sidecars while returning viewport camera,
   model placement and dimensions, with explicit metadata inputs taking priority.
@@ -48,6 +62,12 @@
   limits, with optional pre-welding and open-chain filling.
 - Native `ApplyTextureToMesh` attaches base color and optional ORM/normal maps,
   fitting out-of-range UVs uniformly and retaining the normal-map tangent basis.
+- Native `BakeNormalMapFromMesh` bakes high-poly surface normals into existing
+  low-poly UVs as OpenGL +Y tangent-space images, with cage projection,
+  closest-surface fallback and filled UV gutters.
+- Native `BakeTextureFromVoxel` bakes sparse voxel colors and metallic/roughness
+  into existing mesh UVs, with normalized occupied-corner interpolation,
+  nearest-voxel fallback, optional reference-surface projection and filled gutters.
 - Native `RenderUVAtlas` renders the first mesh's UV charts with deterministic
   colors and black boundary outlines.
 - Native `UnwrapMesh` generates UV atlases with PEC or adaptive charts, retaining

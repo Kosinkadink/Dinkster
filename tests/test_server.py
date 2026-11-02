@@ -5405,6 +5405,61 @@ def test_coordination_endpoints_answer_409_when_ungoverned() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("device", ["mps", "cuda:1", "xpu:0", "cpu", None])
+@pytest.mark.parametrize("type_id", ["MODEL", "VAE"])
+def test_pack_resident_device_and_cost_reach_memory_status(
+    device: str | None, type_id: str
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_memory.resident import default_pool
+    from dinkster_nodes_comfy import register_inference_types
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_inference_types(registry)
+        model = (
+            SimpleNamespace(load_device=device, model_size=lambda: 12345)
+            if device is not None
+            else object()
+        )
+        value = registry.wrap(
+            type_id, model if type_id == "MODEL" else SimpleNamespace(patcher=model)
+        )
+        meta = value.meta.entries
+        accelerated = device is not None and device != "cpu"
+        if accelerated:
+            assert meta["resources"] == {"gpu": device}
+            assert meta["cost"] == {f"vram:{device}": 12345, "ram": 12345}
+        else:
+            assert "resources" not in meta
+            assert "cost" not in meta
+        resource_id = str(meta["resourceId"])
+        assert resource_id.startswith("resident:")
+        pool = default_pool()
+        governor = MemoryGovernor({"ram": 100000, f"vram:{device}": 100000})
+        governor.register_shedder(pool, name="models")
+        client = await make_governed_client(governor)
+        try:
+            response = await client.get("/memory/status?details=1")
+            assert response.status == 200
+            data = await response.json()
+            rows = [
+                row
+                for row in data["consumerDetails"]["models"]
+                if row["itemId"] == resource_id.removeprefix("resident:")
+            ]
+            assert len(rows) == 1
+            assert rows[0]["bytesByResidency"] == (
+                {f"vram:{device}": 12345, "ram": 12345} if accelerated else {}
+            )
+        finally:
+            await client.close()
+            pool.remove(resource_id.removeprefix("resident:"))
+
+    asyncio.run(scenario())
+
+
 def test_reserve_status_renew_release_round_trip() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"vram:cuda:0": 100})
