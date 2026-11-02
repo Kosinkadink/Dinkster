@@ -1348,28 +1348,33 @@ def test_compose_serving_default_resolution_is_atomic(
 
 
 @pytest.mark.parametrize(
-    ("pack_id", "expected_digest"),
+    ("pack_id", "expected_version", "expected_digest"),
     [
         (
             "dinkster-nodes-foundation",
+            "0.0.2",
             "blake3:c3eccc6a6e2a8f6f51a571454d502fd79c6f01f40c60b6167b388cac5f9a11cf",
         ),
         (
             "dinkster-nodes-media-io",
+            "0.0.2",
             "blake3:c24231f8757beccad2cc20b186ddf11fb4eb7bb1d3faea636466fb3cb992f1fd",
         ),
         (
             "dinkster-nodes-image",
+            "0.0.3",
             "blake3:d29bcf9258197069f83d845847f629574c539bafb8df9459b4f33dbdc1cd1098",
         ),
         (
             "dinkster-nodes-remote",
+            "0.0.2",
             "blake3:e4d4f3234b1aff19f8f5802485f21659ef8b83929faaefd84f2b12477e8fc22e",
         ),
     ],
 )
 def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     pack_id: str,
+    expected_version: str,
     expected_digest: str,
 ) -> None:
     source_root = Path(__file__).parent.parent / "packages" / pack_id
@@ -1378,7 +1383,7 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert spec.packs is not None
     info = spec.packs[pack_id]
     assert info.source == f"python:{pack_id}==0.0.2"
-    assert info.version == "0.0.2"
+    assert info.version == expected_version
     assert info.artifact_digest == expected_digest
 
 
