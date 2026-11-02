@@ -14,12 +14,12 @@ from dinkster_workers import load_manifest
 from scripts.build_official_packs import OFFICIAL_PACK_FAMILIES
 
 
-def publication_selection(root: Path, before: str) -> tuple[tuple[str, ...], bool]:
-    """Engine dependency changes need all packs and cannot use an older engine preflight."""
+def publication_selection(root: Path, before: str) -> tuple[str, ...]:
+    """Engine dependency and publication changes require checking every official pack."""
     if re.fullmatch(r"[0-9a-f]{40}", before) is None:
         raise ValueError("publication base must be a full Git commit identity")
     if before == "0" * 40:
-        return select_packs(root, before=before), True
+        return select_packs(root, before=before)
     changed = subprocess.check_output(
         ["git", "-C", str(root), "diff", "--name-only", before, "HEAD"], text=True
     ).splitlines()
@@ -41,8 +41,7 @@ def publication_selection(root: Path, before: str) -> tuple[tuple[str, ...], boo
         }
         for path in changed
     )
-    packs = select_packs(root, before="0" * 40 if engine_changed or publication_changed else before)
-    return packs, not engine_changed
+    return select_packs(root, before="0" * 40 if engine_changed or publication_changed else before)
 
 
 def select_packs(

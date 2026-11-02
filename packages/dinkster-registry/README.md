@@ -104,11 +104,13 @@ publish nothing. Pack changes select their owners; engine dependency or
 publication-workflow changes select all current packs. Unrelated engine-only
 changes select none. All six supported bases resolve locks on native hosts.
 
-PRs without engine dependency changes preflight against the exact base-commit
-engine release. A PR changing engine dependency inputs instead validates its
-own source archives and explicitly reports that published-engine lock preflight
-is not applicable until its candidate engine is released. Exact pack tags also
-validate sources only. PR, fork and tag refs never submit or receive the
+PRs resolve native locks using their candidate-head locked engine dependencies,
+not an older published engine. This preflight does not claim a released engine.
+It compares archive digest/size and every supported-base install lock with any
+existing published pack version. Changed bytes fail naming the pack and requiring
+a pack version bump. Publication repeats this check before the first submission;
+identical submissions remain idempotent, and a conflicting submission fails
+without retry. Exact pack tags do not submit. PR, fork and tag refs never receive the
 submission credential. A missing credential refuses submission. Registry
 versions and lock bindings are immutable, so changed bytes need new manifest
 versions. Publication does not imply that scanner admission has completed.

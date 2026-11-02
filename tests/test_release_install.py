@@ -2074,20 +2074,14 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     monkeypatch.setenv(
         "PACK_TAG", "pack/dinkster-nodes-foundation/v2.7rc1" if event == "tag" else ""
     )
-    if event in {"tag", "lockstep"}:
-        from scripts import build_official_packs
-
-        monkeypatch.setattr(build_official_packs, "build", lambda *args, **kwargs: ())
     exec(compile(script, "official-packs.yml", "exec"), {})
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert json.loads(outputs["packs"]) == (
         [] if event in {"engine-only", "main-failure"} else ["dinkster-nodes-foundation"]
     )
-    assert outputs["applicable"] == (
-        "false" if event in {"tag", "lockstep", "main-failure"} else "true"
-    )
+    assert outputs["applicable"] == ("false" if event == "main-failure" else "true")
     if event in {"tag", "lockstep"}:
-        assert "published-engine lock preflight is not applicable" in capsys.readouterr().out
+        assert "candidate-head engine dependency pins" in capsys.readouterr().out
     if event == "main-failure":
         assert "same-commit engine release did not succeed" in capsys.readouterr().out
     if event in {"main-success", "main-workflow"}:
@@ -2124,6 +2118,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         if "--output .official-publication/preflight" in step.get("run", "")
     )
     assert "--publish" not in preflight["run"]
+    assert "--check-published" in preflight["run"]
     assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
 
 
@@ -2189,7 +2184,9 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("problem", [None, "range", "tag", "commit", "missing", "digest"])
+@pytest.mark.parametrize(
+    "problem", [None, "range", "tag", "commit", "missing", "digest", "candidate"]
+)
 def test_official_publication_workflow_prepares_verified_published_engine_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
 ) -> None:
@@ -2264,6 +2261,15 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setattr(subprocess, "check_output", read)
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(preparation, "fetch_artifact", fetch)
+    candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
+    if problem == "candidate":
+        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.3.dev456")
+
+        def candidate_wheels(root, uv, bases):
+            assert root == tmp_path and uv == "uv" and len(bases) == 2
+            return candidate_dependencies
+
+        monkeypatch.setattr(preparation, "select_dependency_wheels", candidate_wheels)
     monkeypatch.setattr(
         preparation,
         "build",
@@ -2274,7 +2280,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.setenv("PACKS", '["dinkster-nodes-foundation"]')
     try:
-        if problem is not None:
+        if problem not in {None, "candidate"}:
             with pytest.raises((ValueError, environment_downloads.DownloadError)):
                 preparation.prepare_inputs(
                     tmp_path,
@@ -2289,12 +2295,20 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 tmp_path / ".official-publication",
                 "c" * 40,
                 ["dinkster-nodes-foundation"],
+                candidate=problem == "candidate",
             ) == [
                 {"variant": "linux-cpu", "runner": "ubuntu-latest"},
                 {"variant": "win-nvidia", "runner": "windows-latest"},
             ]
             work = tmp_path / ".official-publication"
-            assert (work / "engine/constraints.txt").read_bytes() == b"pins"
+            if problem == "candidate":
+                manifest = json.loads((work / "engine/release-manifest.json").read_bytes())
+                assert manifest["dependencies"] == candidate_dependencies
+                assert manifest["version"] == "0.0.3.dev456"
+                assert manifest["commit"] == "c" * 40
+                assert manifest["artifacts"] == []
+            else:
+                assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
                 ("dinkster-nodes-foundation", "0.0.2")

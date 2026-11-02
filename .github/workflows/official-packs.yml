@@ -59,7 +59,6 @@ jobs:
           import json, os, subprocess
           from pathlib import Path
           from scripts.select_official_packs import publication_selection, select_packs
-          from scripts.build_official_packs import build
           root = Path.cwd()
           tag = os.environ['PACK_TAG']
           event = os.environ['EVENT']
@@ -71,15 +70,14 @@ jobs:
           elif tag:
               packs, applicable = select_packs(root, tag=tag), False
           else:
-              packs, applicable = publication_selection(root, before)
-          if event == 'workflow_run' and os.environ['CONCLUSION'] == 'success':
+              packs, applicable = publication_selection(root, before), True
+          if event == 'pull_request' or event == 'workflow_run' and os.environ['CONCLUSION'] == 'success':
               applicable = True
-          if packs and not applicable:
-              build(root, root / '.official-source-preflight', packs=packs)
-              print('Source archives validated; published-engine lock preflight is not applicable: candidate engine pins or pack tag have no same-head published engine')
+          if event == 'pull_request':
+              print('Preflight uses candidate-head engine dependency pins; it does not claim a published engine release')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('packs=' + json.dumps(packs) + '\n')
-              output.write('engine=' + (head if event == 'workflow_run' else before) + '\n')
+              output.write('engine=' + head + '\n')
               output.write('applicable=' + str(applicable).lower() + '\n')
           PY
 
@@ -99,19 +97,20 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
-      - name: Prepare own-version sources against a published engine and every supported base
+      - name: Prepare own-version sources and every supported base
         id: prepare
         env:
           GH_TOKEN: ${{ github.token }}
           PACKS: ${{ needs.select.outputs.packs }}
           ENGINE_COMMIT: ${{ needs.select.outputs.engine }}
+          CANDIDATE: ${{ github.event_name == 'pull_request' }}
         run: |
           uv run --no-sync python - <<'PY'
           import json, os
           from pathlib import Path
           from scripts.prepare_official_publication import prepare_inputs
           root = Path.cwd()
-          rows = prepare_inputs(root, root / '.official-publication', os.environ['ENGINE_COMMIT'], json.loads(os.environ['PACKS']))
+          rows = prepare_inputs(root, root / '.official-publication', os.environ['ENGINE_COMMIT'], json.loads(os.environ['PACKS']), candidate=os.environ['CANDIDATE'] == 'true')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('matrix=' + json.dumps({'include': rows}) + '\n')
           PY
@@ -200,7 +199,7 @@ jobs:
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
           uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
-            --output .official-publication/preflight
+            --output .official-publication/preflight --check-published
       - name: Submit own-version packs to the official registry
         if: github.repository == 'Kosinkadink/Dinkster' && github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success'
         shell: bash
