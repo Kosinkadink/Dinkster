@@ -2068,7 +2068,14 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     output = tmp_path / "outputs"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setenv("EVENT", "workflow_run" if event.startswith("main-") else "pull_request")
+    monkeypatch.setenv(
+        "EVENT",
+        "workflow_run"
+        if event.startswith("main-")
+        else "push"
+        if event == "tag"
+        else "pull_request",
+    )
     monkeypatch.setenv("CONCLUSION", "failure" if event == "main-failure" else "success")
     monkeypatch.setenv("BEFORE", "0" * 40 if event == "initial" else tree)
     monkeypatch.setenv(
@@ -2099,6 +2106,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "scripts.build_release import" not in prepare["run"]
     assert "prepare_inputs(" in prepare["run"]
     assert "ENGINE_COMMIT" in prepare["env"]
+    assert prepare["env"]["CANDIDATE"] == "${{ github.event_name != 'workflow_run' }}"
     assert "version=" not in prepare["run"]
     assert jobs["publish"]["needs"] == ["sources", "locks"]
     [submission] = [

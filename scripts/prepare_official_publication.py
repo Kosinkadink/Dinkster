@@ -23,7 +23,7 @@ from scripts.build_release import development_version, select_dependency_wheels
 def prepare_inputs(
     root: Path, work: Path, commit: str, packs: list[str], *, candidate: bool = False
 ) -> list[dict[str, str]]:
-    """Require the exact published engine identity before resolving any native locks."""
+    """Use candidate-head dependency pins for preflight, exact published identity for main."""
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         raise ValueError("publication engine commit must be a full Git identity")
     selections = json.loads((root / "scripts/base_bundles.json").read_bytes())

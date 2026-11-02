@@ -68,12 +68,10 @@ jobs:
               print('No official packs published: same-commit engine release did not succeed')
               packs, applicable = (), False
           elif tag:
-              packs, applicable = select_packs(root, tag=tag), False
+              packs, applicable = select_packs(root, tag=tag), True
           else:
               packs, applicable = publication_selection(root, before), True
-          if event == 'pull_request' or event == 'workflow_run' and os.environ['CONCLUSION'] == 'success':
-              applicable = True
-          if event == 'pull_request':
+          if event != 'workflow_run':
               print('Preflight uses candidate-head engine dependency pins; it does not claim a published engine release')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('packs=' + json.dumps(packs) + '\n')
@@ -103,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PACKS: ${{ needs.select.outputs.packs }}
           ENGINE_COMMIT: ${{ needs.select.outputs.engine }}
-          CANDIDATE: ${{ github.event_name == 'pull_request' }}
+          CANDIDATE: ${{ github.event_name != 'workflow_run' }}
         run: |
           uv run --no-sync python - <<'PY'
           import json, os
