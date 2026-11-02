@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from contextlib import ExitStack
 from typing import ClassVar, cast
 
 from dinkster_api.v1 import (
@@ -143,14 +144,32 @@ class _Save3D(Node):
             raise TypeError("FILE_3D source must be a public asset identity")
         writer = AssetWriter(MountSnapshotWriter(snapshot))
         target = writer.output_target(filename_prefix, mount=mount)
-        with source.open() as stream:
-            refs = writer.save_stream_batch(
-                target,
-                (stream,),
-                suffix=f".{model_3d['format'] or 'glb'}",
-                media_type=source.media_type or "application/octet-stream",
-                limit=ENCODED_MEDIA_LIMIT_BYTES,
-            )
+        resources = cast("Mapping[str, AssetRef | LocalAssetRef]", model_3d.get("resources", {}))
+        if resources:
+            if source.name in resources:
+                raise AssetError("FILE_3D primary and resource filename collision")
+            members = {source.name: source, **resources}
+            with ExitStack() as streams:
+                refs = list(
+                    writer.save_named_streams(
+                        target,
+                        {name: streams.enter_context(ref.open()) for name, ref in members.items()},
+                        limit=ENCODED_MEDIA_LIMIT_BYTES,
+                        media_types={
+                            name: ref.media_type or "application/octet-stream"
+                            for name, ref in members.items()
+                        },
+                    ).values()
+                )
+        else:
+            with source.open() as stream:
+                refs = writer.save_stream_batch(
+                    target,
+                    (stream,),
+                    suffix=f".{model_3d['format'] or 'glb'}",
+                    media_type=source.media_type or "application/octet-stream",
+                    limit=ENCODED_MEDIA_LIMIT_BYTES,
+                )
         state = (
             cast("dict[str, object]", viewport_state) if isinstance(viewport_state, dict) else {}
         )
