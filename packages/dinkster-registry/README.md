@@ -124,17 +124,24 @@ set. All local validation completes before the first request; separate release
 submissions are not a registry transaction. A queued receipt is not scanner
 acceptance or proof that the default set is served.
 
-`.github/workflows/official-packs.yml` selects changed committed packs on main
-pushes or one exact `pack/PACK_ID/vVERSION` tag. Engine-only pushes publish
-nothing. It uses the newest already-published engine's verified artifacts as
-constraints and wheel inputs, requires the selected packs to admit that engine,
-and resolves locks on each supported base's native host. It never builds or
-publishes an engine. Pull requests run the same preparation and complete-map
-validation without registry submission. Only trusted `Kosinkadink/Dinkster`
-main pushes receive `DINKSTER_REGISTRY_TOKEN` for the final submission step;
-PR, fork and tag refs never submit. A missing credential
-refuses rather than reporting publication success. Pack changes need their own
-new manifest version because registry versions are immutable.
+`.github/workflows/official-packs.yml` publishes after the same commit's
+successful `Versioned wheel release` run on trusted `Kosinkadink/Dinkster`
+main. It fetches `main-COMMIT` and verifies the engine manifest's repository,
+tag and commit, never selecting by publication time. Failed engine releases
+publish nothing. Pack changes select their owners; engine dependency or
+publication-workflow changes select all current packs. Unrelated engine-only
+changes select none. All six supported bases resolve locks on native hosts.
+
+PRs resolve native locks using their candidate-head locked engine dependencies,
+not an older published engine. This preflight does not claim a released engine.
+It compares archive digest/size and every supported-base install lock with any
+existing published pack version. Changed bytes fail naming the pack and requiring
+a pack version bump. Publication repeats this check before the first submission;
+identical submissions remain idempotent, and a conflicting submission fails
+without retry. Exact pack tags do not submit. PR, fork and tag refs never receive the
+submission credential. A missing credential refuses submission. Registry
+versions and lock bindings are immutable, so changed bytes need new manifest
+versions. Publication does not imply that scanner admission has completed.
 
 `python -m scripts.check_default_pack_admission --engine-version VERSION`
 resolves the complete committed default set and runs these public archive stages
