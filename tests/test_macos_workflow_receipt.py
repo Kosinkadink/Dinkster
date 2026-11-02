@@ -23,7 +23,7 @@ SPEC = importlib.util.spec_from_file_location("receipt", ROOT / "tools/macos_wor
 assert SPEC is not None and SPEC.loader is not None
 receipt = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(receipt)
-STARTER_COMMIT = "2f880079bb3b48867795db4f7ed45633fa25e374"
+STARTER_COMMIT = "1ec923c7e9ba9c4c01189f1fc01be9b4554ce8ec"
 STARTER_SHA256 = "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
 STARTER_BYTES = (ROOT / "tests/fixtures/macos-sd15.json").read_bytes()
 SCHEMAS = build_schemas(
@@ -131,6 +131,17 @@ class MacWorkflowReceiptTests(unittest.TestCase):
             ("mps", "completed", [], "accepted"),
             ("mps", "completed", [], "history"),
             ("mps", "completed", [], "no-output"),
+            ("mps", "completed", [], "memory-foreign"),
+            ("mps", "completed", [], "memory-empty"),
+            ("mps", "completed", [], "memory-duplicate"),
+            ("mps", "completed", [], "memory-zero"),
+            ("mps", "completed", [], "retained-grant"),
+            ("mps", "completed", [], "artifact-old"),
+            ("mps", "completed", [], "artifact-missing"),
+            ("mps", "completed", [], "artifact-foreign"),
+            ("mps", "completed", [], "artifact-size"),
+            ("mps", "completed", [], "artifact-duplicate"),
+            ("mps", "completed", [], "artifact-traversal"),
             ("mps", "completed", [], "mount-fresh"),
             ("mps", "completed", [], "mount-race"),
             ("mps", "completed", [], "mount-path"),
@@ -151,6 +162,11 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                 starter.write_bytes(STARTER_BYTES)
                 status = installed_status(root)
                 output = root / "receipt"
+                retained_grant = foreign == "retained-grant" or str(foreign).startswith("artifact-")
+                images = root / "retained-images" if retained_grant else output / "images"
+                if retained_grant:
+                    images.mkdir()
+                    (images / "old.png").write_bytes(b"preserved old output")
                 asset = {
                     "digest": "sha256:resolved",
                     "name": checkpoint.name,
@@ -171,6 +187,16 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                         "state": "pending",
                     },
                 ]
+                if retained_grant:
+                    grants.append(
+                        {
+                            "id": "mac-readiness-comfy-output",
+                            "path": str(images),
+                            "mode": "readwrite",
+                            "kind": "directory/output",
+                            "state": "ready",
+                        }
+                    )
                 if foreign in ("mount-fresh", "mount-race"):
                     grants.pop(0)
                 elif foreign in ("mount-path", "mount-mode", "mount-kind"):
@@ -189,7 +215,7 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                     device == "mps"
                     and state == "completed"
                     and not cached
-                    and foreign in (None, "mount-fresh", "mount-race")
+                    and foreign in (None, "mount-fresh", "mount-race", "retained-grant")
                 )
                 clock = iter(range(0, 10000, 301 if foreign == "mount-timeout" else 1))
 
@@ -200,6 +226,7 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                     asset=asset,
                     submitted=submitted,
                     output=output,
+                    images=images,
                     state=state,
                     device=device,
                     cached=cached,
@@ -240,7 +267,7 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                     elif route == "/api/jobs":
                         submitted.append(json.loads(request.data))
                         if foreign != "no-output":
-                            (output / "images/result.png").write_bytes(b"actual output bytes")
+                            (images / "result.png").write_bytes(b"actual output bytes")
                         body = {
                             "jobRef": "server-assigned",
                             "clientId": "mac-readiness",
@@ -259,11 +286,57 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                                 "checkpoint": {
                                     "MODEL": {
                                         "meta": {
-                                            "resources": {"gpu": device},
+                                            "resourceId": "resident:checkpoint-model",
                                         }
                                     }
                                 }
                             },
+                            "artifacts": [],
+                        }
+                        if foreign not in ("no-output", "artifact-missing"):
+                            artifact = {
+                                "nodeId": "save",
+                                "mediaType": "image/png",
+                                "size": len(b"actual output bytes"),
+                                "virtualPath": "mounts/mac-readiness-comfy-output/result.png",
+                            }
+                            if foreign == "artifact-old":
+                                artifact.update(
+                                    virtualPath="mounts/mac-readiness-comfy-output/old.png",
+                                    size=len(b"preserved old output"),
+                                )
+                            elif foreign == "artifact-foreign":
+                                artifact["virtualPath"] = "mounts/other-output/result.png"
+                            elif foreign == "artifact-size":
+                                artifact["size"] = len(b"actual output bytes") + 1
+                            elif foreign == "artifact-traversal":
+                                artifact["virtualPath"] = (
+                                    "mounts/mac-readiness-comfy-output/../result.png"
+                                )
+                            body["artifacts"] = (
+                                [artifact, artifact]
+                                if foreign == "artifact-duplicate"
+                                else [artifact]
+                            )
+                    elif route == "/memory/status?details=1":
+                        row = {
+                            "itemId": "foreign"
+                            if foreign == "memory-foreign"
+                            else "checkpoint-model",
+                            "displayName": "resident checkpoint",
+                            "bytesByResidency": {}
+                            if foreign == "memory-empty"
+                            else {f"vram:{device}": 0 if foreign == "memory-zero" else 12345},
+                        }
+                        body = {
+                            "consumerDetails": {
+                                "dinkster-nodes-comfy:resident-values-0": [row, row]
+                                if foreign == "memory-duplicate"
+                                else [row],
+                                "other-pack:resident-values-0": [
+                                    dict(row, itemId="checkpoint-model")
+                                ],
+                            }
                         }
                     else:
                         body = {}
@@ -288,6 +361,7 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                             str(root / "release-manifest.json"),
                             "--output",
                             str(output),
+                            *(["--images", str(images)] if retained_grant else []),
                         ],
                     ),
                     patch.object(receipt.platform, "system", return_value="Darwin"),
@@ -309,6 +383,8 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                         with self.assertRaises(RuntimeError):
                             receipt.main()
                 report = json.loads((output / "receipt.json").read_text())
+                if retained_grant:
+                    self.assertEqual((images / "old.png").read_bytes(), b"preserved old output")
                 if mount_failure:
                     self.assertEqual(report["status"], "failed")
                     self.assertEqual(submitted, [])
@@ -342,6 +418,11 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                 diagnostics = validate(graph_from_wire(job["graph"]), SCHEMAS, job["targets"])
                 self.assertEqual([item for item in diagnostics if item.severity == "error"], [])
                 if report["status"] == "pass":
+                    self.assertEqual(report["engineDevice"], "mps")
+                    self.assertEqual(
+                        report["engineResident"]["resourceId"], "resident:checkpoint-model"
+                    )
+                    self.assertTrue((output / "memory-status.json").is_file())
                     self.assertTrue(report["installedStatusMatched"])
                     self.assertEqual(report["installedCommit"], STARTER_COMMIT)
                     self.assertEqual(report["installedGeneration"], 2)
@@ -360,6 +441,8 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                         report["outputs"][0]["sha256"],
                         hashlib.sha256(b"actual output bytes").hexdigest(),
                     )
+                    self.assertEqual(len(report["outputs"]), 1)
+                    self.assertEqual(report["outputs"][0]["path"], str(images / "result.png"))
 
     def test_preflight_failures_retain_diagnostics_without_overwriting_existing_output(
         self,
