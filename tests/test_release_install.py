@@ -2015,7 +2015,8 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    "event", ["initial", "engine-only", "tag", "lockstep", "main-success", "main-failure"]
+    "event",
+    ["initial", "engine-only", "tag", "lockstep", "main-success", "main-failure", "main-workflow"],
 )
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, event: str
@@ -2043,8 +2044,12 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
     tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
     (tmp_path / ".git/HEAD").write_text(tree + "\n")
-    if event in {"lockstep", "main-success", "main-failure"}:
-        changed = tmp_path / "uv.lock"
+    after = tree
+    if event in {"lockstep", "main-success", "main-failure", "main-workflow"}:
+        changed = tmp_path / (
+            ".github/workflows/official-packs.yml" if event == "main-workflow" else "uv.lock"
+        )
+        changed.parent.mkdir(parents=True, exist_ok=True)
         changed.write_text("version = 1\n")
         subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
         after = subprocess.check_output(
@@ -2085,7 +2090,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         assert "published-engine lock preflight is not applicable" in capsys.readouterr().out
     if event == "main-failure":
         assert "same-commit engine release did not succeed" in capsys.readouterr().out
-    if event == "main-success":
+    if event in {"main-success", "main-workflow"}:
         assert outputs["engine"] == after
     assert jobs["sources"]["if"] == (
         "needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'"
