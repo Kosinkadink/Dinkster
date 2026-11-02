@@ -29,6 +29,7 @@ from dinkster_api.v1 import (
     ColorWidget,
     ComboWidget,
     InputSpec,
+    LocalAssetRef,
     MountSnapshotWriter,
     MountWidget,
     Node,
@@ -91,7 +92,7 @@ def image_batch(images: Any) -> Any:
     return batch
 
 
-def _load_image(asset: AssetRef) -> tuple[Any, Any]:
+def _load_image(asset: AssetRef | LocalAssetRef) -> tuple[Any, Any]:
     if asset.size > IMAGE_WORKING_SET_LIMIT_BYTES:
         raise ValueError("image asset exceeds the input byte limit")
     with asset.open() as handle:
@@ -144,7 +145,7 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
     return torch.stack(images), torch.stack(masks)
 
 
-def _load_webp(asset: AssetRef) -> tuple[Any, Any]:
+def _load_webp(asset: AssetRef | LocalAssetRef) -> tuple[Any, Any]:
     image_module = importlib.import_module("PIL.Image")
     image_ops = importlib.import_module("PIL.ImageOps")
     image_sequence = importlib.import_module("PIL.ImageSequence")
@@ -635,7 +636,7 @@ class LoadImage(Node):
         )
 
     @classmethod
-    def execute(cls, *, image: AssetRef) -> Mapping[str, object]:
+    def execute(cls, *, image: AssetRef | LocalAssetRef) -> Mapping[str, object]:
         images, masks = _load_image(image)
         return cls.outputs(IMAGE=images, MASK=masks)
 
