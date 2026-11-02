@@ -30,11 +30,13 @@ from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetVault,
+    LibraryStore,
     LocalAssetRef,
     MountDef,
     MountSnapshotResolver,
     MountTable,
     digest_bytes,
+    load_file3d,
     register_asset_type,
     register_file3d_types,
     register_load3d_type,
@@ -59,6 +61,565 @@ from dinkster_workers import InProcessWorker
 from dinkster.compose import PackSpec, ServingComposer
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
+
+def test_load_file3d_binds_only_declared_adjacent_files_and_roundtrips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "data").mkdir()
+    primary = (
+        b'{"asset":{"version":"2.0"},"buffers":[{"uri":"data/mesh.bin"}],'
+        b'"images":[{"uri":"albedo.png"},{"uri":"data:image/png;base64,AA=="}]}'
+    )
+    (root / "scene.gltf").write_bytes(primary)
+    (root / "data/mesh.bin").write_bytes(b"\x01\x03\x09")
+    (root / "albedo.png").write_bytes(b"different texture bytes")
+    (root / "unused.bin").write_bytes(b"not declared")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef(id="models", path=root), kind="media/model3d")
+    table.scan("models")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    source = table.bind_name("scene.gltf", "media/model3d")
+    assert isinstance(source, AssetRef)
+    packet = load_file3d(source)
+    assert packet is not None and packet["source"] is source and packet["format"] == "gltf"
+    refs = cast("dict[str, AssetRef]", packet["resources"])
+    assert {name: ref.read_bytes() for name, ref in refs.items()} == {
+        "data/mesh.bin": b"\x01\x03\x09",
+        "albedo.png": b"different texture bytes",
+    }
+    registry = TypeRegistry()
+    register_file3d_types(registry, MountSnapshotResolver(snapshot))
+    value = registry.wrap(FILE_3D_GLTF_TYPE, packet)
+    manifest = json.loads(registry.render(value, "manifest").data)
+    assert set(manifest["resources"]) == {"data/mesh.bin", "albedo.png"}
+    assert source.read_bytes() == primary
+    payload = registry.spec(FILE_3D_GLTF_TYPE).encode(packet)
+    table.remove("models")
+    restored = cast("dict[str, object]", registry.spec(FILE_3D_GLTF_TYPE).decode(payload))
+    with pytest.raises(AssetError):
+        cast(AssetRef, restored["source"]).read_bytes()
+    with pytest.raises(AssetError):
+        cast("dict[str, AssetRef]", restored["resources"])["data/mesh.bin"].read_bytes()
+    with pytest.raises(AssetError):
+        load_file3d(source)
+
+
+@pytest.mark.parametrize("format_id", ["gltf", "glb", "obj"])
+@pytest.mark.parametrize("scanned", [False, True])
+def test_load_file3d_engine_grants_unindexed_companions_to_worker(
+    tmp_path: Path, format_id: str, scanned: bool
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    if scanned:
+        table.scan("models")
+    (root / "nested").mkdir()
+    if format_id == "obj":
+        primary = b"mtllib nested/material.mtl\nv 3 5 7\n"
+        dependencies = {
+            "nested/material.mtl": b"newmtl surface\nmap_Kd color map.png\n",
+            "nested/color map.png": b"distinct texture bytes",
+        }
+    else:
+        document = (
+            b'{"asset":{"version":"2.0"},"buffers":[{"uri":"nested/mesh.bin"}],'
+            b'"images":[{"uri":"nested/color%20map.png"}]}'
+        )
+        if format_id == "glb":
+            document += b" " * (-len(document) % 4)
+            primary = struct.pack(
+                "<4sIIII", b"glTF", 2, 20 + len(document), len(document), 0x4E4F534A
+            )
+            primary += document
+        else:
+            primary = document
+        dependencies = {
+            "nested/mesh.bin": b"different buffer bytes",
+            "nested/color map.png": b"distinct texture bytes",
+        }
+    (root / f"scene.{format_id}").write_bytes(primary)
+    for name, data in dependencies.items():
+        (root / name).write_bytes(data)
+    (root / "unrelated.bin").write_bytes(b"never granted")
+    source = table.bind_name(f"scene.{format_id}", "media/model3d")
+    assert isinstance(source, LocalAssetRef)
+    packet = load_file3d(source)
+    assert packet is not None
+    worker = MountSnapshotResolver(snapshot)
+    worker_source = LocalAssetRef.from_wire(source.to_wire(), worker)
+    worker_packet = load_file3d(worker_source)
+    assert worker_packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    spec = registry.spec(FILE_3D_TYPE)
+    returned = cast("dict[str, object]", spec.decode(spec.encode(worker_packet)))
+    assert cast(LocalAssetRef, returned["source"]).read_bytes() == primary
+    resources = cast("dict[str, LocalAssetRef]", returned["resources"])
+    assert {name: ref.read_bytes() for name, ref in resources.items()} == dependencies
+    assert all(isinstance(ref, LocalAssetRef) for ref in resources.values())
+    snapshot_data = json.loads(snapshot.read_text())
+    assert {entry["relative"] for entry in snapshot_data["localBindings"].values()} == {
+        f"scene.{format_id}",
+        *dependencies,
+    }
+    table.remove("models")
+    for ref in (cast(LocalAssetRef, returned["source"]), *resources.values()):
+        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+            ref.read_bytes()
+
+
+@pytest.mark.parametrize("bound_identity", [False, True])
+@pytest.mark.parametrize("preview_union", [False, True])
+def test_file3d_source_preflight_grants_declared_unindexed_resources(
+    tmp_path: Path, bound_identity: bool, preview_union: bool
+) -> None:
+    from dinkster_graph import graph_from_wire, graph_to_wire
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names
+
+    root = tmp_path / "input"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "scene.gltf").write_bytes(
+        b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin"}]}'
+    )
+    (nested / "mesh.bin").write_bytes(b"declared buffer bytes")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef("models", root, kind="media/model3d"))
+    source = table.bind_name("nested/scene.gltf", "media/model3d")
+    assert isinstance(source, LocalAssetRef)
+    schema = LoadModel3D.define_schema()
+    selection: object = source.to_wire() if bound_identity else "nested/scene.gltf"
+    if preview_union:
+        schema = NodeSchema(
+            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        )
+        if bound_identity:
+            packet = load_file3d(source)
+            assert packet is not None
+            refs = cast("dict[str, LocalAssetRef]", packet["resources"])
+            selection = TypedLiteral(
+                FILE_3D_TYPE,
+                {
+                    "format": "gltf",
+                    "source": source.to_wire(),
+                    "resources": {name: ref.to_wire() for name, ref in refs.items()},
+                },
+            )
+    graph = Graph(
+        {
+            "load": GraphNode(
+                schema.node_type,
+                {"model": selection},
+            )
+        }
+    )
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+    prepared, missing = bind_model_names(graph, {schema.node_type: schema}, library)
+    assert missing == []
+    if preview_union and bound_identity:
+        assert prepared.nodes["load"].inputs["model"] is selection
+    prepared = graph_from_wire(json.loads(json.dumps(graph_to_wire(prepared))))
+    worker = MountSnapshotResolver(snapshot)
+    value = prepared.nodes["load"].inputs["model"]
+    if preview_union:
+        assert isinstance(value, TypedLiteral)
+        assert value.type_id == FILE_3D_TYPE
+        worker_registry = TypeRegistry()
+        register_file3d_types(worker_registry, worker)
+        packet = worker_registry.wrap(value.type_id, value.value).resolve()
+    else:
+        wire = cast("Mapping[str, object]", value)
+        selected = LocalAssetRef.from_wire(wire, worker)
+        packet = load_file3d(selected)
+    assert packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    spec = registry.spec(FILE_3D_TYPE)
+    returned = cast("dict[str, object]", spec.decode(spec.encode(packet)))
+    refs = cast("dict[str, LocalAssetRef]", returned["resources"])
+    assert refs["mesh.bin"].read_bytes() == b"declared buffer bytes"
+    assert (
+        cast(LocalAssetRef, returned["source"]).read_bytes() == (nested / "scene.gltf").read_bytes()
+    )
+
+
+@pytest.mark.parametrize("preview_union", [False, True])
+@pytest.mark.parametrize("selection", [None, "", "none", TypedLiteral(CORE_STRING, "none")])
+def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
+    preview_union: bool, selection: object
+) -> None:
+    from dinkster_server.preflight import bind_model_names
+
+    schema = LoadModel3D.define_schema()
+    if preview_union:
+        schema = NodeSchema(
+            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        )
+    graph = Graph({"load": GraphNode(schema.node_type, {"model": selection})})
+    prepared, missing = bind_model_names(graph, {schema.node_type: schema}, None)
+    assert missing == []
+    value = prepared.nodes["load"].inputs["model"]
+    assert isinstance(value, TypedLiteral)
+    assert value.type_id == FILE_3D_TYPE
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_asset_type(registry)
+    register_file3d_types(registry)
+    assert registry.wrap(value.type_id, value.value).resolve() is None
+
+    class EmptyFileConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                schema.node_type,
+                inputs=schema.inputs,
+                outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_TYPE)),),
+            )
+
+        @classmethod
+        def execute(cls, *, model: object) -> Mapping[str, object]:
+            return cls.outputs(file=model)
+
+    async def scenario() -> None:
+        nodes = (EmptyFileConsumer,)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        result = await engine.run(prepared, ["load"])
+        assert result.outputs["load"]["file"].resolve() is None
+        assert not result.artifacts
+
+    asyncio.run(scenario())
+    linked = Graph({"load": GraphNode(schema.node_type, {"model": Link("producer", "file")})})
+    prepared, missing = bind_model_names(linked, {schema.node_type: schema}, None)
+    assert prepared == linked
+    assert missing == []
+
+
+def test_file3d_source_preflight_distinguishes_empty_default_from_missing_required() -> None:
+    from dinkster_server.preflight import bind_model_names
+
+    for default, required, expected in (
+        ("", True, {"model": TypedLiteral(FILE_3D_TYPE, None)}),
+        (None, False, {"model": TypedLiteral(FILE_3D_TYPE, None)}),
+        (None, True, {}),
+    ):
+        schema = NodeSchema(
+            "preview-file",
+            inputs=(
+                InputSpec(
+                    "model",
+                    TypeExpr.union(CORE_STRING, FILE_3D_TYPE),
+                    default=default,
+                    required=required,
+                ),
+            ),
+        )
+        graph = Graph({"preview": GraphNode(schema.node_type)})
+        prepared, missing = bind_model_names(graph, {schema.node_type: schema}, None)
+        assert not missing
+        assert prepared.nodes["preview"].inputs == expected
+
+
+@pytest.mark.parametrize("preview_union", [False, True])
+def test_file3d_submission_rejects_missing_companions_as_client_error(
+    tmp_path: Path, preview_union: bool
+) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_engine import EventListener
+    from dinkster_graph import graph_to_wire
+    from dinkster_server import create_app
+    from dinkster_server.library import ServerLibrary
+
+    root = tmp_path / "input"
+    root.mkdir()
+    (root / "scene.gltf").write_bytes(
+        b'{"asset":{"version":"2.0"},"buffers":[{"uri":"missing.bin"}]}'
+    )
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    schema = LoadModel3D.define_schema()
+    if preview_union:
+        schema = NodeSchema(
+            "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        )
+    schemas = {schema.node_type: schema}
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+
+    def factory(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, table)
+        register_file3d_types(registry, table)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker({}, registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        client = TestClient(TestServer(create_app(factory, schemas, library=library)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "file3d-test",
+                    "jobId": "missing-companion",
+                    "graph": graph_to_wire(
+                        Graph({"load": GraphNode(schema.node_type, {"model": "scene.gltf"})})
+                    ),
+                    "targets": ["load"],
+                },
+            )
+            assert response.status == 400
+            assert await response.json() == {
+                "error": "selected file is outside its grant or unavailable"
+            }
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_load_file3d_worker_requires_indexed_or_host_granted_contained_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "scene.obj").write_bytes(b"mtllib surface.mtl\nv 1 3 7\n")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef(id="models", path=root), kind="media/model3d")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    source = table.bind_name("scene.obj", "media/model3d")
+    assert isinstance(source, LocalAssetRef)
+    source = LocalAssetRef.from_wire(source.to_wire(), MountSnapshotResolver(snapshot))
+    with pytest.raises(AssetError, match="outside its grant or unavailable"):
+        load_file3d(source)
+    table.scan("models")
+    (root / "surface.mtl").write_bytes(b"newmtl material\nKd 0.1 0.3 0.7\n")
+    with pytest.raises(AssetError, match="must be indexed"):
+        load_file3d(source)
+    granted = table.bind_name("surface.mtl", "media/model3d")
+    assert isinstance(granted, LocalAssetRef)
+    packet = load_file3d(source)
+    assert packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    spec = registry.spec(FILE_3D_TYPE)
+    received = cast("dict[str, object]", spec.decode(spec.encode(packet)))
+    local_material = cast("dict[str, LocalAssetRef]", received["resources"])["surface.mtl"]
+    assert local_material.binding == granted.binding
+    assert local_material.read_bytes() == b"newmtl material\nKd 0.1 0.3 0.7\n"
+    table.scan("models")
+    packet = load_file3d(source)
+    assert packet is not None
+    material = cast("dict[str, AssetRef]", packet["resources"])["surface.mtl"]
+    assert material.read_bytes() == b"newmtl material\nKd 0.1 0.3 0.7\n"
+    if os.name != "nt":
+        outside = tmp_path / "outside.mtl"
+        outside.write_bytes(b"not granted")
+        (root / "surface.mtl").unlink()
+        (root / "surface.mtl").symlink_to(outside)
+        with pytest.raises(AssetError, match="outside its grant"):
+            load_file3d(source)
+
+
+def test_load_file3d_explicit_obj_dependencies_and_missing_extra_controls(tmp_path: Path) -> None:
+    vault = AssetVault(tmp_path / "assets")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest_bytes(data), name, len(data), resolver=vault)
+
+    source = publish(b"mtllib materials/model.mtl\nv 2 3 5\n", "source.obj")
+    material = publish(b"newmtl surface\nmap_Kd -s 1 2 3 textures/color.png\n", "model.mtl")
+    texture = publish(b"texture contents", "color.png")
+    resources = {"materials/model.mtl": material, "materials/textures/color.png": texture}
+    assert load_file3d(source, resources=resources) == {
+        "format": "obj",
+        "source": source,
+        "resources": resources,
+    }
+    for incomplete in ({}, {"materials/model.mtl": material}):
+        with pytest.raises(AssetError, match="requires an explicit"):
+            load_file3d(source, resources=incomplete)
+    with pytest.raises(AssetError, match="undeclared"):
+        load_file3d(source, resources={**resources, "unused.png": texture})
+    assert source.read_bytes() == b"mtllib materials/model.mtl\nv 2 3 5\n"
+
+
+@pytest.mark.parametrize("continuation", [b"", b"\\\r\n"])
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "textures/red  wood.png",
+        '"textures/red  wood.png"',
+        "-s 1 2 3 -mm 0.2 0.8 textures/red  wood.png",
+        '-o -1 .5 -t 2 -clamp on -bm .4 -s 1 2 3 "textures/red  wood.png"',
+        "-s 1 2 \\\r\n3 textures/red  wood.png # an inline comment",
+        (
+            "-blendu on -blendv off -boost 1 -texres 512 -imfchan r "
+            "-type sphere -cc on textures/red  wood.png"
+        ),
+    ],
+)
+def test_load_file3d_obj_material_options_preserve_filename_remainder(
+    tmp_path: Path, declaration: str, continuation: bytes
+) -> None:
+    vault = AssetVault(tmp_path / "assets")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest_bytes(data), name, len(data), resolver=vault)
+
+    primary = b"mtllib " + continuation + b'"materials/surface file.mtl"\r\nv 3 5 7\r\n'
+    material_bytes = (
+        "newmtl surface\nmap_Kd " + declaration + "\nrefl -type sphere textures/reflection.png\n"
+    ).encode()
+    source = publish(primary, "scene.obj")
+    material = publish(material_bytes, "surface file.mtl")
+    texture = publish(b"asymmetric texture bytes", "red  wood.png")
+    reflection = publish(b"different reflection bytes", "reflection.png")
+    resources = {
+        "materials/surface file.mtl": material,
+        "materials/textures/red  wood.png": texture,
+        "materials/textures/reflection.png": reflection,
+    }
+    packet = load_file3d(source, resources=resources)
+    assert packet is not None
+    assert {
+        name: ref.read_bytes()
+        for name, ref in cast("dict[str, AssetRef]", packet["resources"]).items()
+    } == {
+        "materials/surface file.mtl": material_bytes,
+        "materials/textures/red  wood.png": b"asymmetric texture bytes",
+        "materials/textures/reflection.png": b"different reflection bytes",
+    }
+    assert source.read_bytes() == primary
+
+
+@pytest.mark.parametrize("format_id", ["gltf", "glb"])
+def test_load_file3d_explicit_gltf_resources_decode_uri_names(
+    tmp_path: Path, format_id: str
+) -> None:
+    vault = AssetVault(tmp_path / "assets")
+
+    def publish(data: bytes, name: str) -> AssetRef:
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+        return AssetRef(digest_bytes(data), name, len(data), resolver=vault)
+
+    document = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"uri": "data/mesh%20data.bin"}],
+        "images": [{"uri": "textures/albedo%20map.png"}],
+    }
+    primary = json.dumps(document).encode()
+    if format_id == "glb":
+        primary += b" " * (-len(primary) % 4)
+        primary = (
+            struct.pack("<4sIIII", b"glTF", 2, 20 + len(primary), len(primary), 0x4E4F534A)
+            + primary
+        )
+    source = publish(primary, "scene." + format_id)
+    mesh = publish(b"asymmetric mesh bytes", "mesh data.bin")
+    texture = publish(b"different texture bytes", "albedo map.png")
+    resources = {"data/mesh data.bin": mesh, "textures/albedo map.png": texture}
+    packet = load_file3d(source, resources=resources)
+    assert packet == {"format": format_id, "source": source, "resources": resources}
+    registry = TypeRegistry()
+    register_file3d_types(registry, vault)
+    codec = registry.spec(FILE_3D_TYPE)
+    restored = cast("dict[str, object]", codec.decode(codec.encode(packet)))
+    assert cast(AssetRef, restored["source"]).read_bytes() == primary
+    assert {
+        name: ref.read_bytes()
+        for name, ref in cast("dict[str, AssetRef]", restored["resources"]).items()
+    } == {
+        "data/mesh data.bin": b"asymmetric mesh bytes",
+        "textures/albedo map.png": b"different texture bytes",
+    }
+    for missing in ({}, {"data/mesh data.bin": mesh}):
+        with pytest.raises(AssetError, match="requires an explicit"):
+            load_file3d(source, resources=missing)
+    with pytest.raises(AssetError, match="undeclared"):
+        load_file3d(source, resources={**resources, "unused.bin": mesh})
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "../secret.bin",
+        "/secret.bin",
+        "https://host/file.bin",
+        "%2e%2e/file.bin",
+        "%252e%252e/file.bin",
+        "data/%2e%2e/secret.bin",
+        "%2fsecret.bin",
+        "data%5csecret.bin",
+        "data.bin?remote=1",
+        "data.bin#fragment",
+        "data/%00secret.bin",
+        "\tdata.bin",
+    ],
+)
+def test_load_file3d_cannot_follow_resource_paths(tmp_path: Path, uri: str) -> None:
+    vault = AssetVault(tmp_path / "assets")
+    data = json.dumps({"asset": {"version": "2.0"}, "buffers": [{"uri": uri}]}).encode()
+    with vault.writer(digest_bytes(data)) as writer:
+        writer.write(data)
+        writer.commit()
+    source = AssetRef(digest_bytes(data), "scene.gltf", len(data), resolver=vault)
+    with pytest.raises(AssetError, match="contained relative"):
+        load_file3d(source, resources={})
+
+
+def test_load_file3d_empty_and_self_contained_binary_sources(tmp_path: Path) -> None:
+    for source in (None, "", "none"):
+        assert load_file3d(source) is None
+    with pytest.raises(AssetError, match="bound asset"):
+        load_file3d("host-file.obj")
+    data = b'{"asset":{"version":"2.0"}}  '
+    payload = struct.pack("<4sIIII", b"glTF", 2, 20 + len(data), len(data), 0x4E4F534A) + data
+    vault = AssetVault(tmp_path / "assets")
+    with vault.writer(digest_bytes(payload)) as writer:
+        writer.write(payload)
+        writer.commit()
+    source = AssetRef(digest_bytes(payload), "source.GLB", len(payload), resolver=vault)
+    assert load_file3d(source) == {"format": "glb", "source": source, "resources": {}}
+    assert source.read_bytes() == payload
+    for format_id in ("fbx", "stl", "ply", "spz", "splat", "ksplat", "usdz"):
+        source = AssetRef(
+            digest_bytes(payload), "source." + format_id.upper(), len(payload), resolver=vault
+        )
+        assert load_file3d(source) == {"format": format_id, "source": source, "resources": {}}
+        assert source.read_bytes() == payload
 
 
 @pytest.mark.parametrize("node", [Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud])

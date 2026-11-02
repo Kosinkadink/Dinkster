@@ -76,6 +76,7 @@ from dinkster_assets import (
     digest_bytes,
     digest_file,
     is_digest,
+    load_file3d,
     mount_roots_for_kind,
     produced_output_scratch,
     register_asset_type,
@@ -1003,6 +1004,7 @@ __all__ = [
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",
+    "load_file3d",
     "register_file3d_types",
     "resolver_from_env",
 ]
