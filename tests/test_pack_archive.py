@@ -734,7 +734,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     record["publishedBy"]["principalId"] = "other"
             files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(record).encode()
     server = _serve_artifacts(files, requests)
-    respond = getattr(server.RequestHandlerClass, "respond")
+    respond = vars(server.RequestHandlerClass)["respond"]
 
     def registry_response(handler):
         if (
