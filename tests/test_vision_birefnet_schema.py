@@ -43,7 +43,7 @@ def test_birefnet_pack_declares_cpu_provider_and_pinned_model() -> None:
     assert manifest.sandbox.network is False
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
-        "dinkster-inference==0.1.0",
+        "dinkster-inference==0.1.1",
         "numpy",
         "safetensors==0.8.0",
         "torch",

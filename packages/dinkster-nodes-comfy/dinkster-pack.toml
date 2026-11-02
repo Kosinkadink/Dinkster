@@ -9,7 +9,7 @@ requires = [
     "pillow",
     "torch",
     "torchvision",
-    "dinkster-inference==0.1.0",
+    "dinkster-inference==0.1.1",
     "av",
     "scipy",
     "einops",
