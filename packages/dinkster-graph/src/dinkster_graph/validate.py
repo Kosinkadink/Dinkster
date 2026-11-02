@@ -470,6 +470,7 @@ def _check_input_value(
     diags: list[Diagnostic],
     *,
     asset_stamp_required: bool = False,
+    accepts_list: bool = False,
 ) -> None:
     """Every per-input check, shared by node inputs and region inputs:
     producer resolution, maybe-absent, cardinality (authoritative), advisory
@@ -579,6 +580,8 @@ def _check_input_value(
             )
         if out_type is None:
             return  # unresolvable producer type; its own error is reported
+        if accepts_list and out_type.kind == "list" and expected.kind != "list":
+            expected = TypeExpr.list_of(expected)
         # Asset coercion (typed assets, joint contract 2026-07-26): when the
         # producer's runtime type is asset-shaped and the destination's
         # declared type matches a registered coercion plan (decode / lift /
@@ -648,6 +651,13 @@ def _check_input_value(
             )
         return
     if isinstance(value, TypedLiteral):
+        if (
+            accepts_list
+            and expected is not None
+            and expected.kind != "list"
+            and parse_list_type_id(value.type_id) is not None
+        ):
+            expected = TypeExpr.list_of(expected)
         _check_typed_literal(level, node_id, input_id, value, expected, diags)
         return
     if expected is None:
@@ -1390,6 +1400,7 @@ def _validate_graph_node(
             spec.type,
             spec.absent_policy(),
             diags,
+            accepts_list=spec.accepts_list,
             asset_stamp_required=(
                 (
                     (

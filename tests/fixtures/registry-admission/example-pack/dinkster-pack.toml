@@ -1,0 +1,29 @@
+[pack]
+name = "example-pack"
+publisher = "dinkster"
+namespaces = ["example"]
+platforms = ["darwin", "linux"]
+dinkster = ">=0.9,<1"
+license = "Apache-2.0"
+repository = "https://github.com/example-org/dinkster-example-pack"
+
+[pack.entry]
+nodes = "nodes:PACK_NODES"
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.sandbox]
+gpu = false
+network = false
+writable-mounts = false
+
+[[pack.templates]]
+id = "starter"
+name = "Starter"
+file = "templates/starter.json"
+description = "Start here"
+tags = ["intro"]
+family = "example.image"
+models = ["example.safetensors"]

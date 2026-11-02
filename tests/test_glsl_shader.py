@@ -13,6 +13,7 @@ import pytest
 from dinkster_nodes_foundation import Curve
 from dinkster_nodes_image import DEFAULT_FRAGMENT_SHADER, IMAGE_NODES, GlslShader
 from dinkster_nodes_image import glsl as glsl_module
+from dinkster_nodes_image.glsl import NativeGlslShader
 from dinkster_schema import use_reporter
 from numpy.lib.format import write_array_header_1_0
 
@@ -57,6 +58,98 @@ def test_glsl_shader_schema_is_fixed_bounded_and_discoverable() -> None:
     assert families["bools"].member_names == tuple(f"u_bool{index}" for index in range(10))
     assert families["curves"].member_names == tuple(f"u_curve{index}" for index in range(4))
     assert [option.key for option in schema.combos[0].options] == ["from_input", "custom"]
+
+
+def test_exact_glsl_schema_preserves_source_members_and_output_positions() -> None:
+    from dinkster_schema import schema_from_wire, schema_to_wire
+
+    schema = NativeGlslShader.schema()
+    assert NativeGlslShader in IMAGE_NODES
+    assert schema.node_type == "GLSLShader" and not schema.aliases
+    assert not schema.output_node
+    assert schema.input_order == (
+        "fragment_shader",
+        "size_mode",
+        "images",
+        "floats",
+        "ints",
+        "bools",
+        "curves",
+    )
+    assert [
+        (family.member_prefix, family.min_members, family.max_members)
+        for family in schema.input_families
+    ] == [
+        ("image", 1, 5),
+        ("u_float", 0, 20),
+        ("u_int", 0, 20),
+        ("u_bool", 0, 10),
+        ("u_curve", 0, 4),
+    ]
+    assert [spec.id for spec in schema.outputs] == ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"]
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    assert GlslShader.schema().node_type == "dinkster.image.glsl_shader"
+
+
+def test_exact_glsl_compacts_source_members_and_keeps_empty_uniform_defaults() -> None:
+    source = """#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+uniform sampler2D u_image0;
+uniform sampler2D u_image1;
+uniform sampler2D u_curve0;
+uniform float u_float0;
+uniform float u_float1;
+uniform int u_int0;
+uniform int u_int1;
+uniform bool u_bool0;
+uniform bool u_bool1;
+in vec2 v_texCoord;
+layout(location=0) out vec4 fragColor0;
+layout(location=1) out vec4 fragColor1;
+layout(location=2) out vec4 fragColor2;
+layout(location=3) out vec4 fragColor3;
+void main() {
+    fragColor0 = texture(u_image0, v_texCoord);
+    fragColor1 = vec4(texture(u_image1, v_texCoord).rgb, u_float1);
+    fragColor2 = vec4(float(u_int1)/10.0, u_bool1 ? 0.6 : 0.1,
+        u_float0 + float(u_int0) + (u_bool0 ? 1.0 : 0.0), 1.0);
+    fragColor3 = vec4(texture(u_curve0, vec2(0.5, 0.5)).rrr, 1.0);
+}
+"""
+    try:
+        result = NativeGlslShader.execute(
+            fragment_shader=source,
+            images={"image4": _image(2), "image0": None, "image2": _image(2) * 0.3},
+            floats={"u_float3": None, "u_float1": 0.7},
+            ints={"u_int4": None, "u_int2": 9},
+            bools={"u_bool5": None, "u_bool0": True},
+            curves={"u_curve0": None, "u_curve3": Curve(((0.0, 0.0), (1.0, 1.0)))},
+        )
+    except RuntimeError as exc:
+        if str(exc).startswith("GLSL shader execution is unavailable:"):
+            pytest.skip(str(exc))
+        raise
+    assert list(result) == ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"]
+    expected = np.ones((2, 2, 3, 4), dtype=np.float32)
+    expected[..., :3] = _image(2)
+    np.testing.assert_allclose(np.asarray(result["IMAGE0"]), expected, rtol=0, atol=1e-6)
+    expected[..., :3] *= 0.3
+    expected[..., 3] = 0.7
+    np.testing.assert_allclose(np.asarray(result["IMAGE1"]), expected, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(result["IMAGE2"]),
+        np.broadcast_to([0.9, 0.6, 0.0, 1.0], expected.shape),
+        rtol=0,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result["IMAGE3"]),
+        np.broadcast_to([0.5, 0.5, 0.5, 1.0], expected.shape),
+        rtol=0,
+        atol=1e-6,
+    )
 
 
 def test_execute_projects_exact_uniforms_previews_and_child_request(

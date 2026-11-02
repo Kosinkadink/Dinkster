@@ -1,0 +1,30 @@
+name: Public archive admission contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure the full Linux admission jail
+        run: bash scripts/setup_probe_jail.sh
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - name: Verify archive fixture admission with full isolation
+        env:
+          DINKSTER_TEST_FULL_PROBE: "1"
+        run: >-
+          uv run --no-sync pytest -q tests/test_archive_admission.py
+          tests/test_pack_archive.py -k 'service_fixture or registry_'

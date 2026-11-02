@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -503,7 +504,98 @@ class GlslShader(Node):
         return cls.outputs(**{f"image{index}": output for index, output in enumerate(outputs)})
 
 
-GLSL_NODES: tuple[type[Node], ...] = (GlslShader,)
+class NativeGlslShader(GlslShader):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        schema = GlslShader.schema()
+        return replace(
+            schema,
+            node_type="GLSLShader",
+            inputs=tuple(
+                replace(
+                    spec,
+                    default=DEFAULT_FRAGMENT_SHADER.replace("precision highp sampler2D;\n", ""),
+                )
+                for spec in schema.inputs
+            ),
+            input_families=tuple(
+                replace(
+                    family,
+                    member_names=None,
+                    member_prefix="image" if family.id == "images" else f"u_{family.id[:-1]}",
+                    max_members=family.max_members,
+                    template=tuple(
+                        replace(spec, id=family.id[:-1]) if isinstance(spec, InputSpec) else spec
+                        for spec in family.template
+                    ),
+                )
+                for family in schema.input_families
+            ),
+            input_order=(
+                "fragment_shader",
+                "size_mode",
+                "images",
+                "floats",
+                "ints",
+                "bools",
+                "curves",
+            ),
+            outputs=tuple(
+                replace(spec, id=f"IMAGE{index}", display_name=f"IMAGE{index}")
+                for index, spec in enumerate(schema.outputs)
+            ),
+            output_node=False,
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        fragment_shader: str = DEFAULT_FRAGMENT_SHADER.replace("precision highp sampler2D;\n", ""),
+        size_mode: str = "from_input",
+        width: int = 512,
+        height: int = 512,
+        images: Mapping[str, object],
+        floats: Mapping[str, object] | None = None,
+        ints: Mapping[str, object] | None = None,
+        bools: Mapping[str, object] | None = None,
+        curves: Mapping[str, object] | None = None,
+    ) -> Mapping[str, object]:
+        normalized: dict[str, dict[str, object]] = {}
+        for family, values, prefix, maximum, default in (
+            ("images", images, "image", MAX_GLSL_IMAGES, None),
+            ("floats", floats or {}, "u_float", MAX_GLSL_FLOATS, 0.0),
+            ("ints", ints or {}, "u_int", MAX_GLSL_INTS, 0),
+            ("bools", bools or {}, "u_bool", MAX_GLSL_BOOLS, False),
+            ("curves", curves or {}, "u_curve", MAX_GLSL_CURVES, None),
+        ):
+            _ordered_family(
+                values, tuple(f"{prefix}{index}" for index in range(maximum)), subject=family
+            )
+            members = [
+                default if value is None else value
+                for value in values.values()
+                if value is not None or default is not None
+            ]
+            target_prefix = "u_image" if family == "images" else prefix
+            normalized[family] = {
+                f"{target_prefix}{index}": value for index, value in enumerate(members)
+            }
+        outputs = GlslShader.execute(
+            fragment_shader=fragment_shader,
+            size_mode=size_mode,
+            width=width,
+            height=height,
+            images=normalized["images"],
+            floats=normalized["floats"],
+            ints=normalized["ints"],
+            bools=normalized["bools"],
+            curves=normalized["curves"],
+        )
+        return cls.outputs(**{f"IMAGE{index}": outputs[f"image{index}"] for index in range(4)})
 
 
-__all__ = ["DEFAULT_FRAGMENT_SHADER", "GLSL_NODES", "GlslShader"]
+GLSL_NODES: tuple[type[Node], ...] = (GlslShader, NativeGlslShader)
+
+
+__all__ = ["DEFAULT_FRAGMENT_SHADER", "GLSL_NODES", "GlslShader", "NativeGlslShader"]

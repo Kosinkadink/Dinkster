@@ -24,7 +24,7 @@ from botocore.exceptions import (
 )
 from dinkster_supervisor.environment_artifacts import parse_metadata, validate_manifest
 from dinkster_supervisor.environment_channels import write_channel
-from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
+from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
 from dinkster_supervisor.environment_state import Channel, content_digest
 
 
@@ -166,8 +166,9 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
         if channel == "main":
             try:
                 published_bytes = read_metadata(public, "channels/main.json")
-            except HTTPError as error:
-                if error.code != 404:
+            except DownloadError as error:
+                cause = error.__cause__
+                if not isinstance(cause, HTTPError) or cause.code != 404:
                     raise
             else:
                 published = Channel.parse(parse_metadata(published_bytes))
