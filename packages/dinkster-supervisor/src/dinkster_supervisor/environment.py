@@ -28,6 +28,7 @@ from .environment_generations import (
     prepare_engine_interpreter,
     prepare_registry_inputs,
     project_operation,
+    stage_pack_sources,
     verify_base_inputs,
 )
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
@@ -453,22 +454,25 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     for pack, reason in unavailable.items():
                         print(f"default pack {pack} unavailable: {reason}", file=sys.stderr)
                 else:
-                    if workflow is not None:
-                        assert source_artifacts is not None
-                        scratch = (
-                            Path(
-                                preparation.enter_context(
-                                    tempfile.TemporaryDirectory(dir=store, prefix=".workflow-")
-                                )
+                    assert source_artifacts is not None
+                    scratch = (
+                        Path(
+                            preparation.enter_context(
+                                tempfile.TemporaryDirectory(dir=store, prefix=".workflow-")
                             )
-                            / "engine"
                         )
-                        prepare_engine_interpreter(
-                            scratch,
-                            store=store,
-                            base=catalog.channel.base_for(variant),
-                            constraints=published_constraints,
-                        )
+                        / "engine"
+                    )
+                    prepare_engine_interpreter(
+                        scratch,
+                        store=store,
+                        base=catalog.channel.base_for(variant),
+                        constraints=published_constraints,
+                    )
+                    stage_pack_sources(
+                        scratch, catalog_lock=catalog_lock, artifacts=source_artifacts
+                    )
+                    if workflow is not None:
                         preflight_workflow(scratch, catalog_lock, source_artifacts)
                     if not pack_locks:
                         pack_locks = acquire_pack_locks(catalog, variant, store)
