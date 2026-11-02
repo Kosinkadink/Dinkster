@@ -36,7 +36,6 @@ from .environment_generations import (
     prepare_engine_interpreter,
     prepare_registry_inputs,
     project_operation,
-    stage_pack_sources,
     verify_base_inputs,
 )
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
@@ -577,9 +576,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         store=store,
                         base=base_id,
                         constraints=published_constraints,
-                    )
-                    stage_pack_sources(
-                        scratch, catalog_lock=catalog_lock, artifacts=source_artifacts
                     )
                     if workflow is not None:
                         preflight_workflow(scratch, catalog_lock, source_artifacts)

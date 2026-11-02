@@ -68,6 +68,8 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
                 "a=p.parse_args()\n"
                 "assert json.loads(a.catalog_lock.read_text())['packs']==[]\n"
                 "if a.prepare_locks:\n"
+                "    assert not (a.generation/'generation.json').exists()\n"
+                "    assert not (a.generation/'dinkster.lock').exists()\n"
                 "    a.prepare_locks.mkdir()\n"
                 "    print(json.dumps({'locks':[],'errors':[]}))\n"
                 "    raise SystemExit(0)\n"
