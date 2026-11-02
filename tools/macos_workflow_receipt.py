@@ -297,7 +297,33 @@ def main() -> None:
             raise RuntimeError("engine did not confirm an uncached execution")
         if not {"sampler", "decode", "save"}.issubset(history.get("executed", [])):
             raise RuntimeError("engine did not execute sampling, decoding and saving")
-        device = history["outputs"]["checkpoint"]["MODEL"]["meta"]["resources"]["gpu"]
+        model_meta = history["outputs"]["checkpoint"]["MODEL"]["meta"]
+        resource_id = model_meta.get("resourceId")
+        if not isinstance(resource_id, str) or not resource_id.startswith("resident:"):
+            raise RuntimeError("checkpoint has no resident identity for device correlation")
+        memory = request("/memory/status?details=1")
+        save("memory-status.json", memory)
+        supervisor = request("/supervisor/status")
+        save("supervisor-status-after.json", supervisor)
+        if supervisor.get("state") != "ready" or supervisor.get("instance") != instances[0]:
+            raise RuntimeError("device evidence came from another runtime instance")
+        residents = [
+            (consumer, row)
+            for consumer, rows in memory.get("consumerDetails", {}).items()
+            if consumer.startswith("dinkster-nodes-comfy:")
+            for row in rows
+            if row.get("itemId") == resource_id.removeprefix("resident:")
+        ]
+        if len(residents) != 1:
+            raise RuntimeError("memory status must identify exactly the checkpoint resident")
+        consumer, resident = residents[0]
+        devices = [
+            lane.removeprefix("vram:")
+            for lane, nbytes in resident.get("bytesByResidency", {}).items()
+            if lane.startswith("vram:") and type(nbytes) is int and nbytes > 0
+        ]
+        device = devices[0] if len(devices) == 1 else devices
+        receipt["engineResident"] = {"consumer": consumer, "resourceId": resource_id}
         receipt["engineDevice"] = device
         if device != "mps":
             raise RuntimeError(f"engine reported device {device!r}, not mps")
