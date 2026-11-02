@@ -141,7 +141,7 @@ def test_deprecated_preview_preserves_granted_file_and_optional_metadata(
                 "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
                 "DINKSTER_ASSET_VAULT": str(tmp_path / "vault"),
                 "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
-            }
+            },
         )
         try:
             await composer.add_pack(
