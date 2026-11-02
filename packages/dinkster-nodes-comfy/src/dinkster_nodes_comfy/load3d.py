@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from dinkster_api.v1 import (
+    ASSET_TYPE,
     CORE_INT,
     FILE_3D_TYPE,
     LOAD3D_CAMERA_TYPE,
@@ -36,7 +37,7 @@ class Load3DAdvanced(Node):
             inputs=(
                 InputSpec(
                     "model_file",
-                    TypeExpr.asset_of(TypeExpr.concrete(FILE_3D_TYPE)),
+                    TypeExpr.concrete(ASSET_TYPE),
                     default="none",
                     widget=AssetWidget(kind="media/model3d", allow_upload=True),
                     source_filename=SourceFilenameSpec("media/model3d", "input"),
