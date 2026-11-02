@@ -1207,9 +1207,12 @@ def test_registry_probe_refuses_degraded_isolation(
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
-@pytest.mark.parametrize("problem", [None, "broken", "missing", "skipped"])
+@pytest.mark.parametrize("problem", [None, "broken", "missing", "skipped", "unpublished-only"])
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    problem: str | None,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
@@ -1233,10 +1236,14 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
         "import tomllib\n"
         "from pathlib import Path\nimport dinkster_nodes_image\n"
-        "from dinkster_nodes_image import VALUE\n"
+        "from dinkster_nodes_image import VALUE, NEW_NODE as Unpublished\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
-        + "def test_selected_value():\n"
-        "    assert VALUE == 47\n"
+        + (
+            "def selected_value():\n"
+            if problem == "unpublished-only"
+            else "def test_selected_value():\n"
+        )
+        + "    assert VALUE == 47\n"
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
         "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
@@ -1259,6 +1266,16 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "check=True)\n"
         "    with pytest.raises(importlib.metadata.PackageNotFoundError):\n"
         "        importlib.metadata.distribution('dinkster-nodes-image')\n"
+        "def future_helper():\n"
+        "    return Unpublished.execute()\n"
+        "@pytest.fixture\n"
+        "def future_value():\n"
+        "    return future_helper()\n"
+        "def test_unpublished_fixture(future_value):\n"
+        "    assert future_value == 17\n"
+        "class TestUnpublished:\n"
+        "    def test_node(self):\n"
+        "        assert Unpublished.execute() == 17\n"
     )
     subprocess.run(["git", "init", "-q", str(engine)], check=True)
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
@@ -1296,6 +1313,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     )
     if problem is None:
         run_selected_tests(engine, catalog, artifacts)
+        output = capfd.readouterr().out
+        assert "1 passed" in output
+        assert "Excluded tests/test_image_nodes.py::test_unpublished_fixture" in output
+        assert "Excluded tests/test_image_nodes.py::TestUnpublished" in output
+        assert "dinkster_nodes_image:NEW_NODE" in output
     elif problem == "missing":
         with pytest.raises(ValueError, match="archive is missing declared module"):
             run_selected_tests(engine, catalog, artifacts)
