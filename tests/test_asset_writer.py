@@ -744,7 +744,7 @@ def test_named_stream_export_rechecks_authority_and_stream_limit(
     other.mkdir()
 
     class ChangedSource(io.BytesIO):
-        def read(self, size: int = -1) -> bytes:
+        def read(self, size: int | None = -1) -> bytes:
             if change == "revoke":
                 (tmp_path / "mounts.json").write_text('{"mounts":[]}', encoding="ascii")
             elif change == "root":
@@ -779,7 +779,7 @@ def test_named_stream_export_does_not_rename_or_overwrite_a_claimed_member(tmp_p
     claimed = root / "scene_00001/model.bin"
 
     class ContendedSource(io.BytesIO):
-        def read(self, size: int = -1) -> bytes:
+        def read(self, size: int | None = -1) -> bytes:
             if not claimed.exists():
                 claimed.write_bytes(b"concurrent bytes")
             return super().read(size)
