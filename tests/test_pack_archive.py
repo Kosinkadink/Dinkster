@@ -277,7 +277,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
             "pillow",
             "torch",
             "torchvision",
-            "dinkster-inference==0.1.0",
+            "dinkster-inference==0.1.1",
             "av",
             "scipy",
             "einops",

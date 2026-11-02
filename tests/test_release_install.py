@@ -762,7 +762,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.0\n" in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.1\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [

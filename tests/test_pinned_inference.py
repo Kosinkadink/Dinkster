@@ -9,7 +9,7 @@ from packaging.requirements import Requirement
 
 from tools.verify_pinned_inference import pinned_requirement, verify_source_contracts
 
-PIN = "0.1.0"
+PIN = "0.1.1"
 REQUIREMENT = f"dinkster-inference=={PIN}"
 
 

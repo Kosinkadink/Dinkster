@@ -7,7 +7,7 @@ dependencies = [
     "dinkster-assets",
     "dinkster-image-document",
     "dinkster-graph",
-    "dinkster-inference==0.1.0",
+    "dinkster-inference==0.1.1",
     "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-nodes-generation",
