@@ -63,6 +63,146 @@ from dinkster.compose import PackSpec, ServingComposer
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 
+@pytest.mark.parametrize(
+    "selection,viewport", [(None, {}), ("", None), ("none", {"model_3d_info": None})]
+)
+def test_native_advanced_loader_empty_selection_and_viewport_fallback(
+    selection: str | None, viewport: object
+) -> None:
+    from dinkster_nodes_comfy.load3d import Load3DAdvanced
+
+    result = Load3DAdvanced.execute(
+        model_file=selection, viewport_state=viewport, width=37, height=91
+    )
+    assert result == {
+        "model_3d": None,
+        "model_3d_info": None if viewport == {"model_3d_info": None} else [],
+        "camera_info": None,
+        "width": 37,
+        "height": 91,
+    }
+
+
+def test_native_advanced_loader_preserves_original_files_and_viewport(tmp_path: Path) -> None:
+    from dinkster_nodes_comfy.load3d import Load3DAdvanced
+
+    root = tmp_path / "input"
+    root.mkdir()
+    source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"nested/mesh.bin"}]}'
+    (root / "scene.gltf").write_bytes(source)
+    (root / "nested").mkdir()
+    (root / "nested/mesh.bin").write_bytes(b"asymmetric buffer bytes")
+    (root / "opaque.fbx").write_bytes(b"opaque original bytes")
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    viewport = {"camera_info": {"zoom": 2.25}, "model_3d_info": [{"scale": [2, 3, 5]}]}
+    for name, expected in (("scene.gltf", source), ("opaque.fbx", b"opaque original bytes")):
+        ref = table.bind_name(name, "media/model3d")
+        assert isinstance(ref, LocalAssetRef)
+        result = Load3DAdvanced.execute(
+            model_file=ref, viewport_state=viewport, width=37, height=91
+        )
+        packet = cast(dict[str, object], result["model_3d"])
+        assert packet["source"] is ref
+        assert ref.read_bytes() == expected
+        resources = cast(dict[str, LocalAssetRef], packet["resources"])
+        assert {key: value.read_bytes() for key, value in resources.items()} == (
+            {"nested/mesh.bin": b"asymmetric buffer bytes"} if name.endswith("gltf") else {}
+        )
+        assert result["camera_info"] is viewport["camera_info"]
+        assert result["model_3d_info"] is viewport["model_3d_info"]
+        assert (result["width"], result["height"]) == (37, 91)
+
+
+@pytest.mark.parametrize("in_process", [True, False])
+@pytest.mark.parametrize("selection", ["nested/scene.gltf", "none"])
+def test_native_advanced_loader_runs_after_common_source_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, selection: str
+) -> None:
+    from dinkster_nodes_comfy.load3d import Load3DAdvanced
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names
+
+    root = tmp_path / "input"
+    (root / "nested").mkdir(parents=True)
+    source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin"}]}'
+    (root / "nested/scene.gltf").write_bytes(source)
+    (root / "nested/mesh.bin").write_bytes(b"distinct companion bytes")
+    snapshot = tmp_path / "mounts.json"
+    mounts = MountTable(snapshot)
+    mounts.add(MountDef("models", root, kind="media/model3d"))
+    vault = AssetVault(tmp_path / "vault")
+    library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"), resolver=mounts)
+    environment = {
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+        "DINKSTER_ASSET_VAULT": str(tmp_path / "vault"),
+        "DINKSTER_ACCELERATOR": "cpu",
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    viewport = {
+        "model_3d_info": [],
+        "camera_info": {
+            "position": {"x": 3.0, "y": -2.0, "z": 7.0},
+            "target": {"x": -1.0, "y": 4.0, "z": 0.0},
+            "zoom": 1.75,
+            "cameraType": "perspective",
+        },
+    }
+    schema = Load3DAdvanced.define_schema()
+    graph, missing = bind_model_names(
+        Graph(
+            {
+                "load": GraphNode(
+                    "Load3DAdvanced",
+                    {
+                        "model_file": selection,
+                        "viewport_state": TypedLiteral(LOAD_3D_TYPE, viewport),
+                        "width": 37,
+                        "height": 91,
+                    },
+                )
+            }
+        ),
+        {schema.node_type: schema},
+        library,
+    )
+    assert not missing
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, mounts)
+        register_inference_types(registry)
+        composer = ServingComposer(registry=registry, worker_env=environment)
+        try:
+            manifest = (
+                Path(__file__).resolve().parents[1]
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            )
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                graph, ["load"]
+            )
+            outputs = result.outputs["load"]
+            packet = outputs["model_3d"].resolve()
+            if selection == "none":
+                assert packet is None
+            else:
+                packet = cast(dict[str, object], packet)
+                assert cast(LocalAssetRef, packet["source"]).read_bytes() == source
+                resources = cast(dict[str, LocalAssetRef], packet["resources"])
+                assert resources["mesh.bin"].read_bytes() == b"distinct companion bytes"
+            assert outputs["model_3d_info"].resolve() == []
+            assert outputs["camera_info"].resolve() == viewport["camera_info"]
+            assert (outputs["width"].resolve(), outputs["height"].resolve()) == (37, 91)
+            assert not result.artifacts
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_load_file3d_binds_only_declared_adjacent_files_and_roundtrips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
