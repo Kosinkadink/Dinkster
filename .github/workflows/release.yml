@@ -95,14 +95,10 @@ jobs:
           if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
           uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
           "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY'
-          import os
           from pathlib import Path
           from scripts.build_official_packs import build
-          from scripts.build_release import development_version, release_version
           root = Path.cwd()
-          tag = os.environ['RELEASE_TAG']
-          version = release_version(root, tag) if tag else development_version(root)
-          build(root, root / '.release/official-packs', version=version.split('+', 1)[0])
+          build(root, root / '.release/official-packs')
           PY
           for payload in .release/official-packs/*; do arguments+=(--artifact "$payload"); done
           for manifest in .release/base-manifests/*/manifest.json; do

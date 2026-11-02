@@ -901,12 +901,31 @@ def test_publication_client_preserves_archive_and_lock_bytes(tmp_path: Path, mod
         thread.join()
 
 
-def test_official_publication_declarations_match_archive_admission(tmp_path: Path) -> None:
+@pytest.mark.parametrize("tag", ["", "v0.0.2"])
+def test_official_publication_declarations_match_archive_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: str
+) -> None:
+    import yaml
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_registry.archive_admission import run_ingest_integrity, run_manifest_admission
 
     root = Path(__file__).resolve().parents[1]
-    first = build_official_packs(root, tmp_path / "first")
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    commands = next(
+        step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if step.get("name") == "Build the complete release contract"
+    )
+    script = commands.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    output = tmp_path / "first"
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("RELEASE_TAG", tag)
+    monkeypatch.setattr(
+        "scripts.build_official_packs.build",
+        lambda root, destination, **kwargs: build_official_packs(root, output, **kwargs),
+    )
+    exec(compile(script, "release official pack sources", "exec"), {})
+    first = (*sorted(output.glob("*.zip")), output / "official-packs.lock")
     second = build_official_packs(root, tmp_path / "second")
     assert {path.name: path.read_bytes() for path in first} == {
         path.name: path.read_bytes() for path in second
