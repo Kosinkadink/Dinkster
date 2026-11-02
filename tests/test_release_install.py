@@ -2014,16 +2014,19 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         }
 
 
-@pytest.mark.parametrize("event", ["initial", "engine-only", "tag"])
+@pytest.mark.parametrize(
+    "event", ["initial", "engine-only", "tag", "lockstep", "main-success", "main-failure"]
+)
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, event: str
 ) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
     trigger = workflow[True]
-    assert trigger["push"] == {
+    assert trigger["push"] == {"tags": ["pack/**"]}
+    assert trigger["workflow_run"] == {
+        "workflows": ["Versioned wheel release"],
+        "types": ["completed"],
         "branches": ["main"],
-        "tags": ["pack/**"],
-        "paths": ["packages/dinkster-nodes-*/**"],
     }
     assert "pull_request_target" not in trigger and "workflow_dispatch" not in trigger
     jobs = workflow["jobs"]
@@ -2040,19 +2043,53 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
     tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
     (tmp_path / ".git/HEAD").write_text(tree + "\n")
+    if event in {"lockstep", "main-success", "main-failure"}:
+        changed = tmp_path / "uv.lock"
+        changed.write_text("version = 1\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        after = subprocess.check_output(
+            ["git", "-C", str(tmp_path), "write-tree"], text=True
+        ).strip()
+        (tmp_path / ".git/HEAD").write_text(after + "\n")
+        original = subprocess.check_output
+
+        def read(command, **kwargs):
+            if command == ["git", "rev-parse", "HEAD^"]:
+                return tree + "\n"
+            return original(command, **kwargs)
+
+        monkeypatch.setattr(subprocess, "check_output", read)
     manifest.write_text("invalid uncommitted declaration")
     output = tmp_path / "outputs"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setenv("BEFORE", tree if event == "engine-only" else "0" * 40)
+    monkeypatch.setenv("EVENT", "workflow_run" if event.startswith("main-") else "pull_request")
+    monkeypatch.setenv("CONCLUSION", "failure" if event == "main-failure" else "success")
+    monkeypatch.setenv("BEFORE", "0" * 40 if event == "initial" else tree)
     monkeypatch.setenv(
         "PACK_TAG", "pack/dinkster-nodes-foundation/v2.7rc1" if event == "tag" else ""
     )
+    if event in {"tag", "lockstep"}:
+        from scripts import build_official_packs
+
+        monkeypatch.setattr(build_official_packs, "build", lambda *args, **kwargs: ())
     exec(compile(script, "official-packs.yml", "exec"), {})
-    assert json.loads(output.read_text().removeprefix("packs=")) == (
-        [] if event == "engine-only" else ["dinkster-nodes-foundation"]
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert json.loads(outputs["packs"]) == (
+        [] if event in {"engine-only", "main-failure"} else ["dinkster-nodes-foundation"]
     )
-    assert jobs["sources"]["if"] == "needs.select.outputs.packs != '[]'"
+    assert outputs["applicable"] == (
+        "false" if event in {"tag", "lockstep", "main-failure"} else "true"
+    )
+    if event in {"tag", "lockstep"}:
+        assert "published-engine lock preflight is not applicable" in capsys.readouterr().out
+    if event == "main-failure":
+        assert "same-commit engine release did not succeed" in capsys.readouterr().out
+    if event == "main-success":
+        assert outputs["engine"] == after
+    assert jobs["sources"]["if"] == (
+        "needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'"
+    )
     assert jobs["locks"]["needs"] == "sources"
     assert jobs["locks"]["runs-on"] == "${{ matrix.runner }}"
     native = next(step for step in jobs["locks"]["steps"] if "--sources" in step.get("run", ""))
@@ -2061,8 +2098,8 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "scripts.build_release_pack_locks" in native["run"]
     prepare = next(step for step in jobs["sources"]["steps"] if step.get("id") == "prepare")
     assert "scripts.build_release import" not in prepare["run"]
-    assert "validate_manifest(" in prepare["run"] and "fetch_artifact(" in prepare["run"]
-    assert "manifest.compatibility.require_engine(" in prepare["run"]
+    assert "prepare_inputs(" in prepare["run"]
+    assert "ENGINE_COMMIT" in prepare["env"]
     assert "version=" not in prepare["run"]
     assert jobs["publish"]["needs"] == ["sources", "locks"]
     [submission] = [
@@ -2070,7 +2107,10 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     ]
     assert submission["if"] == (
         "github.repository == 'Kosinkadink/Dinkster' && "
-        "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        "github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && "
+        "github.event.workflow_run.head_branch == 'main' && "
+        "github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && "
+        "github.event.workflow_run.conclusion == 'success'"
     )
     assert "--publish" in submission["run"]
     preflight = next(
@@ -2085,7 +2125,8 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
 @pytest.mark.parametrize(
     ("repository", "event", "ref", "allowed"),
     [
-        ("Kosinkadink/Dinkster", "push", "refs/heads/main", True),
+        ("Kosinkadink/Dinkster", "workflow_run", "refs/heads/main", True),
+        ("Kosinkadink/Dinkster", "push", "refs/heads/main", False),
         ("Kosinkadink/Dinkster", "pull_request", "refs/heads/main", False),
         ("someone/Dinkster", "push", "refs/heads/main", False),
         ("Kosinkadink/Dinkster", "push", "refs/tags/pack/demo/v1.0", False),
@@ -2101,7 +2142,19 @@ def test_official_publication_submits_only_from_trusted_main(
     submission = next(
         step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
     )
-    github = SimpleNamespace(repository=repository, event_name=event, ref=ref)
+    github = SimpleNamespace(
+        repository=repository,
+        event_name=event,
+        ref=ref,
+        event=SimpleNamespace(
+            workflow_run=SimpleNamespace(
+                event="push",
+                head_branch="main" if ref == "refs/heads/main" else "feature",
+                head_repository=SimpleNamespace(full_name=repository),
+                conclusion="success",
+            )
+        ),
+    )
     assert eval(submission["if"].replace("&&", " and "), {"github": github}) is allowed
 
 
@@ -2131,7 +2184,7 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("problem", [None, "range", "tag", "missing", "digest"])
+@pytest.mark.parametrize("problem", [None, "range", "tag", "commit", "missing", "digest"])
 def test_official_publication_workflow_prepares_verified_published_engine_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
 ) -> None:
@@ -2139,13 +2192,9 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     from dinkster_supervisor import environment_downloads
     from test_installer import _serve_artifacts
 
-    from scripts import acquire_engine_bases, build_official_packs
+    from scripts import prepare_official_publication as preparation
 
-    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
-    step = next(
-        step for step in workflow["jobs"]["sources"]["steps"] if step.get("id") == "prepare"
-    )
-    script = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    tag = "main-" + "c" * 40
     (tmp_path / "scripts").mkdir()
     selections = {"linux-cpu": "a" * 64, "win-nvidia": "b" * 64}
     (tmp_path / "scripts/base_bundles.json").write_text(json.dumps(selections))
@@ -2166,8 +2215,8 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
         "version": "0.1" if problem == "range" else "0.0.3.dev123",
-        "tag": "wrong" if problem == "tag" else "main-published",
-        "commit": "c" * 40,
+        "tag": "wrong" if problem == "tag" else tag,
+        "commit": ("d" if problem == "commit" else "c") * 40,
         "workerProtocol": 11,
         "artifacts": [
             {"name": "constraints.txt", "size": 4, "sha256": hashlib.sha256(b"pins").hexdigest()}
@@ -2178,24 +2227,19 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     def read(command, **kwargs):
         if command[0] != "gh":
             return old_check_output(command, **kwargs)
+        assert command[-1] == f"repos/Kosinkadink/Dinkster/releases/tags/{tag}"
         return json.dumps(
-            []
-            if problem == "missing"
-            else [
-                {"tag_name": "older", "draft": False, "published_at": "2026-01-01T00:00:00Z"},
-                {"tag_name": "draft", "draft": True, "published_at": "2026-12-01T00:00:00Z"},
-                {
-                    "tag_name": "main-published",
-                    "draft": False,
-                    "published_at": "2026-11-01T00:00:00Z",
-                },
-            ]
+            {
+                "tag_name": tag,
+                "draft": problem == "missing",
+                "published_at": "2026-01-01T00:00:00Z",
+            }
         ).encode()
 
     def run(command, **kwargs):
         if command[0] != "gh":
             return old_run(command, **kwargs)
-        assert command[3] == "main-published"
+        assert command[3] == tag
         directory = Path(command[-1])
         directory.mkdir()
         (directory / "release-manifest.json").write_text(json.dumps(engine))
@@ -2205,20 +2249,18 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     server = _serve_artifacts({"/constraints.txt": b"fake" if problem == "digest" else b"pins"}, [])
 
     def fetch(mirrors, name, destination, digest, size):
-        assert mirrors == (
-            "https://github.com/Kosinkadink/Dinkster/releases/download/main-published",
-        )
+        assert mirrors == (f"https://github.com/Kosinkadink/Dinkster/releases/download/{tag}",)
         return original_fetch(
             (f"http://127.0.0.1:{server.server_port}",), name, destination, digest, size
         )
 
-    original_build = build_official_packs.build
-    monkeypatch.setattr(acquire_engine_bases, "acquire", acquire)
+    original_build = preparation.build
+    monkeypatch.setattr(preparation, "acquire", acquire)
     monkeypatch.setattr(subprocess, "check_output", read)
     monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(environment_downloads, "fetch_artifact", fetch)
+    monkeypatch.setattr(preparation, "fetch_artifact", fetch)
     monkeypatch.setattr(
-        build_official_packs,
+        preparation,
         "build",
         lambda root, output, **kwargs: original_build(ROOT, output, **kwargs),
     )
@@ -2229,16 +2271,23 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     try:
         if problem is not None:
             with pytest.raises((ValueError, environment_downloads.DownloadError)):
-                exec(compile(script, "official-packs.yml", "exec"), {})
+                preparation.prepare_inputs(
+                    tmp_path,
+                    tmp_path / ".official-publication",
+                    "c" * 40,
+                    ["dinkster-nodes-foundation"],
+                )
             assert not output.exists()
         else:
-            exec(compile(script, "official-packs.yml", "exec"), {})
-            assert json.loads(output.read_text().removeprefix("matrix=")) == {
-                "include": [
-                    {"variant": "linux-cpu", "runner": "ubuntu-latest"},
-                    {"variant": "win-nvidia", "runner": "windows-latest"},
-                ]
-            }
+            assert preparation.prepare_inputs(
+                tmp_path,
+                tmp_path / ".official-publication",
+                "c" * 40,
+                ["dinkster-nodes-foundation"],
+            ) == [
+                {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+                {"variant": "win-nvidia", "runner": "windows-latest"},
+            ]
             work = tmp_path / ".official-publication"
             assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
