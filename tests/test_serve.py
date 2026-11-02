@@ -335,7 +335,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
     if pack_name == "dinkster-vision-birefnet":
-        assert "dinkster-inference==0.1.0" in manifest.requires
+        assert "dinkster-inference==0.1.1" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 

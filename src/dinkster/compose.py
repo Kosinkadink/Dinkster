@@ -1339,12 +1339,30 @@ def _installed_pack_spec(
     manifest_record = load_manifest(manifest)
     if canonical_name(manifest_record.name) != canonical_name(pack_id):
         raise CompositionError(f"installed {pack_id} manifest names pack {manifest_record.name!r}")
+    version = (
+        manifest_record.compatibility.version
+        if manifest_record.compatibility is not None
+        else distribution.version
+    )
     if locked is not None:
         if version != locked.version:
             raise CompositionError(
                 f"default suite locks {pack_id} version {locked.version}, "
                 f"but installed version is {version}"
             )
+        if locked.source.startswith("python:"):
+            try:
+                distribution = importlib.metadata.distribution(distribution_id)
+            except importlib.metadata.PackageNotFoundError as exc:
+                raise CompositionError(
+                    f"installed pack distribution {distribution_id!r} is unavailable"
+                ) from exc
+            installed_source = f"python:{distribution_id}=={distribution.version}"
+            if installed_source != locked.source:
+                raise CompositionError(
+                    f"default suite locks {pack_id} version {locked.version} "
+                    f"from {locked.source}, but installed distribution is {installed_source}"
+                )
         if digest != locked.artifact_digest:
             raise CompositionError(
                 f"default suite locks {pack_id} artifact {locked.artifact_digest}, "

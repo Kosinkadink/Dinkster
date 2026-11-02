@@ -1,5 +1,16 @@
 ## Image operations
 
+- Native `ImageCompare` previews each nonempty image batch independently without
+  adding graph outputs. The existing two-output image comparison remains available.
+- Native `GLSLShader` renders four ordered image outputs with bounded image and
+  scalar/curve input families, source-order uniform assignment and custom sizing.
+  The existing prefixed shader remains available with its original member names.
+- Native `Painter` composites a granted uploaded RGBA image over the first base
+  frame or a solid background, resizes paint with LANCZOS and returns the painted
+  alpha mask. An omitted paint asset returns the base and a zero mask. Combined
+  base, paint, resampling and preview memory must fit the image working-set limit.
+  The native body does not read ambient filenames; frontend paint editing and
+  legacy empty filename import are separate integration requirements.
 - Native `BakeAmbientOcclusion` bakes high-poly occlusion into a low-poly UV
   layout, with counted mesh batches, surface projection, distance, bias and
   strength controls, cosine-weighted rays and filled UV gutters.

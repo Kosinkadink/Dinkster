@@ -9,7 +9,7 @@ import platform
 import sys
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
@@ -19,6 +19,9 @@ CHECKPOINT_BYTES = 2132696762
 # tests/fixtures/macos-sd15.json is independent of the installed engine's starter templates.
 STARTER_SHA256_BY_COMMIT = {
     "2f880079bb3b48867795db4f7ed45633fa25e374": (
+        "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
+    ),
+    "1ec923c7e9ba9c4c01189f1fc01be9b4554ce8ec": (
         "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
     ),
 }
@@ -47,8 +50,13 @@ def main() -> None:
         help="exact landed installed-engine commit from the packet's status receipt",
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--images",
+        type=Path,
+        help="existing image directory bound to the approved graph's output grant",
+    )
     args = parser.parse_args()
-    output = args.output.absolute()
+    output = args.output.resolve()
     output_owned = False
     images = output / "images"
 
@@ -76,7 +84,13 @@ def main() -> None:
         output.mkdir()
         output_owned = True
         save("receipt.json", receipt)
-        images.mkdir()
+        if args.images:
+            images = args.images.resolve(strict=True)
+            if not images.is_dir():
+                raise ValueError("--images must identify an existing directory")
+        else:
+            images.mkdir()
+        receipt["imageDirectory"] = str(images)
         address = urlsplit(args.url)
         if (
             address.scheme != "http"
@@ -267,6 +281,7 @@ def main() -> None:
             "cacheEnabled": False,
         }
         save("request.json", job)
+        previous_images = {path.resolve() for path in images.rglob("*.png")}
         accepted = request("/api/jobs", job)
         save("accepted.json", accepted)
         if any(accepted.get(key) != job[key] for key in ("clientId", "jobId")):
@@ -328,12 +343,40 @@ def main() -> None:
         if device != "mps":
             raise RuntimeError(f"engine reported device {device!r}, not mps")
         files = []
-        for path in sorted(images.rglob("*.png")):
+        seen = set()
+        for artifact in history.get("artifacts", []):
+            if artifact.get("nodeId") != "save" or artifact.get("mediaType") != "image/png":
+                raise RuntimeError("job reported an unexpected saved artifact")
+            virtual_path = artifact.get("virtualPath", "")
+            relative = PurePosixPath(virtual_path)
+            if (
+                relative.as_posix() != virtual_path
+                or relative.parts[:2] != ("mounts", "mac-readiness-comfy-output")
+                or ".." in relative.parts
+                or relative.suffix != ".png"
+            ):
+                raise RuntimeError("saved artifact is outside the approved output grant")
+            path = images.joinpath(*relative.parts[2:]).resolve()
+            if (
+                not path.is_relative_to(images)
+                or not path.is_file()
+                or path in previous_images
+                or path in seen
+            ):
+                raise RuntimeError("saved artifact must identify a new unique PNG in the grant")
+            if (
+                type(artifact.get("size")) is not int
+                or artifact["size"] < 1
+                or artifact["size"] != path.stat().st_size
+            ):
+                raise RuntimeError("saved artifact size does not match the output bytes")
+            seen.add(path)
             with path.open("rb") as handle:
                 image_digest = hashlib.file_digest(handle, "sha256").hexdigest()
             files.append(
                 {
-                    "path": str(path.relative_to(output)),
+                    "path": str(path),
+                    "virtualPath": virtual_path,
                     "bytes": path.stat().st_size,
                     "sha256": image_digest,
                 }
