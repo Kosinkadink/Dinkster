@@ -1221,7 +1221,7 @@ def test_compose_defaults_only(
             )
             assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
             assert len(FOUNDATION_NODES) == 54
-            assert len(IMAGE_NODES) == 87
+            assert len(IMAGE_NODES) == 89
             assert len(MEDIA_IO_NODES) == 66
             assert {
                 node_type
