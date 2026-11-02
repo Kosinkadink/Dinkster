@@ -3,6 +3,8 @@
 
 [pack]
 name = "dinkster-nodes-image"
+version = "0.0.3"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
@@ -13,7 +15,7 @@ requires = [
 ]
 # dinkster is reserved. This first-party pack receives explicit host trust but
 # otherwise follows the same composition path as every pack.
-namespaces = ["dinkster"]
+namespaces = ["dinkster", "ImageCompare", "GLSLShader"]
 type-namespaces = ["dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"]
 
 [pack.sandbox]

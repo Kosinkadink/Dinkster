@@ -1,5 +1,7 @@
 [pack]
 name = "dinkster-nodes-comfy"
+version = "0.0.5"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
     "simpleeval==1.0.8",
@@ -7,7 +9,7 @@ requires = [
     "pillow",
     "torch",
     "torchvision",
-    "dinkster-inference==0.1.0",
+    "dinkster-inference==0.1.1",
     "av",
     "scipy",
     "einops",
@@ -590,6 +592,7 @@ namespaces = [
     "SaveSVGNode",
     "SaveImage",
     "PreviewImage",
+    "Painter",
     "LoadImage",
     "LoadImageMask",
     "LoadImageOutput",
@@ -625,6 +628,8 @@ namespaces = [
     "UnwrapMesh",
     "ApplyTextureToMesh",
     "BakeAmbientOcclusion",
+    "BakeNormalMapFromMesh",
+    "BakeTextureFromVoxel",
     "FillHoles",
     "Get3DComponents",
     "DecimateMesh",
@@ -643,6 +648,8 @@ namespaces = [
     "ImageUpscaleWithModel",
     "ImageHistogram",
     "TextOverlay",
+    "SAM3DBody_Render",
+    "BuildPoseFile",
 ]
 
 [pack.sandbox]

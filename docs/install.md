@@ -171,6 +171,14 @@ generation in a new root without `--from-scratch` to return to channel updates.
 Windows bases use CPython 3.14.10 / cp314 from python-build-standalone 20261026,
 with SQLite 3.53.1 plus the upstream
 [mapped-shm recovery fix](https://sqlite.org/src/info/7c103a0b7d).
+The CPython 3.14.10 pin requires **uv 0.13.6 or newer**, the first uv catalog
+that lists this interpreter. Before running the commands below, check
+`uv --version`; an older uv cannot launch the outer `uv run --python 3.14.10`
+command. Keep uv's managed-interpreter downloads enabled (do not set
+`UV_PYTHON_DOWNLOADS=never` or use `--no-python-downloads`) while acquiring
+the bootstrap interpreter. Move this minimum uv version together with the
+interpreter pin. Setup checks uv before its own downloads or environment
+creation and refuses an unsupported version; it never upgrades uv automatically.
 The unmodified interpreter fails WAL reopening while an old shared-memory
 mapping survives ([upstream report](https://sqlite.org/forum/forumpost/f9c68d01e2d7f638)).
 A version string cannot distinguish the patched library. Acquisition and bundle

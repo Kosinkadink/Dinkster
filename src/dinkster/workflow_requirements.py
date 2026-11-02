@@ -12,6 +12,7 @@ from dinkster_workers import PackManifest
 VARIANTS = {
     "linux-cpu": "cpu",
     "linux-nvidia": "cuda",
+    "mac-arm64": "mps",
     "win-cpu": "cpu",
     "win-nvidia": "cuda",
     "win-nvidia-cu126": "cuda",
