@@ -25,11 +25,12 @@ Each `vX.Y.Z` release contains:
 - `constraints.txt`, exported from `uv.lock` with hashes;
 - `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
 - `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
-- native tools ZIPs with the installer interpreters; and
-- the existing official pack artifacts and per-variant pack locks.
+- native tools ZIPs with the installer interpreters.
 
-No third-party wheels are release assets. Finalization rejects unexpected
-payloads and fails above 100,000,000 bytes excluding native tools ZIPs.
+Official packs and their per-base dependency locks come from the registry,
+not the engine release or wheel. No third-party wheels are release assets.
+Finalization rejects pack payloads and other unexpected artifacts and fails
+above 100,000,000 bytes excluding native tools ZIPs.
 Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
 locked PyPI artifact URLs into the shared wheel store, checking the exact
 filename, size and SHA256. Base-owned names and exact variant-index wheel pins

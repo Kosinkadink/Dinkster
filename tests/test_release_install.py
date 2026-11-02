@@ -155,7 +155,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert set(workflow["jobs"]) == {
         "validation",
         "build",
-        "pack-locks",
         "tools",
         "finalize",
         "install",
@@ -171,39 +170,27 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["tools"]["needs"] == "build"
-    assert workflow["jobs"]["pack-locks"]["needs"] == "build"
-    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools", "pack-locks"]
+    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools"]
     assert workflow["jobs"]["install"]["needs"] == "finalize"
     assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
         {"os": "linux", "runner": "ubuntu-latest"},
         {"os": "windows", "runner": "windows-latest"},
         {"os": "macos", "runner": "macos-latest"},
     ]
-    locks = workflow["jobs"]["pack-locks"]
-    assert locks["runs-on"] == "${{ matrix.runner }}"
-    assert locks["strategy"]["matrix"] == "${{ fromJSON(needs.build.outputs.lock-matrix) }}"
-    assert locks["strategy"]["fail-fast"] is False
-    assert [
-        step["with"]["name"]
-        for step in locks["steps"]
-        if step.get("uses") == "actions/download-artifact@v4"
-    ] == ["wheel-release", "selected-base-manifests"]
-    resolve = [step for step in locks["steps"] if "run" in step]
-    assert {step["if"] for step in resolve} == {
-        "runner.os == 'Windows'",
-        "runner.os != 'Windows'",
-    }
-    for step in resolve:
-        assert "-m scripts.build_release_pack_locks --release dist --base-manifest" in step["run"]
-        assert step["env"] == {"VARIANT": "${{ matrix.variant }}"}
+    commands = "\n".join(
+        step.get("run", "") for job in workflow["jobs"].values() for step in job.get("steps", [])
+    )
+    assert "build_official_packs" not in commands
+    assert "build_release_pack_locks" not in commands
+    assert "official-packs" not in commands
+    assert "pack-locks" not in commands
+    assert "lock-matrix" not in workflow["jobs"]["build"].get("outputs", {})
     admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
-    assert "for manifest in .release/bases/*/manifest.json" in admission
-    assert 'arguments+=(--base-manifest "$manifest")' in admission
     assert (
         "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
         in admission
     )
-    assert "for artifact in .release/pack-locks/*.pack-lock.json" in admission
+    assert "for artifact in .release/tools/*.zip" in admission
     assert 'arguments+=(--artifact "$artifact")' in admission
     assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
     for job in ("install", "release", "publish", "publish-api", "publish-supervisor"):
@@ -383,12 +370,8 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     assert "uvx twine check dist/*.whl" in commands
     assert "scripts/download_frontend.py" in commands
     assert "--frontend-artifact .release/frontend.zip" in commands
-    assert "from scripts.build_official_packs import build" in commands
-    assert 'arguments+=(--artifact "$payload")' in commands
-    assert (
-        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
-        in commands
-    )
+    assert "build_official_packs" not in commands
+    assert "--artifact" not in commands
     assert "pnpm" not in commands
     assert "node" not in commands
     assert all(
@@ -1258,11 +1241,8 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
     with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
-        assert {
-            name.removeprefix("dinkster/official_packs/"): wheel.read(name)
-            for name in wheel.namelist()
-            if name.startswith("dinkster/official_packs/")
-        } == {path.name: path.read_bytes() for path in (archive, catalog)}
+        assert not any(name.startswith("dinkster/official_packs/") for name in wheel.namelist())
+        assert not any(name.endswith((".zip", ".pack-lock.json")) for name in wheel.namelist())
     for candidate in payloads:
         assert (output / candidate.name).read_bytes() == candidate.read_bytes()
         row = next(row for row in manifest["artifacts"] if row["name"] == candidate.name)
@@ -1326,6 +1306,17 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
         check_release(tmp_path, expected - 1)
     (tmp_path / names[-1]).write_bytes(b"large interpreter" * 1000)
     assert check_release(tmp_path, expected) == expected
+    for name in (
+        "official-packs.lock",
+        "dinkster-nodes-foundation-1.0.zip",
+        "dinkster-nodes-foundation-1.0-linux-cpu.pack-lock.json",
+    ):
+        forbidden = tmp_path / name
+        forbidden.write_text('{"packs": []}')
+        write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), forbidden])
+        with pytest.raises(ValueError, match="unexpected release payload"):
+            check_release(tmp_path, 100_000_000)
+        forbidden.unlink()
     external = "numpy-1.0-py3-none-any.whl"
     (tmp_path / external).write_bytes(b"external")
     write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])

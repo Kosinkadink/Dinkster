@@ -416,18 +416,6 @@ def build(
         verify_and_extract(
             frontend_artifact.read_bytes(), sources, staged / "src/dinkster/frontend_bundle/static"
         )
-        catalog = next(
-            (path for path in payload_artifacts or [] if path.name == "official-packs.lock"), None
-        )
-        if catalog is not None:
-            bundled = staged / "src/dinkster/official_packs"
-            bundled.mkdir()
-            shutil.copyfile(catalog, bundled / catalog.name)
-            entries = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
-            payloads = {path.name: path for path in payload_artifacts or []}
-            for entry in entries:
-                name = f"{entry['pack']}-{entry['version']}.zip"
-                shutil.copyfile(payloads[name], bundled / name)
         for name in PUBLISHED_PROJECTS:
             subprocess.run(
                 [uv, "build", "--package", name, "--wheel", "--out-dir", str(output)],
@@ -581,16 +569,7 @@ def check_release(output: Path, maximum_bytes: int) -> int:
         raise ValueError("release must contain only the three Dinkster workspace wheels")
     if {path.name for path in output.iterdir()} != names | {"release-manifest.json", "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
-    allowed = wheels | {"constraints.txt", "official-packs.lock"}
-    catalog = output / "official-packs.lock"
-    if catalog.is_file():
-        packs = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
-        for pack in packs:
-            allowed.add(f"{pack['pack']}-{pack['version']}.zip")
-            allowed.update(
-                f"{pack['pack']}-{pack['version']}-{variant}.pack-lock.json"
-                for variant in manifest["dependencies"]
-            )
+    allowed = wheels | {"constraints.txt"}
     for name in names - allowed:
         if (
             re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", name)

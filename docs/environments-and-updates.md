@@ -22,7 +22,7 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive, native tools and official pack artifacts; no third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive and native tools; no official pack artifacts or third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
 | Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu`, `mac-arm64` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
@@ -137,21 +137,21 @@ The engine environment is immutable and hash-checked. `dinkster-env doctor`
 compares the active generation against its constraints and reports drift.
 Repair re-syncs from the wheel store without network access.
 
-When the selected engine manifest lists `official-packs.lock`, setup/update also
-acquire that existing registry lock and the release's ZIP source payloads. Manifest
-SHA256/size checks verify transport; raw ZIP-byte BLAKE3 identities name the cache
-entries at `engines/<release-id>/artifacts/<digest-hex>.zip`. The supervisor does not
-parse the registry lock or extract sources. Target-interpreter source admission
-consumes that lock/cache pair, verifies artifact identity and claims, and refuses
-the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
-inputs override release-source acquisition. Dependency locks remain distinct from
-source identities. Unless repeated `--pack-lock` inputs override bundled selection,
-setup/update acquire the selected release's existing
-`<pack>-<public-version>-<variant>.pack-lock.json` artifact rows, verify size/SHA256
-and retain original bytes under `engines/<release-id>/`. The target provisioner
-owns their schema and conflict checks; dependency installation is offline, from
-verified local wheels only. Every admitted source pack must have a dependency
-record, including empty closures and in-process packs.
+The engine release and wheel do not supply official pack archives or dependency
+locks. The target engine interpreter resolves the committed default ids and
+minimum versions against the registry, selecting the newest version compatible
+with that engine. It downloads verified BLAKE3-addressed archives and the locks
+published for those exact archives and the selected base. A fresh installation
+reports unavailable defaults and can start with zero packs when the registry is
+offline. Updates re-resolve the installed official selection and refuse an
+unavailable compatible replacement before changing the active generation.
+
+Explicit paired `--catalog-lock`/`--artifacts` inputs select sources directly;
+repeated `--pack-lock` inputs select their dependency records. Source admission
+verifies artifact identity and claims and refuses the whole candidate on errors.
+The target provisioner owns dependency schema and conflict checks; dependency
+installation is offline, from verified local wheels only. Every admitted source
+pack must have a dependency record, including empty closures and in-process packs.
 After dependency doctor and source admission, the target interpreter runs
 `dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
 This selects only admitted generation sources and already-provisioned pack
