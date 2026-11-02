@@ -59,9 +59,18 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
                 "p.add_argument('--generation',type=Path)\n"
                 "p.add_argument('--catalog-lock',type=Path)\n"
                 "p.add_argument('--artifacts',type=Path)\n"
+                "p.add_argument('--prepare-locks',type=Path)\n"
+                "p.add_argument('--variant')\n"
+                "p.add_argument('--accelerator')\n"
+                "p.add_argument('--index',action='append')\n"
+                "p.add_argument('--find-links',action='append')\n"
                 "p.add_argument('--json',action='store_true')\n"
                 "a=p.parse_args()\n"
                 "assert json.loads(a.catalog_lock.read_text())['packs']==[]\n"
+                "if a.prepare_locks:\n"
+                "    a.prepare_locks.mkdir()\n"
+                "    print(json.dumps({'locks':[],'errors':[]}))\n"
+                "    raise SystemExit(0)\n"
                 "shutil.copyfile(a.catalog_lock,a.generation/'dinkster.lock')\n"
                 "print(json.dumps({'packs':[],'errors':[]}))\n",
             )

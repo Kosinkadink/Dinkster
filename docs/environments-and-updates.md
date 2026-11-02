@@ -347,7 +347,9 @@ archive parts and exact wheels. Each generation retains its base manifest,
 so labels do not depend on the definitions file remaining present or unchanged.
 
 An engine update keeps that exact custom base and installs the new engine onto
-it using verified engine wheels and effective hashed constraints. It does not
+it using verified engine wheels and effective hashed constraints, even when the
+definitions file changes or disappears. Pass `update --variants PATH` explicitly
+to rebuild from a definition. It does not
 require a published variant with the custom name. Published exact base/wheel
 alignment is unchanged; the explicit custom path checks the engine wheels'
 dependency requirements against the custom base versions. A newer required

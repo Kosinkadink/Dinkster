@@ -195,10 +195,19 @@ def project_operation(
     approved: dict[str, object] | None = None,
     target_generation: Path | None = None,
     requirements_only: bool = False,
+    target_device: str | None = None,
 ) -> dict[str, object]:
     """Plan or apply workflow requirements through the generation's core adapter."""
     if requirements_only and approved is not None:
         raise EnvironmentError("requirements snapshot cannot apply a workflow plan")
+    if target_device is not None and (
+        approved is not None
+        or requirements_only
+        or target_generation is None
+        or catalog_lock is None
+        or artifacts is None
+    ):
+        raise EnvironmentError("target device requires acquired target inputs for planning only")
     command = [
         str(interpreter(generation)),
         "-I",
@@ -221,6 +230,8 @@ def project_operation(
     if target_generation is not None:
         command[0] = str(interpreter(target_generation))
         command.extend(["--generation", str(target_generation)])
+    if target_device is not None:
+        command.extend(["--target-device", target_device])
     if approved is not None:
         if target_generation is None:
             raise EnvironmentError("workflow execution requires a target generation")

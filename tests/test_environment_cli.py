@@ -12,12 +12,14 @@ import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import ProxyHandler, build_opener, urlopen
 
 import pytest
+import zstandard
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_artifacts import acquire_sources, discover
@@ -192,6 +194,144 @@ def test_setup_names_published_variants_without_resolving_or_creating_project(
     assert "--from-scratch" in result["error"]
     assert not root.exists()
     assert not store.exists()
+
+
+@pytest.mark.parametrize("explicit_sources", [False, True])
+def test_custom_cli_setup_retains_base_on_update_without_definition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    explicit_sources: bool,
+):
+    from dinkster_supervisor import environment
+    from dinkster_supervisor.environment_artifacts import _BASE_IDENTITY
+
+    from tests.fixtures.environments.build import artifact, build, wheel
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
+    base = json.loads(Path(fixture["baseManifest"]).read_bytes())
+    custom = {**base, "variant": "studio-cpu", "source": "user-defined"}
+    donor = Path(fixture["baseManifest"]).parent
+    tree = tmp_path / "custom-payload"
+    with (donor / base["archive"]["parts"][0]["filename"]).open("rb") as stream:
+        with zstandard.ZstdDecompressor().stream_reader(stream) as decoded:
+            with tarfile.open(fileobj=decoded, mode="r|") as archive:
+                archive.extractall(tree, filter="data")
+    torch = wheel(tree / "wheels", "torch", "2.14.1", 17)
+    custom["wheels"] = [
+        *base["wheels"],
+        {
+            **artifact(torch.name, torch.read_bytes(), key="filename"),
+            "name": "torch",
+            "version": "2.14.1",
+            "lockedVersion": None,
+            "index": "https://pypi.org/simple",
+            "url": "https://example.invalid/torch.whl",
+            "verification": "local",
+        },
+    ]
+    custom["replaces"] = [*base["replaces"], "torch"]
+    identity = {key: custom[key] for key in _BASE_IDENTITY}
+    identity["archive"] = {"format": "tar+zstd"}
+    custom["id"] = "sha256:" + hashlib.sha256(_json(identity)).hexdigest()
+    custom["localBuild"] = {"extrasIndex": "https://pypi.org/simple"}
+    retained = store / "downloads" / custom["id"][7:]
+    retained.mkdir(parents=True)
+    part = retained / "base.tar.zst.001"
+    with part.open("wb") as stream, zstandard.ZstdCompressor().stream_writer(stream) as encoded:
+        with tarfile.open(fileobj=encoded, mode="w|") as archive:
+            archive.add(tree / "python", "python")
+            archive.add(tree / "wheels", "wheels")
+    custom["archive"] = {
+        "format": "tar+zstd",
+        "parts": [artifact(part.name, part.read_bytes(), key="filename")],
+    }
+    definitions = tmp_path / "custom.toml"
+    definitions.write_text(
+        '[variants.studio-cpu]\ntorch="2.14.1"\n'
+        'torch-index="https://download.pytorch.org/whl/cpu"\n'
+    )
+
+    def built(*_):
+        from dinkster_supervisor.environment_artifacts import acquire_base
+
+        destination = acquire_base(custom, (str(retained),), store)
+        (destination / "manifest.json").write_bytes(_json(custom))
+        return custom
+
+    monkeypatch.setattr(environment, "build_custom_base", built)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-env",
+            "--root",
+            str(root),
+            "setup",
+            "--variant",
+            "studio-cpu",
+            "--variants",
+            str(definitions),
+            "--data",
+            str(store),
+            "--channel",
+            "main",
+            "--mirror",
+            str(mirror),
+            "--port",
+            str(fixture["port"]),
+            "--yes",
+            "--json",
+        ],
+    )
+    try:
+        with pytest.raises(SystemExit) as setup:
+            environment.main()
+        result = json.loads(capsys.readouterr().out)
+        assert setup.value.code == 0, result
+        assert result["current"] == 1
+        assert _run(root, "stop", "--yes")[0] == 0
+        definitions.unlink()
+        (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        overrides = ()
+        if explicit_sources:
+            catalog, archives = tmp_path / "selected.lock", tmp_path / "selected-artifacts"
+            catalog.write_text(Lockfile().record_json())
+            archives.mkdir()
+            overrides = ("--catalog-lock", str(catalog), "--artifacts", str(archives))
+        code, updated = _run(root, "update", *overrides, "--yes")
+        assert code == 0 and updated["current"] == 2, updated
+        assert _run(root, "stop", "--yes")[0] == 0
+        first, second = (root / "generations" / str(number) for number in (1, 2))
+        assert (second / "base-manifest.json").read_bytes() == (
+            first / "base-manifest.json"
+        ).read_bytes()
+        generation = json.loads((second / "generation.json").read_bytes())
+        assert generation["base"] == custom["id"]
+        assert generation["variant"] == "studio-cpu"
+        assert generation["engine"]["version"] == "2.0"
+        assert not list(store.glob(".registry-*"))
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        manifest = second / "base-manifest.json"
+        original = manifest.read_bytes()
+        manifest.write_bytes(original + b" ")
+        code, refused = _run(root, "update", "--yes")
+        assert code == 1 and "differs from active generation" in refused["error"]
+        assert (root / "current").read_text() == "2\n"
+        assert not (root / "generations/3").exists()
+        manifest.write_bytes(original)
+        code, published = _run(root, "update", "--variant", "fixture-cpu", "--yes")
+        assert code == 0 and published["current"] == 3, published
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, rolled_back = _run(root, "rollback", "--yes")
+        assert code == 0 and rolled_back["current"] == 2, rolled_back
+        assert json.loads((root / "project.json").read_bytes())["variant"] == "studio-cpu"
+        assert _run(root, "doctor")[1]["status"] == "clean"
+    finally:
+        _run(root, "stop", "--yes")
 
 
 @pytest.mark.parametrize("operation", ["setup", "update"])

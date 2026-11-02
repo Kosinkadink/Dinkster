@@ -1166,6 +1166,105 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
         library.close()
 
 
+def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_authoritative(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from functools import partial
+
+    from dinkster.project_requirements import plan_project_requirements
+    from dinkster.workflow_requirements import main
+
+    root, scratch, artifacts = tmp_path / "project", tmp_path / "scratch", tmp_path / "artifacts"
+    root.mkdir()
+    scratch.mkdir()
+    artifacts.mkdir()
+    (root / "project.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "additions": {"packs": [{"pack": "example", "version": "1.0.0"}]},
+            }
+        )
+    )
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname="example"\n[pack.entry]\nnodes="poison:NODES"\n[pack.sandbox]\ngpu=true\n'
+    )
+    (pack / "poison.py").write_text('raise RuntimeError("must not execute")\n')
+    archive = artifacts / "building.zip"
+    digest = build_artifact(pack, archive)
+    archive.rename(artifacts / f"{digest[7:]}.zip")
+    catalog = tmp_path / "selected.lock"
+    catalog.write_text(
+        Lockfile.of([LockedPack("example", "1.0.0", digest, "author", ("example",))]).record_json()
+    )
+    plan = partial(
+        plan_project_requirements,
+        root,
+        variant="user-target",
+        catalog_lock=catalog,
+        artifacts=artifacts,
+    )
+    cpu = cast("dict[str, object]", plan(target_generation=scratch, target_device="cpu")["plan"])
+    cuda = cast("dict[str, object]", plan(target_generation=scratch, target_device="cuda")["plan"])
+    assert cpu["errors"] == ["pack example: pack.sandbox.gpu requires a GPU"]
+    assert cuda["errors"] == []
+    assert cuda["packs"] == [{"pack": "example", "version": "1.0.0"}]
+    with pytest.raises(RequirementError, match="unsupported acquired target device"):
+        plan(target_generation=scratch, target_device="invented")
+    with pytest.raises(RequirementError, match="requires target, catalog and artifacts"):
+        plan_project_requirements(root, variant="user-target", target_device="cuda")
+    with pytest.raises(FileNotFoundError):
+        plan(target_generation=scratch)
+    sealed = custom_generation(tmp_path, "cpu")
+    observed = cast("dict[str, object]", plan(target_generation=sealed)["plan"])
+    assert observed["errors"] == cpu["errors"]
+    assert (
+        main(
+            [
+                "project-apply",
+                "--project-root",
+                str(root),
+                "--generation",
+                str(sealed),
+                "--variant",
+                "user-target",
+                "--target-device",
+                "cuda",
+                "--yes",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    assert "cannot override the sealed target device" in capsys.readouterr().err
+    assert not (root / "library").exists()
+
+
+@pytest.mark.parametrize(
+    "mode", ["apply", "snapshot", "missing-target", "missing-catalog", "missing-artifacts"]
+)
+def test_supervisor_refuses_device_override_outside_acquired_plan(
+    tmp_path: Path, mode: str
+) -> None:
+    from dinkster_supervisor.environment_generations import project_operation
+    from dinkster_supervisor.environment_state import EnvironmentError
+
+    with pytest.raises(EnvironmentError, match="acquired target inputs for planning only"):
+        project_operation(
+            tmp_path,
+            generation=tmp_path / "source",
+            variant="user-target",
+            target_generation=None if mode == "missing-target" else tmp_path / "target",
+            catalog_lock=None if mode == "missing-catalog" else tmp_path / "selected.lock",
+            artifacts=None if mode == "missing-artifacts" else tmp_path / "artifacts",
+            approved={} if mode == "apply" else None,
+            requirements_only=mode == "snapshot",
+            target_device="cuda",
+        )
+
+
 def test_empty_project_requirements_do_not_create_library(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

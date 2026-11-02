@@ -210,6 +210,11 @@
   generation rather than inferred from the current variants file.
   Custom definitions name an exact torch version and HTTPS torch index;
   their optional extras index defaults to PyPI.
+  Setup and update accept `--variants PATH`; otherwise definitions come from
+  the project or store `variants.toml`. An ordinary update retains the active
+  custom base even if its definition file has changed or disappeared. Pass
+  `--variants PATH` explicitly to rebuild from a changed definition. Retained
+  base metadata must still match the active generation's inventory.
 - Custom pack dependency preparation reads the exact selected source archives,
   verifies their identities and resolves standard dependency locks against the
   target generation's constraints. It does not rebuild packs from a checkout

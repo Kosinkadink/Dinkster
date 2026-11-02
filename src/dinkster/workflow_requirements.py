@@ -404,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--catalog-lock", type=Path)
         parser.add_argument("--artifacts", type=Path)
         parser.add_argument("--variant", required=True)
+        parser.add_argument("--target-device")
         parser.add_argument("--json", action="store_true", required=True)
         parser.add_argument("--yes", action="store_true")
         args = parser.parse_args(arguments[1:])
@@ -418,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
                 if path is not None and not path.is_absolute():
                     raise RequirementError("project and generation/catalog paths must be absolute")
             if arguments[0] == "project-apply":
+                if args.target_device is not None:
+                    raise RequirementError("project-apply cannot override the sealed target device")
                 if not args.yes or args.generation is None:
                     raise RequirementError("project-apply requires --yes and --generation")
                 approved = dict(_object(json.load(sys.stdin), "approved project plan"))
@@ -438,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
                     target_generation=args.generation,
                     catalog_lock=args.catalog_lock,
                     artifacts=args.artifacts,
+                    target_device=args.target_device,
                 )
             print(json.dumps(result))
             plan = cast("dict[str, object]", result["plan"])
