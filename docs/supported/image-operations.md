@@ -23,6 +23,11 @@
 - Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
   preserve original-file assets and sidecars while returning viewport camera,
   model placement and dimensions, with explicit metadata inputs taking priority.
+- Native `Save3DAdvanced`, `SaveGaussianSplat` and `SavePointCloud` export
+  resource-bearing original files with their named sidecars in isolated numbered
+  folders, retaining nested relative names and bytes without overwriting earlier
+  exports. Resource-free files retain flat numbered filenames. Original packet
+  and viewport outputs are preserved.
 - `DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
   transport depth, source images and cameras, per-frame face and body detections,
   face topology, masks, canonical colors and external rig state without dropping
