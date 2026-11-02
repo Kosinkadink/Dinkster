@@ -33,9 +33,74 @@ from .model import (
     RESOURCE_ID_META_KEY,
     RESOURCE_OWNER_META_KEY,
     RESOURCE_REFS_META_KEY,
+    RESOURCES_META_KEY,
     process_instance_token,
 )
 from .registry import TypeRegistry, TypeSpec
+from .resources import COST_META_KEY
+
+
+def comfy_resident_meta(obj: object) -> Mapping[str, object]:
+    """Read execution residency and cost from a patcher-shaped resident value."""
+    resident_cost = getattr(obj, "_dinkster_resident_cost", None)
+    if resident_cost is not None:
+        if not isinstance(resident_cost, Mapping):
+            raise TypeError("_dinkster_resident_cost must map resource names to nonnegative ints")
+        raw_cost = cast("Mapping[object, object]", resident_cost)
+        if any(
+            type(resource) is not str or not resource or type(cost) is not int or cost < 0
+            for resource, cost in raw_cost.items()
+        ):
+            raise TypeError("_dinkster_resident_cost must map resource names to nonnegative ints")
+        return {COST_META_KEY: cast("dict[str, int]", dict(raw_cost))}
+    patcher = _patcher_of(obj)
+    if patcher is None:
+        return {}
+    devices = _device_strings(patcher)
+    nbytes = _model_nbytes(patcher)
+    if not devices:
+        return {}
+    meta: dict[str, object] = {
+        RESOURCES_META_KEY: {"gpu": devices[0] if len(devices) == 1 else devices}
+    }
+    if nbytes > 0:
+        # The host offload copy persists; split execution cost across the devices
+        # until patchers expose per-device layouts.
+        share = nbytes // len(devices)
+        cost: dict[str, int] = {f"vram:{device}": share for device in devices}
+        cost["ram"] = nbytes
+        meta[COST_META_KEY] = cost
+    return meta
+
+
+def _patcher_of(obj: object) -> object | None:
+    candidate = getattr(obj, "patcher", obj)
+    if hasattr(candidate, "load_device"):
+        return candidate
+    return None
+
+
+def _device_strings(patcher: object) -> tuple[str, ...]:
+    raw = getattr(patcher, "load_devices", None) or [getattr(patcher, "load_device", None)]
+    devices: list[str] = []
+    for device in cast("list[object]", list(raw)):
+        if device is None:
+            continue
+        text = str(device)
+        if text.startswith(("cuda", "xpu", "mps", "npu")):
+            devices.append(text)
+    return tuple(devices)
+
+
+def _model_nbytes(patcher: object) -> int:
+    size_fn = getattr(patcher, "model_size", None)
+    if not callable(size_fn):
+        return 0
+    try:
+        size = size_fn()
+    except Exception:  # noqa: BLE001 - foreign code; no meta beats a crash
+        return 0
+    return int(size) if isinstance(size, (int, float)) else 0
 
 
 class ResidentLookupError(Exception):
