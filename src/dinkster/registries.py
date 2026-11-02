@@ -54,27 +54,42 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import tempfile
 import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import warnings
-from dataclasses import dataclass
+import zipfile
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
 from dinkster_registry import (
+    ArtifactError,
     InstallError,
     LockedPack,
+    Lockfile,
+    artifact_digest,
+    unpack_artifact,
     validate_artifact_digest,
     validate_version,
 )
-from dinkster_schema import canonical_name, validate_name
+from dinkster_schema import PackCompatibility, canonical_claim, canonical_name, validate_name
+from dinkster_schema.units import MEBIBYTE
+from dinkster_workers import ManifestError, load_manifest
+from dinkster_workers.pack_lock import PackLock
+from dinkster_workers.provision import ProvisionError
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from dinkster.installer import RegistryFetcher, http_registry_fetcher
 
 DEFAULT_REGISTRIES_FILENAME = "registries.toml"
+DEFAULT_PACKS_PATH = Path(__file__).with_name("default-packs.toml")
 AD_HOC_TOKEN_ENV = "DINKSTER_REGISTRY_TOKEN"
 DEFAULT_RESOLVE_TIMEOUT = 60.0
 
@@ -233,6 +248,39 @@ class RegistryConfig:
     def names(self) -> tuple[str, ...]:
         return tuple(registry.name for registry in self.registries)
 
+    def registry_for(
+        self, entry: LockedPack, selected: NamedRegistry | None = None
+    ) -> NamedRegistry:
+        """Route recorded provenance without searching another registry."""
+        source = entry.source
+        if source == "registry":
+            chosen = selected if selected is not None else self.default_registry()
+            if chosen is None:
+                raise InstallError(
+                    f"cannot acquire {entry.pack}: source 'registry' names no "
+                    f"specific registry and none is the default - pass "
+                    f"--registry or flag one 'default = true'"
+                )
+            return chosen
+        qualifier = source.removeprefix("registry:")
+        if qualifier.startswith(("http://", "https://")):
+            endpoint = qualifier.rstrip("/")
+            if selected is not None and selected.endpoint == endpoint:
+                return selected
+            for registry in self.registries:
+                if registry.endpoint == endpoint:
+                    return registry
+            return NamedRegistry(name="", endpoint=endpoint)
+        named = self.get(qualifier)
+        if named is None:
+            configured = ", ".join(self.names) if self.names else "none configured"
+            raise InstallError(
+                f"cannot acquire {entry.pack}: recorded source {source!r} names "
+                f"registry {qualifier!r}, which is not configured "
+                f"(configured: {configured}); add it to registries.toml"
+            )
+        return named
+
 
 def _normalized_endpoint(label: str, endpoint: str) -> str:
     if not endpoint.startswith(("http://", "https://")):
@@ -351,38 +399,8 @@ def routing_registry_fetcher(
     ``"registry"`` sources go there, falling back to the configured
     default."""
 
-    def registry_for(entry: LockedPack) -> NamedRegistry:
-        source = entry.source
-        if source == "registry":
-            chosen = selected if selected is not None else config.default_registry()
-            if chosen is None:
-                raise InstallError(
-                    f"cannot acquire {entry.pack}: source 'registry' names no "
-                    f"specific registry and none is the default - pass "
-                    f"--registry or flag one 'default = true'"
-                )
-            return chosen
-        qualifier = source.removeprefix("registry:")
-        if qualifier.startswith(("http://", "https://")):
-            endpoint = qualifier.rstrip("/")
-            if selected is not None and selected.endpoint == endpoint:
-                return selected
-            for registry in config.registries:
-                if registry.endpoint == endpoint:
-                    return registry  # the matching credential rides along
-            return NamedRegistry(name="", endpoint=endpoint)
-        named = config.get(qualifier)
-        if named is None:
-            configured = ", ".join(config.names) if config.names else "none configured"
-            raise InstallError(
-                f"cannot acquire {entry.pack}: recorded source {source!r} names "
-                f"registry {qualifier!r}, which is not configured "
-                f"(configured: {configured}); add it to registries.toml"
-            )
-        return named
-
     def fetch(entry: LockedPack) -> bytes:
-        registry = registry_for(entry)
+        registry = config.registry_for(entry, selected)
         return http_registry_fetcher(registry.endpoint, token=registry.token())(entry)
 
     return fetch
@@ -439,6 +457,7 @@ def resolve_release(
     pack: str,
     version: str,
     *,
+    engine_version: str | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
 ) -> LockedPack:
     """Turn ``pack@version`` into a digest-pinned :class:`LockedPack`
@@ -485,6 +504,22 @@ def resolve_release(
             f"{wanted_pack}@{version} with {answered_pack}@{answered_version}; "
             f"refusing the substitution"
         )
+    if engine_version is not None:
+        manifest = fields.get("manifest")
+        engine = (
+            cast("dict[str, object]", manifest).get("dinkster")
+            if isinstance(manifest, dict)
+            else None
+        )
+        if fields.get("state") != "active" or not isinstance(engine, str):
+            raise InstallError(
+                f"registry release {wanted_pack}@{version} is not active "
+                "with a declared engine range"
+            )
+        try:
+            PackCompatibility(version, engine).require_engine(wanted_pack, engine_version)
+        except ValueError as exc:
+            raise InstallError(f"registry release {wanted_pack}@{version}: {exc}") from exc
     digest_problem = validate_artifact_digest(digest)
     if digest_problem is not None:
         raise InstallError(
@@ -499,6 +534,324 @@ def resolve_release(
         claims=(),
         source=registry.source,
     )
+
+
+def resolve_compatible_release(
+    registry: NamedRegistry,
+    pack: str,
+    minimum: str,
+    engine_version: str,
+    *,
+    timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+) -> LockedPack:
+    """Select the newest active compatible version from ONE registry, then pin its bytes.
+
+    Inspect every page: a pack's latest release need not support the target engine.
+    Recheck the selected release detail before trusting its installation identity.
+    """
+    wanted_pack = canonical_name(pack)
+    minimum_version = Version(minimum)
+    target_engine = Version(engine_version)
+    selected: Version | None = None
+    minimum_engine: str | None = None
+    cursor = ""
+    seen: set[str] = set()
+    subject = f"versions of {wanted_pack}"
+    while True:
+        params = [("limit", "100")]
+        if cursor:
+            params.append(("cursor", cursor))
+        fields = _index_get(
+            registry,
+            f"/v1/packs/{wanted_pack}/versions?" + urllib.parse.urlencode(params),
+            action=f"resolving compatible {wanted_pack}",
+            subject=subject,
+            timeout=timeout,
+        )
+        rows = fields.get("items")
+        if not isinstance(rows, list):
+            raise InstallError(
+                f"registry {registry.label} answered {subject} without an items list"
+            )
+        for row in cast("list[object]", rows):
+            if not isinstance(row, dict):
+                raise InstallError(
+                    f"registry {registry.label} answered {subject} with a malformed row"
+                )
+            entry = cast("dict[str, object]", row)
+            version, engine, state = entry.get("version"), entry.get("dinkster"), entry.get("state")
+            if (
+                not isinstance(version, str)
+                or not isinstance(engine, str)
+                or not isinstance(state, str)
+            ):
+                raise InstallError(
+                    f"registry {registry.label} answered {subject} "
+                    "without version/engine/state strings"
+                )
+            try:
+                if engine == "":
+                    problem = validate_version(version)
+                    if problem is not None:
+                        raise ValueError(f"pack version {problem}")
+                    continue
+                compatibility = PackCompatibility(version, engine)
+            except ValueError as exc:
+                raise InstallError(f"registry {registry.label} answered {subject}: {exc}") from exc
+            candidate = Version(compatibility.version)
+            if candidate == minimum_version:
+                minimum_engine = compatibility.engine
+            if (
+                state == "active"
+                and candidate >= minimum_version
+                and (selected is None or candidate > selected)
+                and SpecifierSet(compatibility.engine).contains(target_engine, prereleases=True)
+            ):
+                selected = candidate
+        following = fields.get("nextCursor")
+        if following is not None and not isinstance(following, str):
+            raise InstallError(
+                f"registry {registry.label} answered {subject} with a malformed cursor"
+            )
+        cursor = following or ""
+        if not cursor:
+            break
+        if cursor in seen:
+            raise InstallError(f"registry {registry.label} repeated the cursor for {subject}")
+        seen.add(cursor)
+    if selected is None:
+        declaration = (
+            f"; {wanted_pack}@{minimum} declares engine {minimum_engine}" if minimum_engine else ""
+        )
+        raise InstallError(
+            f"registry {registry.label} has no active {wanted_pack} >= {minimum} "
+            f"compatible with engine {engine_version}{declaration}"
+        )
+    return resolve_release(
+        registry, wanted_pack, str(selected), engine_version=engine_version, timeout=timeout
+    )
+
+
+def registry_source_lock(selected: LockedPack, archive: Path, *, engine_version: str) -> LockedPack:
+    """Bind the selected release to its safely unpacked, digest-verified manifest.
+
+    Publisher and namespace claims describe the selected content, not the
+    publishing audit actor. They are not proof of authenticated authority:
+    reserved-name/grant admission belongs to the trusted registry's promotion.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="dinkster-registry-source-") as directory:
+            root = unpack_artifact(archive, Path(directory), selected.artifact_digest)
+            manifest = load_manifest(root / "dinkster-pack.toml")
+            if canonical_name(manifest.name) != selected.pack:
+                raise ValueError(f"archive manifest names {manifest.name!r}")
+            compatibility = manifest.compatibility
+            if compatibility is None:
+                raise ValueError("archive manifest has no pack version and engine range")
+            if compatibility.version != selected.version:
+                raise ValueError(f"archive manifest version is {compatibility.version}")
+            compatibility.require_engine(selected.pack, engine_version)
+            if not manifest.publisher:
+                raise ValueError("archive manifest has no publisher")
+            return replace(
+                selected,
+                publisher=canonical_name(manifest.publisher),
+                claims=tuple(canonical_claim(claim) for claim in manifest.namespaces),
+            )
+    except (ArtifactError, ManifestError, OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise InstallError(
+            f"registry source {selected.pack}@{selected.version} refused: {exc}"
+        ) from exc
+
+
+def default_pack_minimums() -> dict[str, str]:
+    """Read default ids and minimum versions, never installation byte identities."""
+    try:
+        document = tomllib.loads(DEFAULT_PACKS_PATH.read_text(encoding="utf-8"))
+        packs = document.get("packs")
+        if set(document) != {"packs"} or not isinstance(packs, dict) or not packs:
+            raise ValueError("expected a nonempty packs table")
+        minimums: dict[str, str] = {}
+        for name, minimum in packs.items():
+            if validate_name(name) or canonical_name(name) != name:
+                raise ValueError(f"invalid default pack id {name!r}")
+            if not isinstance(minimum, str) or validate_version(minimum):
+                raise ValueError(f"invalid minimum version for {name}")
+            minimums[name] = minimum
+        return minimums
+    except (OSError, ValueError) as exc:
+        raise InstallError(f"default pack declaration refused: {exc}") from exc
+
+
+def prepare_registry_sources(
+    registry: NamedRegistry,
+    minimums: Mapping[str, str],
+    artifacts: Path,
+    *,
+    engine_version: str,
+    allow_missing: bool = False,
+) -> tuple[Lockfile, dict[str, str]]:
+    """Resolve target-compatible sources without mutating any generation.
+
+    Fresh setup may retain available defaults and report unavailable packs.
+    Update requires the complete requested set before returning a source lock.
+    """
+    artifacts.mkdir(parents=True, exist_ok=True)
+    fetch = http_registry_fetcher(registry.endpoint, token=registry.token())
+    entries: list[LockedPack] = []
+    unavailable: dict[str, str] = {}
+    for pack, minimum in minimums.items():
+        try:
+            selected = resolve_compatible_release(registry, pack, minimum, engine_version)
+            cached = artifacts / f"{selected.artifact_digest.removeprefix('blake3:')}.zip"
+            if cached.exists():
+                entry = registry_source_lock(selected, cached, engine_version=engine_version)
+            else:
+                with tempfile.TemporaryDirectory(dir=artifacts, prefix="source-") as directory:
+                    staged = Path(directory) / "pack.zip"
+                    staged.write_bytes(fetch(selected))
+                    entry = registry_source_lock(selected, staged, engine_version=engine_version)
+                    staged.replace(cached)
+            entries.append(entry)
+        except (InstallError, OSError) as exc:
+            unavailable[pack] = f"{pack}: {exc}"
+    if unavailable and not allow_missing:
+        raise InstallError("registry pack preparation refused: " + "; ".join(unavailable.values()))
+    return Lockfile.of(entries), unavailable
+
+
+def prepare_registry_update_sources(
+    config: RegistryConfig,
+    installed: Lockfile,
+    artifacts: Path,
+    *,
+    engine_version: str,
+    selected: NamedRegistry | None = None,
+) -> Lockfile:
+    """Re-resolve installed official registry packs without adding or dropping packs.
+
+    Other selections remain unchanged for generation admission. Official registry
+    selections cannot downgrade or switch their recorded source on engine update.
+    """
+    entries: list[LockedPack] = []
+    for entry in installed.packs:
+        if entry.publisher != "dinkster" or (
+            entry.source != "registry" and not entry.source.startswith("registry:")
+        ):
+            entries.append(entry)
+            continue
+        try:
+            registry = config.registry_for(entry, selected)
+            lock, _ = prepare_registry_sources(
+                registry, {entry.pack: entry.version}, artifacts, engine_version=engine_version
+            )
+            entries.extend(
+                replace(updated, source=entry.source) if entry.source != "registry" else updated
+                for updated in lock.packs
+            )
+        except InstallError as exc:
+            raise InstallError(
+                f"updating installed {entry.pack}@{entry.version} "
+                f"for engine {engine_version} refused: {exc}"
+            ) from exc
+    return Lockfile.of(entries)
+
+
+def prepare_registry_pack_locks(
+    config: RegistryConfig,
+    sources: Lockfile,
+    output: Path,
+    *,
+    variant: str,
+    base_id: str,
+    selected: NamedRegistry | None = None,
+    timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+) -> tuple[Path, ...]:
+    """Acquire published dependency locks for exact selected sources and base.
+
+    Refuse the whole set before exposing output if any binding or bytes differ.
+    No dependency resolution or generation mutation occurs here.
+    """
+    if output.exists():
+        raise InstallError("published lock output directory already exists")
+    if (
+        re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", base_id) is None
+    ):
+        raise InstallError("published locks require a variant and exact sha256 base identity")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(dir=output.parent, prefix="published-locks-") as directory:
+            staged = Path(directory)
+            names: list[str] = []
+            for entry in sources.packs:
+                if entry.source != "registry" and not entry.source.startswith("registry:"):
+                    raise InstallError(f"{entry.pack}: published lock requires registry provenance")
+                registry = config.registry_for(entry, selected)
+                subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
+                path = f"/v1/packs/{entry.pack}/versions/{entry.version}"
+                fields = _index_get(
+                    registry,
+                    path,
+                    action="acquiring published lock",
+                    subject=subject,
+                    timeout=timeout,
+                )
+                bindings = fields.get("installLocks")
+                binding = (
+                    cast("dict[str, object]", bindings).get(variant)
+                    if isinstance(bindings, dict)
+                    else None
+                )
+                if (
+                    fields.get("packName") != entry.pack
+                    or fields.get("version") != entry.version
+                    or fields.get("state") not in ("active", "yanked")
+                    or not isinstance(fields.get("artifact"), dict)
+                    or cast("dict[str, object]", fields["artifact"]).get("digest")
+                    != entry.artifact_digest
+                    or not isinstance(binding, dict)
+                ):
+                    raise InstallError(f"{subject}: selected release or published binding differs")
+                facts = cast("dict[str, object]", binding)
+                digest, size = facts.get("digest"), facts.get("size")
+                lock_path = path + "/locks/" + urllib.parse.quote(variant, safe="")
+                if (
+                    facts.get("baseId") != base_id
+                    or facts.get("artifactDigest") != entry.artifact_digest
+                    or facts.get("url") != lock_path
+                    or not isinstance(digest, str)
+                    or validate_artifact_digest(digest)
+                    or type(size) is not int
+                    or not 1 <= cast("int", size) <= MEBIBYTE
+                ):
+                    raise InstallError(f"{subject}: invalid archive/base/lock binding")
+                headers = {"User-Agent": "dinkster-pack"}
+                token = registry.token()
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                request = urllib.request.Request(
+                    registry.endpoint
+                    + lock_path
+                    + "?"
+                    + urllib.parse.urlencode({"baseId": base_id}),
+                    headers=headers,
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                    payload = response.read(cast("int", size) + 1)
+                if len(payload) != size or artifact_digest(payload) != digest:
+                    raise InstallError(f"{subject}: published lock bytes differ from binding")
+                name = entry.pack + ".pack-lock.json"
+                destination = staged / name
+                destination.write_bytes(payload)
+                lock = PackLock.read(destination)
+                if lock.pack != entry.pack or lock.variant != variant:
+                    raise InstallError(f"{subject}: dependency lock pack or variant differs")
+                names.append(name)
+            staged.rename(output)
+        return tuple(output / name for name in names)
+    except (OSError, ValueError, ProvisionError) as exc:
+        raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -711,9 +1064,13 @@ __all__ = [
     "TemplateSummary",
     "browse_packs",
     "browse_templates",
+    "default_pack_minimums",
     "load_registries",
     "parse_registry_spec",
+    "prepare_registry_sources",
     "publish_release",
+    "registry_source_lock",
+    "resolve_compatible_release",
     "resolve_release",
     "routing_registry_fetcher",
     "select_registry",

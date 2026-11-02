@@ -489,9 +489,11 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
         code, result = _run(root, "update", *flags)
         assert code == 0, result
         assert result["current"] == 1
-        actions = [line for line in result["plan"] if line.startswith("workflow assets: ")]
-        assert len(actions) == 1
-        assert json.loads(actions[0].split(": ", 1)[1]) == {**asset, "sources": []}
+        requirements = next(
+            line for line in result["plan"] if line.startswith("workflow requirements: ")
+        )
+        assert json.loads(requirements.split(": ", 1)[1])["assets"] == [asset]
+        assert any("feasibility: pending" in line for line in result["plan"])
         assert snapshot() == before
 
     workflow_asset = AssetRef(digest_bytes(b"workflow bytes"), "workflow.bin", 14).to_wire()
@@ -519,7 +521,13 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     before = snapshot()
     code, combined = _run(root, "update", "--plan")
     assert code == 0, combined
-    assert len([line for line in combined["plan"] if line.startswith("workflow assets: ")]) == 2
+    requirements = next(
+        line for line in combined["plan"] if line.startswith("workflow requirements: ")
+    )
+    assert {row["digest"] for row in json.loads(requirements.split(": ", 1)[1])["assets"]} == {
+        asset["digest"],
+        workflow_asset["digest"],
+    }
     assert snapshot() == before
     settings.pop("workflows")
     (root / "project.json").write_text(json.dumps(settings))
@@ -527,7 +535,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     _release_sources(mirror)
     before = snapshot()
     code, missing = _run(root, "update", "--plan")
-    assert code == 1 and "intact cached release source" in missing["error"]
+    assert code == 0 and any("feasibility: pending" in line for line in missing["plan"])
     assert snapshot() == before
     acquired = acquire_sources(discover((str(mirror),), "main"), store)
     assert acquired is not None
@@ -537,15 +545,73 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     before = snapshot()
     for extra in ((), ("--catalog-lock", str(lock), "--artifacts", str(artifacts))):
         code, unavailable = _run(root, "update", "--plan", *extra)
-        assert code == 1 and "saved version is unavailable" in unavailable["error"]
+        assert code == 0 and any("feasibility: pending" in line for line in unavailable["plan"])
         assert '"version": "9.9.9"' in "\n".join(unavailable["plan"])
         assert snapshot() == before
     cached = next(artifacts.glob("*.zip"))
     cached.write_bytes(b"x" * cached.stat().st_size)
     before = snapshot()
     code, corrupt = _run(root, "update", "--plan")
-    assert code == 1 and "intact cached release source" in corrupt["error"]
+    assert code == 0 and any("feasibility: pending" in line for line in corrupt["plan"])
     assert snapshot() == before
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_workflow_update_prepares_target_registry_inputs_before_journaling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
+):
+    from tests.fixtures.environments.build import build
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
+    command = fixture["commands"]["setup"]
+    setup = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    assert setup.returncode == 0, setup.stdout + setup.stderr
+    try:
+        assert _run(root, "stop", "--yes")[0] == 0
+        settings = json.loads((root / "project.json").read_bytes())
+        settings["additions"] = {"packs": [], "assets": []}
+        (root / "project.json").write_text(json.dumps(settings))
+        (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        overrides = ()
+        if explicit:
+            catalog, artifacts = tmp_path / "selected.lock", tmp_path / "selected-artifacts"
+            catalog.write_text(Lockfile().record_json())
+            artifacts.mkdir()
+            overrides = ("--catalog-lock", str(catalog), "--artifacts", str(artifacts))
+        before_project = (root / "project.json").read_bytes()
+        before_journals = {path.name: path.read_bytes() for path in (root / "journal").iterdir()}
+        for problem, expected in (
+            ("refuse", "saved pack version is unavailable"),
+            ("revision", "workflow inputs changed"),
+            ("catalog", "target catalog changed"),
+        ):
+            monkeypatch.setenv("DINKSTER_FIXTURE_WORKFLOW_PROBLEM", problem)
+            code, refused = _run(root, "update", *overrides, "--yes")
+            assert code == 1 and expected in refused["error"], refused
+            assert (root / "current").read_text() == "1\n"
+            assert (root / "project.json").read_bytes() == before_project
+            assert {path.name: path.read_bytes() for path in (root / "journal").iterdir()} == (
+                before_journals
+            )
+            assert not (root / "generations/2").exists()
+            assert not list(store.glob(".registry-*"))
+            assert not list(store.glob(".workflow-*"))
+        monkeypatch.delenv("DINKSTER_FIXTURE_WORKFLOW_PROBLEM")
+        code, applied = _run(root, "update", *overrides, "--yes")
+        assert code == 0 and applied["current"] == 2, applied
+        assert (root / "project.json").read_bytes() == before_project
+        assert (
+            json.loads((root / "generations/2/generation.json").read_bytes())["engine"]["version"]
+            == "2.0"
+        )
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        assert not list(store.glob(".registry-*"))
+        assert not list(store.glob(".workflow-*"))
+    finally:
+        _run(root, "stop", "--yes")
 
 
 def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Path):
@@ -740,10 +806,26 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     assert any(path.is_file() for path in (failed_store / "bases").rglob("*"))
     assert not list((root / "journal").glob("*.json"))
     engine_wheel.write_bytes(original_wheel)
+    for problem, expected in (
+        ("refuse", "fixture-pack@1.0 declares >=9"),
+        ("version", "inconsistent source inputs"),
+        ("path", "invalid lock paths"),
+    ):
+        monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", problem)
+        code, refused = _run(root, *arguments, "--yes")
+        assert code == 1 and expected in refused["error"], refused
+        assert not (root / "project.json").exists() and not (root / "store").exists()
+        assert not (store / "projects.json").exists()
+        assert not list((root / "journal").glob("*.json"))
+        assert not list(store.glob(".registry-*"))
+    monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
     code, installed = _run(root, *arguments, "--yes")
     assert code == 0, installed
     try:
         assert installed["current"] == 1 and installed["status"] == "applied"
+        assert installed["unavailablePacks"] == {"fixture-pack": "registry offline"}
+        assert json.loads((root / "generations/1/dinkster.lock").read_text())["packs"] == []
+        assert not list(store.glob(".registry-*"))
         assert installed["url"] == f"http://127.0.0.1:{port}"
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "project.json").read_bytes()
@@ -802,6 +884,18 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert sorted(path.name for path in (root / "journal").iterdir()) == before
         assert (root / "current").read_text() == "1\n"
         (root / "queue.json").write_text('{"running": [], "queued": []}')
+        before_registry = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
+        monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "refuse")
+        code, refused = _run(root, "update", "--yes")
+        monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
+        assert code == 1 and "fixture-pack@1.0 declares >=9" in refused["error"]
+        assert (root / "current").read_text() == "1\n"
+        assert (root / "project.json").read_bytes() == initial_settings
+        assert {
+            path: path.read_bytes() for path in (root / "journal").glob("*.json")
+        } == before_registry
+        assert not (root / "generations/2").exists()
+        assert not list(store.glob(".registry-*"))
         script = """
 import os
 import sys
@@ -850,11 +944,21 @@ environment.main()
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
         source_release, payloads = _release_sources(mirror)
-        code, source_refused = _run(root, "update", "--yes")
+        supplied = acquire_sources(discover((str(mirror),), "main"), store)
+        assert supplied is not None
+        code, source_refused = _run(
+            root,
+            "update",
+            "--yes",
+            "--catalog-lock",
+            str(supplied[0]),
+            "--artifacts",
+            str(supplied[1]),
+        )
         assert (
             code == 1 and "pack source staging: invalid admission result" in source_refused["error"]
         )
-        # This fixture engine has no source-admission CLI; it must not silently omit sources.
+        # The empty-pack fixture must refuse nonempty explicit sources, not omit them.
         assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
         cached_release = store / "engines" / source_release.name
         assert (cached_release / "official-packs.lock").read_bytes() == payloads[

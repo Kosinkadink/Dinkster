@@ -35,20 +35,80 @@
   declarations without adding workspace project requirements at publication.
   Publishing can emit separate per-variant hashed dependency locks against the
   target interpreter and engine constraints, without resolving during setup.
+- Pack publication can submit publisher-produced per-base locks together with
+  the exact source archive. The registry validates their archive and base
+  bindings; submitting locks never resolves dependencies on the client.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. Existing comfy and image node IDs
   execute from these archives without rewriting saved workflows or pack bytes.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
+- Pack manifests can declare an independent public pack version and a PEP 440
+  engine compatibility range. Invalid or incomplete declarations are rejected
+  without importing pack code. Every first-party node pack declares both,
+  including development and engine-carried generation packs.
+- The registry client can select the newest active pack version meeting a
+  minimum version and target engine range across paginated results. Active
+  prereleases inside those bounds remain eligible. Historical releases without
+  an engine declaration are ineligible without blocking declared versions;
+  malformed versions and nonempty ranges still refuse. The selected release is
+  checked again before returning its immutable artifact identity.
+- Official source archive builds can select exact pack ids and use each pack's
+  own manifest version, retaining its declared engine range in the archive.
+  Unknown pack ids and missing publication declarations refuse the build.
+- Publication selection can identify changed official packs from committed Git
+  ranges, or one exact manifest-versioned pack tag, without reading working-tree
+  manifests. Engine-only changes select none; shared vision changes select all
+  affected vision packs. Native dependency locking can consume that independent
+  selected catalog without replacing its versions with the engine version.
+- Official publication requires dependency locks for every selected pack and
+  committed supported base before preparing maps or submitting any archive.
+  Wrong source/base/lock identities, incompatible Python and nonportable wheel
+  origins refuse the entire local preparation without publication requests.
+  Prepared maps do not imply scanner acceptance or live default availability.
+- Default-set admission checks resolve registry archives against the engine
+  under test and require every pack to pass the registry scanner, including
+  the isolated executable probe. Missing defaults, rejected packs and security
+  review requirements fail the check without publishing any pack.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
   from files requiring review. These checks need no private checkout, registry
   database or publication credentials. Missing or degraded probe isolation
-  refuses rather than skipping executable checks. Manifests may declare a paired
-  public pack version and PEP 440 engine range; admission can reject a version
-  outside that range without importing pack code.
+  refuses rather than skipping executable checks.
+- Registry archive inspection verifies the selected digest, safely extracts
+  the manifest without importing pack code, and checks its pack id, version
+  and engine range. Source publisher and namespaces describe that verified
+  content, not the publishing audit actor; they do not authenticate publisher
+  authority. Generation admission still rejects source identity mismatches.
+  Registry downloads also require the ticket's nonnegative integer archive
+  size and reject truncated or excess bytes before acquisition.
+- Registry source preparation resolves the committed default ids and minimum
+  versions, or an explicitly requested set, using the running engine's version.
+  It returns a verified source lock and digest-addressed archives without
+  changing a project or generation. Unavailable packs normally refuse the
+  operation; optional missing-default reporting can return an empty source set.
+- Published dependency-lock preparation verifies each selected registry
+  archive's exact base binding, lock size and BLAKE3, and pack/variant identity.
+  It exposes the complete set only after every lock verifies, without resolving
+  dependencies, modifying the source selection or activating a generation.
+- Registry preparation can accept a caller-owned lock producer for an unpublished
+  base using the same selected sources, target interpreter and effective constraints.
+  Empty custom lock results do not fall back to published base bindings.
+- Installed-source preparation re-resolves official registry packs against the
+  target engine without adding defaults, dropping installed packs or downgrading
+  them. Recorded registries remain authoritative; third-party, local and git
+  selections remain unchanged for generation admission. Unavailable releases refuse
+  before the candidate source lock is written, even with missing-default opt-in.
+- Generation source admission checks each declared pack engine range against
+  the admitting interpreter's engine version before recording the source lock.
+  An incompatible range names the pack/version, range and target engine; a
+  refusal leaves the generation unsealed and its dependency inputs intact.
+- Explicit pack application checks declared engine ranges before staging or
+  returning an identical-lock no-op. External archives, cached and already
+  staged sources, and grouped packs follow the same admission rule. Refusal
+  preserves the active selection, staged content and generation history.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
@@ -78,6 +138,10 @@
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
   generation or its running engine.
+- Generations retain cached engine release manifests byte-for-byte in their
+  sealed inventory, checked against the selected release identity before pack
+  preparation. Missing legacy caches remain supported; present corrupt or
+  unreadable manifests refuse construction and discard the incomplete target.
 - Admitted generation packs prepare their runtime catalogs in their selected
   interpreters before activation. Missing interpreters, changed sources or failed
   imports refuse the candidate; sealed generations cannot be prepared in place.
@@ -93,10 +157,14 @@
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
-  assignment before confirmation. Releases carrying an official source lock feed
-  their verified source ZIPs into target-interpreter admission automatically;
-  missing admission support refuses activation. Selected-variant dependency locks
-  are acquired from release artifacts unless explicitly overridden. Every selected
+  assignment before confirmation. Confirmed published setup selects registry
+  defaults against the acquired target engine before creating an activation
+  journal. Unavailable defaults are reported, and offline setup can start an
+  explicitly empty generation. Update re-resolves installed official selections
+  and refuses unavailable compatible versions before journal/project mutation.
+  Exact-base dependency locks come from the registry; retained non-registry
+  sources keep their recorded bytes/provenance and generation-owned locks.
+  Explicit source/dependency inputs remain supported. Every selected
   source pack needs a dependency lock, including empty closures. Confirmed setup
   and updates acquire missing pack wheels from their locked URLs and verify size
   and SHA256 before offline construction, including wheels absent from release
@@ -177,8 +245,9 @@
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.
-- Health reports composed and failed counts and is not ready when composition
-  is empty or any pack failed.
+- Health reports composed and failed counts when packs are selected and is not
+  ready when their composition is empty or any pack failed. An explicitly empty
+  source selection starts a healthy zero-pack engine without bundled defaults.
 - Local operators can print a read-only requirement plan with
   `dinkster workflow workflow.json --variant linux-cpu` (optional `--server`
   and `--project`). Multiple files produce their union without rewriting them.
@@ -230,6 +299,13 @@
   selected target; workflow records and other project fields are preserved.
   Rollback restores the retained selection without rebuilding, refusing when
   settings were edited after selection rather than discarding user changes.
+- Unconfirmed `dinkster-env update` and `update --plan` report saved workflow
+  requirements without acquiring target payloads or claiming source feasibility.
+  Confirmed updates check those requirements against the same registry-selected
+  sources used for construction, using the acquired target engine before creating
+  the activation journal. Unavailable saved versions and changed workflow inputs
+  refuse before construction. Catalog identities and input revisions are checked
+  again before application and activation; sealed target checks remain mandatory.
 - A local channel builder accepts completed engine release files and selected
   base manifests, verifies engine payload hashes and base/engine compatibility,
   and atomically writes the existing stable/main channel format. It preserves

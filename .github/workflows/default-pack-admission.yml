@@ -1,0 +1,35 @@
+name: Registry default pack admission
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: default-pack-admission-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Configure the same full Linux jail used by registry admission
+        run: bash scripts/setup_probe_jail.sh
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install the engine under test on its published CPU base
+        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+      - name: Resolve defaults and run the registry scanner in process
+        run: |
+          version=$(uv run --no-sync python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
+          uv run --no-sync python -m scripts.check_default_pack_admission \
+            --engine-version "$version"

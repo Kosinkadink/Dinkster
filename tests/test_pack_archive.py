@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -1111,3 +1112,88 @@ def test_registry_probe_refuses_degraded_isolation(
     result = run_executable_probe(root)
     assert result.blocked and result.findings[0].code == "probe.isolation-unavailable"
     assert result.operator_details == {"jail": "degraded"}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
+@pytest.mark.parametrize("problem", [None, "broken", "missing", "skipped"])
+def test_selected_pack_tests_cannot_fall_back_to_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "inherited-device")
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cuda")
+    engine = tmp_path / "engine"
+    tests = engine / "tests"
+    tests.mkdir(parents=True)
+    shutil.copytree(
+        Path(__file__).resolve().parents[1] / "src/dinkster",
+        engine / "src/dinkster",
+        ignore=shutil.ignore_patterns("__pycache__", "official_packs"),
+    )
+    checkout_module = engine / "packages/dinkster-nodes-image/src/dinkster_nodes_image"
+    checkout_module.mkdir(parents=True)
+    (checkout_module / "__init__.py").write_text("VALUE = 47\n")
+    (tests / "test_image_nodes.py").write_text(
+        "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
+        "from pathlib import Path\nimport dinkster_nodes_image\n"
+        "from dinkster_nodes_image import VALUE\n"
+        + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
+        + "def test_selected_value():\n"
+        "    assert VALUE == 47\n"
+        "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
+        "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
+        "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
+        "    assert Path(dinkster_nodes_image.__file__).resolve()"
+        ".is_relative_to(pack_root / 'src')\n"
+        "    assert (pack_root / 'dinkster_nodes_image/__init__.py').resolve(strict=True) "
+        "== Path(dinkster_nodes_image.__file__).resolve()\n"
+        "    subprocess.run([sys.executable, '-I', '-c', "
+        '"from pathlib import Path; import sys; import dinkster_nodes_image as pack; '
+        "expected = Path(pack.__file__).resolve(); "
+        "sys.path.insert(0, str(expected.parents[2])); "
+        "del sys.modules['dinkster_nodes_image']; import dinkster_nodes_image as pack; "
+        'assert Path(pack.__file__).resolve() == expected; assert pack.VALUE == 47"], '
+        "check=True)\n"
+        "    with pytest.raises(importlib.metadata.PackageNotFoundError):\n"
+        "        importlib.metadata.distribution('dinkster-nodes-image')\n"
+    )
+    subprocess.run(["git", "init", "-q", str(engine)], check=True)
+    subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+    source = tmp_path / "selected"
+    source.mkdir()
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
+        'namespaces = ["image-fixture"]\n'
+        '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
+    )
+    if problem != "missing":
+        module = source / "dinkster_nodes_image"
+        module.mkdir()
+        (module / "__init__.py").write_text(
+            f"VALUE = {13 if problem == 'broken' else 47}\nNODES = []\n"
+        )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "pack.zip"
+    digest = build_artifact(source, archive)
+    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of(
+        [
+            LockedPack(
+                pack="dinkster-nodes-image",
+                version="1.2.3",
+                artifact_digest=digest,
+                publisher="dinkster",
+                claims=("image-fixture",),
+                source="registry:https://registry.invalid",
+            )
+        ]
+    )
+    if problem is None:
+        run_selected_tests(engine, catalog, artifacts)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            run_selected_tests(engine, catalog, artifacts)

@@ -368,8 +368,8 @@ verification or extraction removes staging trees.
 generation; `update` plans the configured channel's next generation. Both require
 `--yes` or terminal confirmation before creating project/store state or acquiring
 payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
-write a journal before registration/acquisition, sync offline, check the candidate
-engine's health, publish `current`, then stop the old engine. Update preserves
+acquire and preflight target inputs before journaling and registration, sync
+offline, check the candidate engine's health, publish `current`, then stop the old engine. Update preserves
 existing engine bindings; setup accepts `--engine`, `--port` and repeatable `--gpu`.
 The setup confirmation plan includes that binding name, loopback port and ordered
 `CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
@@ -384,31 +384,64 @@ commands do not acquire these options.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 
+`environment_generations.prepare_engine_interpreter` prepares a new,
+caller-owned directory from an acquired base and effective hashed constraints.
+It returns the target Python after the same offline sync used by generation
+construction. The caller holds the store writer lock and owns directory cleanup,
+including failures. This operation does not acquire inputs, prepare packs or
+write project, journal or generation metadata. Generation construction separately
+retains base provenance, prepares packs and seals the inventory.
+
+Generation construction copies a cached `engines/<release hex>/release-manifest.json`
+byte-for-byte into `engine-manifest.json` before pack preparation and inventory.
+The retained bytes must hash to the selected engine release. A missing legacy
+cache is tolerated; present but unreadable or corrupt content refuses the build
+and removes the incomplete target.
+
 Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
 and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the
-target interpreter. Without those overrides, a selected release carrying
-`official-packs.lock` supplies its source inputs automatically. The client downloads
-that lock and the release's ZIP payloads with the manifest's SHA256/size checks,
-then caches each ZIP as `engines/<release-id>/artifacts/<blake3-hex>.zip`.
-It does not parse the registry lock or unpack sources; target-interpreter admission
-still verifies identity and claims before sealing. A missing admission command
-refuses the generation rather than omitting sources. Without explicit `--pack-lock`
-inputs, the client acquires release artifacts named
-`<pack>-<public-version>-<variant>.pack-lock.json` for its selected variant with
-manifest SHA256/size verification. It stores original bytes under
-`engines/<release-id>/` and passes their paths to the existing provisioner.
-Explicit lock inputs replace this bundled selection; no supervisor dependency
-parser or resolver is involved.
-Update plans with registered workflows or explicit additions call the active generation's
-`dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
-inputs take precedence; otherwise selected-release sources must already exist in
-the cache with verified SHA256/size and BLAKE3 archive names. Planning never
-downloads or repairs source payloads. Pack and asset actions appear in the existing
-plan strings; unavailable saved versions refuse planning. The core adapter retains
-ownership of requirement derivation. SQLite read-only planning can touch WAL
-coordination files without changing logical records or project content.
-On confirmation, the target interpreter consumes the approved plan, checks its
+target interpreter. Without source overrides, confirmed published operations
+prepare a temporary target interpreter from the acquired constraints under the
+store lock, before allocating a generation or opening its journal. Isolated
+`-I -B -m dinkster.manager` commands resolve fresh registry defaults or re-resolve
+the installed official source set, and acquire exact-base published dependency
+locks. The supervisor checks the target version, returned paths and diagnostics;
+the target engine owns source/lock parsing and verification. Temporary inputs
+survive candidate construction and are removed on success or failure.
+
+Fresh setup reports unavailable defaults as `unavailablePacks` and on stderr;
+an offline registry can produce a healthy empty generation. Update refuses a
+missing compatible selection before journal/project mutation, retains other
+source provenance and verifies reconstructed non-registry source bytes.
+Explicit dependency locks replace automatic registry lock acquisition. With an
+explicit source catalog but no dependency locks, legacy release-carried locks
+remain usable. No supervisor dependency parser or resolver is involved.
+
+`prepare_registry_inputs` accepts an optional `prepare_locks` callback after
+source selection, before published lock retrieval. It receives the acquired
+scratch engine directory with effective constraints, selected catalog lock,
+exact archive cache and new output directory. A custom-base caller can resolve
+standard locks from those inputs without a published base binding or a second
+source selector. Returning an empty tuple still replaces published retrieval;
+raising refuses preparation and removes the scratch tree. Returned files must
+belong to the output directory. Explicit `pack_locks` take precedence. The optional
+`preflight(engine, catalog, artifacts)` runs after source selection and before
+either automatic or explicit dependency locks are used.
+
+Update plans with registered workflows or explicit additions use the active
+generation's requirements reader to snapshot requirements and input revisions.
+Unconfirmed plans explicitly report source feasibility as pending; they never
+download payloads or install a planning interpreter. SQLite read-only planning can
+touch WAL coordination files without changing logical records or project content.
+After confirmation, the acquired target interpreter runs
+`dinkster.workflow_requirements project-plan` against the sole selected registry
+catalog and archive cache, before a generation or journal exists. Explicit
+catalog/cache inputs take precedence and use the same target preparation. Changed
+requirements/revisions and unavailable saved versions refuse admission. Pack and
+asset actions appear in the existing plan strings. Catalog digests and input
+revisions are checked again before journaling and application.
+The sealed target interpreter then consumes the approved plan, checks its
 admitted pack identities and acquires only approved assets. Workflow input
 revisions are checked before publication and after candidate health checks;
 activation also requires an empty target requirement plan. Failure retains the

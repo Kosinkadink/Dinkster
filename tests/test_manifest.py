@@ -75,6 +75,73 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+@pytest.mark.parametrize(
+    "path",
+    sorted(Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml"))
+    + sorted(Path("packages/dinkster-nodes-vision").glob("*_pack/dinkster-pack.toml")),
+)
+def test_official_pack_declares_its_version_and_engine_range(path: Path) -> None:
+    from dinkster import __version__
+
+    manifest = load_manifest(path)
+    assert manifest.compatibility is not None, manifest.name
+    manifest.compatibility.require_engine(manifest.name, __version__)
+
+
+@pytest.mark.parametrize(
+    ("engine", "accepted"),
+    [
+        ("0.3.9", False),
+        ("0.4.0", True),
+        ("0.6.3+g123", True),
+        ("0.6.4rc1", True),
+        ("0.7.0rc1", False),
+        ("0.7.0", False),
+    ],
+)
+def test_pack_declares_independent_version_and_engine_compatibility(
+    tmp_path: Path, engine: str, accepted: bool
+) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    path.write_text(
+        path.read_text().replace("[pack]\n", '[pack]\nversion = "2.3.1"\nengine = ">=0.4,<0.7"\n')
+    )
+    manifest = load_manifest(path)
+    assert manifest.compatibility is not None
+    assert manifest.compatibility.version == "2.3.1"
+    if accepted:
+        manifest.compatibility.require_engine(manifest.name, engine)
+    else:
+        with pytest.raises(ValueError) as refusal:
+            manifest.compatibility.require_engine(manifest.name, engine)
+        message = str(refusal.value)
+        assert "test@2.3.1" in message
+        assert ">=0.4,<0.7" in message
+        assert engine in message
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        'version = "2.3.1"',
+        'engine = ">=0.4"',
+        'version = "not-a-version"\nengine = ">=0.4"',
+        'version = "2.3.1+private"\nengine = ">=0.4"',
+        'version = "v2.3.1"\nengine = ">=0.4"',
+        'version = "2.3.1"\nengine = ""',
+        'version = "2.3.1"\nengine = "latest"',
+        'version = 23\nengine = ">=0.4"',
+    ],
+)
+def test_pack_rejects_invalid_version_or_engine_declaration(
+    tmp_path: Path, declaration: str
+) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    path.write_text(path.read_text().replace("[pack]\n", f"[pack]\n{declaration}\n"))
+    with pytest.raises(ManifestError, match="version|engine"):
+        load_manifest(path)
+
+
 @pytest.mark.parametrize("source", (None, '"remote-gateway-catalog"'))
 def test_catalog_driven_node_source_loads_without_importing_pack(
     tmp_path: Path, source: str | None

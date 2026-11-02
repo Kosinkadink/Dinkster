@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from contextlib import ExitStack
 from dataclasses import replace
 from functools import partial
@@ -12,7 +13,7 @@ from pathlib import Path
 from platform import machine
 from typing import cast
 
-from .environment_artifacts import acquire, acquire_pack_locks, acquire_sources, discover
+from .environment_artifacts import acquire, acquire_pack_locks, discover
 from .environment_collection import (
     cleanup_collection,
     collect_generations,
@@ -24,6 +25,8 @@ from .environment_collection import (
 from .environment_generations import (
     build_generation,
     pack_operation,
+    prepare_engine_interpreter,
+    prepare_registry_inputs,
     project_operation,
     verify_base_inputs,
 )
@@ -331,37 +334,54 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     workflow_catalog = None
     workflow_catalog_digest = None
     workflow_artifacts = None
+    workflow_target = None
     workflow_applied = False
     if has_requirements:
         if catalog is None:
             raise EnvironmentError("local setup requires a fresh project without workflow settings")
         if previous_root is None:
             raise EnvironmentError("workflow planning requires an existing generation interpreter")
-        catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
-        if catalog_lock is None:
-            cached_sources = acquire_sources(catalog, store, download=False)
-            if cached_sources is not None:
-                catalog_lock, source_artifacts = cached_sources
         workflow = project_operation(
             root,
             generation=previous_root,
             variant=variant,
-            catalog_lock=catalog_lock,
-            artifacts=source_artifacts,
+            requirements_only=True,
         )
-        actions = cast("dict[str, object]", workflow["plan"])
+        plan.append(
+            f"workflow requirements: {json.dumps(workflow['requirements'], sort_keys=True)}"
+        )
+        plan.append("workflow source feasibility: pending target preparation after confirmation")
+        if (root / "project.json").read_bytes() != snapshot:
+            raise EnvironmentError("project changed during planning; request a new plan")
+    if not _confirmed(args, plan):
+        return 0
+
+    def preflight_workflow(engine: Path, catalog_lock: Path, artifacts: Path) -> None:
+        nonlocal workflow, workflow_catalog, workflow_artifacts
+        nonlocal workflow_catalog_digest, workflow_target
+        assert workflow is not None and previous_root is not None
+        digest = content_digest(catalog_lock)
+        observed = project_operation(
+            root,
+            generation=previous_root,
+            target_generation=engine,
+            variant=variant,
+            catalog_lock=catalog_lock,
+            artifacts=artifacts,
+        )
+        if any(observed[key] != workflow[key] for key in ("requirements", "inputs")):
+            raise EnvironmentError("workflow inputs changed after planning; request a new plan")
+        actions = cast("dict[str, object]", observed["plan"])
+        if actions["errors"]:
+            raise EnvironmentError(
+                f"workflow planning refused: {'; '.join(cast('list[str]', actions['errors']))}"
+            )
         for kind in ("packs", "assets"):
             for action in cast("list[object]", actions[kind]):
                 plan.append(f"workflow {kind}: {json.dumps(action, sort_keys=True)}")
-        if (root / "project.json").read_bytes() != snapshot:
-            raise EnvironmentError("project changed during planning; request a new plan")
-        errors = cast("list[str]", actions["errors"])
-        if errors:
-            raise EnvironmentError(f"workflow planning refused: {'; '.join(errors)}")
-        workflow_catalog, workflow_artifacts = catalog_lock, source_artifacts
-        workflow_catalog_digest = content_digest(catalog_lock) if catalog_lock is not None else None
-    if not _confirmed(args, plan):
-        return 0
+        workflow = observed
+        workflow_catalog, workflow_artifacts = catalog_lock, artifacts
+        workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None
@@ -382,6 +402,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 variant=variant,
                 catalog_lock=workflow_catalog,
                 artifacts=workflow_artifacts,
+                target_generation=workflow_target if not workflow_applied else None,
+                requirements_only=workflow_target is None and not workflow_applied,
             )
             if any(observed[key] != workflow[key] for key in ("requirements", "inputs")):
                 raise EnvironmentError("workflow inputs changed after planning; request a new plan")
@@ -398,15 +420,59 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if select_store(root, requested) != store:
             raise EnvironmentError("store changed after planning; request a new plan")
         store.mkdir(parents=True, exist_ok=True)
-        with writer_lock(store), writer_lock(root):
+        with writer_lock(store), writer_lock(root), ExitStack() as preparation:
             _recover_pending(root, locked_store=store)
             revalidate()
             published_constraints = None
+            catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
+            pack_locks = tuple(args.pack_lock)
             if local is None:
                 assert catalog is not None
                 published_constraints = acquire(
                     catalog, variant, store, package_index=cast("str | None", package_index)
                 )
+                if catalog_lock is None:
+                    catalog_lock, source_artifacts, pack_locks, unavailable = (
+                        preparation.enter_context(
+                            prepare_registry_inputs(
+                                store=store,
+                                base=catalog.channel.base_for(variant),
+                                constraints=published_constraints,
+                                variant=variant,
+                                engine_version=cast("str", catalog.engine["version"]),
+                                installed_lock=previous_root / "dinkster.lock"
+                                if previous_root is not None
+                                else None,
+                                project=root,
+                                pack_locks=pack_locks,
+                                preflight=preflight_workflow if workflow is not None else None,
+                            )
+                        )
+                    )
+                    result["unavailablePacks"] = unavailable
+                    for pack, reason in unavailable.items():
+                        print(f"default pack {pack} unavailable: {reason}", file=sys.stderr)
+                else:
+                    if workflow is not None:
+                        assert source_artifacts is not None
+                        scratch = (
+                            Path(
+                                preparation.enter_context(
+                                    tempfile.TemporaryDirectory(dir=store, prefix=".workflow-")
+                                )
+                            )
+                            / "engine"
+                        )
+                        prepare_engine_interpreter(
+                            scratch,
+                            store=store,
+                            base=catalog.channel.base_for(variant),
+                            constraints=published_constraints,
+                        )
+                        preflight_workflow(scratch, catalog_lock, source_artifacts)
+                    if not pack_locks:
+                        pack_locks = acquire_pack_locks(catalog, variant, store)
+            revalidate()
             target = next_generation(root)
             journal = (
                 begin_setup(
@@ -438,7 +504,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 atomic_write(pointer, str(store) + "\n")
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
-                catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
                 prepare_packs = None
                 if local is not None:
                     from .environment_local import prepare_local, prepare_local_packs
@@ -468,13 +533,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
                     worker_protocol = cast("int", base["workerProtocol"])
-                    if catalog_lock is None:
-                        acquired_sources = acquire_sources(catalog, store)
-                        if acquired_sources is not None:
-                            catalog_lock, source_artifacts = acquired_sources
-                    pack_locks = tuple(args.pack_lock) or acquire_pack_locks(
-                        catalog, variant, store
-                    )
                 measured = sum(
                     path.stat().st_size
                     for path in (store / "bases" / base_id[7:] / "python").rglob("*")
@@ -506,6 +564,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     acquire_pack_wheels=local is None,
                 )
                 if workflow is not None and previous_root is not None:
+                    workflow_target = root / "generations" / str(target)
                     revalidate()
                     applied = project_operation(
                         root,

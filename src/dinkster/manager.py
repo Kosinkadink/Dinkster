@@ -97,8 +97,12 @@ from .registries import (
     RegistryPublishError,
     browse_packs,
     browse_templates,
+    default_pack_minimums,
     load_registries,
     parse_registry_spec,
+    prepare_registry_pack_locks,
+    prepare_registry_sources,
+    prepare_registry_update_sources,
     publish_release,
     resolve_release,
     routing_registry_fetcher,
@@ -304,6 +308,7 @@ def _finish(
         or runtime_pins != installer.current_runtime_pins()
     )
     if steps.empty and not topology_change:
+        installer.check_engine_compatibility(target)
         print("nothing to do; the installation already matches")
         return
     missing = [entry for entry in target.packs if not installer.artifact_available(entry)]
@@ -437,7 +442,7 @@ def _cmd_publish(args: argparse.Namespace) -> None:
             digest = build_artifact(manifest_path.parent, archive)
         except ArtifactError as exc:
             raise RegistryPublishError(str(exc)) from exc
-        verdict = publish_release(registry, archive, manifest.name, args.version)
+        verdict = publish_release(registry, archive, manifest.name, args.version, locks=args.locks)
     for finding in verdict.findings:
         print(f"{finding.code}: {finding.message}")
     print(f"submitted {manifest.name} {args.version} {digest} as candidate {verdict.candidate_id}")
@@ -1070,6 +1075,117 @@ def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
 
 
+def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
+    config = _registry_config(args)
+    if args.installed_lock and args.allow_missing:
+        raise InstallError("--allow-missing is only valid for fresh pack selection")
+    if args.retain_sources and not args.installed_lock:
+        raise InstallError("--retain-sources requires an installed generation source lock")
+    if args.installed_lock and args.installed_lock.resolve() == args.catalog_lock.resolve():
+        raise InstallError("candidate source lock must differ from --installed-lock")
+    minimums: dict[str, str] = {}
+    for spec in args.minimum:
+        parsed = parse_registry_spec(spec)
+        if parsed is None:
+            raise InstallError(f"invalid minimum {spec!r}; expected PACK@VERSION")
+        pack, minimum = parsed
+        if pack in minimums:
+            raise InstallError(f"duplicate minimum for {pack}")
+        minimums[pack] = minimum
+    try:
+        if args.installed_lock:
+            installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
+            lock = prepare_registry_update_sources(
+                config,
+                installed,
+                args.artifacts.resolve(),
+                engine_version=dinkster_version,
+                selected=select_registry(config, args.registry) if args.registry else None,
+            )
+            if args.retain_sources:
+                args.artifacts.mkdir(parents=True, exist_ok=True)
+                fetch = routing_registry_fetcher(
+                    config, select_registry(config, args.registry) if args.registry else None
+                )
+                for entry in lock.packs:
+                    cached = args.artifacts / f"{entry.artifact_digest[7:]}.zip"
+                    if not cached.exists():
+                        if entry.source == "registry" or entry.source.startswith("registry:"):
+                            cached.write_bytes(fetch(entry))
+                        else:
+                            actual = build_artifact(
+                                args.installed_lock.parent / "pack-sources" / entry.pack, cached
+                            )
+                            if actual != entry.artifact_digest:
+                                raise InstallError(f"{entry.pack}: retained source digest differs")
+                from .generation_packs import stage_generation_packs
+
+                with tempfile.TemporaryDirectory(
+                    prefix="dinkster-retained-admission-"
+                ) as directory:
+                    stage_generation_packs(
+                        Path(directory),
+                        lock,
+                        {
+                            entry.pack: args.artifacts / f"{entry.artifact_digest[7:]}.zip"
+                            for entry in lock.packs
+                        },
+                    )
+            unavailable: dict[str, str] = {}
+        else:
+            selector = args.registry or (
+                "" if config.registries else "https://registry.dinkster.org"
+            )
+            registry = select_registry(config, selector)
+            lock, unavailable = prepare_registry_sources(
+                registry,
+                minimums if args.minimum else default_pack_minimums(),
+                args.artifacts.resolve(),
+                engine_version=dinkster_version,
+                allow_missing=args.allow_missing,
+            )
+        args.catalog_lock.parent.mkdir(parents=True, exist_ok=True)
+        args.catalog_lock.write_text(lock.record_json() + "\n", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise InstallError(f"registry source preparation failed: {exc}") from exc
+    print(
+        json.dumps(
+            {
+                "engineVersion": dinkster_version,
+                "catalogLock": str(args.catalog_lock.resolve()),
+                "artifacts": str(args.artifacts.resolve()),
+                "packs": [entry.pack for entry in lock.packs],
+                "unavailable": unavailable,
+            }
+        )
+    )
+
+
+def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
+    config = _registry_config(args)
+    try:
+        sources = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        if args.registry_only:
+            sources = Lockfile.of(
+                [
+                    entry
+                    for entry in sources.packs
+                    if entry.source == "registry" or entry.source.startswith("registry:")
+                ]
+            )
+        paths = prepare_registry_pack_locks(
+            config,
+            sources,
+            args.output.resolve(),
+            variant=args.variant,
+            base_id=args.base_id,
+            selected=select_registry(config, args.registry) if args.registry else None,
+        )
+    except OSError as exc:
+        raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
+    print(json.dumps({"locks": [str(path) for path in paths]}))
+
+
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .comfy_compose import comfy_compat_specs
     from .compose import default_pack_specs
@@ -1202,6 +1318,48 @@ def main() -> None:
     archive.add_argument("--output", required=True, metavar="FILE.zip", help="archive to write")
     archive.set_defaults(handler=_cmd_archive)
 
+    sources = commands.add_parser(
+        "prepare-registry-sources",
+        help="resolve compatible pack archives without creating a generation",
+    )
+    sources.add_argument("--catalog-lock", type=Path, required=True)
+    sources.add_argument("--artifacts", type=Path, required=True)
+    selection = sources.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--minimum",
+        action="append",
+        default=[],
+        metavar="PACK@VERSION",
+        help="default: official set",
+    )
+    selection.add_argument(
+        "--installed-lock", type=Path, help="re-resolve installed official packs, retaining others"
+    )
+    sources.add_argument(
+        "--allow-missing", action="store_true", help="report unavailable fresh defaults"
+    )
+    sources.add_argument(
+        "--retain-sources",
+        action="store_true",
+        help="cache unchanged sources from the installed generation's pack-sources tree",
+    )
+    sources.set_defaults(handler=_cmd_prepare_registry_sources)
+
+    locks = commands.add_parser(
+        "prepare-registry-locks",
+        help="acquire published dependency locks for exact selected sources and base",
+    )
+    locks.add_argument("--catalog-lock", type=Path, required=True)
+    locks.add_argument("--output", type=Path, required=True)
+    locks.add_argument("--variant", required=True)
+    locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--registry-only",
+        action="store_true",
+        help="leave non-registry dependency locks to the retained generation",
+    )
+    locks.set_defaults(handler=_cmd_prepare_registry_locks)
+
     for name, help_text, handler in (
         ("doctor", "lint installed packs and refresh schema catalogs", _cmd_doctor),
         (
@@ -1283,6 +1441,9 @@ def main() -> None:
     )
     publish.add_argument("pack", metavar="PACK_DIR_OR_MANIFEST")
     publish.add_argument("--version", required=True, metavar="X.Y.Z")
+    publish.add_argument(
+        "--locks", type=Path, help="Publish-time per-base lock map; registry admission validates it"
+    )
     publish.add_argument(
         "--no-preflight",
         action="store_true",

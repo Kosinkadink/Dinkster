@@ -25,11 +25,12 @@ Each `vX.Y.Z` release contains:
 - `constraints.txt`, exported from `uv.lock` with hashes;
 - `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
 - `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
-- native tools ZIPs with the installer interpreters; and
-- the existing official pack artifacts and per-variant pack locks.
+- native tools ZIPs with the installer interpreters.
 
-No third-party wheels are release assets. Finalization rejects unexpected
-payloads and fails above 100,000,000 bytes excluding native tools ZIPs.
+Official packs and their per-base dependency locks come from the registry,
+not the engine release or wheel. No third-party wheels are release assets.
+Finalization rejects pack payloads and other unexpected artifacts and fails
+above 100,000,000 bytes excluding native tools ZIPs.
 Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
 locked PyPI artifact URLs into the shared wheel store, checking the exact
 filename, size and SHA256. Base-owned names and exact variant-index wheel pins
@@ -69,6 +70,66 @@ set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
 `dinkster-registry-service` package and `dinkster-registry` command.
 Dinkster remains a client of that service for browsing, publishing, resolving,
 and downloading exact pack releases.
+
+### Prepare compatible registry pack sources
+
+Run source preparation with the engine interpreter that will load the packs.
+The committed `src/dinkster/default-packs.toml` specifies official ids and
+minimum versions. It does not pin release bytes: the registry client chooses
+the newest active version whose declared engine range admits that interpreter's
+engine version, then verifies the selected archive by size and BLAKE3 digest.
+
+```sh
+python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts --allow-missing
+```
+
+Use writable scratch paths that are separate from an installed generation.
+On Windows, use the target environment's `Scripts\python.exe` and Windows
+paths. The JSON result lists selected ids and an `unavailable` map with a
+reason for each missing pack. With no registry access, `--allow-missing`
+produces an empty source lock; without it, any unavailable pack refuses the
+command. An engine serving an explicitly empty generation remains healthy
+with zero nodes rather than loading checkout defaults.
+
+This command prepares verified sources only. It does not install the engine,
+obtain dependency locks, build a generation or activate it. For an update,
+use `--installed-lock /retained/dinkster.lock` instead of fresh selection;
+the output lock must have a different path. Installed official registry packs
+are re-resolved without downgrading, adding defaults or changing their recorded
+registry. Other installed selections are preserved for admission. Update
+preparation refuses unavailable compatible releases and does not allow
+`--allow-missing`.
+
+For a source lock containing registry packs, `prepare-registry-locks` accepts
+`--catalog-lock`, a new `--output` directory, `--variant` and the exact
+`--base-id sha256:...`. It downloads the dependency locks already published
+for those exact source archives and base, verifies their size, BLAKE3 and
+pack/variant identities, and reports their paths as JSON. It never resolves
+dependencies. Any missing or mismatched lock refuses the whole set without
+creating the output directory or changing an installed generation.
+
+Confirmed published `dinkster-env setup` and `update` run these commands with
+the acquired target engine, in isolated temporary storage before opening an
+activation journal. Fresh setup reports unavailable defaults in
+`unavailablePacks` and on stderr, and can activate an empty generation when
+the registry is offline. Updates re-resolve the installed official selection;
+an unavailable compatible release refuses without changing project settings,
+the current generation or its journal. Non-registry sources are retained and
+checked against their recorded digests and the target engine; their dependency
+locks remain generation-owned. Explicit catalog/artifact and dependency-lock
+inputs override automatic preparation. `--from-scratch` remains a separate
+checkout-only path.
+
+The preparation commands can also be run separately. Source preparation's
+`--retain-sources` requires `--installed-lock` and caches unchanged sources
+from that generation's `pack-sources` tree. Lock preparation's `--registry-only`
+leaves non-registry dependency locks to the retained generation.
+
+Pack versions are independent of engine versions. A pack's `[pack] version`
+and `engine` fields declare its version and PEP 440 engine range; excluded
+engines refuse installation, including an identical-lock no-op. See
+[pack compatibility and dependency locks](environments-and-updates.md#versions-and-engine-compatibility)
+and the [registry client guide](../packages/dinkster-registry/README.md#use).
 
 ## Develop from source
 

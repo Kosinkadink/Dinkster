@@ -178,6 +178,7 @@ def http_registry_fetcher(
             ticket = cast("dict[str, object]", ticket_raw)
             url = ticket.get("url")
             digest = ticket.get("artifactDigest")
+            size = ticket.get("artifactSize")
             required_headers = ticket.get("requiredHeaders", {})
             if (
                 not isinstance(url, str)
@@ -189,12 +190,20 @@ def http_registry_fetcher(
                 )
             ):
                 raise ValueError("ticket fields do not match the locked release")
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise ValueError("ticket artifactSize must be a nonnegative integer")
             url = urllib.parse.urljoin(base + "/", url)
             if not url.startswith(("http://", "https://")):
                 raise ValueError("ticket URL is not HTTP(S)")
             request = urllib.request.Request(url, headers=cast("dict[str, str]", required_headers))  # noqa: S310 - service-issued ticket URL
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                return response.read()
+                data = response.read(size + 1)
+            if len(data) != size:
+                raise ValueError(
+                    f"archive size differs from ticket: expected {size}, got {len(data)}; "
+                    "refusing to return unverified bytes"
+                )
+            return data
         except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise InstallError(
                 f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"
@@ -897,22 +906,39 @@ class Installer:
                 )
             os.replace(candidate, self.artifacts_dir / f"{_digest_hex(digest)}.zip")
 
-    def manifest_of(self, entry: LockedPack) -> PackManifest | None:
+    def manifest_of(
+        self, entry: LockedPack, *, artifact: Path | None = None
+    ) -> PackManifest | None:
         """The manifest of an entry's exact bytes, from the unpacked
         store when staged, else read out of the archived artifact - so
         PLAN display can show compatibility (declared platforms,
         accelerator-conditional requirements) before anything mutates.
-        None when neither is present (a gc'd plan; apply refuses that
-        separately)."""
+        ``artifact`` supplies an explicit archive instead of the cached path.
+        None when neither is present (a gc'd plan; apply refuses that separately)."""
         store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
         if store_manifest.is_file():
             return load_manifest(store_manifest)
-        archive = self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
+        archive = artifact or self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
         if not archive.is_file():
             return None
         with tempfile.TemporaryDirectory(prefix="dinkster-manifest-") as scratch:
             unpack_artifact(archive, Path(scratch), entry.artifact_digest)
             return load_manifest(Path(scratch) / MANIFEST_FILENAME)
+
+    def check_engine_compatibility(
+        self, target: Lockfile, artifacts: Mapping[str, Path] | None = None
+    ) -> None:
+        """Check available target sources without provisioning or activation."""
+        for entry in target.packs:
+            manifest = self.manifest_of(
+                entry,
+                artifact=artifacts.get(entry.artifact_digest) if artifacts is not None else None,
+            )
+            if manifest is not None and manifest.compatibility is not None:
+                try:
+                    manifest.compatibility.require_engine(entry.pack, dinkster_version)
+                except ValueError as exc:
+                    raise InstallError(str(exc)) from exc
 
     def venv_python(self, entry: LockedPack) -> Path | None:
         """The staged venv's interpreter for this entry, or None when no
@@ -1233,6 +1259,7 @@ class Installer:
         with self._locked():
             current = self.current_lockfile()
             current_number = self.current_number()
+            self.check_engine_compatibility(target, artifacts)
             explicit_topology = (
                 hosting_groups is not None
                 or hosting_in_process is not None
