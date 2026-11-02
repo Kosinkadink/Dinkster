@@ -1433,6 +1433,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
     release.mkdir()
     sources.mkdir()
     versions = {"first-pack": "1.2.3", "second-pack": "7.0rc1"}
+    release_versions = {**versions, "unselected-pack": "0.5.0"}
 
     def artifacts(directory, selected):
         directory.mkdir(exist_ok=True)
@@ -1450,7 +1451,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
         return (*paths, catalog)
 
     artifacts(sources, versions)
-    artifacts(release, {**dict.fromkeys(versions, "9.0"), "unselected-pack": "9.0"})
+    artifacts(release, release_versions)
     if mode == "archive":
         (sources / "second-pack-7.0rc1.zip").write_bytes(b"changed")
     elif mode == "catalog":
@@ -1487,10 +1488,8 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
     monkeypatch.setattr(native, "engine_constraints", lambda *args: "constraints")
     monkeypatch.setattr(native, "effective_constraints", lambda *args, **kwargs: "constraints")
 
-    def build(root, output, *, version, packs, variant, **kwargs):
-        selected = {
-            name: version or versions[name] for name in packs or (*versions, "unselected-pack")
-        }
+    def build(root, output, *, version=None, packs, variant, **kwargs):
+        selected = {name: version or release_versions[name] for name in packs or release_versions}
         payloads = artifacts(output, selected)
         locks = []
         for name, own_version in selected.items():
@@ -1525,11 +1524,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
         paths = native.build_locks(
             tmp_path, release, manifest, output, sources=None if mode == "legacy" else sources
         )
-        expected = (
-            {**dict.fromkeys(versions, "9.0"), "unselected-pack": "9.0"}
-            if mode == "legacy"
-            else versions
-        )
+        expected = release_versions if mode == "legacy" else versions
         assert {path.name for path in paths} == {
             f"{name}-{version}-fixture-base.pack-lock.json" for name, version in expected.items()
         }
