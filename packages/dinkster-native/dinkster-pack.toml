@@ -1,5 +1,7 @@
 [pack]
 name = "dinkster-native"
+version = "0.0.3"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["comfy", "dinkster"]
 executes = [

@@ -1020,7 +1020,7 @@ requires-dist = [{ name = "aiohttp", specifier = ">=3.10" }]
 
 [[package]]
 name = "dinkster-compat-comfy"
-version = "0.0.2"
+version = "0.0.3"
 source = { editable = "packages/dinkster-compat-comfy" }
 dependencies = [
     { name = "dinkster-assets" },
@@ -1188,7 +1188,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-native"
-version = "0.0.2"
+version = "0.0.3"
 source = { editable = "packages/dinkster-native" }
 dependencies = [
     { name = "dinkster-assets" },
@@ -1227,7 +1227,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-nodes-comfy"
-version = "0.0.2"
+version = "0.0.3"
 source = { editable = "packages/dinkster-nodes-comfy" }
 dependencies = [
     { name = "dinkster-api" },
