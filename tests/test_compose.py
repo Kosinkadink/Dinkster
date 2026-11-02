@@ -1221,7 +1221,7 @@ def test_compose_defaults_only(
             )
             assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
             assert len(FOUNDATION_NODES) == 54
-            assert len(IMAGE_NODES) == 87
+            assert len(IMAGE_NODES) == 89
             assert len(MEDIA_IO_NODES) == 66
             assert {
                 node_type
@@ -1360,7 +1360,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-image",
-            "blake3:9a7296619b5c644e860058af847628e7a038281dbf933f24a947f22974fdda53",
+            "blake3:d29bcf9258197069f83d845847f629574c539bafb8df9459b4f33dbdc1cd1098",
         ),
         (
             "dinkster-nodes-remote",
