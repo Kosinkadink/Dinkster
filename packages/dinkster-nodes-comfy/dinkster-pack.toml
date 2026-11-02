@@ -642,6 +642,7 @@ namespaces = [
     "SaveGaussianSplat",
     "SavePointCloud",
     "Load3DAdvanced",
+    "Load3D",
     "Preview3DAdvanced",
     "PreviewGaussianSplat",
     "PreviewPointCloud",
