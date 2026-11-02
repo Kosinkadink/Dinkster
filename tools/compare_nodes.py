@@ -3,8 +3,10 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
-Source-marked file combos and strings may use an ASSET socket and asset picker. Marked
-directory, pair and literal choices require their exact selection kind;
+Source-marked file combos and strings may use an ASSET socket and asset picker.
+Scalar STRING files with an empty default use an optional ASSET with no default
+file to represent no paint; multiline text metadata does not apply to ASSET files.
+Marked directory, pair and literal choices require their exact selection kind;
 ordinary combo types, options and defaults remain exact.
 V3 inputs follow the recorded declaration sequence, including optional inputs
 between required inputs. V1 inputs retain required-then-optional group order.
@@ -90,6 +92,8 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
             entry: dict[str, Any] = {"name": name, "group": group, "type": value_type}
             if options.get("hidden"):
                 entry["hidden"] = True
+            if value_type == "STRING" and "socketless" in options:
+                entry["socketless"] = options["socketless"]
             if isinstance(value_type, list):
                 entry.update(type="COMBO", options=value_type)
             elif value_type == "COMBO":
@@ -173,6 +177,8 @@ def _native_inputs(
         }
         if item.get("hidden"):
             entry["hidden"] = True
+        if "socketless" in public:
+            entry["socketless"] = item.get("socketless", False)
         if role == "input":
             entry["type"] = _type(item["type"])
             widget = item.get("widget") or {}
@@ -330,6 +336,13 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
             file_type = expected["type"]
+            if file_type == "STRING" and actual.get("type") == "ASSET":
+                if not list_flag and expected.get("default") == "":
+                    if actual.get("group") != "optional" or actual.get("default") is not None:
+                        return [f"{path}: empty file requires an optional ASSET with no default"]
+                    if expected.get("group") == "required":
+                        expected["group"] = "optional"
+                expected.pop("multiline", None)
             if isinstance(file_type, dict):
                 file_type = file_type["list"]
             if actual.get("type") == "ASSET":
