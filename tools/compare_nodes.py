@@ -3,8 +3,10 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
-Source-marked file combos may use an ASSET socket and asset picker. Marked
-directory, pair and literal choices require their exact selection kind;
+Source-marked file combos and strings may use an ASSET socket and asset picker.
+Scalar STRING files with an empty default use an optional ASSET with no default
+file to represent no paint; multiline text metadata does not apply to ASSET files.
+Marked directory, pair and literal choices require their exact selection kind;
 ordinary combo types, options and defaults remain exact.
 V3 inputs follow the recorded declaration sequence, including optional inputs
 between required inputs. V1 inputs retain required-then-optional group order.
@@ -90,6 +92,8 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
             entry: dict[str, Any] = {"name": name, "group": group, "type": value_type}
             if options.get("hidden"):
                 entry["hidden"] = True
+            if value_type == "STRING" and "socketless" in options:
+                entry["socketless"] = options["socketless"]
             if isinstance(value_type, list):
                 entry.update(type="COMBO", options=value_type)
             elif value_type == "COMBO":
@@ -173,6 +177,8 @@ def _native_inputs(
         }
         if item.get("hidden"):
             entry["hidden"] = True
+        if "socketless" in public:
+            entry["socketless"] = item.get("socketless", False)
         if role == "input":
             entry["type"] = _type(item["type"])
             widget = item.get("widget") or {}
@@ -321,13 +327,32 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
             expected.pop("default", None)
             actual.pop("default", None)
         elif file_picker:
-            if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
+            if not file_input or expected.get("type") not in (
+                "COMBO",
+                "STRING",
+                {"list": "COMBO"},
+                {"list": "STRING"},
+            ):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
+            file_type = expected["type"]
+            if file_type == "STRING" and actual.get("type") == "ASSET":
+                if (
+                    list_flag
+                    or expected.get("default") != ""
+                    or actual.get("group") != "optional"
+                    or actual.get("default") is not None
+                ):
+                    return [f"{path}: empty file requires an optional ASSET with no default"]
+                if expected.get("group") == "required":
+                    expected["group"] = "optional"
+                expected.pop("multiline", None)
+            if isinstance(file_type, dict):
+                file_type = file_type["list"]
             if actual.get("type") == "ASSET":
-                actual["type"] = "COMBO"
+                actual["type"] = file_type
             elif actual.get("type") == {"list": "ASSET"}:
-                actual["type"] = {"list": "COMBO"}
+                actual["type"] = {"list": file_type}
             expected.pop("options", None)
             expected.pop("default", None)
             actual.pop("default", None)
@@ -540,8 +565,13 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     for key, schema in served.items():
         if key != schema.get("nodeType"):
             errors.append(f"registry key {key!r} differs from nodeType {schema.get('nodeType')!r}")
-        if key in ids and schema.get("pack", "dinkster-nodes-comfy") != "dinkster-nodes-comfy":
-            errors.append(f"core class id {key!r} is claimed by pack {schema['pack']!r}")
+        owner = (
+            "dinkster-nodes-image"
+            if key in {"ImageCompare", "GLSLShader"}
+            else "dinkster-nodes-comfy"
+        )
+        if key in ids and schema.get("pack", "dinkster-nodes-comfy") != owner:
+            errors.append(f"core class id {key!r} is claimed by pack {schema.get('pack')!r}")
         if key.startswith(FORBIDDEN_PREFIXES):
             errors.append(f"prefixed node id: {key}")
         for item in schema.get("interface", []):

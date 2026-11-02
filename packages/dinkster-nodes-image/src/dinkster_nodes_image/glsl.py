@@ -508,29 +508,69 @@ class NativeGlslShader(GlslShader):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = GlslShader.schema()
+        families: list[InputFamilySpec] = []
+        for family in schema.input_families:
+            member = cast(InputSpec, family.template[0])
+            families.append(
+                replace(
+                    family,
+                    member_names=None,
+                    member_prefix="image" if family.id == "images" else f"u_{family.id[:-1]}",
+                    max_members=family.max_members,
+                    optional_after_minimum=family.id == "images",
+                    template=(
+                        replace(
+                            member,
+                            id=family.id[:-1],
+                            force_input=family.id != "images",
+                            widget=(
+                                None if isinstance(member.widget, NumberWidget) else member.widget
+                            ),
+                            default=(
+                                {
+                                    "points": [[0.0, 0.0], [1.0, 1.0]],
+                                    "interpolation": "monotone_cubic",
+                                }
+                                if family.id == "curves"
+                                else member.default
+                            ),
+                        ),
+                    ),
+                )
+            )
         return replace(
             schema,
             node_type="GLSLShader",
             inputs=tuple(
                 replace(
                     spec,
+                    required=True,
                     default=DEFAULT_FRAGMENT_SHADER.replace("precision highp sampler2D;\n", ""),
                 )
                 for spec in schema.inputs
             ),
-            input_families=tuple(
+            combos=tuple(
                 replace(
-                    family,
-                    member_names=None,
-                    member_prefix="image" if family.id == "images" else f"u_{family.id[:-1]}",
-                    max_members=family.max_members,
-                    template=tuple(
-                        replace(spec, id=family.id[:-1]) if isinstance(spec, InputSpec) else spec
-                        for spec in family.template
+                    combo,
+                    default=None,
+                    options=tuple(
+                        replace(
+                            option,
+                            inputs=tuple(
+                                replace(
+                                    cast(InputSpec, spec),
+                                    required=True,
+                                    widget=NumberWidget(min=1, max=MAX_DIMENSION),
+                                )
+                                for spec in option.inputs
+                            ),
+                        )
+                        for option in combo.options
                     ),
                 )
-                for family in schema.input_families
+                for combo in schema.combos
             ),
+            input_families=tuple(families),
             input_order=(
                 "fragment_shader",
                 "size_mode",
