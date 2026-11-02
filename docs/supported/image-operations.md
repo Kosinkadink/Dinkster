@@ -167,6 +167,9 @@
   complete model wrappers in the holding worker when passed between nodes.
 - Native `SAM3DBody_Loader` loads one bound detection-model checkpoint with
   automatic dtype and mixed-precision selection and rejects mismatched keys.
+- Native `SAM3DBody_Predict` predicts pose geometry from full images, detector
+  boxes or SAM3 tracking masks, with bounded crop batches, optional hand
+  refinement and camera field of view. It requires a loaded SAM3D Body model.
 - Native `SAM3DBody_Smooth` reduces temporal pose jitter with Gaussian or
   Savitzky-Golay filtering, wrapped-angle handling and fast-spin geometry
   protection while camera motion remains smoothed.
