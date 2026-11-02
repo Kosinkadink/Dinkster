@@ -16,6 +16,11 @@ jobs:
   admission:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
     steps:
       - uses: actions/checkout@v4
         with:

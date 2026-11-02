@@ -1339,11 +1339,8 @@ def _installed_pack_spec(
     manifest_record = load_manifest(manifest)
     if canonical_name(manifest_record.name) != canonical_name(pack_id):
         raise CompositionError(f"installed {pack_id} manifest names pack {manifest_record.name!r}")
-    version = (
-        manifest_record.compatibility.version
-        if manifest_record.compatibility is not None
-        else distribution.version
-    )
+    if manifest_record.compatibility is not None:
+        version = manifest_record.compatibility.version
     if locked is not None:
         if version != locked.version:
             raise CompositionError(
