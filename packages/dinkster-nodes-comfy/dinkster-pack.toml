@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
-version = "0.0.2"
+version = "0.0.3"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [

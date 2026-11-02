@@ -14,6 +14,36 @@ from dinkster_workers import load_manifest
 from scripts.build_official_packs import OFFICIAL_PACK_FAMILIES
 
 
+def publication_selection(root: Path, before: str) -> tuple[str, ...]:
+    """Engine dependency and publication changes require checking every official pack."""
+    if re.fullmatch(r"[0-9a-f]{40}", before) is None:
+        raise ValueError("publication base must be a full Git commit identity")
+    if before == "0" * 40:
+        return select_packs(root, before=before)
+    changed = subprocess.check_output(
+        ["git", "-C", str(root), "diff", "--name-only", before, "HEAD"], text=True
+    ).splitlines()
+    engine_changed = any(
+        path in {"pyproject.toml", "uv.lock", "scripts/base_bundles.json"}
+        or path.startswith("packages/")
+        and path.endswith("/pyproject.toml")
+        for path in changed
+    )
+    publication_changed = any(
+        path == ".github/workflows/official-packs.yml"
+        or path
+        in {
+            "scripts/select_official_packs.py",
+            "scripts/prepare_official_publication.py",
+            "scripts/build_release_pack_locks.py",
+            "scripts/build_official_packs.py",
+            "scripts/publish_official_packs.py",
+        }
+        for path in changed
+    )
+    return select_packs(root, before="0" * 40 if engine_changed or publication_changed else before)
+
+
 def select_packs(
     root: Path, *, before: str | None = None, tag: str | None = None
 ) -> tuple[str, ...]:

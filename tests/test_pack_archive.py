@@ -531,6 +531,17 @@ def test_official_publication_selects_only_changed_committed_packs(
     [
         None,
         "prepare-only",
+        "published-identical",
+        "check-published",
+        "published-digest",
+        "published-size",
+        "published-lock",
+        "published-lock-size",
+        "published-base",
+        "published-coverage",
+        "published-publisher",
+        "lookup-failed",
+        "publish-conflict",
         "missing-base",
         "duplicate-base",
         "wrong-base",
@@ -552,16 +563,17 @@ def test_official_publication_selects_only_changed_committed_packs(
     ],
 )
 def test_official_publication_requires_complete_supported_base_bindings(
-    tmp_path: Path, problem: str | None
+    tmp_path: Path, problem: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import hashlib
     import json
 
+    from blake3 import blake3
     from dinkster_registry import ArtifactError, LockedPack, Lockfile, build_artifact
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_installer import _serve_artifacts
 
-    from dinkster.registries import NamedRegistry
+    from dinkster.registries import NamedRegistry, RegistryPublishError
     from scripts.publish_official_packs import publish_official_packs
 
     sources = tmp_path / "sources"
@@ -676,20 +688,96 @@ def test_official_publication_requires_complete_supported_base_bindings(
         extra.write_bytes(locks[-1].read_bytes())
         locks.append(extra)
     requests = []
-    server = _serve_artifacts(
-        {
-            f"/v1/publish/{pack.pack}/versions/{pack.version}": json.dumps(
-                {"status": "queued", "candidateId": pack.pack}
-            ).encode()
-            for pack in packs
-        },
-        requests,
-    )
+    files = {
+        f"/v1/publish/{pack.pack}/versions/{pack.version}": json.dumps(
+            {"status": "queued", "candidateId": pack.pack}
+        ).encode()
+        for pack in packs
+    }
+    if problem and (problem.startswith("published-") or problem == "check-published"):
+        for pack in packs:
+            record = {
+                "packName": pack.pack,
+                "version": pack.version,
+                "publishedBy": {"principalId": "dinkster"},
+                "artifact": {
+                    "digest": pack.artifact_digest,
+                    "size": (sources / f"{pack.pack}-{pack.version}.zip").stat().st_size,
+                },
+                "installLocks": {},
+            }
+            for variant in variants:
+                raw = json.dumps(
+                    expected_locks[pack.pack, variant], sort_keys=True, separators=(",", ":")
+                ).encode("ascii")
+                record["installLocks"][variant] = {
+                    "baseId": "sha256:" + supported[variant],
+                    "artifactDigest": pack.artifact_digest,
+                    "digest": "blake3:" + blake3(raw).hexdigest(),
+                    "size": len(raw),
+                    "url": "/ignored/download/url",
+                }
+            if pack.pack == "second-pack":
+                if problem == "published-digest":
+                    record["artifact"]["digest"] = "blake3:" + "f" * 64
+                elif problem == "published-size":
+                    record["artifact"]["size"] += 1
+                elif problem == "published-lock":
+                    record["installLocks"]["win-nvidia"]["digest"] = "blake3:" + "e" * 64
+                elif problem == "published-lock-size":
+                    record["installLocks"]["win-nvidia"]["size"] += 1
+                elif problem == "published-base":
+                    record["installLocks"]["win-nvidia"]["baseId"] = "sha256:" + "e" * 64
+                elif problem == "published-coverage":
+                    del record["installLocks"]["win-nvidia"]
+                elif problem == "published-publisher":
+                    record["publishedBy"]["principalId"] = "other"
+            files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(record).encode()
+    server = _serve_artifacts(files, requests)
+    respond = vars(server.RequestHandlerClass)["respond"]
+
+    def registry_response(handler):
+        if (
+            problem == "lookup-failed"
+            or problem == "publish-conflict"
+            and handler.command == "POST"
+        ):
+            requests.append((handler.path, handler.headers.get("Authorization")))
+            handler.send_response(503 if problem == "lookup-failed" else 409)
+            handler.end_headers()
+            handler.wfile.write(b"release already has different archive or lock bindings")
+        else:
+            respond(handler)
+
+    monkeypatch.setattr(server.RequestHandlerClass, "respond", registry_response)
     output = tmp_path / "publication"
     before = {path: path.read_bytes() for path in [*sources.iterdir(), *locks, *bases]}
     try:
         registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
-        if problem not in {None, "prepare-only"}:
+        lookup_paths = [f"/v1/packs/{pack.pack}/versions/{pack.version}" for pack in packs]
+        if problem in {"lookup-failed", "publish-conflict"}:
+            with pytest.raises(
+                RegistryPublishError,
+                match="first-pack@1.2.3.*"
+                + (
+                    "lookup failed"
+                    if problem == "lookup-failed"
+                    else "not retried.*bump the pack version"
+                ),
+            ):
+                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+            assert [path for path, _ in requests] == (
+                lookup_paths[:1]
+                if problem == "lookup-failed"
+                else lookup_paths + ["/v1/publish/first-pack/versions/1.2.3"]
+            )
+        elif problem and problem.startswith("published-") and problem != "published-identical":
+            with pytest.raises(
+                RegistryPublishError, match="second-pack@7.4.0rc1.*bump the pack version"
+            ):
+                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+            assert [path for path, _ in requests] == lookup_paths
+        elif problem not in {None, "prepare-only", "published-identical", "check-published"}:
             with pytest.raises((ValueError, ArtifactError)):
                 publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
             assert not output.exists()
@@ -701,7 +789,8 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 bases,
                 locks,
                 output,
-                registry=registry if problem is None else None,
+                registry=registry if problem in {None, "published-identical"} else None,
+                preflight_registry=registry.endpoint if problem == "check-published" else None,
             )
             assert len(result) == 2
             assert [row["version"] for row in result] == ["1.2.3", "7.4.0rc1"]
@@ -716,11 +805,14 @@ def test_official_publication_requires_complete_supported_base_bindings(
                         "artifactDigest": pack.artifact_digest,
                         "lock": expected_locks[pack.pack, variant],
                     }
-                if problem is None:
+                if problem in {None, "published-identical"}:
                     assert row["state"] == "queued" and row["candidateId"] == pack.pack
             assert [path for path, _ in requests] == (
-                [f"/v1/publish/{pack.pack}/versions/{pack.version}" for pack in packs]
-                if problem is None
+                lookup_paths
+                + [f"/v1/publish/{pack.pack}/versions/{pack.version}" for pack in packs]
+                if problem in {None, "published-identical"}
+                else lookup_paths
+                if problem == "check-published"
                 else []
             )
         assert {path: path.read_bytes() for path in before} == before
