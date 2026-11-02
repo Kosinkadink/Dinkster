@@ -5,16 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import urllib.error
+import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
+from blake3 import blake3
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_workers import load_manifest
 from dinkster_workers.pack_lock import PackLock
 from packaging.specifiers import SpecifierSet
 
-from dinkster.registries import NamedRegistry, publish_release
+from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
 from scripts.build_release import read_base_manifest
 
 
@@ -26,10 +29,12 @@ def publish_official_packs(
     output: Path,
     *,
     registry: NamedRegistry | None = None,
+    preflight_registry: str | None = None,
 ) -> list[dict[str, object]]:
     """Validate the entire publication set before exposing maps or making a request.
 
-    With no registry, only prepare inputs. A queued receipt is not scanner acceptance.
+    Without a registry endpoint, only prepare inputs. Public preflight never sends credentials.
+    A queued receipt is not scanner acceptance.
     Native lock production and archive construction belong to their existing builders.
     """
     if output.exists():
@@ -113,6 +118,56 @@ def publish_official_packs(
                 encoding="ascii",
             )
         staged.rename(output)
+    endpoint = registry.endpoint if registry is not None else preflight_registry
+    if endpoint is not None:
+        for pack in catalog.packs:
+            url = (
+                endpoint.rstrip("/")
+                + f"/v1/packs/{quote(pack.pack, safe='')}/versions/{quote(pack.version, safe='')}"
+            )
+            try:
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    published = json.load(response)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    continue
+                raise RegistryPublishError(
+                    f"{pack.pack}@{pack.version}: registry lookup failed: {exc}"
+                ) from exc
+            except (OSError, ValueError) as exc:
+                raise RegistryPublishError(
+                    f"{pack.pack}@{pack.version}: registry lookup failed: {exc}"
+                ) from exc
+            bindings = json.loads((output / f"{pack.pack}-{pack.version}.json").read_bytes())
+            expected = {}
+            for variant, binding in bindings.items():
+                payload = json.dumps(
+                    binding["lock"], sort_keys=True, separators=(",", ":"), allow_nan=False
+                ).encode("ascii")
+                expected[variant] = {
+                    "baseId": binding["baseId"],
+                    "artifactDigest": binding["artifactDigest"],
+                    "digest": "blake3:" + blake3(payload).hexdigest(),
+                    "size": len(payload),
+                }
+            actual = published.get("installLocks", {})
+            if (
+                published.get("packName") != pack.pack
+                or published.get("version") != pack.version
+                or published.get("publishedBy", {}).get("principalId") != pack.publisher
+                or published.get("artifact", {}).get("digest") != pack.artifact_digest
+                or published.get("artifact", {}).get("size")
+                != (sources / f"{pack.pack}-{pack.version}.zip").stat().st_size
+                or actual.keys() != expected.keys()
+                or any(
+                    {key: actual[variant].get(key) for key in binding} != binding
+                    for variant, binding in expected.items()
+                )
+            ):
+                raise RegistryPublishError(
+                    f"{pack.pack}@{pack.version}: published archive or install locks differ; "
+                    "bump the pack version"
+                )
     result: list[dict[str, object]] = []
     for pack in catalog.packs:
         locks = output / f"{pack.pack}-{pack.version}.json"
@@ -123,13 +178,19 @@ def publish_official_packs(
             "locks": str(locks),
         }
         if registry is not None:
-            verdict = publish_release(
-                registry,
-                sources / f"{pack.pack}-{pack.version}.zip",
-                pack.pack,
-                pack.version,
-                locks=locks,
-            )
+            try:
+                verdict = publish_release(
+                    registry,
+                    sources / f"{pack.pack}-{pack.version}.zip",
+                    pack.pack,
+                    pack.version,
+                    locks=locks,
+                )
+            except RegistryPublishError as exc:
+                raise RegistryPublishError(
+                    f"{pack.pack}@{pack.version}: publication refused (not retried); "
+                    f"if archive or install locks changed, bump the pack version: {exc}"
+                ) from exc
             row.update(state=verdict.state, candidateId=verdict.candidate_id)
         result.append(row)
     return result
@@ -142,6 +203,7 @@ if __name__ == "__main__":
     parser.add_argument("--pack-lock", required=True, action="append", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--check-published", action="store_true")
     parser.add_argument("--registry", default="https://registry.dinkster.org")
     args = parser.parse_args()
     print(
@@ -155,6 +217,7 @@ if __name__ == "__main__":
                 registry=NamedRegistry("", args.registry, token_env="DINKSTER_REGISTRY_TOKEN")
                 if args.publish
                 else None,
+                preflight_registry=args.registry if args.check_published else None,
             )
         )
     )
