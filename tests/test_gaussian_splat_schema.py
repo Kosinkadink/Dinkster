@@ -19,7 +19,35 @@ from dinkster_engine import ParentGraphBudget, admit_parent_graph
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.gaussian_splat import GetSplatCount, MergeSplat, TransformSplat
+from dinkster_nodes_comfy.splat_render import RenderSplat
 from dinkster_schema import elaborate
+
+
+def test_render_splat_schema_and_native_registration() -> None:
+    schema = RenderSplat.schema()
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    assert [port.id for port in schema.inputs] == [
+        "splat",
+        "width",
+        "height",
+        "frames",
+        "splat_scale",
+        "sharpen",
+        "headlight_shading",
+        "opacity_threshold",
+        "render_style",
+        "background",
+        "bg_image",
+        "camera_info",
+    ]
+    assert schema.inputs[0].type.types == (SPLAT_TYPE,)
+    assert not schema.inputs[-1].required and not schema.inputs[-2].required
+    assert [port.id for port in schema.outputs] == ["IMAGE", "MASK"]
+    assert sum(node is RenderSplat for node in COMFY_NODES) == 1
+    manifest = (
+        Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    )
+    assert tomllib.loads(manifest.read_text())["pack"]["namespaces"].count("RenderSplat") == 1
 
 
 def test_splat_count_schema_and_production_claim_are_canonical() -> None:

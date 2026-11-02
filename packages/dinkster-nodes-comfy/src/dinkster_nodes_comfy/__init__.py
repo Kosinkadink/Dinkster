@@ -59,6 +59,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .curve_editor import CurveEditor
 from .custom_sampling import CUSTOM_SAMPLING_NODES
+from .depth_anything_3 import DA3GeometryToMesh, DA3Inference, DA3Render, LoadDA3Model
 from .device_routing import DEVICE_ROUTING_NODES
 from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
@@ -85,13 +86,16 @@ from .image_file_tools import (
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
+    Painter,
     PreviewImage,
     SaveAnimatedPNG,
     SaveAnimatedWEBP,
     SaveImage,
 )
 from .image_filters import IMAGE_FILTER_NODES
+from .image_histogram import ImageHistogram
 from .image_layers import AddLayer
+from .image_model_upscale import ImageUpscaleWithModel
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -108,6 +112,8 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
 from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
+from .load3d import Load3DAdvanced
+from .load3d_captures import Load3D
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_extract_save import LoraSave
@@ -132,13 +138,18 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from .mesh import MESH_NODES
+from .mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from .mesh_decimate import DecimateMesh
 from .mesh_holes import FillHoles
 from .mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from .mesh_normals import MeshSmoothNormals
 from .mesh_paint import PaintMesh
+from .mesh_remesh import RemeshMesh
+from .mesh_render import RenderMesh
 from .mesh_texture import ApplyTextureToMesh, MeshTextureToImage
+from .mesh_unwrap import UnwrapMesh
 from .mesh_weld import WeldVertices
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_control import MiniMaxH3FunControlNetApply
@@ -158,6 +169,7 @@ from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
 from .moge_mesh import MoGePointMapToMesh
 from .moge_panorama import MoGePanoramaInference
+from .moge_render import MoGeRender
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -166,7 +178,9 @@ from .optical_flow import OpticalFlowLoader
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
+from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning
 from .post_processing import POST_PROCESSING_NODES
+from .preview3d import Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -187,6 +201,10 @@ from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
+from .sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
+from .sam3d_export import BuildPoseFile
+from .sam3d_prediction import SAM3DBody_Predict
+from .sam3d_render import SAM3DBody_Render
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
@@ -204,7 +222,8 @@ from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
-from .splat_files import SplatToFile3D
+from .splat_files import File3DToSplat, SplatToFile3D
+from .splat_render import RenderSplat
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
@@ -214,9 +233,11 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
-from .trellis import Trellis2TextureStage
+from .text_overlay import TextOverlay
+from .trellis import Trellis2TextureStage, VaeDecodeTextureTrellis
 from .trellis_conditioning import Trellis2Conditioning
-from .trellis_shape import Trellis2ShapeStage
+from .trellis_shape import Trellis2ShapeStage, VaeDecodeShapeTrellis
+from .trellis_structure import VaeDecodeStructureTrellis2
 from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import (
     TripoSplatConditioning,
@@ -244,6 +265,7 @@ from .void_conditioning import (
 from .void_sampler import VOIDSampler
 from .void_warped_noise import VOIDWarpedNoise
 from .voxel_mesh import VOXEL_MESH_NODES
+from .voxel_texture import BakeTextureFromVoxel
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -474,10 +496,18 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetSplatCount,
     TransformSplat,
     MergeSplat,
+    RenderSplat,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
+    MoGeRender,
     MoGePointMapToMesh,
+    LoadDA3Model,
+    DA3Inference,
+    DA3Render,
+    DA3GeometryToMesh,
+    MediaPipeFaceMeshVisualize,
+    MediaPipeFaceMask,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
     TripoSplatConditioning,
@@ -505,6 +535,9 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetVideoComponents,
     ConditioningLoader,
     SaveConditioning,
+    SAM3DBody_Loader,
+    SAM3DBody_Predict,
+    SAM3DBody_Smooth,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
@@ -515,6 +548,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveSVGNode,
     SaveImage,
     PreviewImage,
+    Painter,
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
@@ -526,27 +560,49 @@ COMFY_NODES: tuple[type[Node], ...] = (
     CheckpointSave,
     ModelSave,
     SaveImageAdvanced,
+    Pixal3DConditioning,
+    Pixal3DMultiViewConditioning,
     Trellis2Conditioning,
     *MESH_NODES,
     *VOXEL_MESH_NODES,
     VAEDecodeHunyuan3D,
     Trellis2ShapeStage,
+    VaeDecodeStructureTrellis2,
+    VaeDecodeShapeTrellis,
     Trellis2TextureStage,
+    VaeDecodeTextureTrellis,
     PaintMesh,
     WeldVertices,
     MeshTextureToImage,
     MeshSmoothNormals,
     RenderUVAtlas,
+    UnwrapMesh,
     ApplyTextureToMesh,
+    BakeAmbientOcclusion,
+    BakeNormalMapFromMesh,
+    BakeTextureFromVoxel,
     FillHoles,
     Get3DComponents,
     DecimateMesh,
+    RemeshMesh,
+    RenderMesh,
     MeshToFile3D,
     SaveGLB,
     Save3DAdvanced,
     SaveGaussianSplat,
     SavePointCloud,
+    Load3DAdvanced,
+    Load3D,
+    Preview3DAdvanced,
+    PreviewGaussianSplat,
+    PreviewPointCloud,
     SplatToFile3D,
+    File3DToSplat,
+    ImageUpscaleWithModel,
+    ImageHistogram,
+    TextOverlay,
+    SAM3DBody_Render,
+    BuildPoseFile,
 )
 
 

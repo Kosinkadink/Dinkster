@@ -10,10 +10,9 @@ from typing import cast
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
-    BOUNDING_BOX_TYPE,
-    COMFY_ARRAY_TYPE,
     DETECTION_TYPE,
     IMAGE_TYPE,
+    IMAGECOMPARE_TYPE,
     MASK_TYPE,
     POSE_TYPE,
     REGION_TYPE,
@@ -30,6 +29,7 @@ from dinkster_api.v1 import (
     encode_detection,
     encode_region,
     region_meta,
+    register_box_types,
 )
 
 from .compositor_types import (
@@ -333,6 +333,8 @@ def register_image_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env())
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
+    if IMAGECOMPARE_TYPE not in registry:
+        registry.register(IMAGECOMPARE_TYPE)
     for type_id, renderer in (
         (IMAGE_TYPE, render_image_png),
         (MASK_TYPE, render_mask_png),
@@ -423,9 +425,7 @@ def register_image_types(registry: TypeRegistry) -> None:
         )
     register_comfy_layers(registry)
     register_comfy_compositor(registry)
-    for type_id in (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE):
-        if type_id not in registry:
-            registry.register(type_id)
+    register_box_types(registry)
 
 
 __all__ = [

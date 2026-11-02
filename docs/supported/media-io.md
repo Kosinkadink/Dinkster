@@ -10,6 +10,14 @@
 - Create 3D File (from Splat) exports the first valid-count-trimmed batch item
   as PLY with full spherical harmonics, or KSPLAT/SPZ with base color only.
   Empty splats are rejected and the input tensors remain unchanged.
+- Native `BuildPoseFile` constructs animated GLB body meshes, bones, OpenPose
+  and SCAIL rigs, or single-track BVH, as asset-backed FILE_3D values.
+  It preserves track selection, frame gaps, camera translation, smoothing and
+  external rig bind/skin data. Body meshes, bones and BVH require an external
+  rig or a SAM3D model. Controlled CPU rig execution is tested; real-weight
+  loading is not verified with the currently pinned inference release.
+- Get Splat reads PLY, SPLAT, KSPLAT and SPZ file assets into a single Gaussian
+  batch. PLY retains spherical harmonics; the other formats retain base color.
 - Save 3D Model saves each nonempty mesh batch item as GLB with submission
   metadata, or copies a 3D file's primary bytes without changing its format.
   Filename prefixes target the output mount unless an adjacent mount is selected.
@@ -22,13 +30,37 @@
   Omitted captures and an empty recording remain distinct authored states.
 - Canonical FILE_3D values preserve original file formats and explicitly granted
   sidecar assets without converting containers or granting filesystem access.
+  The public file loader retains selected source bytes and binds declared glTF,
+  GLB and OBJ sidecars from explicit asset identities or the selected source's
+  input/model3d mount grant. glTF resource URIs may encode spaces in contained
+  filenames. OBJ material and texture declarations support continued lines;
+  texture names retain spaces after material-map options or inside quotes.
+  Declared adjacent files selected through model3d file inputs receive local host
+  grants at submission, without a separate directory scan or indexing step.
+  String-or-FILE_3D inputs bind legacy filename selections through those same
+  grants and preserve canonical file values. Empty, null and `none` source
+  selections normalize before asset validation without opening a file.
+  Canonical file submissions validate their source identity, format and declared
+  resources before queueing. Missing, undeclared and traversing resources fail;
+  an empty selection produces no file. It never fetches external URLs.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
+  Generic and aggregate sockets preserve an empty format for consumers that
+  detect the original container from its contents. Concrete format sockets
+  require their declared format; conflicting explicit formats remain rejected.
   A JSON manifest rendition preserves the source and named resource identities
   when reading completed job outputs; local bindings remain host-granted rather
   than becoming content digests.
+- Related-file exports can preserve complete nested filenames and source bytes
+  in one uniquely numbered directory under an existing writable mount. The
+  shared writer validates all names before publication, rejects case-insensitive
+  and file/directory collisions, and records each file for immediate resolution.
+  It never overwrites or independently renumbers a member. This shared writer
+  operation is separate from the native 3D nodes' flat-file save behavior.
 - Local asset bindings support byte reads for callers with local assets:read
   permission. Reads require a live grant and unchanged file revision; they do not
   index files, grant path access or advertise immutable caching.
+  A worker selecting the same unindexed file can return its existing host grant
+  without requiring a separate indexing step.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported
@@ -274,7 +306,8 @@
   splat PLY files. Shared inference and media packs preserve optional per-item
   counts, empty Gaussian tensors and floating dtype across ordinary worker
   boundaries; live tensors retain their device and storage. Empty splats can
-  cross workers but cannot be exported to PLY.
+  be loaded from zero-vertex PLY files and cross workers, but cannot be exported
+  to PLY.
 - Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
   honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights

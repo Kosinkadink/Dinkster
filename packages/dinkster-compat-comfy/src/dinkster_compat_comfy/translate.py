@@ -153,6 +153,7 @@ from dinkster_values.builtin_types import (
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
+    COMFY_ARRAY_TYPE,
     CONTROL_NET_TYPE,
     GLIGEN_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
@@ -2598,6 +2599,10 @@ class CompatTranslation:
             v1_name = type_id.removeprefix(COMFY_TYPE_PREFIX)
             if v1_name in resident_types:
                 register_resident_type(registry, type_id, table=table, meta=resident_meta)
+            elif type_id in (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE):
+                from dinkster_values import register_box_types
+
+                register_box_types(registry)
             elif v1_name in (IMAGE_V1_NAME, MASK_V1_NAME):
                 # Images and masks cross as npy bytes, not pickle, so the
                 # torchless engine can decode and render their exact type

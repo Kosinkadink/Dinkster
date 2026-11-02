@@ -12,6 +12,7 @@ from typing import Any, BinaryIO, Literal, cast
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    COLOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
@@ -25,8 +26,10 @@ from dinkster_api.v1 import (
     AssetRef,
     AssetWidget,
     AssetWriter,
+    ColorWidget,
     ComboWidget,
     InputSpec,
+    LocalAssetRef,
     MountSnapshotWriter,
     MountWidget,
     Node,
@@ -42,6 +45,7 @@ from dinkster_api.v1 import (
     materialize_image,
     open_image_components,
     render_image_png,
+    report_preview,
 )
 
 from .advanced_image_encoding import inject_png_metadata
@@ -88,7 +92,7 @@ def image_batch(images: Any) -> Any:
     return batch
 
 
-def _load_image(asset: AssetRef) -> tuple[Any, Any]:
+def _load_image(asset: AssetRef | LocalAssetRef) -> tuple[Any, Any]:
     if asset.size > IMAGE_WORKING_SET_LIMIT_BYTES:
         raise ValueError("image asset exceeds the input byte limit")
     with asset.open() as handle:
@@ -141,7 +145,7 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
     return torch.stack(images), torch.stack(masks)
 
 
-def _load_webp(asset: AssetRef) -> tuple[Any, Any]:
+def _load_webp(asset: AssetRef | LocalAssetRef) -> tuple[Any, Any]:
     image_module = importlib.import_module("PIL.Image")
     image_ops = importlib.import_module("PIL.ImageOps")
     image_sequence = importlib.import_module("PIL.ImageSequence")
@@ -501,6 +505,116 @@ class SaveAnimatedPNG(Node):
         return cls.outputs(images=images)
 
 
+class Painter(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="Painter",
+            display_name="Painter",
+            category="image",
+            inputs=(
+                InputSpec("image", _IMAGE, required=False, default=None),
+                InputSpec(
+                    "mask",
+                    _ASSET,
+                    required=False,
+                    default=None,
+                    socketless=True,
+                    widget=AssetWidget(_IMAGE_MEDIA_TYPES, kind="media/image", allow_upload=True),
+                    source_filename=SourceFilenameSpec("media/image", "input"),
+                ),
+                *(
+                    InputSpec(
+                        name,
+                        _INT,
+                        default=512,
+                        widget=NumberWidget(min=64, max=4096, step=64),
+                        socketless=True,
+                        hidden=True,
+                    )
+                    for name in ("width", "height")
+                ),
+                InputSpec(
+                    "bg_color",
+                    TypeExpr.concrete(COLOR_TYPE),
+                    default="#000000",
+                    widget=ColorWidget(),
+                ),
+            ),
+            outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
+            emits_previews=True,
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        mask: AssetRef | None = None,
+        width: int = 512,
+        height: int = 512,
+        bg_color: str = "#000000",
+        image: object = None,
+    ) -> Mapping[str, object]:
+        torch = importlib.import_module("torch")
+        numpy = importlib.import_module("numpy")
+        if image is not None:
+            base_image = image_batch(image)[:1]
+            height, width = base_image.shape[1:3]
+        else:
+            _check_dimensions(width, height)
+            color = bg_color.lstrip("#")
+            rgb = (
+                tuple(int(color[index : index + 2], 16) / 255.0 for index in (0, 2, 4))
+                if len(color) == 6
+                else (0.0, 0.0, 0.0)
+            )
+            base_image = torch.zeros((1, height, width, 3), dtype=torch.float32)
+            for channel, value in enumerate(rgb):
+                base_image[..., channel] = value
+        # The first-frame view retains the entire input storage. Reserve target
+        # RGBA/resampling, NumPy arithmetic, IMAGE/MASK and PNG encoding scratch.
+        peak_bytes = (
+            base_image.untyped_storage().nbytes()
+            + width * height * 48 * max(4, base_image.element_size())
+            + 32_768
+        )
+        if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+            raise ValueError("Painter exceeds the image working-set limit")
+        if mask is None:
+            out_image = base_image
+            mask_tensor = torch.zeros((1, height, width), dtype=torch.float32)
+        else:
+            if not isinstance(cast("object", mask), AssetRef):
+                raise TypeError("Painter mask must be a granted asset")
+            if mask.size > IMAGE_WORKING_SET_LIMIT_BYTES:
+                raise ValueError("Painter mask exceeds the input byte limit")
+            image_module = importlib.import_module("PIL.Image")
+            with mask.open() as handle:
+                source_bytes = os.fstat(handle.fileno()).st_size
+                if source_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                    raise ValueError("Painter mask exceeds the input byte limit")
+                with image_module.open(handle) as source:
+                    _check_dimensions(*source.size)
+                    # Source decode/conversion can coexist with resized target
+                    # buffers and the retained base; individual raster caps do not suffice.
+                    peak_bytes += source.width * source.height * 96 + max(mask.size, source_bytes)
+                    if source.size != (width, height):
+                        # Separable RGBA resampling also retains a mixed-size intermediate.
+                        peak_bytes += max(width * source.height, source.width * height) * 8
+                    if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                        raise ValueError("Painter exceeds the image working-set limit")
+                    painted = source.convert("RGBA")
+                    if painted.size != (width, height):
+                        painted = painted.resize((width, height), image_module.Resampling.LANCZOS)
+                    pixels = numpy.array(painted).astype(numpy.float32) / 255.0
+            alpha = pixels[..., 3:4]
+            composited = pixels[..., :3] * alpha + base_image[0].cpu().numpy() * (1.0 - alpha)
+            out_image = torch.from_numpy(composited).unsqueeze(0)
+            mask_tensor = torch.from_numpy(pixels[..., 3]).unsqueeze(0)
+        report_preview(render_image_png(out_image), mime="image/png", width=width, height=height)
+        return cls.outputs(IMAGE=out_image, MASK=mask_tensor)
+
+
 class LoadImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -522,7 +636,7 @@ class LoadImage(Node):
         )
 
     @classmethod
-    def execute(cls, *, image: AssetRef) -> Mapping[str, object]:
+    def execute(cls, *, image: AssetRef | LocalAssetRef) -> Mapping[str, object]:
         images, masks = _load_image(image)
         return cls.outputs(IMAGE=images, MASK=masks)
 

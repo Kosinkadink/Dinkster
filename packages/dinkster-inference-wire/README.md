@@ -28,6 +28,26 @@ resident pool and preserves an already registered type spec. Interpolation
 model objects stay in their holding process; normal value transport carries
 their resident identity, not model contents.
 
+`DA3_MODEL`, `FACE_DETECTION_MODEL` and `SAM3D_BODY_MODEL` use the same
+governed holding-process identity path. Complete model wrappers and their
+patchers stay in the holding process, and prior registration authority is
+preserved. Their constants are exported through `dinkster_api.v1`.
+
+Structural tensor payloads retain unsigned 16-bit joint indices and unsigned
+32-bit mesh faces without converting values above the corresponding signed
+range. Existing tensor framing and fingerprints are unchanged.
+
+`DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
+use structural packets over that envelope. Each array carries its NumPy or
+Torch kind; NumPy scalars and scalar arrays remain distinct. Ordered frames,
+optional-key absence, camera/source-image fields, frozenset face topology and
+external `_skeleton_override` rig buffers are retained. Decode and validation
+remain NumPy/Torch/inference-free; they produce inspectable tensor records.
+`materialize_vision_packet`, exported through `dinkster_api.v1`, reconstructs
+NumPy arrays/scalars and Torch tensors only at the consumer. Live objects keep
+their storage, dtype and device. Unsupported objects and malformed structural
+records are refused; no pickle or resident fallback exists for these packets.
+
 `MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
 uses the structural latent codec without requiring a `samples` entry. Geometry
 tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
@@ -53,6 +73,17 @@ are not truncated and optional-key omission survives encoding. Public
 `None` for absent optional attributes without modifying the wire mapping.
 Live tensors keep their dtype, device and storage. Registration is cold and
 preserves existing authority; malformed tensor records are rejected.
+
+`SHAPE_SUBDIVIDES` transports ordered sparse stages containing `feats`, `coords`,
+explicit `shape`, and three exact rational scale components. Its structural
+tensor envelope retains dtype, dimensions and bytes without importing Torch.
+The public `materialize_shape_subdivides` API rebuilds inference `SparseTensor`
+stages without spatial caches. Live tensors retain storage, dtype and device;
+the consuming node owns placement. Scale is stored as integer numerator and
+denominator pairs, never rounded through floating point. Registration preserves
+prior authority; unknown stage fields and malformed tensor records are refused.
+The subprocess transport/cache keeper is
+`tests/test_geometry_wire.py::test_shape_subdivides_survives_ordinary_hosts_and_cache_restart`.
 
 This package is a uv workspace member. From the repository root:
 

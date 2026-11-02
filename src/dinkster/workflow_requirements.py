@@ -15,8 +15,10 @@ from dinkster_assets import AssetRef, AssetSource, PackagedSource, RemoteSource
 from dinkster_workers import PackManifest
 from packaging.version import Version
 
-VARIANT_DEVICES = {
+VARIANTS = {
     "linux-cpu": "cpu",
+    "linux-nvidia": "cuda",
+    "mac-arm64": "mps",
     "win-cpu": "cpu",
     "win-nvidia": "cuda",
     "win-nvidia-cu126": "cuda",
@@ -313,9 +315,9 @@ def manifest_unavailability(
     requirement: PackRequirement, manifest: PackManifest, variant: str, *, device: str | None = None
 ) -> str | None:
     """Only manifest-declared resource needs can make portable packs hardware-specific."""
-    if device is None and variant not in VARIANT_DEVICES:
+    if device is None and variant not in VARIANTS:
         raise RequirementError(f"unknown engine variant: {variant}")
-    device = VARIANT_DEVICES[variant] if device is None else device
+    device = VARIANTS[variant] if device is None else device
     if manifest.sandbox.gpu and device == "cpu":
         return "pack.sandbox.gpu requires a GPU"
     for provider in manifest.vision_providers:

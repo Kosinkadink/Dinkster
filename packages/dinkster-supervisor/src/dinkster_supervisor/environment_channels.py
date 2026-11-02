@@ -9,7 +9,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from .environment_artifacts import artifact_rows, parse_metadata, validate_manifest
+from .environment_artifacts import (
+    artifact_rows,
+    engine_constraints,
+    parse_metadata,
+    validate_dependency_base,
+    validate_manifest,
+)
 from .environment_constraints import effective_constraints
 from .environment_state import (
     Channel,
@@ -56,7 +62,12 @@ def write_channel(
             raise EnvironmentError(f"duplicate selected base variant: {variant}")
         if base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError(f"workerProtocol mismatch for selected base {variant}")
-        effective_constraints(constraints.decode("utf-8"), base)
+        if "dependencies" in engine:
+            selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
+            validate_dependency_base(selection, base)
+            effective_constraints(engine_constraints(engine, variant), base, strict=True)
+        else:
+            effective_constraints(constraints.decode("utf-8"), base)
         selected[variant] = {
             "id": base_id,
             "locations": [

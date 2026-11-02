@@ -18,7 +18,7 @@ from dinkster_workers import PackManifest
 from .mounts_api import MOUNTS_KEY, MountService
 from .project_folders import ProjectFolders
 from .workflow_requirements import (
-    VARIANT_DEVICES,
+    VARIANTS,
     PackRequirement,
     RequirementError,
     generation_device,
@@ -100,10 +100,10 @@ def add_workflow_requirement_routes(
             if not isinstance(variant, str):
                 raise RequirementError("variant must be a string")
             device = None
-            if variant not in VARIANT_DEVICES:
+            if variant not in VARIANTS:
                 if generation is None or variant != engine_variant:
                     raise RequirementError(
-                        f"variant must be one of {', '.join(VARIANT_DEVICES)} "
+                        f"variant must be one of {', '.join(VARIANTS)} "
                         "or the selected generation's variant"
                     )
                 device = await asyncio.to_thread(generation_device, generation, variant)

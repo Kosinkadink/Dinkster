@@ -1,7 +1,7 @@
 # Install Dinkster
 
-Dinkster is pre-release. Release assets are private and are not published to a
-package index. A GitHub 404 can mean that your account does not have access.
+Dinkster is pre-release. Use the manifest and checksums from the same engine
+release for every installation input.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
@@ -11,28 +11,45 @@ the selected Dinkster-Environments bundle supplies runtime Python. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
 
-The Desktop app installs an
-exact backend release from its wheel set and constraints file. Desktop builds
-are not yet available; see the
-[Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
-for the current platform boundaries.
-Until that repository becomes public, the guide requires repository access;
-authenticated users can make a local copy with
-`gh repo clone Kosinkadink/Dinkster-Frontend`.
+The Desktop app installs an exact backend release through the environment
+client. See the
+[Desktop guide](https://github.com/Kosinkadink/Dinkster-Desktop#readme)
+for platform artifacts and the unsigned Apple Silicon installation procedure.
 
 ## Inspect a wheel release
 
 Each `vX.Y.Z` release contains:
 
-- one wheel for every Dinkster workspace package;
-- the `dinkster` meta-package wheel with its `default` extra;
-- a `dinkster-frontend` wheel containing the built browser application;
+- the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, with the
+  browser application embedded in the engine;
 - `constraints.txt`, exported from `uv.lock` with hashes;
-- `release-manifest.json` and `SHA256SUMS`; and
-- `dinkster-source-X.Y.Z.zip`, a maintainer source archive.
+- `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
+- `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
+- native tools ZIPs with the installer interpreters.
 
-Download all wheels and `constraints.txt` from the same release. A manual
-installation for inspection can be created without Git credentials:
+Official packs and their per-base dependency locks come from the registry,
+not the engine release or wheel. No third-party wheels are release assets.
+Finalization rejects pack payloads and other unexpected artifacts and fails
+above 100,000,000 bytes excluding native tools ZIPs.
+Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
+locked PyPI artifact URLs into the shared wheel store, checking the exact
+filename, size and SHA256. Base-owned names and exact variant-index wheel pins
+come from the selected Environments manifest. Generation construction uses
+only the store, offline, without resolution or source builds.
+
+`setup --package-index https://packages.example.org/simple` selects a simple
+package mirror instead of those locked artifact origins. The index must offer
+the exact locked filename; index hashes cannot change the required size/hash.
+There is no fallback to PyPI or another version. Confirmed setup saves the
+index for updates; `update --package-index URL` changes it transactionally.
+This option is separate from `--mirror`, which selects channel, base and
+Dinkster release artifact locations. Warm shared-store wheels need no index
+access. Repair and move remain offline.
+
+Download the three Dinkster wheels and `constraints.txt` from the same release.
+A manual installation for inspection can be created without Git credentials;
+the command fetches third-party wheels from the package index using the exported
+hashes, rather than selecting a published base:
 
 ```sh
 uv venv --python 3.12 .venv
@@ -42,6 +59,9 @@ uv pip install --python .venv/bin/python --no-deps --require-hashes --find-links
 
 On Windows, use `.venv\Scripts\python.exe`. Do not combine wheels or constraints
 from different releases. Models and accelerator runtimes are not bundled.
+For a variant-specific managed installation, use the
+[native environment tools](environments-and-updates.md#environment-tools-bootstrap)
+and `dinkster-env setup` instead of this generic inspection environment.
 On Windows, first prepare the runtime below and pass its executable to
 `uv venv --python` instead of the floating `3.12` selector.
 
@@ -50,6 +70,66 @@ set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
 `dinkster-registry-service` package and `dinkster-registry` command.
 Dinkster remains a client of that service for browsing, publishing, resolving,
 and downloading exact pack releases.
+
+### Prepare compatible registry pack sources
+
+Run source preparation with the engine interpreter that will load the packs.
+The committed `src/dinkster/default-packs.toml` specifies official ids and
+minimum versions. It does not pin release bytes: the registry client chooses
+the newest active version whose declared engine range admits that interpreter's
+engine version, then verifies the selected archive by size and BLAKE3 digest.
+
+```sh
+python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts --allow-missing
+```
+
+Use writable scratch paths that are separate from an installed generation.
+On Windows, use the target environment's `Scripts\python.exe` and Windows
+paths. The JSON result lists selected ids and an `unavailable` map with a
+reason for each missing pack. With no registry access, `--allow-missing`
+produces an empty source lock; without it, any unavailable pack refuses the
+command. An engine serving an explicitly empty generation remains healthy
+with zero nodes rather than loading checkout defaults.
+
+This command prepares verified sources only. It does not install the engine,
+obtain dependency locks, build a generation or activate it. For an update,
+use `--installed-lock /retained/dinkster.lock` instead of fresh selection;
+the output lock must have a different path. Installed official registry packs
+are re-resolved without downgrading, adding defaults or changing their recorded
+registry. Other installed selections are preserved for admission. Update
+preparation refuses unavailable compatible releases and does not allow
+`--allow-missing`.
+
+For a source lock containing registry packs, `prepare-registry-locks` accepts
+`--catalog-lock`, a new `--output` directory, `--variant` and the exact
+`--base-id sha256:...`. It downloads the dependency locks already published
+for those exact source archives and base, verifies their size, BLAKE3 and
+pack/variant identities, and reports their paths as JSON. It never resolves
+dependencies. Any missing or mismatched lock refuses the whole set without
+creating the output directory or changing an installed generation.
+
+Confirmed published `dinkster-env setup` and `update` run these commands with
+the acquired target engine, in isolated temporary storage before opening an
+activation journal. Fresh setup reports unavailable defaults in
+`unavailablePacks` and on stderr, and can activate an empty generation when
+the registry is offline. Updates re-resolve the installed official selection;
+an unavailable compatible release refuses without changing project settings,
+the current generation or its journal. Non-registry sources are retained and
+checked against their recorded digests and the target engine; their dependency
+locks remain generation-owned. Explicit catalog/artifact and dependency-lock
+inputs override automatic preparation. `--from-scratch` remains a separate
+checkout-only path.
+
+The preparation commands can also be run separately. Source preparation's
+`--retain-sources` requires `--installed-lock` and caches unchanged sources
+from that generation's `pack-sources` tree. Lock preparation's `--registry-only`
+leaves non-registry dependency locks to the retained generation.
+
+Pack versions are independent of engine versions. A pack's `[pack] version`
+and `engine` fields declare its version and PEP 440 engine range; excluded
+engines refuse installation, including an identical-lock no-op. See
+[pack compatibility and dependency locks](environments-and-updates.md#versions-and-engine-compatibility)
+and the [registry client guide](../packages/dinkster-registry/README.md#use).
 
 ## Develop from source
 
@@ -71,7 +151,7 @@ to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
 The shared Python setup installs only one runtime in `.venv`: the published
-Linux CPU base, a Windows NVIDIA/CPU base compatible with the detected
+Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
 hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
 Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
@@ -81,9 +161,35 @@ Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;
 `--force` rebuilds its `.venv`, retaining the verified bundle store.
 
+`linux-nvidia` supplies the cu132 torch family and its complete Linux CUDA
+closure. It requires Linux x86_64 with glibc 2.28+, NVIDIA driver 580+ and
+compute capability 7.5+. Use `--variant linux-nvidia` to request it explicitly;
+an incompatible machine is refused rather than resolving another CUDA runtime.
+
 The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
 torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
 an explicit message; it never falls back to a separate dependency resolution.
+
+### Apple Silicon macOS
+
+Apple Silicon on macOS 14 or newer is supported through the `mac-arm64` base.
+The native `dinkster-tools-macos-arm64.zip` contains its own Python and uv;
+environment setup, doctor, engine start, update and rollback do not require
+host Python or uv. Verify the ZIP against the same release's manifest and
+`SHA256SUMS`, then extract it with executable permissions preserved. Invoke
+`python/bin/python3 -I -m dinkster_supervisor.environment` from that tree,
+prepending its absolute `python/bin` directory to that command's PATH so it
+uses the bundled uv. Do not change the global PATH.
+Setup selects `mac-arm64` automatically; select the `main` channel to use a
+pre-release engine. Intel Macs and CUDA on macOS are not supported.
+
+The arm64 Desktop ZIP contains an unsigned `.app`. Extract it and copy the app
+to a directory you control. macOS may require right-click **Open** or removal
+of the `com.apple.quarantine` attribute from that verified app before launch.
+This is an unsigned-build procedure, not a signature or notarization check.
+Apple signing and notarization are tracked separately in
+[Apple signing](https://github.com/Kosinkadink/comfy-vibe-station/issues/501);
+they are not prerequisites for the tools or engine environment.
 
 A maintainer evidence checkout is optional. If `DINKSTER_EVIDENCE_ROOT` selects
 one, setup also installs its `dinkster-acceptance` package. The run scripts set
@@ -91,7 +197,7 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 
 | Platform | Execution interpreter |
 | --- | --- |
-| Linux CPU | `$PWD/.venv/bin/python` |
+| Linux NVIDIA or CPU | `$PWD/.venv/bin/python` |
 | Apple Silicon macOS (`mac-arm64`) | `$PWD/.venv/bin/python` |
 | Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
 
@@ -143,7 +249,9 @@ generations can both be reactivated without rebuilding them.
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform
-without a suitable bundle, `dinkster-env --root /absolute/new-project setup
+without a suitable bundle, setup refuses and names the supported published
+variants. It does not resolve or choose a local replacement automatically.
+`dinkster-env --root /absolute/new-project setup
 --from-scratch --variant linux-cpu --source /absolute/Dinkster --yes` explicitly
 resolves the checkout lock against the variant's torch index and builds engine
 wheels locally. The plan states that resolution occurs before downloading.
@@ -168,6 +276,14 @@ generation in a new root without `--from-scratch` to return to channel updates.
 Windows bases use CPython 3.14.10 / cp314 from python-build-standalone 20261026,
 with SQLite 3.53.1 plus the upstream
 [mapped-shm recovery fix](https://sqlite.org/src/info/7c103a0b7d).
+The CPython 3.14.10 pin requires **uv 0.13.6 or newer**, the first uv catalog
+that lists this interpreter. Before running the commands below, check
+`uv --version`; an older uv cannot launch the outer `uv run --python 3.14.10`
+command. Keep uv's managed-interpreter downloads enabled (do not set
+`UV_PYTHON_DOWNLOADS=never` or use `--no-python-downloads`) while acquiring
+the bootstrap interpreter. Move this minimum uv version together with the
+interpreter pin. Setup checks uv before its own downloads or environment
+creation and refuses an unsupported version; it never upgrades uv automatically.
 The unmodified interpreter fails WAL reopening while an old shared-memory
 mapping survives ([upstream report](https://sqlite.org/forum/forumpost/f9c68d01e2d7f638)).
 A version string cannot distinguish the patched library. Acquisition and bundle

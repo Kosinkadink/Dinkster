@@ -9,7 +9,6 @@ from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
     BACKGROUND_REMOVAL_TYPE,
-    BOUNDING_BOX_TYPE,
     BOUNDING_BOXES_TYPE,
     CAMERA_INFO_STATE_TYPE,
     CLIP_TYPE,
@@ -19,6 +18,8 @@ from dinkster_values import (
     COLORS_TYPE,
     COMPOSITOR_TYPE,
     CONTROL_NET_TYPE,
+    DA3_MODEL_TYPE,
+    FACE_DETECTION_MODEL_TYPE,
     FLOATS_TYPE,
     GLIGEN_TYPE,
     GUIDER_TYPE,
@@ -42,6 +43,7 @@ from dinkster_values import (
     POSE_KEYPOINT_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     SAM3_TRACK_DATA_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
     STYLE_MODEL_TYPE,
@@ -56,11 +58,13 @@ from dinkster_values import (
     decode_latent,
     encode_latent,
     latent_fingerprint,
+    register_box_types,
     register_resident_type,
     register_splat_type,
     register_video_edit_type,
     validate_latent_encoded,
 )
+from dinkster_values.resident import comfy_resident_meta
 
 from .camera_wire import register_load3d_camera_type, register_load3d_model_info_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
@@ -80,7 +84,9 @@ from .media_wire import (
 from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
+from .shape_subdivides_wire import materialize_shape_subdivides, register_shape_subdivides_type
 from .splat_wire import materialize_splat
+from .vision_packet_wire import materialize_vision_packet, register_vision_packet_types
 from .vision_wire import (
     clip_vision_output_fingerprint,
     decode_clip_vision_output,
@@ -105,6 +111,9 @@ _RESIDENT_TYPE_IDS = (
     BACKGROUND_REMOVAL_TYPE,
     MODEL_TYPE_ID,
     MOGE_MODEL_TYPE,
+    DA3_MODEL_TYPE,
+    FACE_DETECTION_MODEL_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     OPTICAL_FLOW_TYPE,
     INTERP_MODEL_TYPE,
@@ -142,6 +151,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
                 registry,
                 type_id,
                 table=table,
+                meta=comfy_resident_meta,
                 coerce=(
                     normalize_hook_owners
                     if type_id == HOOKS_TYPE
@@ -157,8 +167,9 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
+    registered.extend(register_box_types(registry))
+    registered.extend(register_vision_packet_types(registry))
     for type_id in (
-        BOUNDING_BOX_TYPE,
         BOUNDING_BOXES_TYPE,
         CAMERA_INFO_STATE_TYPE,
         COLOR_TYPE,
@@ -236,6 +247,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     registered.append(register_mesh_type(registry))
     registered.append(register_splat_type(registry))
     registered.append(register_voxel_type(registry))
+    registered.append(register_shape_subdivides_type(registry))
     register_video_edit_type(registry)
     registered.append(registry.spec(VIDEO_EDIT_TYPE))
     return tuple(registered)
@@ -255,7 +267,9 @@ __all__ = [
     "materialize_image",
     "materialize_latent",
     "materialize_mesh",
+    "materialize_shape_subdivides",
     "materialize_splat",
+    "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
 ]

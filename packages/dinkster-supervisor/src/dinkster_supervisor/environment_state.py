@@ -238,7 +238,12 @@ class Channel:
         for name, sha in self.bases:
             if name == variant:
                 return sha
-        raise EnvironmentError(f"channel does not provide variant {variant}; choose explicitly")
+        supported = ", ".join(sorted(name for name, _ in self.bases))
+        raise EnvironmentError(
+            f"channel does not provide variant {variant}; supported published variants: "
+            f"{supported}. Choose a published variant explicitly; "
+            "--from-scratch is an explicit development option, never an automatic fallback."
+        )
 
 
 @dataclass(frozen=True)

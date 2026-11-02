@@ -157,7 +157,7 @@ def test_image_operation_alpha_policy_inventory(node: type[Node]) -> None:
             expected = "drop"
         elif node.__module__.endswith("preprocess") and output.id == "image":
             expected = "drop"
-        elif node in (ImageAlphaJoin, GlslShader):
+        elif node is ImageAlphaJoin or issubclass(node, GlslShader):
             expected = "create_if_missing"
         elif node in (ImageAlphaPremultiply, ImageAlphaUnpremultiply):
             expected = "require"

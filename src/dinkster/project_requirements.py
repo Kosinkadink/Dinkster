@@ -28,7 +28,7 @@ from dinkster_schema import canonical_name
 from dinkster_workers import PackManifest, load_manifest
 
 from .workflow_requirements import (
-    VARIANT_DEVICES,
+    VARIANTS,
     PackRequirement,
     RequirementError,
     WorkflowRequirements,
@@ -146,7 +146,7 @@ def plan_project_requirements(
     Only this project's verified vault bytes count as locally materialized.
     """
     device = None
-    if variant not in VARIANT_DEVICES:
+    if variant not in VARIANTS:
         selected = target_generation if target_generation is not None else source_generation
         if selected is None:
             raise RequirementError("custom workflow target requires a generation")

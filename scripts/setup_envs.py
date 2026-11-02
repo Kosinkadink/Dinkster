@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,8 +86,10 @@ def select_base(bases: list[dict], variant: str | None = None) -> dict:
         if usable(base) and (variant is None or base["variant"] == variant)
     ]
     if not candidates:
+        supported = ", ".join(sorted(base["variant"] for base in bases))
         raise RuntimeError(
-            "No published base supports this machine/selection; see Dinkster-Environments. "
+            "No published base supports this machine/selection; "
+            f"supported published variants: {supported}. "
             "For development/fallback use --from-scratch --variant NAME --python PATH."
         )
     return max(
@@ -126,6 +129,10 @@ def setup(
         if python_override is not None or variants is not None:
             raise RuntimeError("--python and --variants require --from-scratch")
         selections = json.loads((root / "scripts/base_bundles.json").read_text())
+        prefixes = {"Windows": "win-", "Linux": "linux-", "Darwin": "mac-"}
+        other_prefixes = tuple(
+            prefix for host, prefix in prefixes.items() if host != platform.system()
+        )
         bases = [
             validate_manifest(
                 read_metadata(mirror, f"base/{name}/{identity}/manifest.json"),
@@ -133,6 +140,7 @@ def setup(
                 name,
             )
             for name, identity in selections.items()
+            if not name.startswith(other_prefixes)
         ]
         base = select_base(bases, variant)
         print(
@@ -172,7 +180,16 @@ def setup(
             str(requirements),
             root=root,
         )
-        requirements.write_text(effective_constraints(requirements.read_text(), base))
+        from scripts.build_release import engine_base_interfaces
+
+        interfaces = (
+            set(engine_base_interfaces(tomllib.loads((root / "uv.lock").read_text()), base))
+            if local is None
+            else None
+        )
+        requirements.write_text(
+            effective_constraints(requirements.read_text(), base, interfaces=interfaces)
+        )
         receipt = root / ".run/environment-base.json"
         if environment.exists() and (
             force or not receipt.is_file() or json.loads(receipt.read_text())["id"] != base["id"]
@@ -254,6 +271,11 @@ def main() -> int:
     args = parser.parse_args()
     if not shutil.which("uv"):
         parser.error("uv is required: https://docs.astral.sh/uv/")
+    sys.path.insert(0, str(ROOT))
+    if platform.system() == "Windows":
+        from scripts.prepare_windows_python import require_uv_version
+
+        require_uv_version()
     if not os.environ.get("DINKSTER_SETUP_BOOTSTRAPPED"):
         python = bootstrap(ROOT)
         command(
@@ -263,7 +285,6 @@ def main() -> int:
             env={"DINKSTER_SETUP_BOOTSTRAPPED": "1"},
         )
         return 0
-    sys.path.insert(0, str(ROOT))
     python = setup(
         ROOT,
         variant=args.variant,

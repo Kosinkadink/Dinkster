@@ -226,6 +226,14 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
         "pack tools-b: pack.sandbox.gpu requires a GPU",
     ]
     assert plan("win-nvidia", gpu=True).to_wire() == cpu
+    assert plan("linux-nvidia", gpu=True, devices=("cuda",)).to_wire() == cpu
+    assert plan("mac-arm64", gpu=True, devices=("mps",)).to_wire() == cpu
+    assert plan("mac-arm64", devices=("cuda",)).to_wire()["errors"] == [
+        "pack tools-a: node a.load declares devices cuda; mps is not supported"
+    ]
+    assert plan("linux-nvidia", devices=("cpu",)).to_wire()["errors"] == [
+        "pack tools-a: node a.load declares devices cpu; cuda is not supported"
+    ]
     assert plan("win-cpu", devices=("cuda",)).to_wire()["errors"] == [
         "pack tools-a: node a.load declares devices cuda; cpu is not supported"
     ]
@@ -378,6 +386,7 @@ def test_acquired_base_device_refuses_unverified_or_ambiguous_metadata(
         (None, None),
         ("linux-cpu", "cpu"),
         ("win-nvidia", "cuda"),
+        ("linux-nvidia", "cuda"),
         ("user-target", "cpu"),
         ("user-target", "cuda"),
     ],
@@ -679,6 +688,9 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     nvidia = run_plan("win-nvidia")
     assert cpu.returncode == nvidia.returncode == 0, (cpu.stderr, nvidia.stderr)
     assert cpu.stdout == nvidia.stdout
+    linux_nvidia = run_plan("linux-nvidia")
+    assert linux_nvidia.returncode == 0, linux_nvidia.stderr
+    assert linux_nvidia.stdout == cpu.stdout
     result = json.loads(cpu.stdout)
     assert result["requirements"] == requirements.to_wire()
     assert result["inputs"] == list(inputs)
@@ -962,15 +974,14 @@ os._exit(0)
 
 
 def test_confirmed_project_apply_revalidates_and_materializes_only_approved_assets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     from dinkster_supervisor.environment_generations import project_operation
     from dinkster_supervisor.environment_state import EnvironmentError
-    from test_environment_generations import _standalone_tree
+    from test_environment_generations import _workspace_tree
 
     from dinkster.generation_packs import stage_generation_packs
 
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
     root, source, target = tmp_path / "project", tmp_path / "source", tmp_path / "target"
     root.mkdir()
     source.mkdir()
@@ -1006,7 +1017,8 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
         )
     )
     for directory in (source, target):
-        _standalone_tree(directory / "python")
+        packages = _workspace_tree(directory / "python")
+        assert packages.is_relative_to(directory / "python")
     project = root / "project.json"
     settings = {
         "format": "dinkster.project/1",

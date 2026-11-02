@@ -7,7 +7,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import CompositorWidget, TypeRegistry
+from dinkster_api.v1 import BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE, CompositorWidget, TypeRegistry
 from dinkster_image_document.document import ImageDocument
 from dinkster_nodes_image import (
     COMPOSITOR_BLEND_MODES,
@@ -519,6 +519,80 @@ def test_layers_from_bounding_boxes_accepts_regions_and_detections_in_order() ->
 
     with pytest.raises(ValueError, match="bounding box count"):
         LayersFromBoundingBoxes.execute(image=images, bounding_boxes=boxes[:1])
+
+
+@pytest.mark.parametrize(
+    "type_id,payload,expected,name",
+    [
+        (
+            BOUNDING_BOX_TYPE,
+            {"x": -3, "y": 2.5, "width": 0, "height": 0},
+            (-3, 2.5, 5, 3),
+            "Layer 1",
+        ),
+        (
+            BOUNDING_BOX_TYPE,
+            [
+                [
+                    {
+                        "x": -3,
+                        "y": 2.5,
+                        "width": 0,
+                        "height": 0,
+                        "metadata": {"name": "Crop", "z_index": -2, "content_rect": [1, 1, 2, 1]},
+                    }
+                ],
+                [{"x": 99, "y": 99, "width": 1, "height": 1}],
+            ],
+            (-2, 3.5, 2, 1),
+            "Crop",
+        ),
+        (
+            COMFY_ARRAY_TYPE,
+            [
+                [
+                    {
+                        "bbox": [1200, 900, -200, -100],
+                        "desc": "Outside",
+                        "type": "text",
+                        "text": "Title",
+                        "color_palette": ["#AABBCC"],
+                    }
+                ],
+                [],
+            ],
+            (-2, -2, 20, 14),
+            "Outside",
+        ),
+        (COMFY_ARRAY_TYPE, [], (0, 0, 5, 3), "Layer 1"),
+        (BOUNDING_BOX_TYPE, [[], []], (0, 0, 5, 3), "Layer 1"),
+    ],
+)
+def test_structured_box_transport_preserves_layer_placement_and_first_frame(
+    type_id: str, payload: object, expected: tuple[float, ...], name: str
+) -> None:
+    registry = TypeRegistry()
+    register_image_types(registry)
+    spec = registry.spec(type_id)
+    restored = spec.decode(spec.encode(payload))
+    result = LayersFromBoundingBoxes.execute(
+        image=_solid((1.0, 0.0, 0.0), width=5, height=3),
+        bboxes=restored,
+        canvas_width=20,
+        canvas_height=10,
+    )
+    document = cast("ImageDocument", result["layers"])
+    layer = next(iter(document.to_record()["layers"].values()))
+    assert layer["name"] == name
+    assert (
+        tuple(layer["transform"]["components"][key] for key in ("x", "y", "width", "height"))
+        == expected
+    )
+    if name == "Crop":
+        assert layer["z_index"] == -2
+    if type_id == COMFY_ARRAY_TYPE and payload:
+        with pytest.raises(ValueError, match="canvas dimensions"):
+            LayersFromBoundingBoxes.execute(image=_solid((1.0, 0.0, 0.0)), bboxes=restored)
 
 
 def test_source_fingerprint_covers_pixels_mask_and_native_placement() -> None:

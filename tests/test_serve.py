@@ -335,7 +335,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
     if pack_name == "dinkster-vision-birefnet":
-        assert "dinkster-inference==0.1.0" in manifest.requires
+        assert "dinkster-inference==0.1.1" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -2605,6 +2605,65 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
+@pytest.mark.parametrize("failed_pack", [False, True])
+def test_serve_empty_generation_health_distinguishes_failed_selection(
+    tmp_path: Path, failed_pack: bool
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    stage_generation_packs(generation, Lockfile.of(()), {})
+    (generation / "generation.json").write_text(
+        json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+    )
+    extra = (
+        ("--no-default-packs", "--pack", str(write_iso_manifest(tmp_path / "bad", name="core")))
+        if failed_pack
+        else ("--generation", str(generation))
+    )
+    port = free_port()
+    log = tmp_path / "empty-generation.log"
+    with log.open("wb") as output:
+        process = subprocess.Popen(
+            serve_command(port, *extra),
+            cwd=tmp_path,
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            report = wait_for_composition(process, port)
+            packs = report["packs"]
+            assert isinstance(packs, dict)
+            if failed_pack:
+                assert packs["core"]["state"] == "failed"
+            else:
+                assert packs == {}
+
+            async def check() -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(f"http://127.0.0.1:{port}/api/health") as response:
+                        assert response.status == 200
+                        assert (await response.json())["ok"] is (not failed_pack)
+                    async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                        assert response.status == 200
+                        assert (await response.json())["nodes"] == {}
+
+            asyncio.run(check())
+        except Exception as exc:
+            exc.add_note(log.read_text())
+            raise
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=30)
+
+
 @pytest.mark.parametrize(
     ("in_process", "output_configuration", "engine_variant"),
     [
@@ -2614,6 +2673,9 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
         (True, "read-only", "linux-cpu"),
         (True, "removed", "linux-cpu"),
         (True, "fresh", "linux-custom-cu130"),
+        (True, "fresh", "linux-nvidia"),
+        (True, "fresh", "mac-arm64"),
+        (False, "fresh", "mac-arm64"),
     ],
 )
 def test_serve_explicit_generation_uses_only_its_sources(
@@ -2734,12 +2796,14 @@ def test_serve_explicit_generation_uses_only_its_sources(
                             "packs": {pack: {"version": "1.2.3"}},
                         },
                     }
-                    for variant in (
-                        (None, "win-nvidia") if engine_variant == "linux-cpu" else ("win-nvidia",)
+                    for plan_variant in (
+                        (None, "win-nvidia", "linux-nvidia")
+                        if engine_variant != "linux-custom-cu130"
+                        else ("win-nvidia", "linux-nvidia")
                     ):
                         body: dict[str, object] = {"workflows": [workflow]}
-                        if variant is not None:
-                            body["variant"] = variant
+                        if plan_variant is not None:
+                            body["variant"] = plan_variant
                         async with client.post(
                             f"http://127.0.0.1:{port}/api/workflows/plan", json=body
                         ) as response:

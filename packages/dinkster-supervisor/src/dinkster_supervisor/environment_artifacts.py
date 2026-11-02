@@ -9,18 +9,19 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from http.client import HTTPException
 from pathlib import Path
 from platform import machine
 from typing import cast
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 from blake3 import blake3
-from packaging.utils import InvalidWheelFilename, parse_wheel_filename
+from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
 from .environment_archives import extract_base
-from .environment_constraints import effective_constraints
+from .environment_constraints import effective_constraints, validate_base_requirements
 from .environment_downloads import fetch_artifact, read_metadata
 from .environment_state import (
     ArtifactLocation,
@@ -104,6 +105,12 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
         rows = artifact_rows(document.get("artifacts"), "name")
         if not any(row["name"] == "constraints.txt" for row in rows):
             raise EnvironmentError("engine release has no constraints.txt artifact")
+        if "dependencies" in document:
+            dependencies = document["dependencies"]
+            if not isinstance(dependencies, dict) or not dependencies:
+                raise EnvironmentError("engine dependency selections must be a nonempty object")
+            for selection in cast("dict[str, object]", dependencies).values():
+                dependency_wheels(selection)
     else:
         if document.get("format") != "dinkster.base/1" or document.get("variant") != variant:
             raise EnvironmentError("base manifest format or variant mismatch")
@@ -338,12 +345,154 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
     return base_root
 
 
-def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
+def dependency_wheels(selection: object) -> tuple[dict[str, object], ...]:
+    """Validate exact install-lock identities independently of uploaded release artifacts."""
+    if not isinstance(selection, dict):
+        raise EnvironmentError("engine dependency selection must be an object")
+    selection = cast("dict[str, object]", selection)
+    base = selection.get("base")
+    if not isinstance(base, str):
+        raise EnvironmentError("engine dependency selection must name its base")
+    digest(base)
+    rows = artifact_rows(selection.get("wheels"), "filename")
+    names: set[str] = set()
+    for row in rows:
+        name, version = row.get("name"), row.get("version")
+        if not isinstance(name, str) or name != canonicalize_name(name) or name in names:
+            raise EnvironmentError("dependency distribution names must be normalized and unique")
+        names.add(name)
+        try:
+            wheel_name, wheel_version, _, _ = parse_wheel_filename(cast("str", row["filename"]))
+            if (
+                not isinstance(version, str)
+                or wheel_name != name
+                or wheel_version != Version(version)
+            ):
+                raise ValueError("dependency identity differs from its filename")
+        except ValueError as exc:
+            raise EnvironmentError("invalid locked dependency wheel identity") from exc
+        for field in ("url", "index"):
+            value = row.get(field)
+            if not isinstance(value, str):
+                raise EnvironmentError("dependency must record its source URL and index")
+            parsed = urlparse(value)
+            if (
+                parsed.scheme not in {"https", "http"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise EnvironmentError("dependency source must be an uncredentialed HTTP(S) URL")
+        if unquote(urlparse(cast("str", row["url"])).path.rsplit("/", 1)[-1]) != row["filename"]:
+            raise EnvironmentError("dependency URL differs from the locked filename")
+    return rows
+
+
+def validate_dependency_base(selection: object, base: dict[str, object]) -> None:
+    """Bind selected dependency metadata to the exact producer manifest, not generic pins."""
+    selected = dependency_wheels(selection)
+    if cast("dict[str, object]", selection)["base"] != base["id"]:
+        raise EnvironmentError("engine dependency lock selects a different base")
+    locked = {row["name"]: row for row in selected}
+    fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+    wheels = artifact_rows(base["wheels"], "filename")
+    for row in wheels:
+        if locked.get(row["name"]) != {key: row[key] for key in fields}:
+            raise EnvironmentError("base wheel differs from the engine dependency lock")
+    if {row["name"] for row in selected if row["name"] in cast("list[str]", base["replaces"])} != {
+        row["name"] for row in wheels
+    }:
+        raise EnvironmentError("engine lock contains a removed base-owned distribution")
+
+
+def engine_constraints(engine: dict[str, object], variant: str) -> str:
+    """Use the same exact variant requirements for native pack builds and user installs."""
+    selections = cast("dict[str, object]", engine["dependencies"])
+    additions = [
+        f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
+        for row in dependency_wheels(selections.get(variant))
+    ]
+    for row in artifact_rows(engine["artifacts"], "name"):
+        filename = cast("str", row["name"])
+        if filename.endswith(".whl"):
+            name, version, _, _ = parse_wheel_filename(filename)
+            additions.append(f"{name}=={version} --hash=sha256:{row['sha256']}")
+    return "\n".join(additions) + "\n"
+
+
+class _WheelLinks(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self.links.extend(value for key, value in attrs if key == "href" and value is not None)
+
+
+def _dependency_source(row: dict[str, object], package_index: str | None) -> str:
+    if package_index is None:
+        return cast("str", row["url"]).rsplit("/", 1)[0]
+    project = cast("str", row["name"])
+    page = package_index.rstrip("/") + "/" + project + "/"
+    links = _WheelLinks()
+    links.feed(read_metadata(package_index, project).decode("utf-8"))
+    matches: set[str] = set()
+    for link in links.links:
+        url = urljoin(page, link)
+        parsed = urlparse(url)
+        if unquote(parsed.path.rsplit("/", 1)[-1]) == row["filename"]:
+            if parsed.query or parsed.username or parsed.password:
+                raise EnvironmentError("package index supplied an unsupported wheel URL")
+            matches.add(parsed._replace(fragment="").geturl().rsplit("/", 1)[0])
+    if len(matches) != 1:
+        raise EnvironmentError("package index must supply one URL for the exact locked filename")
+    return matches.pop()
+
+
+def acquire(
+    catalog: EnvironmentCatalog,
+    variant: str,
+    store: Path,
+    *,
+    package_index: str | None = None,
+    base: dict[str, object] | None = None,
+    base_sources: tuple[str, ...] | None = None,
+) -> Path:
     """Populate verified artifacts and merged requirements under a held store writer lock."""
-    base = catalog.bases[variant]
-    acquire_base(base, catalog.base_sources[variant], store)
+    published_base = catalog.bases[variant]
+    custom = base is not None
+    if custom != (base_sources is not None):
+        raise EnvironmentError("custom acquisition requires paired base and base_sources")
+    if base is None:
+        base = published_base
+        base_sources = catalog.base_sources[variant]
+    else:
+        if base.get("source") != "user-defined":
+            raise EnvironmentError("explicit base acquisition requires a user-defined base")
+        validate_manifest(
+            json.dumps(base).encode("utf-8"), cast("str", base["id"]), cast("str", base["variant"])
+        )
+        if any(
+            base[field] != published_base[field]
+            for field in ("platform", "python", "workerProtocol")
+        ):
+            raise EnvironmentError("custom base differs from the engine dependency target ABI")
+    selections = catalog.engine.get("dependencies")
+    selected = None
+    if selections is not None:
+        selection = cast("dict[str, object]", selections).get(variant)
+        validate_dependency_base(selection, published_base)
+        selected = dependency_wheels(selection)
+    assert base_sources is not None
+    acquire_base(base, base_sources, store)
     release_root = store / "engines" / catalog.channel.engine_release[7:]
-    owned = cast("list[str]", base["replaces"])
+    owned = set(cast("list[str]", base["replaces"]))
+    if custom:
+        owned.update(cast("list[str]", published_base["replaces"]))
+    nonbase_wheels: list[Path] = []
     for row in artifact_rows(catalog.engine["artifacts"], "name"):
         name, sha = cast("str", row["name"]), cast("str", row["sha256"])
         if name.endswith(".whl"):
@@ -354,15 +503,40 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
             if distribution in owned:
                 continue
             destination = store / "wheels" / sha / name
+            nonbase_wheels.append(destination)
         elif name == "constraints.txt":
             destination = release_root / name
         else:
             continue
         fetch_artifact(catalog.engine_sources, name, destination, sha, cast("int", row["size"]))
+    requirements = (release_root / "constraints.txt").read_text(encoding="utf-8")
+    if selected is not None:
+        for row in selected:
+            name, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+            if row["name"] not in owned:
+                destination = store / "wheels" / sha / name
+                nonbase_wheels.append(destination)
+                if (
+                    not destination.is_file()
+                    or destination.is_symlink()
+                    or destination.stat().st_size != row["size"]
+                    or content_digest(destination) != "sha256:" + sha
+                ):
+                    source = _dependency_source(row, package_index)
+                    fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
+        requirements = engine_constraints(catalog.engine, variant)
+    context = published_base if custom else None
+    if selected is not None or custom:
+        validate_base_requirements(tuple(nonbase_wheels), base, published_base=context)
     merged = effective_constraints(
-        (release_root / "constraints.txt").read_text(encoding="utf-8"), base
+        requirements,
+        base,
+        strict=selected is not None and not custom,
+        custom=custom,
+        published_base=context,
     )
-    constraints = release_root / f"constraints-{variant}.txt"
+    identity = f"{variant}-{cast('str', base['id'])[7:]}" if custom else variant
+    constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
     return constraints
 

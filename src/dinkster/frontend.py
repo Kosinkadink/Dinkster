@@ -102,6 +102,13 @@ def install_frontend(
     if (bundle is None) == (development_url is None):
         raise ValueError("configure exactly one frontend source")
 
+    async def missing_api(_request: web.Request) -> web.StreamResponse:
+        raise web.HTTPNotFound()
+
+    # Owned API routes precede these fallbacks; neither frontend source owns API misses.
+    app.router.add_route("*", "/api", missing_api)
+    app.router.add_route("*", "/api/{path:.*}", missing_api)
+
     if development_url is not None:
         parsed = urlparse(development_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:

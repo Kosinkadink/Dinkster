@@ -115,12 +115,12 @@ def test_public_keyed_residents_share_first_concurrent_load(
 ) -> None:
     constructors = Barrier(2)
 
-    def slow_pool() -> ResidentPool:
+    def slow_pool(*, cost_of: resident.CostFn | None = None) -> ResidentPool:
         try:
             constructors.wait(timeout=1)
         except BrokenBarrierError:
             pass
-        return ResidentPool()
+        return ResidentPool(cost_of=cost_of)
 
     monkeypatch.setattr(resident, "_pool", None)
     monkeypatch.setattr(resident, "ResidentPool", slow_pool)

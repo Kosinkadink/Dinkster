@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+from email.parser import BytesParser
+from pathlib import Path
 from typing import cast
+from zipfile import BadZipFile, ZipFile
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -20,6 +23,80 @@ def requirement_hashes(requirements: str) -> frozenset[str]:
     return frozenset(_HASH.findall(requirements.replace("\\\n", "").replace("\\\r\n", "")))
 
 
+def validate_base_requirements(
+    wheels: tuple[Path, ...],
+    base: dict[str, object],
+    *,
+    published_base: dict[str, object] | None = None,
+) -> None:
+    """Check installed non-base wheel requirements against a native base, without resolving."""
+    versions = {
+        cast("str", row["name"]): Version(cast("str", row["version"]))
+        for row in cast("list[dict[str, object]]", base["wheels"])
+    }
+    owned = set(cast("list[str]", base["replaces"]))
+    if published_base is not None:
+        owned.update(cast("list[str]", published_base["replaces"]))
+    requirements: dict[str, list[Requirement]] = {}
+    for path in wheels:
+        try:
+            name, version, _, _ = parse_wheel_filename(path.name)
+            with ZipFile(path) as archive:
+                entries = [
+                    entry
+                    for entry in archive.namelist()
+                    if entry.endswith(".dist-info/METADATA") and len(entry.split("/")) == 2
+                ]
+                if len(entries) != 1:
+                    raise EnvironmentError(
+                        f"wheel must contain one distribution metadata: {path.name}"
+                    )
+                metadata = BytesParser().parsebytes(archive.read(entries[0]))
+            if (
+                canonicalize_name(str(metadata["Name"])) != name
+                or Version(str(metadata["Version"])) != version
+            ):
+                raise EnvironmentError(f"wheel metadata disagrees with filename: {path.name}")
+            requirements[name] = [Requirement(row) for row in metadata.get_all("Requires-Dist", [])]
+        except (BadZipFile, ValueError) as exc:
+            raise EnvironmentError(f"invalid wheel dependency metadata: {path.name}") from exc
+
+    environment = cast("dict[str, str]", default_environment())
+    python = Version(cast("str", base["python"]))
+    environment.update(
+        python_full_version=str(python),
+        python_version=f"{python.major}.{python.minor}",
+        implementation_version=str(python),
+    )
+    extras = {name: {""} for name in requirements}
+    changed = True
+    while changed:
+        changed = False
+        for name, dependencies in requirements.items():
+            for requirement in dependencies:
+                if requirement.marker is not None and not any(
+                    requirement.marker.evaluate({**environment, "extra": extra})
+                    for extra in extras[name]
+                ):
+                    continue
+                dependency = canonicalize_name(requirement.name)
+                if dependency in extras and not requirement.extras <= extras[dependency]:
+                    extras[dependency].update(requirement.extras)
+                    changed = True
+                if dependency not in owned:
+                    continue
+                actual = versions.get(dependency)
+                if (
+                    actual is None
+                    or requirement.url is not None
+                    or not requirement.specifier.contains(actual, prereleases=True)
+                ):
+                    raise EnvironmentError(
+                        f"{name} requires {requirement}; base provides {dependency} "
+                        f"{actual if actual is not None else 'absent'}"
+                    )
+
+
 def effective_constraints(
     engine: str,
     base: dict[str, object],
@@ -27,18 +104,24 @@ def effective_constraints(
     strict: bool = False,
     custom: bool = False,
     published_base: dict[str, object] | None = None,
+    interfaces: set[str] | None = None,
 ) -> str:
     """Replace precisely the base producer's owned closure, including remove-only rows.
 
     The caller verifies manifest identity and non-base wheel requirements first.
     Published locks retain exact alignment. Explicit custom bases replace both
     closures and require at least the engine's applicable public torch version.
+    Generic contributor exports constrain only computed dependency interfaces.
     All unrelated requirement markers and hashes are retained verbatim.
     """
     if custom and (strict or base.get("source") != "user-defined"):
         raise EnvironmentError("custom constraints require a user-defined base and strict=False")
     if published_base is not None and not custom:
         raise EnvironmentError("published_base replacement context requires custom=True")
+    if interfaces is not None and (strict or custom):
+        raise EnvironmentError(
+            "generic interface constraints require strict=False and custom=False"
+        )
     replaces = base.get("replaces")
     if not isinstance(replaces, list) or not replaces:
         raise EnvironmentError("base manifest must provide replacement membership")
@@ -68,7 +151,7 @@ def effective_constraints(
             raise EnvironmentError("published base replacement names must be sorted and unique")
         owned.update(original_names)
     marker_environment = cast("dict[str, str]", default_environment())
-    if custom:
+    if custom or interfaces is not None:
         python = Version(cast("str", base["python"]))
         marker_environment.update(
             python_full_version=str(python),
@@ -101,9 +184,8 @@ def effective_constraints(
         try:
             version = Version(pins[0].version)
             if (
-                not custom
-                or name != "torch"
-                or requirement.marker is None
+                requirement.marker is None
+                or (interfaces is None and (not custom or name != "torch"))
                 or requirement.marker.evaluate(marker_environment)
             ):
                 locked.setdefault(name, set()).add(version)
@@ -136,11 +218,6 @@ def effective_constraints(
             if wheel_name != name or wheel_version != parsed_version:
                 raise EnvironmentError(f"base wheel identity disagrees with filename: {name}")
             versions = locked.get(name, set())
-            declared = wheel.get("lockedVersion")
-            if declared is not None and not strict and not custom:
-                if not isinstance(declared, str):
-                    raise EnvironmentError(f"invalid lockedVersion for {name}")
-                versions = versions | {Version(declared)}
             if custom and name == "torch":
                 required = max(versions, default=None)
                 if required is not None and Version(required.public) > Version(
@@ -152,15 +229,21 @@ def effective_constraints(
                         "use a new variant name, and rebuild with dinkster-env update "
                         "--variant NAME --variants PATH --yes"
                     )
-            if not custom and any(
-                candidate != parsed_version
-                and not (
-                    not strict
-                    and name in {"torch", "torchvision"}
-                    and candidate.public == parsed_version.public
-                    and candidate.local is None
+            if (
+                not custom
+                and (interfaces is None or name in interfaces)
+                and any(
+                    candidate != parsed_version
+                    and not (
+                        not strict
+                        and candidate.public == parsed_version.public
+                        and (
+                            interfaces is not None
+                            or (name in {"torch", "torchvision"} and candidate.local is None)
+                        )
+                    )
+                    for candidate in versions
                 )
-                for candidate in versions
             ):
                 raise EnvironmentError(f"base wheel {name} {version} disagrees with engine lock")
         except (InvalidVersion, InvalidWheelFilename) as exc:
