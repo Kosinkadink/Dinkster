@@ -570,6 +570,15 @@ class Painter(Node):
             base_image = torch.zeros((1, height, width, 3), dtype=torch.float32)
             for channel, value in enumerate(rgb):
                 base_image[..., channel] = value
+        # The first-frame view retains the entire input storage. Reserve target
+        # RGBA/resampling, NumPy arithmetic, IMAGE/MASK and PNG encoding scratch.
+        peak_bytes = (
+            base_image.untyped_storage().nbytes()
+            + width * height * 48 * max(4, base_image.element_size())
+            + 32_768
+        )
+        if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+            raise ValueError("Painter exceeds the image working-set limit")
         if mask is None:
             out_image = base_image
             mask_tensor = torch.zeros((1, height, width), dtype=torch.float32)
@@ -580,10 +589,19 @@ class Painter(Node):
                 raise ValueError("Painter mask exceeds the input byte limit")
             image_module = importlib.import_module("PIL.Image")
             with mask.open() as handle:
-                if os.fstat(handle.fileno()).st_size > IMAGE_WORKING_SET_LIMIT_BYTES:
+                source_bytes = os.fstat(handle.fileno()).st_size
+                if source_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
                     raise ValueError("Painter mask exceeds the input byte limit")
                 with image_module.open(handle) as source:
                     _check_dimensions(*source.size)
+                    # Source decode/conversion can coexist with resized target
+                    # buffers and the retained base; individual raster caps do not suffice.
+                    peak_bytes += source.width * source.height * 96 + max(mask.size, source_bytes)
+                    if source.size != (width, height):
+                        # Separable RGBA resampling also retains a mixed-size intermediate.
+                        peak_bytes += max(width * source.height, source.width * height) * 8
+                    if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                        raise ValueError("Painter exceeds the image working-set limit")
                     painted = source.convert("RGBA")
                     if painted.size != (width, height):
                         painted = painted.resize((width, height), image_module.Resampling.LANCZOS)

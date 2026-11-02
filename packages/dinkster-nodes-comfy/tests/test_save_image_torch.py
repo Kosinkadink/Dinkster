@@ -373,6 +373,41 @@ def test_painter_granted_rgba_retains_alpha_resize_and_base(tmp_path: Path, resi
         Painter.execute(mask=unbound, width=3, height=1)
 
 
+@pytest.mark.parametrize("resize", (False, True))
+@pytest.mark.parametrize("first_frame_view", (False, True))
+def test_painter_budgets_retained_base_paint_and_preview_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resize: bool, first_frame_view: bool
+) -> None:
+    path = tmp_path / "paint.png"
+    Image.new("RGBA", (10, 10) if resize else (8, 8), (32, 96, 208, 255)).save(path)
+    asset = AssetRef(
+        digest_file(path),
+        path.name,
+        path.stat().st_size,
+        resolver=SimpleNamespace(resolve=lambda _digest: path),
+    )
+    base = torch.full((2, 8, 8, 3), 0.25)
+    image = base[:1] if first_frame_view else base
+    # Each input fits separately: base conversion needs 9216 bytes; paint needs
+    # 6144 bytes (same size) or 9600 bytes (resize), excluding its tiny PNG.
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 10_000)
+    with pytest.raises(ValueError, match="Painter.*working-set limit"):
+        Painter.execute(image=image, mask=asset)
+
+    # Both frames' retained storage, source decode, target conversion/composite/
+    # preview, mixed-size resample scratch and codec overhead must fit.
+    limit = 1536 + (9600 + 640 if resize else 6144) + 12288 + 32768 + path.stat().st_size
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", limit - 1)
+    with pytest.raises(ValueError, match="Painter.*working-set limit"):
+        Painter.execute(image=image, mask=asset)
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", limit)
+    result = Painter.execute(image=image, mask=asset)
+    expected = torch.tensor([32, 96, 208], dtype=torch.float32) / 255
+    torch.testing.assert_close(result["IMAGE"], expected.expand(1, 8, 8, 3), rtol=0, atol=0)
+    assert torch.equal(result["MASK"], torch.ones(1, 8, 8))
+    assert torch.equal(base, torch.full_like(base, 0.25))
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_painter_ordinary_manifest_optional_empty_and_mounted_paint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
