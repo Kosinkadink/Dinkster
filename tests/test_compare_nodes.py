@@ -1383,6 +1383,10 @@ def test_image_core_classes_keep_their_native_pack_ownership(name: str) -> None:
     result = compare_registry(reference, registry)
     assert not result["passed"]
     assert result["registry_errors"] == [f"core class id {name!r} is claimed by pack 'custom-pack'"]
+    del schema["pack"]
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["registry_errors"] == [f"core class id {name!r} is claimed by pack None"]
 
 
 @pytest.mark.parametrize(

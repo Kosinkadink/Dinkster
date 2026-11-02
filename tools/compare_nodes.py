@@ -553,8 +553,8 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
             if key in {"ImageCompare", "GLSLShader"}
             else "dinkster-nodes-comfy"
         )
-        if key in ids and schema.get("pack", owner) != owner:
-            errors.append(f"core class id {key!r} is claimed by pack {schema['pack']!r}")
+        if key in ids and schema.get("pack", "dinkster-nodes-comfy") != owner:
+            errors.append(f"core class id {key!r} is claimed by pack {schema.get('pack')!r}")
         if key.startswith(FORBIDDEN_PREFIXES):
             errors.append(f"prefixed node id: {key}")
         for item in schema.get("interface", []):
