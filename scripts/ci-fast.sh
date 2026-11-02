@@ -14,12 +14,6 @@ uv run --locked pyright &
 linux_types=$!
 uv run --locked pyright --pythonplatform Windows &
 windows_types=$!
-typecheck_status=0
-wait "$linux_types" || typecheck_status=$?
-wait "$windows_types" || typecheck_status=$?
-if ((typecheck_status != 0)); then
-  exit "$typecheck_status"
-fi
 uv run --locked python -m pytest -q -m 'not network' \
   tests/test_disabled_features.py \
   tests/test_settings.py \
@@ -106,4 +100,10 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
   tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection \
-  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency
+  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency &
+unit_tests=$!
+check_status=0
+wait "$linux_types" || check_status=$?
+wait "$windows_types" || check_status=$?
+wait "$unit_tests" || check_status=$?
+exit "$check_status"
