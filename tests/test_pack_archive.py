@@ -1220,6 +1220,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     engine = tmp_path / "engine"
     tests = engine / "tests"
     tests.mkdir(parents=True)
+    (engine / "pyproject.toml").write_text("")
     shutil.copytree(
         Path(__file__).resolve().parents[1] / "src/dinkster",
         engine / "src/dinkster",
@@ -1258,6 +1259,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     source.mkdir()
     (source / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
         'namespaces = ["image-fixture"]\n'
         '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
     )

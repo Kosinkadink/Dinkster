@@ -161,12 +161,9 @@ def run_selected_tests(
             module_roots.append(str(src))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(src / entry.replace(".", "/"))
-        bundled = checkout / "src/dinkster/official_packs"
-        bundled.mkdir(parents=True)
-        (bundled / "official-packs.lock").write_text(catalog.record_json(), encoding="utf-8")
-        for pack in catalog.packs:
-            archive = artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip"
-            shutil.copy2(archive, bundled / f"{pack.pack}-{pack.version}.zip")
+        (checkout / "src/dinkster/checkout-packs.lock").write_text(
+            catalog.record_json(), encoding="utf-8"
+        )
         environment = work / "venv"
         venv.EnvBuilder(with_pip=False).create(environment)
         python = environment / "bin/python"

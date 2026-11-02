@@ -152,7 +152,6 @@ from dinkster_registry import (
     RequirementKind,
     ResolvedRequirement,
     build_artifact,
-    unpack_artifact,
 )
 from dinkster_registry import (
     CompositionMode as PackCompositionMode,
@@ -328,8 +327,6 @@ _ENGINE_CARRIED_PACKS = frozenset(
 )
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _CHECKOUT_PACKS_LOCK = Path(__file__).with_name("checkout-packs.lock")
-_OFFICIAL_PACKS_DIRECTORY = Path(__file__).with_name("official_packs")
-_OFFICIAL_PACKS_LOCK = "official-packs.lock"
 _MODEL_PACK_IDS: tuple[str, ...] = ()
 
 
@@ -1184,14 +1181,11 @@ class PackSpec:
 
 @lru_cache(maxsize=1)
 def _default_pack_lock() -> Lockfile:
-    """Load packaged official packs, or checkout defaults during development."""
-    path = _OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK
-    if not path.is_file():
-        if not Path(__file__).resolve().parents[2].joinpath("pyproject.toml").is_file():
-            raise CompositionError(f"engine wheel has no bundled official pack catalog: {path}")
-        path = _CHECKOUT_PACKS_LOCK
+    """Keep checkout development defaults separate from installed generations."""
+    if not Path(__file__).resolve().parents[2].joinpath("pyproject.toml").is_file():
+        return Lockfile.of([])
     try:
-        lock = Lockfile.from_record_json(path.read_text(encoding="utf-8"))
+        lock = Lockfile.from_record_json(_CHECKOUT_PACKS_LOCK.read_text(encoding="utf-8"))
     except (InstallError, OSError) as exc:
         raise CompositionError(f"default pack catalog is invalid: {exc}") from exc
     if not lock.packs:
@@ -1209,52 +1203,6 @@ def _default_pack_lock() -> Lockfile:
             f"default pack catalog contains non-Dinkster publishers for {unexpected_publishers!r}"
         )
     return lock
-
-
-@dataclass
-class _OfficialPackSources:
-    roots: Mapping[str, Path]
-    temporary_directory: tempfile.TemporaryDirectory[str] = field(repr=False)
-
-
-def _official_pack_manifest(root: Path, entry: LockedPack) -> PackManifest:
-    manifest = load_manifest(root / "dinkster-pack.toml")
-    if canonical_name(manifest.name) != entry.pack:
-        raise CompositionError(
-            f"bundled official pack {entry.pack!r} manifest names {manifest.name!r}"
-        )
-    if tuple(canonical_claim(claim) for claim in manifest.namespaces) != entry.claims:
-        raise CompositionError(f"bundled official pack {entry.pack!r} claims differ from catalog")
-    if canonical_name(manifest.publisher) != entry.publisher:
-        raise CompositionError(
-            f"bundled official pack {entry.pack!r} publisher differs from catalog"
-        )
-    return manifest
-
-
-@lru_cache(maxsize=1)
-def _official_pack_sources() -> _OfficialPackSources:
-    """Verify and unpack bundled official artifacts into writable runtime roots."""
-    directory = tempfile.TemporaryDirectory(prefix="dinkster-official-packs-")
-    roots: dict[str, Path] = {}
-    try:
-        for entry in _default_pack_lock().packs:
-            archive = _OFFICIAL_PACKS_DIRECTORY / f"{entry.pack}-{entry.version}.zip"
-            if not archive.is_file():
-                raise CompositionError(
-                    f"engine wheel has no bundled source archive for {entry.pack!r}: {archive.name}"
-                )
-            root = Path(directory.name) / entry.pack
-            unpack_artifact(archive, root, entry.artifact_digest)
-            _official_pack_manifest(root, entry)
-            roots[entry.pack] = root
-    except (ArtifactError, OSError) as exc:
-        directory.cleanup()
-        raise CompositionError(f"bundled official pack source is invalid: {exc}") from exc
-    except BaseException:
-        directory.cleanup()
-        raise
-    return _OfficialPackSources(MappingProxyType(roots), directory)
 
 
 def default_pack_ids() -> tuple[str, ...]:
@@ -1335,14 +1283,7 @@ def _installed_pack_spec(
         if pack_id in _ENGINE_CARRIED_PACKS
         else _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
     )
-    try:
-        distribution = importlib.metadata.distribution(distribution_id)
-    except importlib.metadata.PackageNotFoundError as exc:
-        raise CompositionError(
-            f"installed pack distribution {distribution_id!r} is unavailable"
-        ) from exc
     sidecar = pack_id.replace("-", "_")
-    bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
         raise CompositionError(f"installed {pack_id} package is not discoverable")
@@ -1364,13 +1305,30 @@ def _installed_pack_spec(
             ),
             None,
         )
+    declaration = load_manifest(source_manifest) if source_manifest is not None else None
+    if (
+        declaration is not None
+        and declaration.compatibility is not None
+        and pack_id not in _ENGINE_CARRIED_PACKS
+    ):
+        version = declaration.compatibility.version
+        bundled = None
+    else:
+        try:
+            distribution = importlib.metadata.distribution(distribution_id)
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise CompositionError(
+                f"installed pack distribution {distribution_id!r} is unavailable"
+            ) from exc
+        version = distribution.version
+        bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
     if source_manifest is not None:
         manifest = source_manifest
         source = f"local:{manifest.parent.resolve()}"
         source_install = True
-    elif bundled.is_file():
+    elif bundled is not None and bundled.is_file():
         manifest = bundled
-        source = f"python:{distribution_id}=={distribution.version}"
+        source = f"python:{distribution_id}=={version}"
         source_install = False
     else:
         raise CompositionError(f"installed {pack_id} has no bundled artifact or source manifest")
@@ -1382,10 +1340,10 @@ def _installed_pack_spec(
     if canonical_name(manifest_record.name) != canonical_name(pack_id):
         raise CompositionError(f"installed {pack_id} manifest names pack {manifest_record.name!r}")
     if locked is not None:
-        if distribution.version != locked.version:
+        if version != locked.version:
             raise CompositionError(
                 f"default suite locks {pack_id} version {locked.version}, "
-                f"but installed version is {distribution.version}"
+                f"but installed version is {version}"
             )
         if digest != locked.artifact_digest:
             raise CompositionError(
@@ -1397,15 +1355,18 @@ def _installed_pack_spec(
                 f"default suite locks {pack_id} claims {locked.claims!r}, "
                 f"but its manifest claims {manifest_record.namespaces!r}"
             )
-        if locked.publisher != "dinkster":
+        if (
+            locked.publisher != "dinkster"
+            or canonical_name(manifest_record.publisher) != "dinkster"
+        ):
             raise CompositionError(
-                f"default suite pack {pack_id} has unexpected publisher {locked.publisher!r}"
+                f"default suite pack {pack_id} publisher differs from its Dinkster lock"
             )
         source = locked.source
     manifest_info = pack_info_from_manifest(manifest_record)
     info = PackInfo(
         display_name=pack_id,
-        version=distribution.version,
+        version=version,
         artifact_digest=digest,
         source=source,
         publisher="dinkster",
@@ -1422,49 +1383,13 @@ def _installed_pack_spec(
         trust_reserved=True,
         in_process=in_process,
         env={} if env is None else env,
+        require_catalog=locked is not None and locked.source.startswith("registry:"),
         asset_vault_write=asset_vault_write,
     )
 
 
-def _official_pack_spec(pack_id: str) -> PackSpec:
-    """Compose a locked first-party pack from the engine wheel's verified sources."""
-    entry = _default_pack_lock().get(pack_id)
-    if entry is None:
-        raise CompositionError(f"unknown official pack {pack_id!r}")
-    root = _official_pack_sources().roots[pack_id]
-    manifest = _official_pack_manifest(root, entry)
-    info = replace(
-        pack_info_from_manifest(manifest),
-        display_name=pack_id,
-        version=entry.version,
-        artifact_digest=entry.artifact_digest,
-        source=entry.source,
-        publisher=entry.publisher,
-    )
-    return PackSpec(
-        manifest=manifest.path,
-        packs=MappingProxyType({pack_id: info}),
-        trust_reserved=True,
-        in_process=(
-            pack_id not in _ISOLATED_FIRST_PARTY_PACKS and pack_id != "dinkster-nodes-remote"
-        ),
-        env=(
-            {"DINKSTER_REMOTE_CATALOG_BASE": "", "DINKSTER_REMOTE_GATEWAY_BASE": ""}
-            if pack_id == "dinkster-nodes-remote"
-            else {}
-        ),
-        require_catalog=True,
-        asset_vault_write=pack_id == "dinkster-nodes-remote",
-    )
-
-
 def default_pack_spec(pack_id: str) -> PackSpec:
-    """Resolve packaged official packs, or installed sources in a checkout."""
-    if (
-        pack_id not in _ENGINE_CARRIED_PACKS
-        and (_OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK).is_file()
-    ):
-        return _official_pack_spec(pack_id)
+    """Resolve installed sources selected by the checkout development catalog."""
     module_name = _FIRST_PARTY_PACK_MODULES.get(pack_id)
     if module_name is None:
         raise CompositionError(f"unknown first-party pack {pack_id!r}")

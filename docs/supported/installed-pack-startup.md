@@ -222,8 +222,10 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
-- A pip-installed engine prepares the bundled default pack catalogs before
-  binding; the core worker is selected once with its configured runtime options.
+- A pip-installed engine has no implicit official pack selection. Managed
+  generations serve their admitted registry sources. Checkout development
+  selects verified local sources with each pack's declared version, without
+  requiring an installed pack distribution.
 - Checkout defaults retain their managed source lock without requiring an
   installed standard-suite distribution.
 - Development scaffolding is workspace-only and is excluded from engine and
