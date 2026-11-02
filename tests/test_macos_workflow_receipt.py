@@ -23,7 +23,7 @@ SPEC = importlib.util.spec_from_file_location("receipt", ROOT / "tools/macos_wor
 assert SPEC is not None and SPEC.loader is not None
 receipt = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(receipt)
-STARTER_COMMIT = "2f880079bb3b48867795db4f7ed45633fa25e374"
+STARTER_COMMIT = "1ec923c7e9ba9c4c01189f1fc01be9b4554ce8ec"
 STARTER_SHA256 = "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
 STARTER_BYTES = (ROOT / "tests/fixtures/macos-sd15.json").read_bytes()
 SCHEMAS = build_schemas(
