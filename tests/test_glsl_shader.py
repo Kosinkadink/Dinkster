@@ -61,7 +61,7 @@ def test_glsl_shader_schema_is_fixed_bounded_and_discoverable() -> None:
 
 
 def test_exact_glsl_schema_preserves_source_members_and_output_positions() -> None:
-    from dinkster_schema import schema_from_wire, schema_to_wire
+    from dinkster_schema import elaborate, schema_from_wire, schema_to_wire
 
     schema = NativeGlslShader.schema()
     assert NativeGlslShader in IMAGE_NODES
@@ -88,6 +88,43 @@ def test_exact_glsl_schema_preserves_source_members_and_output_positions() -> No
     ]
     assert [spec.id for spec in schema.outputs] == ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"]
     assert schema_from_wire(schema_to_wire(schema)) == schema
+    interface = json.loads(json.dumps(schema_to_wire(schema)))["interface"]
+    shader, size_mode, images, *uniforms = interface[:7]
+    assert shader["required"] is True
+    assert size_mode["required"] is True and "default" not in size_mode
+    assert size_mode["options"][0]["inputs"] == []
+    assert [
+        (spec["id"], spec["required"], spec["default"], spec["widget"])
+        for spec in size_mode["options"][1]["inputs"]
+    ] == [
+        ("width", True, 512, {"type": "NUMBER", "min": 1, "max": 16384}),
+        ("height", True, 512, {"type": "NUMBER", "min": 1, "max": 16384}),
+    ]
+    assert images["optionalAfterMinimum"] is True
+    assert images["template"][0]["required"] is True
+    for family in uniforms:
+        member = family["template"][0]
+        assert member["required"] is False
+        assert member["forceInput"] is True
+        assert "step" not in (member.get("widget") or {})
+    assert uniforms[-1]["template"][0]["default"] == {
+        "points": [[0.0, 0.0], [1.0, 1.0]],
+        "interpolation": "monotone_cubic",
+    }
+    effective = elaborate(
+        schema,
+        ("images.image4", "images.image0", "images.image2", "floats.u_float3"),
+        slot_variants={"size_mode": "custom"},
+    )
+    assert [(spec.id, spec.required) for spec in effective.inputs] == [
+        ("fragment_shader", True),
+        ("size_mode.width", True),
+        ("size_mode.height", True),
+        ("images.image4", False),
+        ("images.image0", True),
+        ("images.image2", False),
+        ("floats.u_float3", False),
+    ]
     assert GlslShader.schema().node_type == "dinkster.image.glsl_shader"
 
 

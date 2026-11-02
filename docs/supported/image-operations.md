@@ -245,6 +245,8 @@
   inputs, typed scalar and curve uniforms, four render targets, custom output
   dimensions, and 1-32 passes; Linux and Windows x86-64/ARM64 and macOS ARM64
   are supported, while unavailable platforms refuse explicitly
+- Native `GLSLShader` preserves required shader/custom dimensions, authored
+  image-member positions, optional image growth, and force-input uniforms
 - Pointwise invert, normalize, brightness, and contrast adjustment; Gaussian
   blur, sharpen, quantize, seeded noise, and bounded image morphology
 - ComfyUI SDR-to-HDR and image color-space conversion with Rec.2020 HLG/PQ,
