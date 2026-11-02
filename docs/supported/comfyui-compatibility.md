@@ -1,5 +1,9 @@
 ## ComfyUI compatibility
 
+- ImageScaleToMaxDimension declares the deprecated ResizeImagesByLongerEdge
+  replacement, preserving the image connection and requested longer edge,
+  selecting lanczos and forwarding the image output. The retired training
+  node is not registered; positional workflow import remains a frontend concern.
 - Native EmptyImage supports CPU-only execution as the first image node in a
   fresh worker, preserving its dimensions, batch size and RGB color values.
 - Native POSE_KEYPOINT values preserve frame canvas dimensions, people and flat
