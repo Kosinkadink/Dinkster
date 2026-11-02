@@ -1,5 +1,7 @@
 [pack]
 name = "dinkster-vision-efficient-sam"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.detection.segment"]
