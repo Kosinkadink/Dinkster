@@ -8,7 +8,9 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -192,8 +194,11 @@ def project_operation(
     artifacts: Path | None = None,
     approved: dict[str, object] | None = None,
     target_generation: Path | None = None,
+    requirements_only: bool = False,
 ) -> dict[str, object]:
     """Plan or apply workflow requirements through the generation's core adapter."""
+    if requirements_only and approved is not None:
+        raise EnvironmentError("requirements snapshot cannot apply a workflow plan")
     command = [
         str(interpreter(generation)),
         "-I",
@@ -213,11 +218,27 @@ def project_operation(
         command.extend(["--catalog-lock", str(catalog_lock)])
     if artifacts is not None:
         command.extend(["--artifacts", str(artifacts)])
+    if target_generation is not None:
+        command[0] = str(interpreter(target_generation))
+        command.extend(["--generation", str(target_generation)])
     if approved is not None:
         if target_generation is None:
             raise EnvironmentError("workflow execution requires a target generation")
-        command[0] = str(interpreter(target_generation))
-        command.extend(["--yes", "--generation", str(target_generation)])
+        command.append("--yes")
+    if requirements_only:
+        command = [
+            str(interpreter(generation)),
+            "-I",
+            "-B",
+            "-c",
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "from dinkster.project_requirements import load_project_requirements\n"
+            "requirements, inputs = load_project_requirements(Path(sys.argv[1]))\n"
+            "print(json.dumps({'requirements': requirements.to_wire(), 'inputs': list(inputs), "
+            "'plan': {'packs': [], 'assets': [], 'errors': []}}))\n",
+            str(root),
+        ]
     result = subprocess.run(
         command,
         input=json.dumps(approved) if approved is not None else None,
@@ -330,6 +351,235 @@ def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -
         )
 
 
+def prepare_engine_interpreter(
+    destination: Path,
+    *,
+    store: Path,
+    base: str,
+    constraints: Path,
+    uv: str = "uv",
+    refresh_cache: bool = False,
+) -> Path:
+    """Prepare acquired engine inputs in a new caller-owned, unsealed directory.
+
+    The caller holds the store writer lock and owns destination cleanup on both
+    success and failure. No project, journal, pack or generation record is written.
+    """
+    digest(base)
+    source = store / "bases" / base.removeprefix("sha256:") / "python"
+    if destination.exists():
+        raise EnvironmentError(f"interpreter destination already exists: {destination}")
+    if not source.is_dir():
+        raise EnvironmentError(f"base {base} is not in the local store")
+    parent = destination.parent
+    while not parent.exists():
+        parent = parent.parent
+    if source.stat().st_dev != parent.stat().st_dev:
+        raise EnvironmentError("project and wheel store must be on the same volume")
+    if not constraints.is_file():
+        raise EnvironmentError("effective constraints.txt is missing")
+
+    def ignore_bytecode(directory: str, names: list[str]) -> set[str]:
+        return {
+            name
+            for name in names
+            if name == "__pycache__"
+            or "__pycache__"
+            in (Path(directory) / name).resolve().relative_to(source.resolve()).parts
+        }
+
+    destination.mkdir(parents=True)
+    shutil.copytree(
+        source,
+        destination / "python",
+        copy_function=link_file,
+        ignore=ignore_bytecode,
+    )
+    shutil.copyfile(constraints, destination / "constraints.txt")
+    python = interpreter(destination)
+    if not python.is_file():
+        raise EnvironmentError(f"base has no generation interpreter: {python}")
+    base_python = source / python.relative_to(destination / "python")
+    link_mode = "hardlink" if python.samefile(base_python) else "clone"
+    wheels = store / "wheels"
+    hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
+    links = [
+        wheels,
+        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+    ]
+    command = [
+        uv,
+        "pip",
+        "sync",
+        "--python",
+        str(python),
+        # Standalone bases may carry a manager marker; only this owned target is writable.
+        "--break-system-packages",
+        "--offline",
+        "--no-index",
+        "--require-hashes",
+        "--only-binary",
+        ":all:",
+        "--link-mode",
+        link_mode,
+        "-",
+    ]
+    # Wheel sources can exceed Windows' command-line limit in large stores.
+    requirements = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in links)
+    requirements += constraints.read_text(encoding="utf-8")
+    environment = {
+        **os.environ,
+        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_OFFLINE": "1",
+        "UV_NO_INDEX": "1",
+        "UV_PYTHON_DOWNLOADS": "never",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    if refresh_cache:
+        # A hand-edited hardlink can also corrupt uv's extracted cache.
+        cleaned = subprocess.run(
+            [uv, "cache", "clean"], env=environment, capture_output=True, text=True
+        )
+        if cleaned.returncode:
+            raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
+    result = subprocess.run(
+        command, input=requirements, env=environment, capture_output=True, text=True
+    )
+    if result.returncode:
+        raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+    return python
+
+
+@contextmanager
+def prepare_registry_inputs(
+    *,
+    store: Path,
+    base: str,
+    constraints: Path,
+    variant: str,
+    engine_version: str,
+    project: Path,
+    installed_lock: Path | None = None,
+    pack_locks: tuple[Path, ...] = (),
+    prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
+    preflight: Callable[[Path, Path, Path], None] | None = None,
+) -> Generator[tuple[Path, Path, tuple[Path, ...], dict[str, str]]]:
+    """Keep target-owned registry inputs alive through candidate construction.
+
+    The caller holds the store lock and has acquired engine/base inputs. No
+    candidate generation or activation journal has been created. Inputs are removed
+    on refusal, failed construction and successful activation alike.
+
+    ``prepare_locks`` receives the scratch engine directory (with effective
+    constraints), selected catalog, archive cache and new lock output directory.
+    It replaces published lock retrieval, including when it returns no locks.
+    Explicit ``pack_locks`` take precedence over either automatic producer.
+    ``preflight`` checks the scratch engine, catalog and archives before locks
+    are prepared; it also runs when explicit locks override automatic preparation.
+    """
+    with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
+        scratch = Path(directory)
+        python = prepare_engine_interpreter(
+            scratch / "engine", store=store, base=base, constraints=constraints
+        )
+        catalog = scratch / "dinkster.lock"
+        artifacts = scratch / "artifacts"
+        output = scratch / "locks"
+        command = [str(python), "-I", "-B", "-m", "dinkster.manager", "--root", str(project)]
+
+        def run(arguments: list[str]) -> dict[str, object]:
+            completed = subprocess.run([*command, *arguments], capture_output=True, text=True)
+            if completed.returncode:
+                raise EnvironmentError(
+                    "target registry preparation refused: "
+                    + (completed.stderr.strip() or completed.stdout.strip())
+                )
+            try:
+                raw: object = json.loads(completed.stdout)
+                if not isinstance(raw, dict):
+                    raise ValueError("expected an object")
+            except ValueError as exc:
+                raise EnvironmentError(
+                    f"target registry preparation: invalid result: {exc}"
+                ) from exc
+            return cast("dict[str, object]", raw)
+
+        selection = (
+            ["--installed-lock", str(installed_lock), "--retain-sources"]
+            if installed_lock is not None
+            else ["--allow-missing"]
+        )
+        sources = run(
+            [
+                "prepare-registry-sources",
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(artifacts),
+                *selection,
+            ]
+        )
+        unavailable = sources.get("unavailable")
+        if (
+            sources.get("engineVersion") != engine_version
+            or sources.get("catalogLock") != str(catalog)
+            or sources.get("artifacts") != str(artifacts)
+            or not catalog.is_file()
+            or not artifacts.is_dir()
+            or not isinstance(unavailable, dict)
+            or any(
+                not isinstance(k, str) or not isinstance(v, str)
+                for k, v in cast("dict[object, object]", unavailable).items()
+            )
+            or (installed_lock is not None and unavailable)
+        ):
+            raise EnvironmentError(
+                "target registry preparation returned inconsistent source inputs"
+            )
+        if preflight is not None:
+            preflight(scratch / "engine", catalog, artifacts)
+        if pack_locks:
+            yield catalog, artifacts, pack_locks, cast("dict[str, str]", unavailable)
+            return
+        if prepare_locks is not None:
+            raw_locks: object = [
+                str(path) for path in prepare_locks(scratch / "engine", catalog, artifacts, output)
+            ]
+        else:
+            prepared = run(
+                [
+                    "prepare-registry-locks",
+                    "--catalog-lock",
+                    str(catalog),
+                    "--output",
+                    str(output),
+                    "--variant",
+                    variant,
+                    "--base-id",
+                    base,
+                    "--registry-only",
+                ]
+            )
+            raw_locks = prepared.get("locks")
+        if not isinstance(raw_locks, list) or not output.is_dir() or output.is_symlink():
+            raise EnvironmentError("target registry preparation returned invalid lock paths")
+        paths: list[Path] = []
+        for value in cast("list[object]", raw_locks):
+            if not isinstance(value, str):
+                raise EnvironmentError("target registry preparation returned invalid lock paths")
+            path = Path(value)
+            if (
+                not path.is_absolute()
+                or path.parent != output
+                or path.is_symlink()
+                or not path.is_file()
+                or path in paths
+            ):
+                raise EnvironmentError("target registry preparation returned invalid lock paths")
+            paths.append(path)
+        yield catalog, artifacts, tuple(paths), cast("dict[str, str]", unavailable)
+
+
 def build_generation(
     *,
     root: Path,
@@ -372,84 +622,30 @@ def build_generation(
     destination = root / "generations" / str(number)
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
-    if not source.is_dir():
-        raise EnvironmentError(f"base {base} is not in the local store")
-    if source.stat().st_dev != root.stat().st_dev:
-        raise EnvironmentError("project and wheel store must be on the same volume")
-    if not constraints.is_file():
-        raise EnvironmentError("effective constraints.txt is missing")
-
-    def ignore_bytecode(directory: str, names: list[str]) -> set[str]:
-        return {
-            name
-            for name in names
-            if name == "__pycache__"
-            or "__pycache__"
-            in (Path(directory) / name).resolve().relative_to(source.resolve()).parts
-        }
-
-    destination.mkdir(parents=True)
     try:
-        shutil.copytree(
-            source,
-            destination / "python",
-            copy_function=link_file,
-            ignore=ignore_bytecode,
+        prepare_engine_interpreter(
+            destination,
+            store=store,
+            base=base,
+            constraints=constraints,
+            uv=uv,
+            refresh_cache=refresh_cache,
         )
-        shutil.copyfile(constraints, destination / "constraints.txt")
         if source_kind == "local":
             shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
-        python = interpreter(destination)
-        if not python.is_file():
-            raise EnvironmentError(f"base has no generation interpreter: {python}")
-        base_python = source / python.relative_to(destination / "python")
-        link_mode = "hardlink" if python.samefile(base_python) else "clone"
-        wheels = store / "wheels"
-        hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
-        links = [
-            wheels,
-            *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
-        ]
-        command = [
-            uv,
-            "pip",
-            "sync",
-            "--python",
-            str(python),
-            # Standalone bases may carry a manager marker; only this owned target is writable.
-            "--break-system-packages",
-            "--offline",
-            "--no-index",
-            "--require-hashes",
-            "--only-binary",
-            ":all:",
-            "--link-mode",
-            link_mode,
-            "-",
-        ]
-        # Wheel sources can exceed Windows' command-line limit in large stores.
-        requirements = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in links)
-        requirements += constraints.read_text(encoding="utf-8")
-        environment = {
-            **os.environ,
-            "UV_CACHE_DIR": str(store / "uv-cache"),
-            "UV_OFFLINE": "1",
-            "UV_NO_INDEX": "1",
-            "UV_PYTHON_DOWNLOADS": "never",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
-        if refresh_cache:
-            # A hand-edited hardlink can also corrupt uv's extracted cache.
-            cleaned = subprocess.run(
-                [uv, "cache", "clean"], env=environment, capture_output=True, text=True
-            )
-            if cleaned.returncode:
-                raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
-        result = subprocess.run(
-            command, input=requirements, env=environment, capture_output=True, text=True
+        engine_manifest = (
+            store / "engines" / engine_release.removeprefix("sha256:") / "release-manifest.json"
         )
-        if result.returncode:
-            raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+        try:
+            engine_manifest.lstat()
+        except FileNotFoundError:
+            # Legacy and direct local callers may have no retained release manifest.
+            pass
+        else:
+            retained = destination / "engine-manifest.json"
+            shutil.copyfile(engine_manifest, retained)
+            if content_digest(retained) != engine_release:
+                raise EnvironmentError("retained engine manifest does not match engine release")
         provisioned: set[str] = set()
         if (
             source_generation is not None
@@ -529,5 +725,6 @@ def build_generation(
         generation.write(destination / "generation.json")
         return generation
     except BaseException:
-        shutil.rmtree(destination)
+        if destination.exists():
+            shutil.rmtree(destination)
         raise

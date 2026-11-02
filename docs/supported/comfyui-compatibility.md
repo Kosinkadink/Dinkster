@@ -1,5 +1,9 @@
 ## ComfyUI compatibility
 
+- ImageScaleToMaxDimension declares the deprecated ResizeImagesByLongerEdge
+  replacement, preserving the image connection and requested longer edge,
+  selecting lanczos and forwarding the image output. The retired training
+  node is not registered; positional workflow import remains a frontend concern.
 - Native EmptyImage supports CPU-only execution as the first image node in a
   fresh worker, preserving its dimensions, batch size and RGB color values.
 - Native POSE_KEYPOINT values preserve frame canvas dimensions, people and flat
@@ -20,9 +24,12 @@
   with a scalar STRING filename prefix, including CLIPSave, VAESave,
   CheckpointSave, and ModelSave, without relying on their class-name spelling.
 - Source-marked file COMBO and STRING inputs may use the asset picker in the
-  same positional slot. Ordinary strings and choices retain their exact
-  interface checks. Core pack ownership recognizes ImageCompare and GLSLShader
-  in the image pack and rejects other packs claiming those class ids.
+  same positional slot. A scalar STRING file with an empty default represents
+  no paint through an optional ASSET with no selected file; text multiline
+  metadata does not apply to an ASSET picker. Other requiredness, name, order
+  and visibility checks remain exact. Core pack ownership recognizes
+  ImageCompare and GLSLShader in the image pack and rejects other packs
+  claiming those class ids.
 - The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant

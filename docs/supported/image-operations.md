@@ -23,6 +23,12 @@
 - Native `Preview3DAdvanced`, `PreviewGaussianSplat` and `PreviewPointCloud`
   preserve original-file assets and sidecars while returning viewport camera,
   model placement and dimensions, with explicit metadata inputs taking priority.
+- Native `Load3DAdvanced` loads granted original 3D files with declared sidecars
+  and returns viewport model placement, camera and supplied dimensions. Empty
+  selections return no file; opaque formats retain their original bytes.
+- Native `Load3D` returns authored viewport image, alpha-derived mask, normal,
+  camera, optional recording and model placement, retaining original selected
+  model bytes and declared sidecars without resizing the captured images.
 - Native `Save3DAdvanced`, `SaveGaussianSplat` and `SavePointCloud` export
   resource-bearing original files with their named sidecars in isolated numbered
   folders, retaining nested relative names and bytes without overwriting earlier

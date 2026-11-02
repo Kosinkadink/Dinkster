@@ -112,6 +112,8 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
 from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
+from .load3d import Load3DAdvanced
+from .load3d_captures import Load3D
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_extract_save import LoraSave
@@ -590,6 +592,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveGaussianSplat,
     SavePointCloud,
     Preview3D,
+    Load3DAdvanced,
+    Load3D,
     Preview3DAdvanced,
     PreviewGaussianSplat,
     PreviewPointCloud,

@@ -20,9 +20,13 @@ def artifact_server(
     interrupted: bool = False,
     redirect: str | None = None,
     statuses: list[int] | None = None,
+    responses: list[bytes] | None = None,
+    ranges: list[str | None] | None = None,
 ) -> Iterator[str]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            if ranges is not None:
+                ranges.append(self.headers.get("Range"))
             if self.headers.get("User-Agent") != "dinkster-env":
                 self.send_error(403, "product User-Agent required")
                 return
@@ -52,9 +56,10 @@ def artifact_server(
                 self.send_header("Content-Range", f"bytes 0-{len(body) - 1}/{len(body)}")
             else:
                 self.send_response(200)
-            self.send_header("Content-Length", str(len(body) - start))
+            response_body = responses.pop(0) if responses else body
+            self.send_header("Content-Length", str(len(response_body) - start))
             self.end_headers()
-            response = body[start:]
+            response = response_body[start:]
             self.wfile.write(response[: len(response) // 2] if interrupted else response)
 
         def log_message(self, format: str, *args: object) -> None:
@@ -315,5 +320,50 @@ def test_transient_recovery_does_not_bypass_digest_verification(tmp_path):
             fetch_artifact((mirror,), "artifact.bin", destination, digest(b"right"), 5)
     assert "HTTP 500 (cf-ray=request-2)" in str(failure.value)
     assert "attempt 2: returned corrupt or short data" in str(failure.value)
-    assert statuses == [200]
+    assert "attempt 3: returned corrupt or short data" in str(failure.value)
+    assert statuses == []
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("corruption", ["short", "digest", "oversized"])
+def test_remote_integrity_failure_recovers_with_safe_partial_handling(tmp_path, corruption):
+    data = b"verified release bytes"
+    first = {"short": data[:7], "digest": b"x" * len(data), "oversized": data + b"extra"}[
+        corruption
+    ]
+    ranges: list[str | None] = []
+    destination = tmp_path / "artifact.bin"
+    with artifact_server(data, responses=[first], ranges=ranges) as mirror:
+        fetch_artifact((mirror,), "artifact.bin", destination, digest(data), len(data))
+    assert destination.read_bytes() == data
+    assert ranges == [None, "bytes=7-" if corruption == "short" else None]
+    assert not destination.with_suffix(".bin.part").exists()
+
+
+@pytest.mark.parametrize("saved_prefix", [b"", b"bad prefix"])
+def test_remote_wrong_digest_exhausts_attempts_without_publishing(tmp_path, saved_prefix):
+    data = b"verified release bytes"
+    ranges: list[str | None] = []
+    destination = tmp_path / "artifact.bin"
+    partial = destination.with_suffix(".bin.part")
+    if saved_prefix:
+        partial.write_bytes(saved_prefix)
+    with artifact_server(b"x" * len(data), ranges=ranges) as mirror:
+        with pytest.raises(DownloadError) as failure:
+            fetch_artifact((mirror,), "artifact.bin", destination, digest(data), len(data))
+    message = str(failure.value)
+    for attempt in range(1, 4):
+        assert f"attempt {attempt}: returned corrupt or short data" in message
+    assert ranges == [f"bytes={len(saved_prefix)}-" if saved_prefix else None, None, None]
+    assert not destination.exists()
+    assert not partial.exists()
+
+
+def test_local_integrity_failure_is_not_retried(tmp_path):
+    (tmp_path / "source.bin").write_bytes(b"wrong")
+    destination = tmp_path / "artifact.bin"
+    with pytest.raises(DownloadError) as failure:
+        fetch_artifact((str(tmp_path),), "source.bin", destination, digest(b"right"), 5)
+    assert str(failure.value).count("returned corrupt or short data") == 1
+    assert "attempt" not in str(failure.value)
     assert not destination.exists()
