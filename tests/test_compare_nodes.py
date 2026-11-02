@@ -808,7 +808,7 @@ def test_painter_empty_file_uses_an_optional_asset_without_losing_other_contract
     )
     row = next(node for node in reference["nodes"] if node["class_name"] == "Painter")
     reference = {"nodes": [row]}
-    schema = schema_to_wire(Painter.define_schema())
+    schema: dict[str, Any] = schema_to_wire(Painter.define_schema())
     registry = {"nodes": {"Painter": schema}}
     assert compare_registry(reference, registry)["passed"]
 
