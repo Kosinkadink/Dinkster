@@ -868,10 +868,10 @@ def test_exact_image_compare_has_no_outputs_and_previews_each_nonempty_side() ->
     assert schema.outputs == () and schema.output_node and schema.emits_previews
     assert schema_from_wire(schema_to_wire(schema)) == schema
     a = np.zeros((2, 2, 3, 3), dtype=np.float32)
-    a[0, ..., 0] = 1
-    a[1, ..., 1] = 1
+    a[0, ..., 0] = 0.03
+    a[1, ..., 1] = 0.61
     b = np.zeros((1, 3, 1, 3), dtype=np.float32)
-    b[..., 2] = 1
+    b[..., 2] = 0.91
     reports: list[tuple[Mapping[str, object], bytes | None]] = []
 
     def capture(name: str, data: Mapping[str, object], blob: bytes | None) -> None:

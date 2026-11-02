@@ -1,6 +1,7 @@
 """Paired image previews with independent optional sides."""
 
 from collections.abc import Mapping
+from io import BytesIO
 from typing import Any, cast
 
 import numpy as np
@@ -14,9 +15,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     copy_media_semantics,
-    render_image_png,
     report_preview,
 )
+from PIL import Image
 
 from .geometry import IMAGE
 from .support import image_array
@@ -89,8 +90,11 @@ class NativeImageCompare(Node):
                 continue
             batch = image_array(value, subject=name)
             for index in range(batch.shape[0]):
+                raster = np.clip(batch[index] * 255.0, 0, 255).astype(np.uint8)
+                encoded = BytesIO()
+                Image.fromarray(raster).save(encoded, format="PNG")
                 report_preview(
-                    render_image_png(copy_media_semantics(value, batch[index])),
+                    encoded.getvalue(),
                     mime="image/png",
                     width=int(batch.shape[2]),
                     height=int(batch.shape[1]),
