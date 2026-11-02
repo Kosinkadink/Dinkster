@@ -1,7 +1,5 @@
 [pack]
 name = "dinkster-compat-comfy"
-version = "0.0.3"
-engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["comfy", "dinkster"]
 # Exact translated leaves avoid claiming the image pack's shared bridge types.

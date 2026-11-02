@@ -292,7 +292,7 @@ def test_engine_carried_pack_uses_engine_distribution(
     spec = compose.default_pack_spec("dinkster-nodes-generation")
     assert requested == ["dinkster"]
     assert spec.packs is not None
-    assert spec.packs["dinkster-nodes-generation"].version == "1.2.3"
+    assert spec.packs["dinkster-nodes-generation"].version == "0.0.2"
 
 
 def test_compat_manifest_uses_engine_distribution_when_carried(
@@ -1722,6 +1722,86 @@ def test_default_pack_refuses_version_outside_suite_lock(
 
     with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.2"):
         default_pack_spec("dinkster-nodes-foundation")
+
+
+@pytest.mark.parametrize("mismatch", [None, "pack", "distribution", "distribution-name"])
+def test_shared_distribution_pack_uses_manifest_version(
+    monkeypatch: pytest.MonkeyPatch, mismatch: str | None
+) -> None:
+    from dinkster import compose
+
+    lock = compose._default_pack_lock()
+    pack = lock.get("dinkster-vision-birefnet")
+    assert pack is not None
+    assert pack.version == "0.0.3"
+    assert pack.artifact_digest == (
+        "blake3:921320363e6f14e9075e469eedb8491365835a9b1c23a4a925e1a7bf82207cf5"
+    )
+    if mismatch == "pack":
+        pack = replace(pack, version="0.0.2")
+    elif mismatch == "distribution-name":
+        pack = replace(pack, source="python:dinkster-nodes-image==0.0.2")
+    changed = replace(
+        lock, packs=tuple(pack if row.pack == pack.pack else row for row in lock.packs)
+    )
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: changed)
+    real_distribution = compose.importlib.metadata.distribution
+
+    def distribution(name: str):
+        installed = real_distribution(name)
+        if name == "dinkster-nodes-vision" and mismatch == "distribution":
+            return SimpleNamespace(version="9.0.0", locate_file=installed.locate_file)
+        return installed
+
+    monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
+    if mismatch is not None:
+        with pytest.raises(CompositionError, match="default suite locks dinkster-vision-birefnet"):
+            default_pack_spec("dinkster-vision-birefnet")
+        return
+    spec = default_pack_spec("dinkster-vision-birefnet")
+    sibling = default_pack_spec("dinkster-vision-hed")
+    assert spec.packs is not None
+    assert sibling.packs is not None
+    assert spec.packs[pack.pack].version == "0.0.3"
+    assert spec.packs[pack.pack].source == "python:dinkster-nodes-vision==0.0.2"
+    assert sibling.packs["dinkster-vision-hed"].version == "0.0.2"
+    assert sibling.packs["dinkster-vision-hed"].source == "python:dinkster-nodes-vision==0.0.2"
+
+
+def test_undeclared_pack_version_uses_distribution_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import compose
+
+    pack_id = "dinkster-nodes-foundation"
+    lock = compose._default_pack_lock()
+    changed = replace(
+        lock,
+        packs=tuple(
+            replace(row, version="2.3.4", source=f"python:{pack_id}==2.3.4")
+            if row.pack == pack_id
+            else row
+            for row in lock.packs
+        ),
+    )
+    real_load_manifest = compose.load_manifest
+    real_distribution = compose.importlib.metadata.distribution
+
+    def distribution(name: str):
+        installed = real_distribution(name)
+        if name == pack_id:
+            return SimpleNamespace(version="2.3.4", locate_file=installed.locate_file)
+        return installed
+
+    monkeypatch.setattr(
+        compose, "load_manifest", lambda path: replace(real_load_manifest(path), compatibility=None)
+    )
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: changed)
+    monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
+    spec = default_pack_spec(pack_id)
+    assert spec.packs is not None
+    assert spec.packs[pack_id].version == "2.3.4"
+    assert spec.packs[pack_id].source == f"python:{pack_id}==2.3.4"
 
 
 def test_default_pack_refuses_bytes_outside_suite_lock(

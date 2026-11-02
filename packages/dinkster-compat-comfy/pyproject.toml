@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-compat-comfy"
-version = "0.0.3"
+version = "0.0.2"
 description = "Quarantined ComfyUI v1 node compatibility: translate NODE_CLASS_MAPPINGS into Dinkster nodes"
 requires-python = ">=3.12"
 dependencies = [
