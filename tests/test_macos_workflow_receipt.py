@@ -144,7 +144,7 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                 self.subTest(device=device, state=state, foreign=foreign),
                 tempfile.TemporaryDirectory() as directory,
             ):
-                root = Path(directory)
+                root = Path(directory).resolve()
                 checkpoint = root / "model.safetensors"
                 checkpoint.write_bytes(b"test checkpoint")
                 starter = root / "starter.json"
