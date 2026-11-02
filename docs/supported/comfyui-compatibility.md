@@ -19,6 +19,10 @@
 - Core schema comparison permits the optional output mount for output nodes
   with a scalar STRING filename prefix, including CLIPSave, VAESave,
   CheckpointSave, and ModelSave, without relying on their class-name spelling.
+- Source-marked file COMBO and STRING inputs may use the asset picker in the
+  same positional slot. Ordinary strings and choices retain their exact
+  interface checks. Core pack ownership recognizes ImageCompare and GLSLShader
+  in the image pack and rejects other packs claiming those class ids.
 - The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
