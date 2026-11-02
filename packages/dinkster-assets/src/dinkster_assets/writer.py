@@ -34,7 +34,7 @@ import stat
 import threading
 import time
 import uuid
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
@@ -252,21 +252,7 @@ class AssetWriter:
         before_publish: Callable[[AssetRef], None] | None = None,
     ) -> AssetRef:
         """Import bytes under the target's full filename, numbering collisions only."""
-        if type(limit) is not int or limit < 0:
-            raise AssetError("limit must be a non-negative integer")
-        parsed = coerce_save_target(target)
-        reserved = {"con", "prn", "aux", "nul"} | {
-            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
-        }
-        for segment in parsed.prefix.split("/"):
-            if (
-                len(segment) > 255
-                or segment.endswith((".", " "))
-                or segment.casefold().startswith(".dinkster-")
-                or segment.split(".", 1)[0].casefold() in reserved
-                or any(ord(character) < 32 or character in '<>:"|?*\x7f' for character in segment)
-            ):
-                raise AssetError("import target must use portable folder and file names")
+        parsed = self._validated_named_target(target, limit)
         suffix = Path(parsed.stem).suffix
         named = SaveTarget(
             parsed.mount, parsed.prefix.removesuffix(suffix) if suffix else parsed.prefix
@@ -284,6 +270,87 @@ class AssetWriter:
                 before_publish=before_publish,
             )
         return ref
+
+    @staticmethod
+    def _validated_named_target(target: object, limit: int) -> SaveTarget:
+        if type(limit) is not int or limit < 0:
+            raise AssetError("limit must be a non-negative integer")
+        parsed = coerce_save_target(target)
+        reserved = {"con", "prn", "aux", "nul"} | {
+            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+        }
+        for segment in parsed.prefix.split("/"):
+            if (
+                len(segment) > 255
+                or segment.endswith((".", " "))
+                or segment.casefold().startswith(".dinkster-")
+                or segment.split(".", 1)[0].casefold() in reserved
+                or any(ord(character) < 32 or character in '<>:"|?*\x7f' for character in segment)
+            ):
+                raise AssetError("import target must use portable folder and file names")
+        return parsed
+
+    def save_named_streams(
+        self,
+        target: object,
+        sources: Mapping[str, BinaryIO],
+        *,
+        limit: int,
+        media_types: Mapping[str, str] | None = None,
+    ) -> dict[str, AssetRef]:
+        """Keep related relative filenames together in one collision-free export directory.
+
+        Validate the entire name set before writing. A later stream failure returns
+        no group result; already published members remain complete and resolvable.
+        """
+        parsed = self._validated_named_target(target, limit)
+        sources = dict(sources)
+        if not sources:
+            raise AssetError("named stream exports require at least one file")
+        canonical: dict[str, str] = {}
+        files: set[str] = set()
+        folders: set[str] = set()
+        for name in sources:
+            self._validated_named_target(SaveTarget(parsed.mount, name), limit)
+            parts = name.split("/")
+            for index in range(1, len(parts) + 1):
+                path = "/".join(parts[:index])
+                folded = path.casefold()
+                if folded in canonical and canonical[folded] != path:
+                    raise AssetError("named stream exports contain case-insensitive collisions")
+                canonical[folded] = path
+                (files if index == len(parts) else folders).add(folded)
+        if files & folders:
+            raise AssetError("named stream exports contain file and directory collisions")
+        root, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            counter = self._next_counter(folder, parsed.stem)
+            while True:
+                export = folder / f"{parsed.stem}_{counter:05d}"
+                self._require_contained(root, folder, parsed)
+                if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                    raise AssetError("export mount changed its root before allocation")
+                try:
+                    export.mkdir()
+                except FileExistsError:
+                    counter += 1
+                else:
+                    break
+            refs: dict[str, AssetRef] = {}
+            for name, source in sources.items():
+                member = SaveTarget(parsed.mount, f"{export.relative_to(root).as_posix()}/{name}")
+                ref, _ = self._write_stream(
+                    member,
+                    source,
+                    suffix="",
+                    media_type=(media_types or {}).get(name, "application/octet-stream"),
+                    limit=limit,
+                    expected_root=root,
+                    prefer_exact_name=True,
+                    strict_counter=True,
+                )
+                refs[name] = ref
+        return refs
 
     def recover_named_asset(self, ref: AssetRef) -> Path | None:
         """Verify a journaled publication under current authority without creating bytes."""
@@ -389,8 +456,12 @@ class AssetWriter:
             )
         return parsed
 
-    def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
+    def _writable_folder(
+        self, parsed: SaveTarget, *, expected_root: Path | None = None
+    ) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
+        if expected_root is not None and root.resolve() != expected_root.resolve():
+            raise AssetError(f"mount {parsed.mount!r} changed its root during batch save")
         if not root.is_dir():
             raise AssetError(f"output mount {parsed.mount!r} is unavailable at {root}")
         folder = root
@@ -415,9 +486,7 @@ class AssetWriter:
         prefer_exact_name: bool = False,
         before_publish: Callable[[AssetRef], None] | None = None,
     ) -> tuple[AssetRef, int]:
-        root, folder = self._writable_folder(parsed)
-        if expected_root is not None and root.resolve() != expected_root.resolve():
-            raise AssetError(f"mount {parsed.mount!r} changed its root during batch save")
+        root, folder = self._writable_folder(parsed, expected_root=expected_root)
         stem = parsed.stem if stem is None else stem
         tmp = folder / f".dinkster-save-{uuid.uuid4().hex}"
         final: Path | None = None
@@ -451,9 +520,7 @@ class AssetWriter:
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
             if prefer_exact_name:
-                current_root, _ = self._writable_folder(parsed)
-                if current_root.resolve() != root.resolve():
-                    raise AssetError(f"mount {parsed.mount!r} changed its root during import")
+                self._writable_folder(parsed, expected_root=root)
 
             def prepare(final: Path) -> None:
                 if before_publish is not None:
@@ -746,7 +813,8 @@ class AssetWriter:
             try:
                 os.link(tmp, final)
             except FileExistsError:
-                pass
+                if strict_counter:
+                    raise AssetError("selected save name was claimed before publication") from None
             else:
                 return final, 0
         if counter is None:

@@ -44,6 +44,12 @@
   A JSON manifest rendition preserves the source and named resource identities
   when reading completed job outputs; local bindings remain host-granted rather
   than becoming content digests.
+- Related-file exports can preserve complete nested filenames and source bytes
+  in one uniquely numbered directory under an existing writable mount. The
+  shared writer validates all names before publication, rejects case-insensitive
+  and file/directory collisions, and records each file for immediate resolution.
+  It never overwrites or independently renumbers a member. This shared writer
+  operation is separate from the native 3D nodes' flat-file save behavior.
 - Local asset bindings support byte reads for callers with local assets:read
   permission. Reads require a live grant and unchanged file revision; they do not
   index files, grant path access or advertise immutable caching.

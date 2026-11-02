@@ -186,6 +186,15 @@ mount, containment, bounded streaming and digest-index publication as output
 saves. Portable filename rules also reject reserved writer/index names. Existing
 `save_stream` output naming is unchanged.
 
+`AssetWriter.save_named_streams(target, sources, limit=..., media_types=None)`
+exports a nonempty mapping of canonical relative filenames to held streams into
+one unique counter-named directory under the target prefix. Nested names and
+bytes stay unchanged. The complete portable name set is validated before any
+publication, including case-insensitive and file/directory collisions. Each
+member uses the existing live mount authority and publication records; `limit`
+applies per stream. A later failure returns no group result, but already
+published files remain complete. Resource-free saves retain their flat names.
+
 `AssetWriter.output_target(filename_prefix, mount=None)` combines separate save
 inputs into the writer's target. Omitting `mount` uses the snapshot's configured
 output mount; an explicit mount selects that grant instead. Both forms retain
