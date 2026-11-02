@@ -3,6 +3,8 @@
 
 [pack]
 name = "dinkster-nodes-image"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",

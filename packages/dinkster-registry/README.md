@@ -54,6 +54,57 @@ through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
 generation-based activation.
 
+## Official pack publication
+
+Official pack manifests declare their own public `pack.version` and PEP 440
+`pack.engine` range. These use the shared schema and archive admission contract;
+the engine version is not the pack version.
+
+`python -m scripts.build_official_packs --pack PACK_ID --output /scratch/packs`
+builds selected committed sources using their manifest versions. Repeat `--pack`
+or omit it for the official set. Unknown ids and missing declarations refuse.
+The explicit `--version` override remains available for existing engine-release
+callers. Native variant, interpreter and constraints inputs produce dependency
+locks for the same selected sources without changing an installed generation.
+
+`python -m scripts.select_official_packs --before FULL_COMMIT` selects official
+ids changed between that committed push base and HEAD. Engine-only changes
+select nothing; a zero base selects all packs. Shared vision files select all
+vision packs, while pack-specific sources select their owner. Working-tree
+manifests are ignored. `--tag pack/PACK_ID/vVERSION` selects one pack only when
+VERSION exactly matches its declared version.
+
+`scripts.build_release_pack_locks --sources /scratch/packs` uses that source
+catalog and each pack's own version. `--release` supplies verified published
+engine inputs and constraints, not pack versions. Regenerated sources must
+match the catalog and archive bytes. Without `--sources`, existing engine
+release behavior is unchanged. Locks use native supported-base interpreters
+and portable wheel URLs.
+
+`python -m scripts.publish_official_packs --sources /scratch/packs
+--base-manifest PATH --pack-lock PATH --output /scratch/publication` validates
+and prepares publication maps. Repeat the base and lock options for all bases
+in `scripts/base_bundles.json` and every selected pack/base pair. It checks
+canonical base identities, archive digests, manifest declarations, lock
+identities, Python compatibility and credential-free HTTP(S) origins before
+exposing any maps. It neither resolves dependencies nor installs a pack.
+
+Add `--publish --registry URL` to submit unchanged archives and their complete
+maps using `DINKSTER_REGISTRY_TOKEN`. The HTTP client's `publish_release` accepts
+an optional `locks` path and sends exact archive and map bytes as multipart;
+omitting it preserves raw-ZIP submission. Local validation completes before the
+first request, but separate release submissions are not a registry transaction.
+A queued receipt is not an admission verdict.
+
+`.github/workflows/official-packs.yml` builds and preflights changed packs on
+main pushes, pull requests, or exact pack tags. It uses the newest published
+engine's verified inputs and requires each selected pack to admit that engine.
+All six supported bases resolve locks on native hosts without building an
+engine. Only trusted `Kosinkadink/Dinkster` main pushes receive the existing
+submission credential; PR, fork and tag refs never submit. A missing credential
+refuses. Registry versions are immutable, so changed packs need new manifest
+versions. Publication does not imply that scanner admission has completed.
+
 ## Template catalog
 
 `ReleaseIndex.template_catalog()` is the version 1 payload served by

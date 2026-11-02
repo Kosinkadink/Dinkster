@@ -27,6 +27,11 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
+  tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
+  tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
+  tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
+  tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_canonical_bytes \
