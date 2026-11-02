@@ -4,9 +4,11 @@ from typing import cast
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AssetWidget,
     ComboWidget,
     MountWidget,
     NumberWidget,
+    SourceFilenameSpec,
     StringWidget,
     TypeExpr,
 )
@@ -14,6 +16,7 @@ from dinkster_nodes_comfy.image_file_tools import (
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
+    Painter,
     PreviewImage,
     SaveAnimatedPNG,
     SaveAnimatedWEBP,
@@ -90,6 +93,38 @@ def test_image_file_inputs_use_the_bound_asset_contract() -> None:
         image = node.schema().inputs[0]
         assert image.type == TypeExpr.concrete(ASSET_TYPE)
         assert image.source_filename is not None
+
+
+def test_painter_retains_order_with_an_optional_granted_mask() -> None:
+    from dinkster_nodes_comfy import COMFY_NODES
+    from dinkster_schema import schema_from_wire
+
+    schema = Painter.schema()
+    assert Painter in COMFY_NODES
+    assert schema.node_type == "Painter" and not schema.aliases
+    assert tuple(spec.id for spec in schema.inputs) == (
+        "image",
+        "mask",
+        "width",
+        "height",
+        "bg_color",
+    )
+    assert tuple(spec.id for spec in schema.outputs) == ("IMAGE", "MASK")
+    fields = {spec.id: spec for spec in schema.inputs}
+    mask = fields["mask"]
+    assert not mask.required and mask.default is None and mask.socketless
+    assert mask.type == TypeExpr.concrete(ASSET_TYPE)
+    assert isinstance(mask.widget, AssetWidget) and mask.widget.allow_upload
+    assert mask.widget.kind == "media/image"
+    assert mask.source_filename == SourceFilenameSpec("media/image", "input")
+    assert not fields["image"].required
+    for name in ("width", "height"):
+        spec = fields[name]
+        assert spec.default == 512 and spec.socketless and spec.hidden
+        assert spec.widget == NumberWidget(min=64, max=4096, step=64)
+    restored = schema_from_wire(schema_to_wire(schema))
+    assert restored.input("mask") == mask
+    assert restored.emits_previews
 
 
 def test_animated_savers_preserve_source_controls_and_append_mount() -> None:

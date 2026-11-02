@@ -19,7 +19,7 @@ from .channels import (
     ImageChannelMerge,
     ImageChannelSplit,
 )
-from .compare import ImageCompare
+from .compare import ImageCompare, NativeImageCompare
 from .composition import (
     COMPOSITION_NODES,
     ImageComposite,
@@ -145,6 +145,7 @@ from .vision import (
 
 IMAGE_NODES = [
     ImageCompare,
+    NativeImageCompare,
     *GEOMETRY_NODES,
     *COMPOSITION_NODES,
     *COMPOSITOR_NODES,

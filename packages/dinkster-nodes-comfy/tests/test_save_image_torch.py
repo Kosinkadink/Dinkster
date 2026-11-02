@@ -8,6 +8,7 @@ import math
 import os
 import struct
 import sys
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,7 @@ from dinkster_nodes_comfy import image_file_tools
 from dinkster_nodes_comfy.image_file_tools import (
     LoadImage,
     LoadImageMask,
+    Painter,
     PreviewImage,
     SaveAnimatedPNG,
     SaveAnimatedWEBP,
@@ -45,7 +47,7 @@ from dinkster_nodes_comfy.save_image_advanced import SaveImageAdvanced
 from dinkster_schema.reporting import capture_saved_artifacts
 from PIL import Image
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
 
 def test_image_loader_preserves_sixteen_bit_samples(tmp_path: Path) -> None:
@@ -321,6 +323,159 @@ def test_preview_image_preserves_cpu_source() -> None:
     images = torch.zeros((1, 2, 3, 3), dtype=torch.float32)
 
     assert PreviewImage.execute(images=images)["images"] is images
+
+
+def test_painter_no_paint_uses_background_or_only_first_base_frame() -> None:
+    result = Painter.execute(width=3, height=2, bg_color="#1950c8")
+    expected = torch.tensor([25, 80, 200], dtype=torch.float32).expand(1, 2, 3, 3) / 255
+    torch.testing.assert_close(result["IMAGE"], expected, rtol=0, atol=0)
+    assert torch.equal(result["MASK"], torch.zeros((1, 2, 3)))
+    base = torch.arange(2 * 2 * 3 * 3, dtype=torch.float32).reshape(2, 2, 3, 3) / 36
+    original = base.clone()
+    result = Painter.execute(image=base, width=64, height=128, bg_color="not hex")
+    torch.testing.assert_close(result["IMAGE"], base[:1], rtol=0, atol=0)
+    assert torch.equal(result["MASK"], torch.zeros((1, 2, 3)))
+    assert torch.equal(base, original)
+
+
+@pytest.mark.parametrize("resize", (False, True))
+def test_painter_granted_rgba_retains_alpha_resize_and_base(tmp_path: Path, resize: bool) -> None:
+    pixels = np.array([[[23, 91, 207, 0], [219, 49, 103, 128], [33, 181, 71, 255]]], np.uint8)
+    painted = Image.fromarray(pixels)
+    path = tmp_path / "paint.png"
+    painted.save(path)
+    asset = AssetRef(
+        digest_file(path),
+        path.name,
+        path.stat().st_size,
+        resolver=SimpleNamespace(resolve=lambda _digest: path),
+    )
+    width, height = (5, 3) if resize else (3, 1)
+    base = torch.linspace(0.1, 0.9, 2 * height * width * 3).reshape(2, height, width, 3)
+    original = base.clone()
+    expected_paint = (
+        np.array(
+            painted.resize((width, height), Image.Resampling.LANCZOS) if resize else painted,
+            dtype=np.float32,
+        )
+        / 255
+    )
+    alpha = expected_paint[..., 3:4]
+    expected = expected_paint[..., :3] * alpha + base[0].numpy() * (1 - alpha)
+    result = Painter.execute(mask=asset, image=base, width=64, height=128)
+    np.testing.assert_array_equal(result["IMAGE"].numpy(), expected[None])
+    np.testing.assert_array_equal(result["MASK"].numpy(), expected_paint[None, ..., 3])
+    assert torch.equal(base, original)
+    with pytest.raises(TypeError, match="granted asset"):
+        Painter.execute(mask=str(path), width=3, height=1)
+    unbound = AssetRef(asset.digest, asset.name, asset.size)
+    with pytest.raises(AssetError):
+        Painter.execute(mask=unbound, width=3, height=1)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_painter_ordinary_manifest_optional_empty_and_mounted_paint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    Image.new("RGBA", (64, 128), (32, 96, 208, 128)).save(tmp_path / "paint.png")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    table.add(MountDef("paint", tmp_path), kind="media/image")
+    table.scan("paint")
+    asset = table.bind_name("paint.png", "media/image")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        composer = ServingComposer(
+            worker_env={"DINKSTER_ACCELERATOR": "cpu", "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+        )
+        try:
+            await composer.add_pack(PackSpec(manifest=native, in_process=in_process))
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                for paint in (False, True):
+                    inputs = {"width": 64, "height": 128, "bg_color": "#1950c8"}
+                    if paint:
+                        inputs["mask"] = asset.to_wire()
+                    result = await engine.run(
+                        Graph(nodes={"p": GraphNode("Painter", inputs)}), ["p"]
+                    )
+                    outputs = result.outputs["p"]
+                    expected_alpha = 128 / 255 if paint else 0.0
+                    alpha = materialize_image(outputs["MASK"].resolve())
+                    torch.testing.assert_close(
+                        alpha, torch.full((1, 128, 64), expected_alpha), rtol=0, atol=0
+                    )
+                    background = torch.tensor([25, 80, 200], dtype=torch.float32) / 255
+                    foreground = torch.tensor([32, 96, 208], dtype=torch.float32) / 255
+                    coverage = torch.tensor(expected_alpha, dtype=torch.float32)
+                    expected = foreground * coverage + background * (1 - coverage)
+                    actual = materialize_image(outputs["IMAGE"].resolve())
+                    torch.testing.assert_close(
+                        actual, expected.expand(1, 128, 64, 3), rtol=0, atol=0
+                    )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_exact_image_editors_execute_through_ordinary_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    Image.new("RGB", (3, 2), (32, 96, 208)).save(tmp_path / "input.png")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    table.add(MountDef("editor", tmp_path), kind="media/image")
+    table.scan("editor")
+    asset = table.bind_name("input.png", "media/image")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        composer = ServingComposer(
+            worker_env={"DINKSTER_ACCELERATOR": "cpu", "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+        )
+        try:
+            for name in ("foundation", "media-io", "image", "comfy"):
+                await composer.add_pack(
+                    replace(
+                        default_pack_spec(f"dinkster-nodes-{name}"),
+                        in_process=in_process,
+                        require_catalog=False,
+                        asset_vault_write=False,
+                    )
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "load": GraphNode("LoadImage", {"image": asset.to_wire()}),
+                    "shader": GraphNode(
+                        "GLSLShader",
+                        {"images.image0": Link("load", "IMAGE")},
+                        slot_variants={"size_mode": "from_input"},
+                    ),
+                    "compare": GraphNode(
+                        "ImageCompare",
+                        {
+                            "image_a": Link("load", "IMAGE"),
+                            "image_b": Link("shader", "IMAGE0"),
+                            "compare_view": {},
+                        },
+                    ),
+                }
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["shader", "compare"])
+                actual = materialize_image(result.outputs["shader"]["IMAGE0"].resolve())
+                expected = torch.tensor([32 / 255, 96 / 255, 208 / 255, 1], dtype=torch.float32)
+                torch.testing.assert_close(actual, expected.expand(1, 2, 3, 4), rtol=0, atol=1e-6)
+                assert result.outputs["compare"] == {}
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("format_name", ("png", "webp"))
