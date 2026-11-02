@@ -337,11 +337,15 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
             # Mount contents vary, but the widget still consumes the original file slot.
             file_type = expected["type"]
             if file_type == "STRING" and actual.get("type") == "ASSET":
-                if not list_flag and expected.get("default") == "":
-                    if actual.get("group") != "optional" or actual.get("default") is not None:
-                        return [f"{path}: empty file requires an optional ASSET with no default"]
-                    if expected.get("group") == "required":
-                        expected["group"] = "optional"
+                if (
+                    list_flag
+                    or expected.get("default") != ""
+                    or actual.get("group") != "optional"
+                    or actual.get("default") is not None
+                ):
+                    return [f"{path}: empty file requires an optional ASSET with no default"]
+                if expected.get("group") == "required":
+                    expected["group"] = "optional"
                 expected.pop("multiline", None)
             if isinstance(file_type, dict):
                 file_type = file_type["list"]

@@ -722,6 +722,10 @@ def test_exact_ids_and_file_widget_exemption(
     }
     registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
     summary = compare_registry(reference, registry)
+    if reference_type == "STRING":
+        assert not summary["passed"]
+        assert summary["counts"] == {"differs": 1, "Dinkster-only": 1}
+        return
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
 
@@ -815,6 +819,9 @@ def test_painter_empty_file_uses_an_optional_asset_without_losing_other_contract
     changed = deepcopy(reference)
     changed["nodes"][0]["input_types"]["required"]["mask"][1]["default"] = "paint.png"
     assert not compare_registry(changed, registry)["passed"]
+    required = deepcopy(schema)
+    next(item for item in required["interface"] if item["id"] == "mask")["required"] = True
+    assert not compare_registry(changed, {"nodes": {"Painter": required}})["passed"]
     changed = deepcopy(reference)
     changed["nodes"][0]["file_inputs"] = []
     del changed["nodes"][0]["input_types"]["required"]["mask"][1]["file_input"]
