@@ -26,6 +26,11 @@
 - Native `Load3DAdvanced` loads granted original 3D files with declared sidecars
   and returns viewport model placement, camera and supplied dimensions. Empty
   selections return no file; opaque formats retain their original bytes.
+- Native `Save3DAdvanced`, `SaveGaussianSplat` and `SavePointCloud` export
+  resource-bearing original files with their named sidecars in isolated numbered
+  folders, retaining nested relative names and bytes without overwriting earlier
+  exports. Resource-free files retain flat numbered filenames. Original packet
+  and viewport outputs are preserved.
 - `DA3_GEOMETRY`, `FACE_LANDMARKS`, `MHR_POSE_DATA` and `KIMODO_POSE_DATA`
   transport depth, source images and cameras, per-frame face and body detections,
   face topology, masks, canonical colors and external rig state without dropping
@@ -162,6 +167,9 @@
   complete model wrappers in the holding worker when passed between nodes.
 - Native `SAM3DBody_Loader` loads one bound detection-model checkpoint with
   automatic dtype and mixed-precision selection and rejects mismatched keys.
+- Native `SAM3DBody_Predict` predicts pose geometry from full images, detector
+  boxes or SAM3 tracking masks, with bounded crop batches, optional hand
+  refinement and camera field of view. It requires a loaded SAM3D Body model.
 - Native `SAM3DBody_Smooth` reduces temporal pose jitter with Gaussian or
   Savitzky-Golay filtering, wrapped-angle handling and fast-spin geometry
   protection while camera motion remains smoothed.

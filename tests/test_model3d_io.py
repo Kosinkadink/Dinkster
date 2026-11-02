@@ -17,7 +17,6 @@ from dinkster_api.v1 import (
     CORE_STRING,
     FILE_3D_GLB_TYPE,
     FILE_3D_GLTF_TYPE,
-    FILE_3D_PLY_TYPE,
     FILE_3D_TYPE,
     LOAD_3D_TYPE,
     InputSpec,
@@ -1014,6 +1013,94 @@ def test_advanced_3d_saves_preserve_file_and_viewport_precedence(
     assert viewport == unchanged_viewport
 
 
+@pytest.mark.parametrize("format", ["gltf", "obj"])
+def test_native_save_exports_original_named_sidecars_without_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format: str
+) -> None:
+    from dinkster_schema.reporting import capture_saved_artifacts
+
+    output, snapshot = _mount(tmp_path, monkeypatch)
+    vault = AssetVault(tmp_path / "vault")
+    files = (
+        {
+            "source.gltf": (
+                b'{"asset":{"version":"2.0"},"buffers":[{"uri":"data/mesh.bin"}],'
+                b'"images":[{"uri":"textures/color%20map.png"}]}'
+            ),
+            "data/mesh.bin": b"\x01\x03\x09",
+            "textures/color map.png": b"distinct texture bytes",
+        }
+        if format == "gltf"
+        else {
+            "source.obj": b"mtllib materials/scene.mtl\nv 0 1 2\n",
+            "materials/scene.mtl": b"newmtl surface\nmap_Kd ../textures/color map.png\n",
+            "textures/color map.png": b"different OBJ texture bytes",
+        }
+    )
+    refs = {}
+    for name, data in files.items():
+        digest = digest_bytes(data)
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        refs[name] = AssetRef(digest, Path(name).name, len(data), resolver=vault)
+    primary = f"source.{format}"
+    resources = {name: ref for name, ref in refs.items() if name != primary}
+    packet = {"format": format, "source": refs[primary], "resources": resources}
+    occupied = output / "nested/export_00001"
+    occupied.mkdir(parents=True)
+    (occupied / primary).write_bytes(b"existing unrelated export")
+    for counter in (2, 3):
+        with capture_saved_artifacts() as claims:
+            saved = Save3DAdvanced.execute(
+                model_3d=packet,
+                viewport_state={},
+                filename_prefix="nested/export",
+                mount="comfy-output",
+            )
+        assert saved["model_3d"] is packet
+        assert len(claims) == len(files)
+        for name, expected in files.items():
+            assert (output / f"nested/export_{counter:05d}" / name).read_bytes() == expected
+        resolver = MountSnapshotResolver(snapshot)
+        assert {claim["digest"] for claim in claims} == {ref.digest for ref in refs.values()}
+        for claim in claims:
+            assert AssetRef.from_wire(claim, resolver).read_bytes() in files.values()
+    assert (occupied / primary).read_bytes() == b"existing unrelated export"
+    grants = json.loads(snapshot.read_text())
+    grants["mounts"][0]["mode"] = "read"
+    snapshot.write_text(json.dumps(grants))
+    with pytest.raises(AssetError, match="read-only"):
+        Save3DAdvanced.execute(
+            model_3d=packet,
+            viewport_state={},
+            filename_prefix="nested/export",
+            mount="comfy-output",
+        )
+    assert not (output / "nested/export_00004").exists()
+
+
+@pytest.mark.parametrize("resource_name", ["source.gltf", "SOURCE.gltf", "source.gltf/buffer"])
+def test_native_save_rejects_primary_resource_name_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resource_name: str
+) -> None:
+    output, _ = _mount(tmp_path, monkeypatch)
+    vault = AssetVault(tmp_path / "vault")
+    data = b"distinct model bytes"
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    ref = AssetRef(digest, "source.gltf", len(data), resolver=vault)
+    with pytest.raises(AssetError, match="collision"):
+        Save3DAdvanced.execute(
+            model_3d={"format": "gltf", "source": ref, "resources": {resource_name: ref}},
+            viewport_state={},
+            mount="comfy-output",
+        )
+    assert not (output / "3d").exists()
+
+
 def test_save_then_load_round_trips_glb_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1133,7 +1220,7 @@ class Advanced3DFileSource(Node):
             "advanced-3d-source.make",
             inputs=(InputSpec("case", TypeExpr.concrete(CORE_STRING), default="viewport"),),
             outputs=(
-                OutputSpec("file", TypeExpr.concrete(FILE_3D_PLY_TYPE)),
+                OutputSpec("file", TypeExpr.concrete(FILE_3D_TYPE)),
                 OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),
             ),
         )
@@ -1142,6 +1229,25 @@ class Advanced3DFileSource(Node):
     def execute(cls, *, case: str = "viewport") -> Mapping[str, object]:
         vault = produced_output_scratch()
         assert vault is not None
+        if case == "sidecars":
+            refs = {}
+            for name, data in {
+                "scene.gltf": (
+                    b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin"}],'
+                    b'"images":[{"uri":"textures/color%20map.png"}]}'
+                ),
+                "mesh.bin": b"asymmetric buffer bytes",
+                "textures/color map.png": b"different texture bytes",
+            }.items():
+                digest = digest_bytes(data)
+                with vault.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+                refs[name] = AssetRef(digest, Path(name).name, len(data), resolver=vault)
+            primary = refs.pop("scene.gltf")
+            return cls.outputs(
+                file={"format": "gltf", "source": primary, "resources": refs}, viewport={}
+            )
         payload = b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
         digest = digest_bytes(payload)
         with vault.writer(digest) as writer:
@@ -1168,7 +1274,7 @@ class Advanced3DFileSource(Node):
 
 
 @pytest.mark.parametrize("in_process", [True, False])
-@pytest.mark.parametrize("case", ["viewport", "empty", "null_placement"])
+@pytest.mark.parametrize("case", ["viewport", "empty", "null_placement", "sidecars"])
 def test_advanced_3d_save_ordinary_hosts_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, case: str
 ) -> None:
@@ -1204,7 +1310,10 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     )
 
     async def scenario() -> None:
-        composer = ServingComposer(worker_env=environment)
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_inference_types(registry)
+        composer = ServingComposer(registry=registry, worker_env=environment)
         try:
             for path in (
                 Path(__file__).resolve().parents[1]
@@ -1215,10 +1324,17 @@ def test_advanced_3d_save_ordinary_hosts_twice(
             graph = Graph(
                 {
                     "source": GraphNode("advanced-3d-source.make", {"case": case}),
+                    "preview": GraphNode(
+                        "Preview3DAdvanced",
+                        {
+                            "model_3d": Link("source", "file"),
+                            "viewport_state": Link("source", "viewport"),
+                        },
+                    ),
                     "save": GraphNode(
                         "Save3DAdvanced",
                         {
-                            "model_3d": Link("source", "file"),
+                            "model_3d": Link("preview", "model_3d"),
                             "viewport_state": Link("source", "viewport"),
                         },
                     ),
@@ -1227,11 +1343,29 @@ def test_advanced_3d_save_ordinary_hosts_twice(
             engine = composer.composition.make_engine(lambda _event: None)
             for attempt in (1, 2):
                 result = await engine.run(graph, ["save"])
-                assert "save" in result.executed and len(result.artifacts) == 1
-                file = output / f"3d/ComfyUI_{attempt:05d}.ply"
-                assert file.read_bytes() == (
-                    b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
-                )
+                assert "save" in result.executed
+                if case == "sidecars":
+                    assert len(result.artifacts) == 3
+                    folder = output / f"3d/ComfyUI_{attempt:05d}"
+                    packet = cast(
+                        "Mapping[str, object]", result.outputs["save"]["model_3d"].resolve()
+                    )
+                    original = cast(AssetRef, packet["source"]).read_bytes()
+                    assert (folder / "scene.gltf").read_bytes() == original
+                    assert json.loads(original)["images"][0]["uri"] == "textures/color%20map.png"
+                    resources = cast("Mapping[str, AssetRef]", packet["resources"])
+                    assert {name: ref.read_bytes() for name, ref in resources.items()} == {
+                        "mesh.bin": b"asymmetric buffer bytes",
+                        "textures/color map.png": b"different texture bytes",
+                    }
+                    for name, ref in resources.items():
+                        assert (folder / name).read_bytes() == ref.read_bytes()
+                else:
+                    assert len(result.artifacts) == 1
+                    file = output / f"3d/ComfyUI_{attempt:05d}.ply"
+                    assert file.read_bytes() == (
+                        b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
+                    )
                 camera = result.outputs["save"]["camera_info"].resolve()
                 if case == "viewport":
                     assert cast(dict[str, object], camera)["zoom"] == 2.5

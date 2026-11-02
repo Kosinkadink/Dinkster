@@ -675,8 +675,13 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
 
 
 @pytest.mark.parametrize("list_inputs", [False, True])
-@pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
-def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str) -> None:
+@pytest.mark.parametrize(
+    ("reference_type", "native_type"),
+    [("COMBO", "COMBO"), ("COMBO", "ASSET"), ("STRING", "ASSET")],
+)
+def test_exact_ids_and_file_widget_exemption(
+    list_inputs: bool, native_type: str, reference_type: str
+) -> None:
     from tools.compare_nodes import compare_registry
 
     reference = {
@@ -685,7 +690,13 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str
                 "class_name": "LoadExample",
                 "file_inputs": ["file"],
                 "input_is_list": list_inputs,
-                "input_types": {"required": {"file": [["original.safetensors"]]}},
+                "input_types": {
+                    "required": {
+                        "file": [["original.safetensors"]]
+                        if reference_type == "COMBO"
+                        else ["STRING", {"default": ""}]
+                    }
+                },
                 "return_types": ["MODEL"],
                 "return_names": ["model"],
                 "output_is_list": [True],
@@ -714,6 +725,10 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
 
+    original_spec = reference["nodes"][0]["input_types"]["required"]["file"]
+    reference["nodes"][0]["input_types"]["required"]["file"] = ["FLOAT"]
+    assert not compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["input_types"]["required"]["file"] = original_spec
     file_input = schema["interface"][0]
     reference["nodes"][0]["file_inputs"] = []
     assert not compare_registry(reference, registry)["passed"]
@@ -745,7 +760,10 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str
     file_input["id"] = "renamed"
     assert not compare_registry(reference, registry)["passed"]
     file_input["id"] = "file"
-    file_input["type"] = {"kind": "concrete", "types": ["STRING"]}
+    file_input["type"] = {
+        "kind": "concrete",
+        "types": ["STRING" if reference_type == "COMBO" else "COMBO"],
+    }
     assert not compare_registry(reference, registry)["passed"]
     file_input["type"] = {"kind": "concrete", "types": [native_type]}
     file_input["required"] = False
@@ -754,7 +772,7 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str
     file_input["type"] = {"kind": "list", "element": file_input["type"]}
     assert compare_registry(reference, registry)["passed"] is list_inputs
     original_spec = reference["nodes"][0]["input_types"]["required"]["file"]
-    reference["nodes"][0]["input_types"]["required"]["file"] = [{"list": "COMBO"}]
+    reference["nodes"][0]["input_types"]["required"]["file"] = [{"list": reference_type}]
     assert compare_registry(reference, registry)["passed"]
     reference["nodes"][0]["input_types"]["required"]["file"] = original_spec
     file_input["type"] = {"kind": "concrete", "types": [native_type]}
@@ -1351,6 +1369,24 @@ def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
         "Extra: prefixed type name: comfy.IMAGE",
         "core class id 'Example' is claimed by pack 'custom-pack'",
     ]
+
+
+@pytest.mark.parametrize("name", ["ImageCompare", "GLSLShader"])
+def test_image_core_classes_keep_their_native_pack_ownership(name: str) -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {"nodes": [{"class_name": name, "input_types": {}, "return_types": []}]}
+    schema = {"nodeType": name, "pack": "dinkster-nodes-image", "interface": []}
+    registry = {"nodes": {name: schema}}
+    assert compare_registry(reference, registry)["passed"]
+    schema["pack"] = "custom-pack"
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["registry_errors"] == [f"core class id {name!r} is claimed by pack 'custom-pack'"]
+    del schema["pack"]
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["registry_errors"] == [f"core class id {name!r} is claimed by pack None"]
 
 
 @pytest.mark.parametrize(
