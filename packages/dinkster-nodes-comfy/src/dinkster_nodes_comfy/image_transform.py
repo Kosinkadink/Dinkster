@@ -19,10 +19,13 @@ from dinkster_api.v1 import (
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     materialize_image,
 )
@@ -437,17 +440,34 @@ class ImageFlip(Node):
 class ImageScaleToMaxDimension(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema(
-            "ImageScaleToMaxDimension",
-            "Scale Image to Max Dimension",
-            "image/upscaling",
-            (
+        return NodeSchema(
+            node_type="ImageScaleToMaxDimension",
+            display_name="Scale Image to Max Dimension",
+            category="image/upscaling",
+            inputs=(
                 InputSpec("image", _IMAGE),
                 _combo(
                     "upscale_method",
                     ("area", "lanczos", "bilinear", "nearest-exact", "bilinear", "bicubic"),
                 ),
                 _integer("largest_size", 512, 0, _MAX_RESOLUTION, 1),
+            ),
+            outputs=(OutputSpec("IMAGE", _IMAGE),),
+            replacements=(
+                ReplacementRule(
+                    from_type="ResizeImagesByLongerEdge",
+                    cases=(
+                        ReplacementCase.build(
+                            "ImageScaleToMaxDimension",
+                            inputs={
+                                "image": MappingSource.copy("images"),
+                                "largest_size": MappingSource.copy("longer_edge"),
+                                "upscale_method": MappingSource.constant("lanczos"),
+                            },
+                            outputs={"IMAGE": "images"},
+                        ),
+                    ),
+                ),
             ),
         )
 
