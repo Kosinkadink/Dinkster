@@ -7,8 +7,17 @@ import importlib
 import importlib.util
 import json
 import subprocess
+import symtable
 import sys
 from pathlib import Path
+
+
+def _global_names(scope: symtable.SymbolTable) -> set[str]:
+    return {
+        symbol.get_name()
+        for symbol in scope.get_symbols()
+        if symbol.is_global() and symbol.is_referenced()
+    } | set().union(*(_global_names(child) for child in scope.get_children()))
 
 
 def select_available_tests(tests: list[str], modules: dict[str, str]) -> None:
@@ -44,22 +53,50 @@ def select_available_tests(tests: list[str], modules: dict[str, str]) -> None:
         if not unavailable:
             continue
         excluded = dict(unavailable)
-        removed: set[int] = set()
+        removed: set[ast.stmt] = set()
+        skipped_setup: set[ast.stmt] = set()
+        statements = [(statement, "") for statement in tree.body]
+        for statement in tree.body:
+            if isinstance(statement, ast.ClassDef):
+                statements.extend((member, statement.name + "::") for member in statement.body)
+        fixtures = {
+            statement
+            for statement, _ in statements
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and any(
+                (isinstance(node, ast.Attribute) and node.attr == "fixture")
+                or (isinstance(node, ast.Name) and node.id == "fixture")
+                for decorator in statement.decorator_list
+                for node in ast.walk(decorator)
+            )
+        }
         # Helpers, fixtures, decorators and aliases can carry an unavailable
-        # symbol into a test without that test importing it directly.
+        # symbol into a test without that test importing it directly. Keep
+        # fixtures registered so pytest skips their dependents
+        # instead of falling back to another fixture or losing required setup.
         while True:
             changed = False
-            for index, statement in enumerate(tree.body):
-                if index in removed or isinstance(statement, (ast.Import, ast.ImportFrom)):
+            for statement, prefix in statements:
+                if (
+                    statement in removed
+                    or statement in skipped_setup
+                    or isinstance(statement, (ast.Import, ast.ImportFrom))
+                ):
                     continue
+                references = (
+                    [*statement.bases, *statement.keywords, *statement.decorator_list]
+                    if isinstance(statement, ast.ClassDef)
+                    else [statement]
+                )
                 dependencies = {
                     node.id
-                    for node in ast.walk(statement)
+                    for reference in references
+                    for node in ast.walk(reference)
                     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
                 }
                 if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    dependencies.update(arg.arg for arg in statement.args.args)
-                    dependencies.update(arg.arg for arg in statement.args.kwonlyargs)
+                    table = symtable.symtable(ast.unparse(statement), filename, "exec")
+                    dependencies = _global_names(table)
                 missing = dependencies & excluded.keys()
                 if not missing:
                     continue
@@ -77,6 +114,32 @@ def select_available_tests(tests: list[str], modules: dict[str, str]) -> None:
                         f"unavailable pack symbol in module setup: {filename}:{statement.lineno}"
                     )
                 reason = ", ".join(sorted({excluded[name] for name in missing}))
+                if isinstance(statement, (ast.Assign, ast.AnnAssign)) and not isinstance(
+                    statement.value, ast.Name
+                ):
+                    raise ValueError(
+                        f"unavailable pack symbol in module initialization: "
+                        f"{filename}:{statement.lineno}"
+                    )
+                if isinstance(
+                    statement, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ) and statement.name.startswith(("setup_", "teardown_")):
+                    raise ValueError(
+                        f"unavailable pack symbol in xunit hook: {filename}:{statement.name}"
+                    )
+                if (
+                    isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and statement in fixtures
+                ):
+                    message = f"selected pack lacks {reason}"
+                    statement.body = ast.parse(f"import pytest\npytest.skip({message!r})").body
+                    skipped_setup.add(statement)
+                    print(
+                        f"Unavailable setup {filename}::{prefix}{statement.name}: {reason}",
+                        flush=True,
+                    )
+                    changed = True
+                    continue
                 names = {
                     node.id
                     for node in ast.walk(statement)
@@ -85,20 +148,32 @@ def select_available_tests(tests: list[str], modules: dict[str, str]) -> None:
                 if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     names = {statement.name}
                     print(
-                        f"Excluded {filename}::{statement.name}: selected pack lacks {reason}",
+                        f"Excluded {filename}::{prefix}{statement.name}: "
+                        f"selected pack lacks {reason}",
                         flush=True,
                     )
-                excluded.update(dict.fromkeys(names, reason))
-                removed.add(index)
+                if prefix:
+                    if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        raise ValueError(
+                            f"unavailable pack symbol in class setup: {filename}:{prefix}"
+                        )
+                else:
+                    excluded.update(dict.fromkeys(names, reason))
+                removed.add(statement)
                 changed = True
             if not changed:
                 break
         tree.body = [
             statement
-            for index, statement in enumerate(tree.body)
-            if index not in removed
+            for statement in tree.body
+            if statement not in removed
             and not (isinstance(statement, ast.ImportFrom) and not statement.names)
         ]
+        for statement in tree.body:
+            if isinstance(statement, ast.ClassDef):
+                statement.body = [member for member in statement.body if member not in removed] or [
+                    ast.Pass()
+                ]
         print(f"Unavailable selected imports in {filename}: {unavailable}", flush=True)
         path.write_text(ast.unparse(tree) + "\n", encoding="utf-8")
 
@@ -146,6 +221,8 @@ def main() -> int:
         def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
             if report.when == "call" and report.passed:
                 self.passed += 1
+            if report.skipped:
+                print(f"Selected test skipped {report.nodeid}: {report.longrepr}", flush=True)
 
         def pytest_sessionfinish(self, session: pytest.Session) -> None:
             if self.passed == 0:

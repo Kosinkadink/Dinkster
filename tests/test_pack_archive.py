@@ -1207,7 +1207,22 @@ def test_registry_probe_refuses_degraded_isolation(
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
-@pytest.mark.parametrize("problem", [None, "broken", "missing", "skipped", "unpublished-only"])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "broken",
+        "missing",
+        "skipped",
+        "unpublished-only",
+        "mixed-class",
+        "shadowed",
+        "autouse",
+        "xunit",
+        "class-fixture",
+        "parameter-shadow",
+    ],
+)
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1240,7 +1255,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + (
             "def selected_value():\n"
-            if problem == "unpublished-only"
+            if problem in {"unpublished-only", "mixed-class", "shadowed", "class-fixture"}
             else "def test_selected_value():\n"
         )
         + "    assert VALUE == 47\n"
@@ -1276,6 +1291,47 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "class TestUnpublished:\n"
         "    def test_node(self):\n"
         "        assert Unpublished.execute() == 17\n"
+        + (
+            "    def test_shipped(self):\n        assert VALUE == 47\n"
+            if problem in {None, "mixed-class"}
+            else ""
+        )
+        + (
+            "def test_shadowed():\n    Unpublished = VALUE\n    assert Unpublished == 47\n"
+            if problem == "shadowed"
+            else ""
+        )
+        + (
+            "@pytest.fixture(autouse=True)\ndef future_setup():\n    return Unpublished.execute()\n"
+            if problem == "autouse"
+            else ""
+        )
+        + (
+            "class TestSetup:\n    def setup_method(self):\n        Unpublished.execute()\n"
+            "    def test_shipped(self):\n        assert True\n"
+            if problem == "xunit"
+            else ""
+        )
+        + (
+            "@pytest.fixture\ndef value():\n    return 47\n"
+            "class TestFixture:\n    @pytest.fixture\n    def value(self):\n"
+            "        return Unpublished.execute()\n"
+            "    @pytest.fixture(autouse=True)\n    def configure(self, value):\n"
+            "        assert value == 47\n    def test_shipped(self):\n        assert True\n"
+            if problem == "class-fixture"
+            else ""
+        )
+        + (
+            "@pytest.mark.parametrize('Unpublished', [13])\n"
+            "def test_parameter_shadow(Unpublished):\n    assert Unpublished == 47\n"
+            if problem == "parameter-shadow"
+            else ""
+        )
+        + (
+            "def test_control():\n    assert True\n"
+            if problem in {"mixed-class", "shadowed", "parameter-shadow"}
+            else ""
+        )
     )
     subprocess.run(["git", "init", "-q", str(engine)], check=True)
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
@@ -1291,9 +1347,8 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem != "missing":
         module = source / "dinkster_nodes_image"
         module.mkdir()
-        (module / "__init__.py").write_text(
-            f"VALUE = {13 if problem == 'broken' else 47}\nNODES = []\n"
-        )
+        value = 13 if problem in {"broken", "mixed-class", "shadowed"} else 47
+        (module / "__init__.py").write_text(f"VALUE = {value}\nNODES = []\n")
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     archive = artifacts / "pack.zip"
@@ -1314,9 +1369,10 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem is None:
         run_selected_tests(engine, catalog, artifacts)
         output = capfd.readouterr().out
-        assert "1 passed" in output
-        assert "Excluded tests/test_image_nodes.py::test_unpublished_fixture" in output
-        assert "Excluded tests/test_image_nodes.py::TestUnpublished" in output
+        assert "2 passed" in output
+        assert "1 skipped" in output
+        assert "Unavailable setup tests/test_image_nodes.py::future_value" in output
+        assert "Excluded tests/test_image_nodes.py::TestUnpublished::test_node" in output
         assert "dinkster_nodes_image:NEW_NODE" in output
     elif problem == "missing":
         with pytest.raises(ValueError, match="archive is missing declared module"):
