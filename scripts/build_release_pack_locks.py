@@ -93,7 +93,6 @@ def build_locks(
         built = build(
             root,
             work / "packs",
-            version=engine["version"].split("+", 1)[0] if catalog is None else None,
             packs=tuple(pack.pack for pack in catalog.packs) if catalog is not None else (),
             variant=variant,
             python=tree / base["interpreter"]["executable"],
