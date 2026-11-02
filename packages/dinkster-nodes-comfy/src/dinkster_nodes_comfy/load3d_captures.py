@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     LOAD_3D_TYPE,
     MASK_TYPE,
     VIDEO_TYPE,
+    AbsentOutput,
     AssetRef,
     AssetWidget,
     InputSpec,
@@ -60,7 +61,12 @@ class Load3D(Node):
                 ),
             ),
             outputs=tuple(
-                OutputSpec(name, TypeExpr.concrete(type_id), preview=name == "model_3d")
+                OutputSpec(
+                    name,
+                    TypeExpr.concrete(type_id),
+                    preview=name == "model_3d",
+                    optional=name == "recording_video",
+                )
                 for name, type_id in (
                     ("image", IMAGE_TYPE),
                     ("mask", MASK_TYPE),
@@ -94,7 +100,7 @@ class Load3D(Node):
         video = (
             admit_video_source(cast("AssetRef | LocalAssetRef", recording))
             if recording != ""
-            else None
+            else AbsentOutput("no recording")
         )
         packet = load_file3d(model_file)
         source = cast("AssetRef | LocalAssetRef", packet["source"]) if packet is not None else None

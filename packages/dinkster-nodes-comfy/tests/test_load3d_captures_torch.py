@@ -15,6 +15,7 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     LOAD_3D_TYPE,
+    AbsentOutput,
     AssetRef,
     AssetVault,
     TypeRegistry,
@@ -26,7 +27,13 @@ from dinkster_assets import LocalAssetRef, MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_nodes_comfy import register_inference_types
 from dinkster_nodes_comfy.load3d_captures import Load3D
-from dinkster_values import register_core_types
+from dinkster_values import (
+    ABSENT_ORIGIN_META_KEY,
+    ABSENT_REASON_META_KEY,
+    ABSENT_STANDS_FOR_META_KEY,
+    is_absent,
+    register_core_types,
+)
 from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -59,9 +66,15 @@ def captures(tmp_path: Path) -> tuple[dict[str, object], np.ndarray, np.ndarray,
 
 
 def _assert_captures(result: Mapping[str, Any], pixels: np.ndarray, normals: np.ndarray) -> None:
-    torch.testing.assert_close(result["image"], torch.tensor(pixels[None, ..., :3] / 255).float())
-    torch.testing.assert_close(result["mask"], 1 - torch.tensor(pixels[None, ..., 3] / 255).float())
-    torch.testing.assert_close(result["normal"], torch.tensor(normals[None] / 255).float())
+    torch.testing.assert_close(
+        torch.as_tensor(result["image"]), torch.tensor(pixels[None, ..., :3] / 255).float()
+    )
+    torch.testing.assert_close(
+        torch.as_tensor(result["mask"]), 1 - torch.tensor(pixels[None, ..., 3] / 255).float()
+    )
+    torch.testing.assert_close(
+        torch.as_tensor(result["normal"]), torch.tensor(normals[None] / 255).float()
+    )
 
 
 @pytest.mark.parametrize("placement", [[], None, [{"scale": [2, 3, 5]}]])
@@ -73,7 +86,7 @@ def test_load3d_keeps_capture_pixels_alpha_and_placement(captures, placement: ob
     _assert_captures(result, pixels, normals)
     assert result["mesh_path"] == ""
     assert result["model_3d"] is None
-    assert result["recording_video"] is None
+    assert result["recording_video"] == AbsentOutput("no recording")
     assert result["model_3d_info"] == placement
     assert result["camera_info"] is state["camera_info"]
 
@@ -173,7 +186,11 @@ def test_load3d_empty_model_and_recording_through_ordinary_hosts(
             _assert_captures(cast("Mapping[str, Any]", values), pixels, normals)
             assert values["mesh_path"] == ""
             assert values["model_3d"] is None
-            assert values["recording_video"] is None
+            recording = result.outputs["load"]["recording_video"]
+            assert is_absent(recording)
+            assert recording.meta.get(ABSENT_ORIGIN_META_KEY) == "load/recording_video"
+            assert recording.meta.get(ABSENT_REASON_META_KEY) == "no recording"
+            assert recording.meta.get(ABSENT_STANDS_FOR_META_KEY) == "VIDEO"
             assert values["model_3d_info"] == []
             assert values["camera_info"] == state["camera_info"]
         finally:
