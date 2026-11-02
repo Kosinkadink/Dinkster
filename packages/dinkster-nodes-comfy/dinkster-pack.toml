@@ -591,6 +591,7 @@ namespaces = [
     "SaveSVGNode",
     "SaveImage",
     "PreviewImage",
+    "Painter",
     "LoadImage",
     "LoadImageMask",
     "LoadImageOutput",
