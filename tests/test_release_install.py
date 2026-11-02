@@ -2111,8 +2111,13 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
         step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
     )
     environment = {**os.environ, "DINKSTER_REGISTRY_TOKEN": ""}
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
     result = subprocess.run(
-        ["bash", "-e", "-c", submission["run"]],
+        [bash, "-e", "-c", submission["run"]],
         cwd=tmp_path,
         env=environment,
         capture_output=True,

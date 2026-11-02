@@ -71,7 +71,7 @@ def test_list_schemas_roundtrip_without_collapsing_list_types() -> None:
         1,
         10,
     )
-    assert not family.optional_after_minimum
+    assert family.optional_after_minimum
     assert GetItemFromList.schema().inputs[1].default == 0
     assert GetItemFromList.schema().inputs[1].accepts_list
     assert CreateList.schema().outputs[0].type == TypeExpr.list_of(TypeExpr.wildcard())
