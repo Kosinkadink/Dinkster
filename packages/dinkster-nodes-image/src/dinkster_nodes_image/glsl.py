@@ -508,7 +508,7 @@ class NativeGlslShader(GlslShader):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = GlslShader.schema()
-        families = []
+        families: list[InputFamilySpec] = []
         for family in schema.input_families:
             member = cast(InputSpec, family.template[0])
             families.append(
