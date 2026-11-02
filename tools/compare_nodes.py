@@ -3,7 +3,7 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
-Source-marked file combos may use an ASSET socket and asset picker. Marked
+Source-marked file combos and strings may use an ASSET socket and asset picker. Marked
 directory, pair and literal choices require their exact selection kind;
 ordinary combo types, options and defaults remain exact.
 V3 inputs follow the recorded declaration sequence, including optional inputs
@@ -321,13 +321,21 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
             expected.pop("default", None)
             actual.pop("default", None)
         elif file_picker:
-            if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
+            if not file_input or expected.get("type") not in (
+                "COMBO",
+                "STRING",
+                {"list": "COMBO"},
+                {"list": "STRING"},
+            ):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
+            file_type = expected["type"]
+            if isinstance(file_type, dict):
+                file_type = file_type["list"]
             if actual.get("type") == "ASSET":
-                actual["type"] = "COMBO"
+                actual["type"] = file_type
             elif actual.get("type") == {"list": "ASSET"}:
-                actual["type"] = {"list": "COMBO"}
+                actual["type"] = {"list": file_type}
             expected.pop("options", None)
             expected.pop("default", None)
             actual.pop("default", None)
@@ -540,8 +548,13 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     for key, schema in served.items():
         if key != schema.get("nodeType"):
             errors.append(f"registry key {key!r} differs from nodeType {schema.get('nodeType')!r}")
-        if key in ids and schema.get("pack", "dinkster-nodes-comfy") != "dinkster-nodes-comfy":
-            errors.append(f"core class id {key!r} is claimed by pack {schema['pack']!r}")
+        owner = (
+            "dinkster-nodes-image"
+            if key in {"ImageCompare", "GLSLShader"}
+            else "dinkster-nodes-comfy"
+        )
+        if key in ids and schema.get("pack", "dinkster-nodes-comfy") != owner:
+            errors.append(f"core class id {key!r} is claimed by pack {schema.get('pack')!r}")
         if key.startswith(FORBIDDEN_PREFIXES):
             errors.append(f"prefixed node id: {key}")
         for item in schema.get("interface", []):
