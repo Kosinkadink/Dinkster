@@ -41,11 +41,13 @@ from dinkster_assets import (
     asset_selection_names,
     is_digest,
     load_file3d,
+    register_file3d_types,
 )
 from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver
 from dinkster_assets.vault import AssetPublicationError
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
+from dinkster_values import TypeRegistry
 from dinkster_values.builtin_types import CORE_STRING, FILE_3D_TYPE
 
 from .library import ServerLibrary, acquire_library_asset
@@ -97,6 +99,15 @@ def bind_model_names(
                 inputs[spec.id] = TypedLiteral(FILE_3D_TYPE, None)
                 continue
             if file3d_union and isinstance(value, Mapping):
+                registry = TypeRegistry()
+                register_file3d_types(registry, resolver)
+                packet = cast("dict[str, object]", registry.wrap(FILE_3D_TYPE, value).resolve())
+                loaded = load_file3d(
+                    cast("AssetRef | LocalAssetRef", packet["source"]),
+                    resources=cast("Mapping[str, AssetRef | LocalAssetRef]", packet["resources"]),
+                )
+                if packet["format"] and loaded is not None and packet["format"] != loaded["format"]:
+                    raise AssetError("FILE_3D format does not match its selected source")
                 inputs[spec.id] = (
                     raw
                     if isinstance(raw, TypedLiteral)

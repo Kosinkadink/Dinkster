@@ -34,7 +34,8 @@
   String-or-FILE_3D inputs bind legacy filename selections through those same
   grants and preserve canonical file values. Empty, null and `none` source
   selections normalize before asset validation without opening a file.
-  Missing, undeclared and traversing resources fail;
+  Canonical file submissions validate their source identity, format and declared
+  resources before queueing. Missing, undeclared and traversing resources fail;
   an empty selection produces no file. It never fetches external URLs.
   Format-specific sockets distinguish mesh, splat and point-cloud files.
   Generic and aggregate sockets preserve an empty format for consumers that
