@@ -131,6 +131,10 @@ class MacWorkflowReceiptTests(unittest.TestCase):
             ("mps", "completed", [], "accepted"),
             ("mps", "completed", [], "history"),
             ("mps", "completed", [], "no-output"),
+            ("mps", "completed", [], "memory-foreign"),
+            ("mps", "completed", [], "memory-empty"),
+            ("mps", "completed", [], "memory-duplicate"),
+            ("mps", "completed", [], "memory-zero"),
             ("mps", "completed", [], "mount-fresh"),
             ("mps", "completed", [], "mount-race"),
             ("mps", "completed", [], "mount-path"),
@@ -259,11 +263,31 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                                 "checkpoint": {
                                     "MODEL": {
                                         "meta": {
-                                            "resources": {"gpu": device},
+                                            "resourceId": "resident:checkpoint-model",
                                         }
                                     }
                                 }
                             },
+                        }
+                    elif route == "/memory/status?details=1":
+                        row = {
+                            "itemId": "foreign"
+                            if foreign == "memory-foreign"
+                            else "checkpoint-model",
+                            "displayName": "resident checkpoint",
+                            "bytesByResidency": {}
+                            if foreign == "memory-empty"
+                            else {f"vram:{device}": 0 if foreign == "memory-zero" else 12345},
+                        }
+                        body = {
+                            "consumerDetails": {
+                                "dinkster-nodes-comfy:resident-values-0": [row, row]
+                                if foreign == "memory-duplicate"
+                                else [row],
+                                "other-pack:resident-values-0": [
+                                    dict(row, itemId="checkpoint-model")
+                                ],
+                            }
                         }
                     else:
                         body = {}
@@ -342,6 +366,11 @@ class MacWorkflowReceiptTests(unittest.TestCase):
                 diagnostics = validate(graph_from_wire(job["graph"]), SCHEMAS, job["targets"])
                 self.assertEqual([item for item in diagnostics if item.severity == "error"], [])
                 if report["status"] == "pass":
+                    self.assertEqual(report["engineDevice"], "mps")
+                    self.assertEqual(
+                        report["engineResident"]["resourceId"], "resident:checkpoint-model"
+                    )
+                    self.assertTrue((output / "memory-status.json").is_file())
                     self.assertTrue(report["installedStatusMatched"])
                     self.assertEqual(report["installedCommit"], STARTER_COMMIT)
                     self.assertEqual(report["installedGeneration"], 2)

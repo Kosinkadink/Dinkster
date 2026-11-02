@@ -17,6 +17,7 @@ from dinkster_values import (
     resident_owners,
     resident_resource_id,
 )
+from dinkster_values.resident import comfy_resident_meta
 
 from .details import ConsumerItem
 from .governor import PressureSignal
@@ -581,7 +582,7 @@ def default_pool() -> ResidentPool:
     global _pool  # noqa: PLW0603 - process-local singleton
     with _pool_lock:
         if _pool is None:
-            _pool = ResidentPool()
+            _pool = ResidentPool(cost_of=comfy_resident_meta)
         return _pool
 
 
