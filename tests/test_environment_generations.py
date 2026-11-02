@@ -18,6 +18,8 @@ import pytest
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
+    prepare_engine_interpreter,
+    prepare_registry_inputs,
     stage_pack_sources,
 )
 from dinkster_supervisor.environment_state import (
@@ -45,6 +47,90 @@ def _wheel(directory: Path, name: str, version: str, value: int) -> tuple[Path, 
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("mode", ["locks", "empty", "refuse", "escape", "explicit"])
+def test_registry_preparation_allows_custom_locks_from_selected_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from tests.fixtures.environments.build import wheel
+
+    store = tmp_path / "store"
+    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    wheels = store / "wheels"
+    wheels.mkdir()
+    archive = wheel(wheels, "fixture_engine", "1.0", 73, engine=True)
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(
+        f"fixture-engine==1.0 --hash=sha256:{hashlib.sha256(archive.read_bytes()).hexdigest()}\n"
+    )
+    monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "path")
+    explicit = tmp_path / "provided.pack-lock.json"
+    explicit.write_text("explicit input bytes")
+    captured: list[Path] = []
+
+    def custom(engine: Path, catalog: Path, artifacts: Path, output: Path) -> tuple[Path, ...]:
+        captured.append(engine.parent)
+        assert (engine / "constraints.txt").read_bytes() == constraints.read_bytes()
+        assert json.loads(catalog.read_text())["packs"] == []
+        assert artifacts.is_dir()
+        result = subprocess.check_output(
+            [
+                str(interpreter(engine)),
+                "-I",
+                "-B",
+                "-c",
+                "import fixture_engine; print(fixture_engine.VALUE)",
+            ]
+        )
+        assert result.strip() == b"73"
+        if mode in {"refuse", "explicit"}:
+            raise EnvironmentError("custom lock preparation refused")
+        output.mkdir()
+        if mode == "empty":
+            return ()
+        if mode == "escape":
+            return (explicit,)
+        path = output / "custom.pack-lock.json"
+        path.write_text(
+            '{"format":"dinkster.pack-lock/1","pack":"custom","variant":"unpublished-custom","requiresPython":">=3.12","requirements":[],"indexes":[],"packages":[]}'
+        )
+        return (path,)
+
+    def prepare() -> None:
+        with prepare_registry_inputs(
+            store=store,
+            base="sha256:" + "a" * 64,
+            constraints=constraints,
+            variant="unpublished-custom",
+            engine_version="1.0",
+            project=tmp_path / "project",
+            prepare_locks=custom,
+            pack_locks=(explicit,) if mode == "explicit" else (),
+        ) as (catalog, artifacts, locks, unavailable):
+            assert catalog.is_file() and artifacts.is_dir()
+            assert unavailable == {"fixture-pack": "registry offline"}
+            if mode == "explicit":
+                assert locks == (explicit,)
+            elif mode == "empty":
+                assert locks == ()
+            else:
+                assert len(locks) == 1
+                assert json.loads(locks[0].read_text())["variant"] == "unpublished-custom"
+                assert locks[0].parent.parent == catalog.parent == artifacts.parent
+
+    if mode in {"refuse", "escape"}:
+        with pytest.raises(
+            EnvironmentError,
+            match="custom lock preparation refused" if mode == "refuse" else "invalid lock paths",
+        ):
+            prepare()
+    else:
+        prepare()
+    assert all(not path.exists() for path in captured)
+    assert not list(store.glob(".registry-*"))
+    assert not (tmp_path / "project").exists()
+    assert explicit.read_text() == "explicit input bytes"
+
+
 def _standalone_tree(root: Path) -> None:
     source = Path(sys.base_prefix)
     if os.name == "nt":
@@ -70,6 +156,73 @@ def _standalone_tree(root: Path) -> None:
             path = Path(sysconfig.get_config_var("LIBDIR")) / library
             if path.is_file():
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
+
+
+@pytest.mark.parametrize("cached", ["exact", "absent", "corrupt", "directory", "changed-copy"])
+def test_generation_retains_verified_engine_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: str
+) -> None:
+    root, store = tmp_path / "project", tmp_path / "store"
+    base_id = "sha256:" + "a" * 64
+    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    raw = b'{  "version": "0.5", "unknown": [3, 1] }\r\n'
+    release = hashlib.sha256(raw).hexdigest()
+    cached_manifest = store / "engines" / release / "release-manifest.json"
+    if cached != "absent":
+        cached_manifest.parent.mkdir(parents=True)
+        if cached == "directory":
+            cached_manifest.mkdir()
+        else:
+            cached_manifest.write_bytes(raw if cached != "corrupt" else b"corrupt")
+    if cached == "changed-copy":
+        copyfile = shutil.copyfile
+
+        def change_copy(src, dst, **kwargs):
+            result = copyfile(src, dst, **kwargs)
+            if Path(dst).name == "engine-manifest.json":
+                Path(dst).write_bytes(b"changed after copying")
+            return result
+
+        monkeypatch.setattr(shutil, "copyfile", change_copy)
+    callbacks: list[Path] = []
+
+    def prepare(target: Path) -> None:
+        callbacks.append(target)
+        if cached == "exact":
+            assert (target / "engine-manifest.json").read_bytes() == raw
+
+    def build():
+        return build_generation(
+            root=root,
+            number=1,
+            store=store,
+            base=base_id,
+            engine_version="0.5",
+            engine_release="sha256:" + release,
+            constraints=constraints,
+            variant="win-cpu" if os.name == "nt" else "linux-cpu",
+            worker_protocol=1,
+            prepare_packs=prepare,
+        )
+
+    target = root / "generations" / "1"
+    if cached in {"corrupt", "directory", "changed-copy"}:
+        with pytest.raises((EnvironmentError, OSError)):
+            build()
+        assert not target.exists()
+        assert callbacks == []
+    else:
+        generation = build()
+        assert callbacks == [target]
+        assert generation.drift(target) == ()
+        if cached == "exact":
+            assert (target / "engine-manifest.json").read_bytes() == raw
+            assert dict(generation.files)["engine-manifest.json"] == "sha256:" + release
+        else:
+            assert not (target / "engine-manifest.json").exists()
+    assert read_current(root) is None
 
 
 def _workspace_tree(root: Path) -> Path:
@@ -342,7 +495,13 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         channel["engine"]["release"] = "sha256:" + identity
         channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
         channel_path.write_bytes(publisher.canonical_json(channel))
-        code, result = _run(root, *fixture["commands"]["setup"][5:], "--yes")
+        code, result = _run(
+            root,
+            *fixture["commands"]["setup"][5:],
+            "--pack-lock",
+            str(release.parent / identity / lock_path.name),
+            "--yes",
+        )
         if provisioner == "without-acquire":
             assert code == 1, result
             assert "selected engine cannot acquire missing pack wheels" in result["error"]
@@ -970,6 +1129,37 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert first.in_process_packs == ("fixture",)
     first_dir = root / "generations" / "1"
     set_current(root, 1)
+    constraints.write_text(
+        f"stable-fixture==1.0 --hash=sha256:{stable_hash}\n"
+        f"changed-fixture==2.0 --hash=sha256:{second_hash}\n"
+    )
+    scratch = store / "preflight"
+    target = prepare_engine_interpreter(
+        scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+    )
+    assert (
+        subprocess.check_output(
+            [
+                str(target),
+                "-B",
+                "-c",
+                "import stable_fixture,changed_fixture; "
+                "print(stable_fixture.VALUE+changed_fixture.VALUE)",
+            ]
+        ).strip()
+        == b"47"
+    )
+    assert {path.name for path in scratch.iterdir()} == {"python", "constraints.txt"}
+    assert read_current(root) == 1
+    assert first.drift(first_dir) == ()
+    assert not list(base.rglob("stable_fixture.py"))
+    assert not list(base.rglob("changed_fixture.py"))
+    with pytest.raises(EnvironmentError, match="destination already exists"):
+        prepare_engine_interpreter(
+            scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+        )
+    assert target.is_file()
+    shutil.rmtree(scratch)
     second = build(2, "2.0", second_hash)
     second_dir = root / "generations" / "2"
     assert read_current(root) == 1
