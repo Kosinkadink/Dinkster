@@ -64,6 +64,7 @@ from dinkster_values import (
     register_video_edit_type,
     validate_latent_encoded,
 )
+from dinkster_values.resident import comfy_resident_meta
 
 from .camera_wire import register_load3d_camera_type, register_load3d_model_info_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
@@ -150,6 +151,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
                 registry,
                 type_id,
                 table=table,
+                meta=comfy_resident_meta,
                 coerce=(
                     normalize_hook_owners
                     if type_id == HOOKS_TYPE

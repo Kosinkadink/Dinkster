@@ -18,6 +18,9 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_extension_factory_guard.py \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
+  tests/test_macos_workflow_receipt.py \
+  tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
+  tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
@@ -26,6 +29,11 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
+  tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
+  tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
+  tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
+  tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_canonical_bytes \
@@ -60,6 +68,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
   tests/test_compose.py::test_exact_node_claims_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
+  tests/test_compose.py::test_vision_pack_license_checkout_endings_do_not_change_digest \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
   tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency

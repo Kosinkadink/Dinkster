@@ -127,6 +127,41 @@ def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Pa
     assert json.loads((root / ".run/environment-base.json").read_text())["id"] == base["id"]
 
 
+@pytest.mark.parametrize(
+    "host,arch,variant",
+    [
+        ("Linux", "x86_64", "linux-cpu"),
+        ("Windows", "AMD64", "win-cpu"),
+        ("Darwin", "arm64", "mac-arm64"),
+    ],
+)
+def test_setup_reads_only_host_manifests(tmp_path, monkeypatch, host, arch, variant):
+    from dinkster_supervisor import environment_artifacts
+    from test_environment_artifacts import _mirror
+
+    mirror, root = tmp_path / "mirror", tmp_path / "checkout"
+    target = {
+        "Linux": ("linux", "x86_64"),
+        "Windows": ("windows", "x86_64"),
+        "Darwin": ("macos", "arm64"),
+    }[host]
+    base, _, _ = _mirror(mirror, variant=variant, target=target)
+    (root / "scripts").mkdir(parents=True)
+    selections = {name: "0" * 64 for name in ("linux-cpu", "win-cpu", "mac-arm64")}
+    selections[variant] = base["id"][7:]
+    (root / "scripts/base_bundles.json").write_text(json.dumps(selections))
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: host)
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: arch)
+
+    def stop_after_selection(selected, mirrors, store):
+        assert selected["id"] == base["id"]
+        raise RuntimeError("selected host base acquired")
+
+    monkeypatch.setattr(environment_artifacts, "acquire_base", stop_after_selection)
+    with pytest.raises(RuntimeError, match="selected host base acquired"):
+        setup_envs.setup(root, mirror=str(mirror), variant=variant)
+
+
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
 def test_apple_silicon_selects_mac_bundle_without_cuda_probe(bases, monkeypatch, arch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
@@ -150,6 +185,9 @@ def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
     script.write_text(
         "import json, os, sys\n"
         "from pathlib import Path\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('uv 0.13.6 (fixture)')\n"
+        "    sys.exit(0)\n"
         "Path(os.environ['SETUP_PROBE']).write_text(json.dumps({\n"
         "'project': os.environ.get('UV_PROJECT'),\n"
         "'environment': os.environ.get('UV_PROJECT_ENVIRONMENT'),\n"
@@ -186,6 +224,61 @@ def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
     assert Path(observed["cwd"]) == root
     assert observed["args"] == ["sync", "--locked", "--package", "dinkster-supervisor", "--no-dev"]
     assert not (tmp_path / "wrong-environment").exists()
+
+
+@pytest.mark.parametrize(
+    "version,accepted",
+    [
+        ("uv 0.12.5 (9d8136592 2026-09-01)\n", False),
+        ("uv 0.13.5\n", False),
+        ("uv 0.13.6 (abc123456 2026-10-27)\n", True),
+        ("uv 0.13.6\r\n", True),
+        ("uv 0.14.0 (Homebrew)\n", True),
+        ("uv 0.13.60\n", True),
+    ],
+)
+def test_windows_uv_minimum_names_required_interpreter(monkeypatch, version, accepted):
+    from scripts.prepare_windows_python import require_uv_version
+
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: version)
+    if accepted:
+        require_uv_version()
+    else:
+        with pytest.raises(RuntimeError) as error:
+            require_uv_version()
+        assert version.strip() in str(error.value)
+        assert "uv >= 0.13.6" in str(error.value)
+        assert "CPython 3.14.10" in str(error.value)
+
+
+@pytest.mark.parametrize("entry", ["setup", "bootstrapped-setup", "prepare"])
+def test_old_uv_refuses_before_setup_side_effects(tmp_path, monkeypatch, entry):
+    from scripts import prepare_windows_python
+
+    calls = []
+
+    def uv_version(arguments, **kwargs):
+        calls.append(arguments)
+        assert arguments == ["uv", "--version"]
+        return "uv 0.12.5 (fixture)\n"
+
+    monkeypatch.setattr(subprocess, "check_output", uv_version)
+    monkeypatch.setattr(setup_envs, "ROOT", tmp_path)
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    monkeypatch.setattr(sys, "argv", ["setup_envs.py"])
+    monkeypatch.delenv("DINKSTER_SETUP_BOOTSTRAPPED", raising=False)
+    if entry == "bootstrapped-setup":
+        monkeypatch.setenv("DINKSTER_SETUP_BOOTSTRAPPED", "1")
+    with pytest.raises(RuntimeError, match="CPython 3.14.10"):
+        if entry == "prepare":
+            prepare_windows_python.prepare(tmp_path / "python", "uv")
+        else:
+            setup_envs.main()
+    assert calls == [["uv", "--version"]]
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows runtime admission")

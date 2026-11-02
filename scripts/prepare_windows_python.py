@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,11 +19,26 @@ INPUTS = {
     "windows_sqlite.py": "9f681989e1928d979868f2acbbb5be88d587c1e6f7c97216b3e777a963208b95",
     "variants.toml": "6c13daa5b35c65c787c859d85bae44a2d463678269c54fcf4ac4141c3ba64db8",
 }
+MINIMUM_UV_VERSION = (0, 13, 6)
+PINNED_PYTHON_VERSION = "3.14.10"
+
+
+def require_uv_version(uv: str = "uv") -> None:
+    executable = shutil.which(uv) or uv
+    installed = subprocess.check_output([executable, "--version"], text=True, timeout=10).strip()
+    match = re.match(r"uv (\d+)\.(\d+)\.(\d+)(?:\s|$)", installed)
+    if match is None or tuple(map(int, match.groups())) < MINIMUM_UV_VERSION:
+        minimum = ".".join(map(str, MINIMUM_UV_VERSION))
+        raise RuntimeError(
+            f"Installed {installed!r}; uv >= {minimum} is required for pinned "
+            f"CPython {PINNED_PYTHON_VERSION}. Install a supported uv version before setup."
+        )
 
 
 def prepare(output: Path, uv: str) -> Path:
     if sys.platform != "win32":
         raise RuntimeError("Windows runtime preparation requires native Windows")
+    require_uv_version(uv)
     with tempfile.TemporaryDirectory(prefix="dinkster-windows-python-") as temporary:
         work = Path(temporary)
         for filename, digest in INPUTS.items():
@@ -84,4 +101,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from None
