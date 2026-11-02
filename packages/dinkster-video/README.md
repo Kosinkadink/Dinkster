@@ -60,9 +60,9 @@ controls, not permission to execute VHS format JSON.
 | `image/gif` | Save Animation or PNG Sequence: `format=gif_pillow`, `loop` | Pillow per-frame quantization, disposal 2; no full decoded frame list |
 | `ffmpeg-gif` | `format=gif_ffmpeg`, `loop`, `dither` | All nine pinned paletteuse dithers; per-frame palettegen rather than an unbounded whole-video palette |
 | `image/webp` | `format=webp`, `loop`, `lossless`, `quality` | Independent compressed frames in ANMF chunks; straight alpha retained |
-| `h264-mp4` | Save Video: `container=mp4`, `codec=h264`, `crf` | 8/10-bit YUV420 selected by VIDEO precision; fixed fast/zerolatency preset |
+| `h264-mp4` | Save Video: `container=mp4`, `codec=h264`, `crf` | 8/10-bit YUV420 selected by VIDEO precision; CRF 18, encoder default medium preset, no low-latency tuning |
 | `h265-mp4` | `container=mp4`, `codec=hevc` (`h265` also accepted), `crf` | hvc1 tag, 8/10-bit YUV420, medium/zerolatency preset, bounded CPU threads |
-| `av1-webm` | `container=webm`, `codec=av1`, `crf` | 8/10-bit YUV420; alpha uses preserving FFV1 fallback because the configured CPU encoder has no alpha side-data support; fixed SVT preset 8, one logical processor, low-delay prediction, no lookahead/temporal filter |
+| `av1-webm` | `container=webm`, `codec=av1`, `crf` | 8/10-bit YUV420; alpha uses preserving FFV1 fallback because the configured CPU encoder has no alpha side-data support; CRF 24, SVT preset 8, one logical processor, standard quality behavior |
 | `webm` | `container=webm`, `codec=vp9` or `vp8`, `crf` | VP9 8-bit alpha uses yuva420p; zero encoder lag; Opus audio, not VHS's libvorbis |
 | `ProRes` | `container=mov`, `codec=prores`, `profile=auto/lt/standard/hq/4444/4444xq` | 10-bit YUV422 or YUV444; alpha uses yuva444p10le, 16-bit ProRes alpha coding, PCM audio |
 | `ffv1-mkv` | `container=mkv`, `codec=ffv1` | Lossless RGB/RGBA at 8 or 16 bits, FLAC audio; fixed level 3, coder 1, context 0 and four slices (bounded probability-model memory), GOP 1, slice CRC 1 |
