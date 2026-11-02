@@ -270,11 +270,14 @@ sha256, size)` downloads a known artifact from ordered local directories or
 HTTPS mirrors (HTTP is limited to loopback fixtures). Its digest argument is
 bare lowercase hexadecimal, not a `sha256:` identifier. Transfers hash bytes
 while streaming, retain interrupted `.part` files and validate exact HTTP
-range offsets on resume. A corrupt saved prefix retries once from zero;
-an ignored Range also restarts from zero. Final publication requires both
-the expected size and digest. Signed query redirects are allowed without
-logging their URLs; external non-TLS redirects and credential-bearing mirror
-URLs are rejected. Calls have a bounded per-socket network timeout.
+range offsets on resume. Remote size/digest failures share the three-attempt
+network retry budget: short bodies resume, full corrupt bodies restart from
+zero, and every failed attempt appears in terminal errors. Local mirrors do
+not use that retry loop. An ignored Range also restarts from zero. Final
+publication requires both the expected size and digest. Signed query redirects
+are allowed without logging their URLs; external non-TLS redirects and
+credential-bearing mirror URLs are rejected. Calls have a bounded per-socket
+network timeout.
 
 `environment_artifacts.discover(mirrors, channel)` reads bounded metadata
 without creating a project, cache or store. It verifies engine manifest bytes
