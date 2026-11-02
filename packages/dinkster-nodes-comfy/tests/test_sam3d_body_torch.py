@@ -949,7 +949,7 @@ class ExpressionInspect(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("expression", (True, False))
 def test_smoothing_ordinary_hosts_twice(tmp_path: Path, in_process: bool, expression: bool) -> None:
-    module = f"sam3d_fixture_{int(in_process)}_{int(expression)}"
+    module = f"sam3d_expression_fixture_{int(in_process)}_{int(expression)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_body_torch import Source, Inspect, ExpressionSource, ExpressionInspect\n"
         "from dinkster_api.v1 import register_inference_types\n"
@@ -1033,6 +1033,8 @@ def test_smoothing_ordinary_hosts_twice(tmp_path: Path, in_process: bool, expres
             await composer.close()
 
     asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("prediction", (True, False))
 def test_sam3d_ordinary_hosts_twice(tmp_path: Path, in_process: bool, prediction: bool) -> None:
