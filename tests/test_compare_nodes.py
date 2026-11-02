@@ -694,7 +694,7 @@ def test_exact_ids_and_file_widget_exemption(
                     "required": {
                         "file": [["original.safetensors"]]
                         if reference_type == "COMBO"
-                        else ["STRING", {"default": ""}]
+                        else ["STRING", {"default": "original.safetensors"}]
                     }
                 },
                 "return_types": ["MODEL"],
@@ -722,6 +722,10 @@ def test_exact_ids_and_file_widget_exemption(
     }
     registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
     summary = compare_registry(reference, registry)
+    if reference_type == "STRING":
+        assert not summary["passed"]
+        assert summary["counts"] == {"differs": 1, "Dinkster-only": 1}
+        return
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
 
@@ -793,6 +797,54 @@ def test_exact_ids_and_file_widget_exemption(
     summary = compare_registry(reference, registry)
     assert not summary["passed"]
     assert summary["counts"] == {"absent": 1, "Dinkster-only": 1}
+
+
+def test_painter_empty_file_uses_an_optional_asset_without_losing_other_contracts() -> None:
+    from copy import deepcopy
+
+    from dinkster_nodes_comfy.image_file_tools import Painter
+    from dinkster_schema import schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+
+    reference = json.loads(
+        (Path(__file__).parents[1] / "tools/data/comfy_core_reference.json").read_text()
+    )
+    row = next(node for node in reference["nodes"] if node["class_name"] == "Painter")
+    reference = {"nodes": [row]}
+    schema: dict[str, Any] = schema_to_wire(Painter.define_schema())
+    registry = {"nodes": {"Painter": schema}}
+    assert compare_registry(reference, registry)["passed"]
+
+    changed = deepcopy(reference)
+    changed["nodes"][0]["input_types"]["required"]["mask"][1]["default"] = "paint.png"
+    assert not compare_registry(changed, registry)["passed"]
+    required = deepcopy(schema)
+    next(item for item in required["interface"] if item["id"] == "mask")["required"] = True
+    assert not compare_registry(changed, {"nodes": {"Painter": required}})["passed"]
+    changed = deepcopy(reference)
+    changed["nodes"][0]["file_inputs"] = []
+    del changed["nodes"][0]["input_types"]["required"]["mask"][1]["file_input"]
+    assert not compare_registry(changed, registry)["passed"]
+
+    for field, value in (
+        ("required", True),
+        ("default", "paint.png"),
+        ("id", "paint"),
+        ("socketless", False),
+        ("hidden", True),
+        ("type", {"kind": "list", "element": {"kind": "concrete", "types": ["ASSET"]}}),
+    ):
+        changed = deepcopy(schema)
+        mask = next(item for item in changed["interface"] if item["id"] == "mask")
+        mask[field] = value
+        assert not compare_registry(reference, {"nodes": {"Painter": changed}})["passed"]
+    changed = deepcopy(schema)
+    changed["interface"][0], changed["interface"][1] = (
+        changed["interface"][1],
+        changed["interface"][0],
+    )
+    assert not compare_registry(reference, {"nodes": {"Painter": changed}})["passed"]
 
 
 @pytest.fixture
