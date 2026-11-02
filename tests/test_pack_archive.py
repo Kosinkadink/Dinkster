@@ -1231,6 +1231,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
     (tests / "test_image_nodes.py").write_text(
         "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
+        "import tomllib\n"
         "from pathlib import Path\nimport dinkster_nodes_image\n"
         "from dinkster_nodes_image import VALUE\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
@@ -1239,6 +1240,12 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
         "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
+        "    assert tomllib.loads((pack_root / 'pyproject.toml').read_text()) "
+        "== {'project': {'name': 'selected-image'}}\n"
+        "    from dinkster.compose import default_pack_spec\n"
+        "    info = default_pack_spec('dinkster-nodes-image').packs['dinkster-nodes-image']\n"
+        "    assert info.version == '1.2.3'\n"
+        "    assert info.source == f'local:{pack_root}'\n"
         "    assert Path(dinkster_nodes_image.__file__).resolve()"
         ".is_relative_to(pack_root / 'src')\n"
         "    assert (pack_root / 'dinkster_nodes_image/__init__.py').resolve(strict=True) "
@@ -1257,6 +1264,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
     source = tmp_path / "selected"
     source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nname = "selected-image"\n')
     (source / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
@@ -1288,6 +1296,9 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     )
     if problem is None:
         run_selected_tests(engine, catalog, artifacts)
+    elif problem == "missing":
+        with pytest.raises(ValueError, match="archive is missing declared module"):
+            run_selected_tests(engine, catalog, artifacts)
     else:
         with pytest.raises(subprocess.CalledProcessError):
             run_selected_tests(engine, catalog, artifacts)

@@ -1300,7 +1300,7 @@ def _installed_pack_spec(
             (
                 parent / f"{sidecar}_pack" / "dinkster-pack.toml"
                 for parent in Path(module.origin).resolve().parents
-                if (parent / "pyproject.toml").is_file()
+                if Path(module.origin).resolve().is_relative_to(parent / "src")
                 and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
             ),
             None,

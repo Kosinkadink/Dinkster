@@ -11,10 +11,13 @@ import sys
 import sysconfig
 import tempfile
 import venv
+from dataclasses import replace
 from pathlib import Path
 
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_workers import load_manifest
+
+from dinkster.compose import _installed_pack_digest
 
 _SUITES = {
     "dinkster-nodes-foundation": (
@@ -83,7 +86,7 @@ _SUITES = {
 def run_selected_tests(
     root: Path, catalog: Lockfile, artifacts: Path, *, test_packs: tuple[str, ...] = ()
 ) -> None:
-    """Use the scanner's exact selection, never resolve or build a second archive."""
+    """Test only the scanner's verified selection through a disposable checkout layout."""
     if sys.platform != "linux":
         raise RuntimeError("selected pack admission tests require the Linux CI environment")
     unknown = {pack.pack for pack in catalog.packs} - _SUITES.keys()
@@ -119,6 +122,7 @@ def run_selected_tests(
             shutil.copy2(source, destination)
         module_roots: list[str] = []
         modules: dict[str, str] = {}
+        checkout_packs = []
         for pack in catalog.packs:
             if pack.pack.startswith("dinkster-vision-"):
                 package = checkout / "packages/dinkster-nodes-vision"
@@ -161,8 +165,21 @@ def run_selected_tests(
             module_roots.append(str(src))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(src / entry.replace(".", "/"))
+            if not Path(modules[entry]).is_dir():
+                raise ValueError(f"selected {pack.pack} archive is missing declared module {entry}")
+            # A checkout excludes publication metadata and relocates modules.
+            # Its local identity is not the selected registry archive identity.
+            checkout_packs.append(
+                replace(
+                    pack,
+                    artifact_digest=_installed_pack_digest(
+                        destination / "dinkster-pack.toml", Path(modules[entry])
+                    ),
+                    source=f"local:{destination}",
+                )
+            )
         (checkout / "src/dinkster/checkout-packs.lock").write_text(
-            catalog.record_json(), encoding="utf-8"
+            Lockfile.of(checkout_packs).record_json(), encoding="utf-8"
         )
         environment = work / "venv"
         venv.EnvBuilder(with_pip=False).create(environment)
