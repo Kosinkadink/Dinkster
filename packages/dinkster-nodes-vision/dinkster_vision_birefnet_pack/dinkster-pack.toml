@@ -1,12 +1,12 @@
 [pack]
 name = "dinkster-vision-birefnet"
-version = "0.0.2"
+version = "0.0.3"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.image.matte"]
 requires = [
-    "dinkster-inference==0.1.0",
+    "dinkster-inference==0.1.1",
     "numpy",
     "safetensors==0.8.0",
     "torch",
