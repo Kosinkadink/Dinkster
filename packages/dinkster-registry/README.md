@@ -96,13 +96,23 @@ omitting it preserves raw-ZIP submission. Local validation completes before the
 first request, but separate release submissions are not a registry transaction.
 A queued receipt is not an admission verdict.
 
-`.github/workflows/official-packs.yml` builds and preflights changed packs on
-main pushes, pull requests, or exact pack tags. It uses the newest published
-engine's verified inputs and requires each selected pack to admit that engine.
-All six supported bases resolve locks on native hosts without building an
-engine. Only trusted `Kosinkadink/Dinkster` main pushes receive the existing
-submission credential; PR, fork and tag refs never submit. A missing credential
-refuses. Registry versions are immutable, so changed packs need new manifest
+`.github/workflows/official-packs.yml` publishes after the same commit's
+successful `Versioned wheel release` run on trusted `Kosinkadink/Dinkster`
+main. It fetches `main-COMMIT` and verifies the engine manifest's repository,
+tag and commit, never selecting by publication time. Failed engine releases
+publish nothing. Pack changes select their owners; engine dependency or
+publication-workflow changes select all current packs. Unrelated engine-only
+changes select none. All six supported bases resolve locks on native hosts.
+
+PRs resolve native locks using their candidate-head locked engine dependencies,
+not an older published engine. This preflight does not claim a released engine.
+It compares archive digest/size and every supported-base install lock with any
+existing published pack version. Changed bytes fail naming the pack and requiring
+a pack version bump. Publication repeats this check before the first submission;
+identical submissions remain idempotent, and a conflicting submission fails
+without retry. Exact pack tags do not submit. PR, fork and tag refs never receive the
+submission credential. A missing credential refuses submission. Registry
+versions and lock bindings are immutable, so changed bytes need new manifest
 versions. Publication does not imply that scanner admission has completed.
 
 ## Template catalog
