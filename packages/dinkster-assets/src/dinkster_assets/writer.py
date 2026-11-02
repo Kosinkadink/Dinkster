@@ -42,6 +42,7 @@ from typing import BinaryIO, Protocol, cast
 from dinkster_values import MEBIBYTE
 from dinkster_values.asset_folders import current_asset_folders
 
+from .file3d import validate_resource_name
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
 from .library import INDEX_NAME, append_write_record, load_write_records
@@ -311,6 +312,7 @@ class AssetWriter:
         files: set[str] = set()
         folders: set[str] = set()
         for name in sources:
+            validate_resource_name(name)
             self._validated_named_target(SaveTarget(parsed.mount, name), limit)
             parts = name.split("/")
             for index in range(1, len(parts) + 1):

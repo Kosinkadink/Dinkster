@@ -53,7 +53,7 @@ FILE3D_FORMATS = {
 }
 
 
-def _resource_name(name: object) -> str:
+def validate_resource_name(name: object) -> str:
     if (
         not isinstance(name, str)
         or not name
@@ -74,7 +74,7 @@ def _gltf_resource_name(uri: object) -> str:
     parsed = urlsplit(uri)
     if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
         raise AssetError("FILE_3D resource URI must be a contained relative path")
-    return _resource_name(unquote(parsed.path, errors="strict"))
+    return validate_resource_name(unquote(parsed.path, errors="strict"))
 
 
 def _mtl_texture_name(declaration: str) -> str:
@@ -127,7 +127,7 @@ def _mtl_texture_name(declaration: str) -> str:
         if len(names) != 1:
             raise AssetError("MTL texture declaration requires one filename")
         remainder = names[0]
-    return _resource_name(remainder)
+    return validate_resource_name(remainder)
 
 
 def load_file3d(
@@ -154,7 +154,7 @@ def load_file3d(
     supplied = dict(resources) if resources is not None else None
     if supplied is not None:
         for name in supplied:
-            _resource_name(name)
+            validate_resource_name(name)
     bound: dict[str, AssetRef | LocalAssetRef] = {}
     snapshot = os.environ.get(MOUNTS_ENV)
     resolver = (
@@ -166,7 +166,7 @@ def load_file3d(
     )
 
     def bind(name: str) -> AssetRef | LocalAssetRef:
-        name = _resource_name(name)
+        name = validate_resource_name(name)
         if name in bound:
             return bound[name]
         ref = supplied.get(name) if supplied is not None else None
@@ -286,7 +286,7 @@ def register_file3d_types(
             raise AssetError("FILE_3D resources must map contained relative names to assets")
         bound: dict[str, AssetRef | LocalAssetRef] = {}
         for name, ref in cast("Mapping[object, object]", resources).items():
-            bound[_resource_name(name)] = asset(ref)
+            bound[validate_resource_name(name)] = asset(ref)
         return {"format": format_id, "source": asset(obj.get("source")), "resources": bound}
 
     def wire(value: object) -> dict[str, object] | None:

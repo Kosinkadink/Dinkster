@@ -717,6 +717,8 @@ def test_named_stream_export_preserves_relative_names_bytes_and_publication(tmp_
         ("CON.txt",),
         (".dinkster-save-file",),
         ("bad. ",),
+        ("scene.gltf", "mesh%2Fdata.bin"),
+        ("scene.gltf", "mesh#part.bin"),
         ("a", "A"),
         ("mesh", "mesh/data.bin"),
         ("Mesh/a", "mesh/b"),
