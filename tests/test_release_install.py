@@ -257,14 +257,16 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
-def test_release_lock_matrix_uses_each_selected_base_native_host(
+def test_release_acquires_each_selected_base_without_pack_lock_matrix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from scripts import acquire_engine_bases
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     selection = next(
-        step["run"] for step in workflow["jobs"]["build"]["steps"] if step.get("id") == "bases"
+        step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if step.get("name") == "Acquire the selected published base manifests"
     )
     paths = []
     for variant, system in (
@@ -279,23 +281,32 @@ def test_release_lock_matrix_uses_each_selected_base_native_host(
         path.write_text(json.dumps({"variant": variant, "platform": {"os": system}}))
         paths.append(path)
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts/base_bundles.json").write_text("{}")
+    (tmp_path / "scripts/base_bundles.json").write_text(
+        json.dumps({path.stem: str(index) for index, path in enumerate(paths)})
+    )
     output = tmp_path / "outputs"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(acquire_engine_bases, "acquire", lambda *args: paths)
+    requested = []
+
+    def acquire(root, references, destination):
+        requested.extend(references)
+        assert root == tmp_path
+        assert destination == tmp_path / ".release/base-manifests"
+        return paths
+
+    monkeypatch.setattr(acquire_engine_bases, "acquire", acquire)
     script = selection.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     exec(compile(script, "release base selection", "exec"), {})
-    assert json.loads(output.read_text().removeprefix("lock-matrix=")) == {
-        "include": [
-            {"variant": "linux-cpu", "runner": "ubuntu-latest"},
-            {"variant": "linux-nvidia", "runner": "ubuntu-latest"},
-            {"variant": "mac-arm64", "runner": "macos-latest"},
-            {"variant": "win-cpu", "runner": "windows-latest"},
-            {"variant": "win-nvidia", "runner": "windows-latest"},
-            {"variant": "win-nvidia-cu126", "runner": "windows-latest"},
-        ]
-    }
+    assert requested == [
+        "base-linux-cpu-0",
+        "base-linux-nvidia-1",
+        "base-mac-arm64-2",
+        "base-win-cpu-3",
+        "base-win-nvidia-4",
+        "base-win-nvidia-cu126-5",
+    ]
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
