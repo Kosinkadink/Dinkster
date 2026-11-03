@@ -30,21 +30,44 @@ class ProducedScratchState:
     def __init__(self, root: Path) -> None:
         self._root = root.absolute()
         self._path = self._root / ".produced-scratch.sqlite"
-        if is_link_or_junction(self._root) or is_link_or_junction(self._path):
+        self._lock_path = self._root / ".produced-scratch.sqlite.lock"
+        if any(is_link_or_junction(path) for path in (self._root, self._path, self._lock_path)):
             raise AssetError("produced scratch state must not be a symlink")
+
+    @contextmanager
+    def _write(self, *, create: bool = False) -> Generator[sqlite3.Connection]:
+        # Separate invocations and processes must serialize before SQLite's busy wait.
+        try:
+            with _lock(self._lock_path).acquire(timeout=5):
+                with (
+                    closing(
+                        sqlite3.connect(
+                            self._path.as_uri() + ("?mode=rwc" if create else "?mode=rw"),
+                            uri=True,
+                        )
+                    ) as db,
+                    db,
+                ):
+                    yield db
+        except Timeout as exc:
+            raise AssetError("produced scratch state is busy") from exc
 
     def bind(self, job: str, attempt: int) -> None:
         if not job or type(attempt) is not int or attempt < 1:
             raise AssetError("produced scratch requires a job and positive attempt")
         try:
-            with closing(sqlite3.connect(self._path)) as db, db:
+            with self._write(create=True) as db:
                 db.execute("BEGIN IMMEDIATE")
                 tables = {
                     row[0]
                     for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
                 if not tables:
-                    metadata = {self._path.name, self._path.name + "-journal"}
+                    metadata = {
+                        self._path.name,
+                        self._path.name + "-journal",
+                        self._lock_path.name,
+                    }
                     if any(path.name not in metadata for path in self._root.iterdir()):
                         raise AssetError("produced scratch contains untracked data")
                     db.execute(
@@ -69,7 +92,7 @@ class ProducedScratchState:
         if type(size) is not int or size < 0:
             raise AssetError("produced scratch size must be a nonnegative integer")
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with self._write() as db:
                 db.execute(
                     "INSERT OR IGNORE INTO publications (digest, size) VALUES (?, ?)",
                     (digest, size),
@@ -83,7 +106,7 @@ class ProducedScratchState:
 
     def offer(self, digests: Iterable[str]) -> None:
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with self._write() as db:
                 for digest in digests:
                     db.execute(
                         "UPDATE publications SET offered = 1 WHERE digest = ?",
@@ -95,7 +118,7 @@ class ProducedScratchState:
     def forget_publications(self, publications: tuple[tuple[str, int, bool], ...]) -> None:
         """Retire exact handoff rows only after owned scratch bytes have been removed."""
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with self._write() as db:
                 for digest, size, offered in publications:
                     changed = db.execute(
                         "DELETE FROM publications WHERE digest = ? AND size = ? AND offered = ?",

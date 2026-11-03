@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import shutil
+import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -269,9 +270,16 @@ def test_produced_scratch_refuses_missing_journal_without_reclassifying_bytes(
     assert ref.read_bytes() == b"keep recoverable source"
 
 
+@pytest.mark.parametrize("sqlite_timeout", [0, 5])
 def test_produced_scratch_parallel_invocations_share_job_without_losing_publications(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sqlite_timeout: int
 ) -> None:
+    connect = sqlite3.connect
+
+    def connect_without_wait(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        return connect(*args, **{**kwargs, "timeout": sqlite_timeout})
+
+    monkeypatch.setattr(sqlite3, "connect", connect_without_wait)
     env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
     contents = [f"distinct intermediate {index}".encode() for index in range(8)]
     ready = threading.Barrier(len(contents))

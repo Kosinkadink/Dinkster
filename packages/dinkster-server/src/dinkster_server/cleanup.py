@@ -286,6 +286,7 @@ def _remove_scratch(
                 # Keep ownership state for idempotent retries and job-attempt reuse.
                 if directory == root and name in {
                     ".produced-scratch.sqlite",
+                    ".produced-scratch.sqlite.lock",
                     ".produced-scratch.sqlite-journal",
                     ".produced-scratch.sqlite-wal",
                     ".produced-scratch.sqlite-shm",

@@ -88,7 +88,12 @@ def standalone_tree(root: Path) -> None:
                 shutil.copy2(path, root / path.name)
         shutil.copytree(source / "DLLs", root / "DLLs")
         shutil.copytree(
-            source / "Lib", root / "Lib", ignore=shutil.ignore_patterns("site-packages")
+            source / "Lib",
+            root / "Lib",
+            ignore=lambda directory, names: (
+                {"site-packages", "__pycache__"}
+                | ({"test"} if Path(directory) == source / "Lib" else set())
+            ),
         )
     else:
         (root / "bin").mkdir(parents=True)
