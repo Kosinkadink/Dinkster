@@ -20,6 +20,8 @@
   SAM 3.1 and upscale packs declare base-carried dependencies without exact pins.
   The generation's effective constraints select those versions; incompatible
   requirements still fail rather than shadowing the engine's packages.
+  Depth Anything v3 keeps its Pillow 12 minimum without rejecting a newer
+  Pillow selected by a user-defined base.
 - In-process pack dependencies stage only into a fresh, inactive generation;
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
@@ -131,6 +133,8 @@
   and recorded in-process or isolated hosting. Retained generations keep their
   own pack selection for rollback. Missing interpreters or changed source
   artifacts fail startup rather than falling back to installed distributions.
+  User-defined portable variant names do not require a published channel row
+  to start; an explicit engine variant must still match the generation.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
 - Stopped engine bindings retain their assigned ports across update and rollback;
@@ -201,6 +205,20 @@
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
   Default setup and Desktop remain published-bundle consumers.
+- Status and doctor identify an active user-defined base by its variant name,
+  torch version and torch index. The base's provenance is retained with the
+  generation rather than inferred from the current variants file.
+  Custom definitions name an exact torch version and HTTPS torch index;
+  their optional extras index defaults to PyPI.
+  Setup and update accept `--variants PATH`; otherwise definitions come from
+  the project or store `variants.toml`. An ordinary update retains the active
+  custom base even if its definition file has changed or disappeared. Pass
+  `--variants PATH` explicitly to rebuild from a changed definition. Retained
+  base metadata must still match the active generation's inventory.
+- Custom pack dependency preparation reads the exact selected source archives,
+  verifies their identities and resolves standard dependency locks against the
+  target generation's constraints. It does not rebuild packs from a checkout
+  or require a published lock for the custom variant.
 - Confirmed environment garbage collection keeps the current generation and its
   successful predecessor, and preserves cache references from other registered
   projects. Interrupted collection recovers before another confirmed mutation;
@@ -265,6 +283,15 @@
 - A server launched with `--engine-variant` supplies that declared target to
   workflow-open plans that omit `variant`. Explicit request variants remain
   available for read-only comparisons; no target is inferred from hardware.
+  A selected custom generation uses its validated base and inventoried torch
+  build metadata for device compatibility, without importing torch or probing
+  host hardware. Missing, nonliteral, repeated or conflicting device declarations
+  refuse planning rather than guessing a device. GPU-only packs still refuse a
+  CPU custom base. Unknown custom comparison targets require their own generation
+  rather than a guessed device.
+  Project plans can select that target with `--generation`; installed pack
+  versions still come from `--source-generation`. Applying a project plan checks
+  device compatibility against the target generation, not the previous base.
   Plans support packs supplied with either a directory or an explicit manifest
   path through `--pack`.
 - Local environment operators can run `python -m dinkster.workflow_requirements
