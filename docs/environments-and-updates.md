@@ -242,12 +242,12 @@ verification. The engine id hashes the final release-manifest.json bytes,
 including its trailing newline. New engine manifests carry a readable
 `label: YYYY-MM-DD-<public-version>` and UTC ISO 8601 `builtAt`, not `tag`.
 The label omits the PEP 440 local segment (`+...`); the manifest version and
-wheel filenames retain it. For example, `0.0.3.dev1793707626+g<commit>` uses
-label `2026-11-03-0.0.3.dev1793707626`.
+wheel filenames retain it. For example, `0.0.3.dev412+g<commit>` uses
+label `2026-11-03-0.0.3.dev412`.
 Publication derives the directory `<label>-<hash8>` and the main prerelease
 tag `main-<label>-<hash8>` after finalizing the bytes. Stable tags stay
 `v<version>`. Old manifests with `tag` and old hash-only paths remain valid;
-existing publications are never renamed. Base ids use the base producer's
+existing engine publications are never renamed. Base ids use the base producer's
 canonical identity fields. The local channel builder validates publisher
 manifests, engine payload hashes, worker protocols and effective constraints
 before atomically replacing one channel file. It does not select base releases
@@ -256,7 +256,9 @@ or publish artifacts itself.
 `stable` is written when a `vX.Y.Z` tag's release workflow finishes. `main`
 is written when a push to `main` finishes the same workflow without a
 version: the engine release it names is a prerelease of the next version
-identified by commit. Both channels are served by the same client code path
+identified by commit. Its development number counts commits since the last
+reachable `v` tag, or the entire history when no such tag exists; release
+checkouts fetch full history and tags. Both channels are served by the same client code path
 and differ only in the channel file. Published-base installs do not resolve on the user's machine:
 base wheels come from the base bundle, Dinkster wheels from the engine
 release, and non-base third-party wheels from their locked package origins

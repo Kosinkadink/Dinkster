@@ -71,10 +71,26 @@ def release_version(root: Path, tag: str) -> str:
 def development_version(root: Path) -> str:
     _, version = project_metadata(root / "pyproject.toml")
     major, minor, patch = (int(part) for part in version.split("."))
-    timestamp = subprocess.check_output(
-        ["git", "-C", str(root), "show", "-s", "--format=%ct", "HEAD"], text=True
+    tag = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(root),
+            "describe",
+            "--tags",
+            "--match",
+            "v[0-9]*",
+            "--abbrev=0",
+            "--always",
+            "HEAD",
+        ],
+        text=True,
     ).strip()
-    return f"{major}.{minor}.{patch + 1}.dev{timestamp}+g{git_head(root)}"
+    revision = f"{tag}..HEAD" if tag.startswith("v") else "HEAD"
+    count = subprocess.check_output(
+        ["git", "-C", str(root), "rev-list", "--count", revision], text=True
+    ).strip()
+    return f"{major}.{minor}.{patch + 1}.dev{count}+g{git_head(root)}"
 
 
 @contextmanager
