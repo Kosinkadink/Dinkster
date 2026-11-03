@@ -1258,7 +1258,8 @@ def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
             scratch_files = {
                 p: p.stat().st_size
                 for p in source.root.rglob("*")
-                if p.is_file() and p.name != ".produced-scratch.sqlite"
+                if p.is_file()
+                and p.name not in {".produced-scratch.sqlite", ".produced-scratch.sqlite.lock"}
             }
             response = await client.post("/api/library/storage/clear", json={})
             assert response.status == 200
@@ -1273,6 +1274,7 @@ def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
             assert (
                 result["temporaryBytes"]
                 == (source.root / ".produced-scratch.sqlite").stat().st_size
+                + (source.root / ".produced-scratch.sqlite.lock").stat().st_size
             )
             response = await client.post("/api/library/storage/clear", json={})
             assert response.status == 200
