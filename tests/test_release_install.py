@@ -2004,8 +2004,9 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             return f"base-{variant}-{identity[:8]}{'0' * 56}"
         return f"base-{variant}-{identity}" if publication == "alias" else requested
 
-    def index_response(url, **kwargs):
-        assert url == f"https://releases.dinkster.org/base/{variant}/index.json"
+    def index_response(request, **kwargs):
+        assert request.full_url == f"https://releases.dinkster.org/base/{variant}/index.json"
+        assert request.get_header("User-agent") == "dinkster-env"
         manifest = json.loads(payload)
         identity = manifest["id"]
         if mutation == "pinned-id":

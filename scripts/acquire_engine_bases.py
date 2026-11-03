@@ -12,7 +12,7 @@ import tomllib
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from packaging.requirements import Requirement
 from packaging.tags import compatible_tags, cpython_tags, mac_platforms
@@ -193,7 +193,11 @@ def acquire(root: Path, tags: list[str], output: Path) -> list[Path]:
                 variant, identity = pinned.groups()
                 try:
                     with urlopen(
-                        f"https://releases.dinkster.org/base/{variant}/index.json", timeout=120
+                        Request(
+                            f"https://releases.dinkster.org/base/{variant}/index.json",
+                            headers={"User-Agent": "dinkster-env"},
+                        ),
+                        timeout=120,
                     ) as response:
                         index = json.load(response)
                 except HTTPError as error:
