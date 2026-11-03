@@ -3471,9 +3471,12 @@ async def handle_submit(request: web.Request) -> web.Response:
         graph = lowered.graph
         targets = list(lowered.targets)
         with use_asset_folders(asset_folders):
-            graph, missing_names = await asyncio.to_thread(
-                bind_model_names, graph, execution.schemas, library
-            )
+            try:
+                graph, missing_names = await asyncio.to_thread(
+                    bind_model_names, graph, execution.schemas, library
+                )
+            except (AssetError, OSError, ValueError) as error:
+                raise _bad_request(str(error)) from error
         if missing_names:
             return web.json_response(
                 {"error": "assets-missing", "assets": missing_names}, status=409

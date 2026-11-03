@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -238,10 +240,165 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
     assert json.dumps(document) == before
 
 
-@pytest.mark.parametrize("engine_variant", [None, "linux-cpu", "win-nvidia", "linux-nvidia"])
-def test_public_plan_is_read_only_project_filtered_and_verified(
-    tmp_path: Path, engine_variant: str | None
+def custom_generation(root: Path, device: str) -> Path:
+    from dinkster_supervisor.environment_state import Generation, content_digest
+
+    generation = root / "generation"
+    generation.mkdir()
+    version_file = generation / "python/lib/python3.14/site-packages/torch/version.py"
+    version_file.parent.mkdir(parents=True)
+    version_file.write_text(
+        "__version__ = '2.5.0'\n"
+        + f"cuda: str | None = {repr('12.4') if device == 'cuda' else 'None'}\n"
+        + f"hip = {repr('6.0') if device == 'rocm' else 'None'}\n"
+        + f"xpu = {repr('2025.0') if device == 'xpu' else 'None'}\n"
+    )
+    base = {
+        "format": "dinkster.base/1",
+        "variant": "user-target",
+        "platform": {"os": "macos" if device == "mps" else "linux", "arch": "x86_64"},
+        "python": "3.14.10",
+        "interpreter": {"executable": "python/bin/python3"},
+        "wheels": [
+            {
+                "name": "torch",
+                "version": "2.5.0",
+                "lockedVersion": None,
+                "filename": "torch-2.5.0-py3-none-any.whl",
+                "size": 1,
+                "sha256": "a" * 64,
+                "index": "https://example.test/simple",
+                "url": "https://example.test/torch.whl",
+                "verification": "index",
+            }
+        ],
+        "replaces": ["torch"],
+        "workerProtocol": 1,
+        "nvidia": None,
+        "archive": {"format": "tar+zstd"},
+    }
+    base_id = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(base, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+                "ascii"
+            )
+        ).hexdigest()
+    )
+    base["id"] = base_id
+    base["archive"]["parts"] = [{"filename": "base.tar.zst.001", "size": 1, "sha256": "b" * 64}]
+    (generation / "base-manifest.json").write_text(json.dumps(base))
+    (generation / "constraints.txt").write_text("torch==2.5.0\n")
+    constraints = content_digest(generation / "constraints.txt")
+    Generation(
+        1,
+        base_id,
+        "0.0.2",
+        "sha256:" + "c" * 64,
+        constraints,
+        "user-target",
+        1,
+        (
+            ("base-manifest.json", content_digest(generation / "base-manifest.json")),
+            ("constraints.txt", constraints),
+            (version_file.relative_to(generation).as_posix(), content_digest(version_file)),
+        ),
+    ).write(generation / "generation.json")
+    (generation / "dinkster.lock").write_text(Lockfile().record_json())
+    return generation
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "rocm", "xpu", "mps"])
+def test_acquired_base_device_matches_sealed_target(tmp_path: Path, device: str) -> None:
+    from dinkster.workflow_requirements import acquired_base_device, generation_device
+
+    generation = custom_generation(tmp_path, device)
+    base = json.loads((generation / "base-manifest.json").read_bytes())
+    metadata = generation / "python/lib/python3.14/site-packages/torch/version.py"
+    wheel = tmp_path / base["wheels"][0]["filename"]
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "torch/version.py", metadata.read_bytes() + b"raise RuntimeError('executed')\n"
+        )
+    base["wheels"][0].update(
+        size=wheel.stat().st_size, sha256=hashlib.sha256(wheel.read_bytes()).hexdigest()
+    )
+    before = {path: path.read_bytes() for path in generation.rglob("*") if path.is_file()}
+    assert acquired_base_device(base, wheel) == device
+    assert generation_device(generation, "user-target") == device
+    assert {path: path.read_bytes() for path in before} == before
+    with wheel.open("r+b") as stream:
+        stream.seek(-1, os.SEEK_END)
+        stream.write(b"x")
+    with pytest.raises(RequirementError, match="torch wheel differs from its manifest"):
+        acquired_base_device(base, wheel)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "problem", "message"),
+    [
+        ("__version__='2.5.0'\ncuda=None\nhip=None\n", "size", "differs from its manifest"),
+        ("__version__='2.5.0'\ncuda=None\nhip=None\n", "duplicate", "one torch/version.py"),
+        ("__version__='2.5.0'\ncuda='12.4'\nhip='6.0'\n", None, "conflicting device"),
+        ("__version__='2.6.0'\ncuda=None\nhip=None\n", None, "version differs"),
+        ("__version__='2.5.0'\ncuda=str(12.4)\nhip=None\n", None, "literal"),
+        ("__version__='2.5.0'\ncuda=None\ncuda='12.4'\nhip=None\n", None, "repeated"),
+        ("__version__='2.5.0'\n", None, "no declared device"),
+        ("__version__='2.5.0'\ncuda=7\nhip=None\n", None, "invalid device"),
+        ("__version__='2.5.0'\ncuda=None\nhip=None\nif True: cuda='12.4'\n", None, "top-level"),
+        ("__version__='2.5.0'\ncuda=\nhip=None\n", None, "not valid Python"),
+    ],
+)
+def test_acquired_base_device_refuses_unverified_or_ambiguous_metadata(
+    tmp_path: Path, metadata: str, problem: str | None, message: str
 ) -> None:
+    from dinkster.workflow_requirements import acquired_base_device, generation_device
+
+    generation = custom_generation(tmp_path, "cpu")
+    base = json.loads((generation / "base-manifest.json").read_bytes())
+    wheel = tmp_path / base["wheels"][0]["filename"]
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("torch/version.py", metadata)
+        if problem == "duplicate":
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                archive.writestr("torch/version.py", metadata)
+    base["wheels"][0].update(
+        size=wheel.stat().st_size + (problem == "size"),
+        sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(RequirementError, match=message):
+        acquired_base_device(base, wheel)
+    if problem is None:
+        version = generation / "python/lib/python3.14/site-packages/torch/version.py"
+        version.write_text(metadata)
+        record = json.loads((generation / "generation.json").read_bytes())
+        record["files"][version.relative_to(generation).as_posix()] = (
+            "sha256:" + hashlib.sha256(version.read_bytes()).hexdigest()
+        )
+        (generation / "generation.json").write_text(json.dumps(record))
+        with pytest.raises(RequirementError, match=message):
+            generation_device(generation, "user-target")
+
+
+@pytest.mark.parametrize(
+    ("engine_variant", "device"),
+    [
+        (None, None),
+        ("linux-cpu", "cpu"),
+        ("win-nvidia", "cuda"),
+        ("linux-nvidia", "cuda"),
+        ("user-target", "cpu"),
+        ("user-target", "cuda"),
+    ],
+)
+def test_public_plan_is_read_only_project_filtered_and_verified(
+    tmp_path: Path, engine_variant: str | None, device: str | None
+) -> None:
+    generation = (
+        custom_generation(tmp_path, cast("str", device))
+        if engine_variant == "user-target"
+        else None
+    )
     store = LibraryStore(tmp_path / "library.sqlite")
     vault = AssetVault(tmp_path / "vault")
     provenance = ProvenanceStore(tmp_path / "provenance.json")
@@ -293,6 +450,7 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
             app,
             manifests=lambda: declared,
             engine_variant=engine_variant,
+            generation=generation,
         )
         async with TestClient(TestServer(app)) as client:
             body = {"workflows": [workflow()], "variant": "linux-cpu", "project": "excluded"}
@@ -366,14 +524,38 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
             response = await client.post("/api/workflows/plan", json={"workflows": [workflow()]})
             if engine_variant is not None:
                 assert (await response.json())["errors"] == (
-                    ["pack tools-a: pack.sandbox.gpu requires a GPU"]
-                    if engine_variant == "linux-cpu"
-                    else []
+                    ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
                 )
             response = await client.post(
                 "/api/workflows/plan", json={**body, "variant": "win-nvidia"}
             )
             assert (await response.json())["errors"] == []
+            if generation is not None:
+                response = await client.post(
+                    "/api/workflows/plan",
+                    json={**body, "variant": "another-custom"},
+                )
+                assert response.status == 400
+                metadata = generation / "python/lib/python3.14/site-packages/torch/version.py"
+                original_metadata = metadata.read_bytes()
+                metadata.write_text("cuda = '99.0'\n")
+                response = await client.post(
+                    "/api/workflows/plan", json={"workflows": [workflow()]}
+                )
+                assert response.status == 400
+                assert "differs from its inventory" in (await response.json())["error"]
+                metadata.write_bytes(original_metadata)
+                base_path = generation / "base-manifest.json"
+                base = json.loads(base_path.read_bytes())
+                base["python"] = "3.12.0"
+                base_path.write_text(json.dumps(base))
+                response = await client.post(
+                    "/api/workflows/plan", json={"workflows": [workflow()]}
+                )
+                assert response.status == 400
+                assert (
+                    "base manifest differs from its inventory" in (await response.json())["error"]
+                )
 
     try:
         asyncio.run(scenario())
@@ -471,7 +653,9 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
         ).record_json()
     )
 
-    def run_plan(variant: str, *extra: str) -> subprocess.CompletedProcess[str]:
+    def run_plan(
+        variant: str, *extra: str, source_generation: Path = source
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
@@ -481,7 +665,7 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
                 "--project-root",
                 str(tmp_path),
                 "--source-generation",
-                str(source),
+                str(source_generation),
                 "--catalog-lock",
                 str(catalog),
                 "--artifacts",
@@ -566,6 +750,30 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     ]
     assert "blocking errors" in refused.stderr
     assert run_plan("win-nvidia").returncode == 0
+    for device in ("cpu", "cuda"):
+        custom_root = tmp_path / device
+        custom_root.mkdir()
+        selected = custom_generation(custom_root, device)
+        (selected / "dinkster.lock").write_text(Lockfile.of(target_packs).record_json())
+        custom = run_plan("user-target", source_generation=selected)
+        assert custom.returncode == (1 if device == "cpu" else 0), custom.stderr
+        assert json.loads(custom.stdout)["plan"]["errors"] == (
+            ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
+        )
+        selected_target = run_plan("user-target", "--generation", str(selected))
+        assert selected_target.returncode == custom.returncode, selected_target.stderr
+        assert selected_target.stdout, selected_target.stderr
+        assert json.loads(selected_target.stdout) == json.loads(custom.stdout)
+    for device in ("cpu", "cuda"):
+        selected = tmp_path / device / "generation"
+        previous = tmp_path / ("cuda" if device == "cpu" else "cpu") / "generation"
+        switched = run_plan(
+            "user-target", "--generation", str(selected), source_generation=previous
+        )
+        assert switched.returncode == (1 if device == "cpu" else 0), switched.stderr
+        assert json.loads(switched.stdout)["plan"]["errors"] == (
+            ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
+        )
     absent_target = tmp_path / "not-created"
     absent = run_plan("win-nvidia", "--generation", str(absent_target))
     assert absent.returncode == 0 and absent.stdout == run_plan("win-nvidia").stdout
@@ -809,7 +1017,8 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
         )
     )
     for directory in (source, target):
-        _workspace_tree(directory / "python")
+        packages = _workspace_tree(directory / "python")
+        assert packages.is_relative_to(directory / "python")
     project = root / "project.json"
     settings = {
         "format": "dinkster.project/1",
@@ -955,6 +1164,105 @@ def test_project_apply_does_not_publish_after_registered_workflow_changes(tmp_pa
         server.server_close()
         thread.join(timeout=30)
         library.close()
+
+
+def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_authoritative(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from functools import partial
+
+    from dinkster.project_requirements import plan_project_requirements
+    from dinkster.workflow_requirements import main
+
+    root, scratch, artifacts = tmp_path / "project", tmp_path / "scratch", tmp_path / "artifacts"
+    root.mkdir()
+    scratch.mkdir()
+    artifacts.mkdir()
+    (root / "project.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "additions": {"packs": [{"pack": "example", "version": "1.0.0"}]},
+            }
+        )
+    )
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname="example"\n[pack.entry]\nnodes="poison:NODES"\n[pack.sandbox]\ngpu=true\n'
+    )
+    (pack / "poison.py").write_text('raise RuntimeError("must not execute")\n')
+    archive = artifacts / "building.zip"
+    digest = build_artifact(pack, archive)
+    archive.rename(artifacts / f"{digest[7:]}.zip")
+    catalog = tmp_path / "selected.lock"
+    catalog.write_text(
+        Lockfile.of([LockedPack("example", "1.0.0", digest, "author", ("example",))]).record_json()
+    )
+    plan = partial(
+        plan_project_requirements,
+        root,
+        variant="user-target",
+        catalog_lock=catalog,
+        artifacts=artifacts,
+    )
+    cpu = cast("dict[str, object]", plan(target_generation=scratch, target_device="cpu")["plan"])
+    cuda = cast("dict[str, object]", plan(target_generation=scratch, target_device="cuda")["plan"])
+    assert cpu["errors"] == ["pack example: pack.sandbox.gpu requires a GPU"]
+    assert cuda["errors"] == []
+    assert cuda["packs"] == [{"pack": "example", "version": "1.0.0"}]
+    with pytest.raises(RequirementError, match="unsupported acquired target device"):
+        plan(target_generation=scratch, target_device="invented")
+    with pytest.raises(RequirementError, match="requires target, catalog and artifacts"):
+        plan_project_requirements(root, variant="user-target", target_device="cuda")
+    with pytest.raises(FileNotFoundError):
+        plan(target_generation=scratch)
+    sealed = custom_generation(tmp_path, "cpu")
+    observed = cast("dict[str, object]", plan(target_generation=sealed)["plan"])
+    assert observed["errors"] == cpu["errors"]
+    assert (
+        main(
+            [
+                "project-apply",
+                "--project-root",
+                str(root),
+                "--generation",
+                str(sealed),
+                "--variant",
+                "user-target",
+                "--target-device",
+                "cuda",
+                "--yes",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    assert "cannot override the sealed target device" in capsys.readouterr().err
+    assert not (root / "library").exists()
+
+
+@pytest.mark.parametrize(
+    "mode", ["apply", "snapshot", "missing-target", "missing-catalog", "missing-artifacts"]
+)
+def test_supervisor_refuses_device_override_outside_acquired_plan(
+    tmp_path: Path, mode: str
+) -> None:
+    from dinkster_supervisor.environment_generations import project_operation
+    from dinkster_supervisor.environment_state import EnvironmentError
+
+    with pytest.raises(EnvironmentError, match="acquired target inputs for planning only"):
+        project_operation(
+            tmp_path,
+            generation=tmp_path / "source",
+            variant="user-target",
+            target_generation=None if mode == "missing-target" else tmp_path / "target",
+            catalog_lock=None if mode == "missing-catalog" else tmp_path / "selected.lock",
+            artifacts=None if mode == "missing-artifacts" else tmp_path / "artifacts",
+            approved={} if mode == "apply" else None,
+            requirements_only=mode == "snapshot",
+            target_device="cuda",
+        )
 
 
 def test_empty_project_requirements_do_not_create_library(

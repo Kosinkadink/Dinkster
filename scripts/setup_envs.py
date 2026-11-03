@@ -129,6 +129,10 @@ def setup(
         if python_override is not None or variants is not None:
             raise RuntimeError("--python and --variants require --from-scratch")
         selections = json.loads((root / "scripts/base_bundles.json").read_text())
+        prefixes = {"Windows": "win-", "Linux": "linux-", "Darwin": "mac-"}
+        other_prefixes = tuple(
+            prefix for host, prefix in prefixes.items() if host != platform.system()
+        )
         bases = [
             validate_manifest(
                 read_metadata(mirror, f"base/{name}/{identity}/manifest.json"),
@@ -136,6 +140,7 @@ def setup(
                 name,
             )
             for name, identity in selections.items()
+            if not name.startswith(other_prefixes)
         ]
         base = select_base(bases, variant)
         print(

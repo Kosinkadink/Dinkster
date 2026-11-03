@@ -22,10 +22,10 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive, native tools and official pack artifacts; no third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive and native tools; no official pack artifacts or third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
-| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu`, `mac-arm64` | a row in `Dinkster-Environments` |
-| Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
+| Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
+| Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
 | Pack venv | A small venv over a generation's interpreter holding one pack's extra dependencies | `<root>/generations/<n>/packs/<pack>/` |
@@ -137,21 +137,21 @@ The engine environment is immutable and hash-checked. `dinkster-env doctor`
 compares the active generation against its constraints and reports drift.
 Repair re-syncs from the wheel store without network access.
 
-When the selected engine manifest lists `official-packs.lock`, setup/update also
-acquire that existing registry lock and the release's ZIP source payloads. Manifest
-SHA256/size checks verify transport; raw ZIP-byte BLAKE3 identities name the cache
-entries at `engines/<release-id>/artifacts/<digest-hex>.zip`. The supervisor does not
-parse the registry lock or extract sources. Target-interpreter source admission
-consumes that lock/cache pair, verifies artifact identity and claims, and refuses
-the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
-inputs override release-source acquisition. Dependency locks remain distinct from
-source identities. Unless repeated `--pack-lock` inputs override bundled selection,
-setup/update acquire the selected release's existing
-`<pack>-<public-version>-<variant>.pack-lock.json` artifact rows, verify size/SHA256
-and retain original bytes under `engines/<release-id>/`. The target provisioner
-owns their schema and conflict checks; dependency installation is offline, from
-verified local wheels only. Every admitted source pack must have a dependency
-record, including empty closures and in-process packs.
+The engine release and wheel do not supply official pack archives or dependency
+locks. The target engine interpreter resolves the committed default ids and
+minimum versions against the registry, selecting the newest version compatible
+with that engine. It downloads verified BLAKE3-addressed archives and the locks
+published for those exact archives and the selected base. A fresh installation
+reports unavailable defaults and can start with zero packs when the registry is
+offline. Updates re-resolve the installed official selection and refuse an
+unavailable compatible replacement before changing the active generation.
+
+Explicit paired `--catalog-lock`/`--artifacts` inputs select sources directly;
+repeated `--pack-lock` inputs select their dependency records. Source admission
+verifies artifact identity and claims and refuses the whole candidate on errors.
+The target provisioner owns dependency schema and conflict checks; dependency
+installation is offline, from verified local wheels only. Every admitted source
+pack must have a dependency record, including empty closures and in-process packs.
 After dependency doctor and source admission, the target interpreter runs
 `dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
 This selects only admitted generation sources and already-provisioned pack
@@ -249,7 +249,7 @@ or publish artifacts itself.
 is written when a push to `main` finishes the same workflow without a
 version: the engine release it names is a prerelease of the next version
 identified by commit. Both channels are served by the same client code path
-and differ only in the channel file. Neither resolves on the user's machine:
+and differ only in the channel file. Published-base installs do not resolve on the user's machine:
 base wheels come from the base bundle, Dinkster wheels from the engine
 release, and non-base third-party wheels from their locked package origins
 or a configured package mirror. Every download checks its locked size and hash.
@@ -329,12 +329,55 @@ comfy-kitchen, comfy-aimdo or other non-base dependencies do not produce a base.
 Protocol, archive, hardware or replacement-membership changes still require
 compatible content identity.
 
+### User-defined bases
+
+A user can build a supported base without adding a published channel variant.
+The [complete variants.toml example](install.md#user-defined-environment-variants)
+names an exact torch version, torch index and optional extras index. Definitions
+are selected from `--variants PATH`, `<project>/variants.toml`, or
+`<store>/variants.toml`, in that order. Ordinary setup uses this row to build
+the base, not to resolve a checkout or opt into `--from-scratch`.
+
+The builder reuses a verified native interpreter and resolves the custom base's
+dependency closure. The result uses the published `dinkster.base/1` format,
+content identity and archive verification. Its additional provenance records
+`source: user-defined` and `localBuild` source-file path, definition digest,
+build time, torch index and extras index. The shared store retains its manifest,
+archive parts and exact wheels. Each generation retains its base manifest,
+so labels do not depend on the definitions file remaining present or unchanged.
+
+An engine update keeps that exact custom base and installs the new engine onto
+it using verified engine wheels and effective hashed constraints, even when the
+definitions file changes or disappears. Pass `update --variants PATH` explicitly
+to rebuild from a definition. It does not
+require a published variant with the custom name. Published exact base/wheel
+alignment is unchanged; the explicit custom path checks the engine wheels'
+dependency requirements against the custom base versions. A newer required
+torch is reported with the present version and rebuild instructions before
+changing the project or its active generation. The custom index is not a reason
+to reject an otherwise compatible update.
+
+Custom generations use the ordinary generation format and activation journal,
+not the checkout-local generation source. Selecting a rebuilt custom variant,
+or selecting a published variant again, uses the same confirmed update.
+Rollback reactivates the retained interpreter and project selection without
+resolving or rebuilding either base. Status, doctor and Desktop identify the
+active base as user-defined and show its variant, torch version and index.
+
+The optional per-variant extras index supplies base dependencies not available
+from the torch index; it defaults to PyPI. Torch is bound to its requested
+index. Other packages try the torch index, then the extras index, then PyPI.
+Resolved manifests record each wheel's actual registry origin, not merely the
+configured fallback. Indexes must be credential-free HTTPS URLs.
+
+### Published base pins
+
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
 and are not on PyPI for that triple. A pack that needs a compiled wheel the
 extras index does not carry takes the own-environment path described below.
 
-Every variant shares one set of base pins: Python 3.14, torch 2.14.1 with
+Published variants share one set of base pins: Python 3.14, torch 2.14.1 with
 the matching torchvision, numpy 2.5, `opencv-contrib-python-headless` 5.0.
 Python 3.14 receives bug fixes until late 2027 and security fixes until
 2030; every dependency of the engine and of the popular ComfyUI packs
@@ -559,6 +602,49 @@ seconds. The public tag and its GitHub release follow and carry the same
 wheels.
 
 ## Packs and their dependencies
+
+### Versions and engine compatibility
+
+Official packs have their own versions, independent of engine versions. Each
+versioned pack declares both fields in `dinkster-pack.toml`:
+
+```toml
+[pack]
+name = "my-pack"
+version = "1.2.0"
+engine = ">=0.0.2.dev0,<0.1"
+```
+
+The shared `dinkster-schema` declaration uses public PEP 440 versions and
+specifier sets. The range is evaluated against the target engine, including
+development versions; a refusal names the pack id, pack version, range and
+engine version. A declared range also gates explicit installation and
+identical-lock no-ops. Unpublished local sources may omit both fields, but
+cannot supply just one.
+
+`src/dinkster/default-packs.toml` contains the default official ids and minimum
+versions, not exact versions or byte identities. Target-interpreter source
+preparation resolves each id to the newest active compatible registry version
+at or above its minimum, including eligible prereleases. The resulting source
+lock records exact archive digests for verification; this does not pin the
+default declaration to those bytes.
+
+`dinkster.manager prepare-registry-sources --allow-missing` prepares the
+available defaults and reports unavailable ids with reasons, including an
+empty source lock when the registry cannot be reached. A deliberately empty
+generation starts a healthy zero-node engine without substituting checkout
+defaults. This source-preparation command does not build or activate a
+generation. Without `--allow-missing`, unavailable sources refuse preparation.
+
+Update source preparation uses `--installed-lock` instead of fresh defaults.
+It re-resolves only installed official registry packs, keeps their recorded
+registry and minimum installed version, and preserves third-party, local and
+git selections. It neither adds defaults nor drops or downgrades installed
+packs. An unavailable compatible release refuses the candidate source lock;
+`--allow-missing` is not permitted for updates. See the
+[registry client guide](../packages/dinkster-registry/README.md#use) for commands.
+
+### Published dependency locks
 
 Externally supplied packs run isolated by default ([pack-authoring.md](pack-authoring.md)). A pack
 declares its dependencies in its pack manifest and ships no wheels. At

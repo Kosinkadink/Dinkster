@@ -44,6 +44,38 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
         if engine:
             archive.writestr("dinkster/__init__.py", "")
             archive.writestr("dinkster/serve.py", Path(__file__).with_name("serve.py").read_bytes())
+            archive.writestr(
+                "dinkster/manager.py", Path(__file__).with_name("manager.py").read_bytes()
+            )
+            for module in ("project_requirements", "workflow_requirements"):
+                archive.writestr(
+                    f"dinkster/{module}.py", Path(__file__).with_name(f"{module}.py").read_bytes()
+                )
+            archive.writestr(
+                "dinkster/generation_packs.py",
+                "import argparse,json,shutil\n"
+                "from pathlib import Path\n"
+                "p=argparse.ArgumentParser()\n"
+                "p.add_argument('--generation',type=Path)\n"
+                "p.add_argument('--catalog-lock',type=Path)\n"
+                "p.add_argument('--artifacts',type=Path)\n"
+                "p.add_argument('--prepare-locks',type=Path)\n"
+                "p.add_argument('--variant')\n"
+                "p.add_argument('--accelerator')\n"
+                "p.add_argument('--index',action='append')\n"
+                "p.add_argument('--find-links',action='append')\n"
+                "p.add_argument('--json',action='store_true')\n"
+                "a=p.parse_args()\n"
+                "assert json.loads(a.catalog_lock.read_text())['packs']==[]\n"
+                "if a.prepare_locks:\n"
+                "    assert not (a.generation/'generation.json').exists()\n"
+                "    assert not (a.generation/'dinkster.lock').exists()\n"
+                "    a.prepare_locks.mkdir()\n"
+                "    print(json.dumps({'locks':[],'errors':[]}))\n"
+                "    raise SystemExit(0)\n"
+                "shutil.copyfile(a.catalog_lock,a.generation/'dinkster.lock')\n"
+                "print(json.dumps({'packs':[],'errors':[]}))\n",
+            )
     return path
 
 

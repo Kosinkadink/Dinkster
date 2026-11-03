@@ -416,18 +416,6 @@ def build(
         verify_and_extract(
             frontend_artifact.read_bytes(), sources, staged / "src/dinkster/frontend_bundle/static"
         )
-        catalog = next(
-            (path for path in payload_artifacts or [] if path.name == "official-packs.lock"), None
-        )
-        if catalog is not None:
-            bundled = staged / "src/dinkster/official_packs"
-            bundled.mkdir()
-            shutil.copyfile(catalog, bundled / catalog.name)
-            entries = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
-            payloads = {path.name: path for path in payload_artifacts or []}
-            for entry in entries:
-                name = f"{entry['pack']}-{entry['version']}.zip"
-                shutil.copyfile(payloads[name], bundled / name)
         for name in PUBLISHED_PROJECTS:
             subprocess.run(
                 [uv, "build", "--package", name, "--wheel", "--out-dir", str(output)],
@@ -498,9 +486,7 @@ def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Pa
     )
 
 
-def extend_release(
-    output: Path, candidates: list[Path], *, base_manifests: list[Path] | None = None
-) -> dict[str, object]:
+def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
     """Finalize an existing release only after checking every original asset."""
     manifest_path = output / "release-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -524,43 +510,6 @@ def extend_release(
         raise ValueError("release SHA256SUMS mismatch")
     if {path.name for path in output.iterdir()} != {*expected, "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
-    catalog = next((path for path in artifacts if path.name == "official-packs.lock"), None)
-    locks = {
-        path.name: path
-        for path in [*artifacts, *candidates]
-        if path.name.endswith(".pack-lock.json")
-    }
-    if catalog is not None:
-        from dinkster_registry.install import Lockfile
-        from dinkster_workers.pack_lock import PackLock
-
-        if not base_manifests:
-            raise ValueError("dependency lock admission requires selected base manifests")
-        variants = {read_base_manifest(path)["variant"] for path in base_manifests}
-        packs = Lockfile.from_record_json(catalog.read_text(encoding="utf-8")).packs
-        required = {
-            f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
-            for pack in packs
-            for variant in variants
-        }
-        if locks.keys() != required.keys():
-            raise ValueError(
-                "dependency lock coverage mismatch: "
-                f"missing={sorted(required.keys() - locks.keys())}, "
-                f"extra={sorted(locks.keys() - required.keys())}"
-            )
-        for name, path in locks.items():
-            lock = PackLock.read(path)
-            if (lock.pack, lock.variant) != required[name]:
-                raise ValueError(f"dependency lock identity mismatch: {name}")
-            urls = [*lock.indexes, *(w.url for p in lock.packages for w in p.wheels)]
-            if any(
-                urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc
-                for url in urls
-            ):
-                raise ValueError(f"dependency lock contains a nonportable URL: {name}")
-    elif locks:
-        raise ValueError("dependency locks require an official pack catalog")
     stage_payloads(output, artifacts, candidates)
     write_manifest(output, manifest, artifacts)
     return manifest
@@ -581,16 +530,7 @@ def check_release(output: Path, maximum_bytes: int) -> int:
         raise ValueError("release must contain only the three Dinkster workspace wheels")
     if {path.name for path in output.iterdir()} != names | {"release-manifest.json", "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
-    allowed = wheels | {"constraints.txt", "official-packs.lock"}
-    catalog = output / "official-packs.lock"
-    if catalog.is_file():
-        packs = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
-        for pack in packs:
-            allowed.add(f"{pack['pack']}-{pack['version']}.zip")
-            allowed.update(
-                f"{pack['pack']}-{pack['version']}-{variant}.pack-lock.json"
-                for variant in manifest["dependencies"]
-            )
+    allowed = wheels | {"constraints.txt"}
     for name in names - allowed:
         if (
             re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", name)
@@ -627,7 +567,7 @@ if __name__ == "__main__":
     if args.check:
         check_release(args.output.resolve(), args.max_bytes)
     elif args.extend:
-        extend_release(args.output.resolve(), args.artifact, base_manifests=args.base_manifest)
+        extend_release(args.output.resolve(), args.artifact)
     elif args.frontend_artifact is None:
         parser.error("--frontend-artifact is required when building a release")
     else:

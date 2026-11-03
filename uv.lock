@@ -886,7 +886,7 @@ requires-dist = [
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
     { name = "comfy-kitchen", specifier = "==0.2.40" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.0" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'default'", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'supervisor'", editable = "packages/dinkster-supervisor" },
@@ -1114,7 +1114,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-inference"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1147,9 +1147,9 @@ dependencies = [
     { name = "transformers" },
     { name = "yarl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/77/7f334aa1562eadbe540a92f8e5537d914d294f13ccdc4529490370abec20/dinkster_inference-0.1.0.tar.gz", hash = "sha256:deb7e0574a7e90d947024f328ec958a543b335408ea066efc7d46105df9b1868", size = 10247261, upload-time = "2026-10-28T20:34:14.039Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/15/a27f4cd8a158c0e392d877078627667cc660bed99f72fdaaeae53798f144/dinkster_inference-0.1.1.tar.gz", hash = "sha256:2333817763b68013b7cab244c8d2bed8abf59ffd018aa9a73f7ae90c9170e6d3", size = 10266802, upload-time = "2026-11-01T23:34:16.996Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/c0/ed5e932b2c65f07cf0f32e7b9b4ad2cd508717be95fc180355610c560dee/dinkster_inference-0.1.0-py3-none-any.whl", hash = "sha256:ffcdcf657d01d48d0348453560739f16f8fe74da7e5cc858959560ecdb2dd51f", size = 10560737, upload-time = "2026-10-28T20:34:11.652Z" },
+    { url = "https://files.pythonhosted.org/packages/99/d0/c5515905853c64379aab3c091c0123ab85010b926a841e431c8e469ca111/dinkster_inference-0.1.1-py3-none-any.whl", hash = "sha256:62ef627f218b95ac11e43fef6a214d6b13844883520c13acae1d2bec13136c7b", size = 10580737, upload-time = "2026-11-01T23:34:14.623Z" },
 ]
 
 [[package]]
@@ -1212,7 +1212,7 @@ requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
-    { name = "dinkster-inference", specifier = "==0.1.0" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
     { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },

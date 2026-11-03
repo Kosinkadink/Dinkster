@@ -10,22 +10,55 @@ uv run --locked python scripts/check_extension_factories.py \
 uv run --locked python scripts/check_builtin_type_spellings.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
-uv run --locked pyright
-uv run --locked pyright --pythonplatform Windows
+uv run --locked pyright &
+linux_types=$!
+uv run --locked pyright --pythonplatform Windows &
+windows_types=$!
 uv run --locked python -m pytest -q -m 'not network' \
   tests/test_disabled_features.py \
   tests/test_settings.py \
   tests/test_extension_factory_guard.py \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
+  tests/test_macos_workflow_receipt.py \
+  tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
+  tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
+  tests/test_environment_generations.py::test_registry_preparation_allows_custom_locks_from_selected_inputs \
+  tests/test_environment_cli.py::test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache \
+  tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal \
+  tests/test_environment_cli.py::test_workflow_update_prepares_target_registry_inputs_before_journaling \
+  tests/test_environment_cli.py::test_custom_cli_setup_retains_base_on_update_without_definition \
+  tests/test_workflow_requirements.py \
   tests/test_run_scripts.py \
   tests/test_launch.py \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
+  tests/test_environment_generations.py::test_generation_retains_verified_engine_manifest \
+  tests/test_installer.py::test_http_registry_fetcher_uses_verified_download_ticket \
+  tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_ticket_size \
+  tests/test_installer.py::test_cli_restore_downloads_registry_sources \
+  tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
+  tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
+  tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
+  tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
+  tests/test_installer.py::test_registry_compatible_selection_refuses_only_undeclared_releases \
+  tests/test_installer.py::test_registry_source_identity_comes_from_verified_archive \
+  tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \
+  tests/test_installer.py::test_cli_prepares_compatible_registry_sources_without_generation_mutation \
+  tests/test_installer.py::test_cli_acquires_published_locks_for_exact_sources_and_base \
+  tests/test_installer.py::test_cli_publishes_exact_archive_with_optional_published_locks \
+  tests/test_installer.py::test_cli_retains_nonregistry_generation_sources_before_writing_candidate \
+  tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
+  tests/test_installer.py::test_generation_source_staging_cli \
+  tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
+  tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
+  tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
+  tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
+  tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_canonical_bytes \
@@ -34,6 +67,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_pack_archive.py::test_registry_manifest_admission_refuses_invalid_metadata \
   tests/test_pack_archive.py::test_registry_executable_probe_bounds_and_sanitizes \
   tests/test_pack_archive.py::test_registry_probe_refuses_degraded_isolation \
+  tests/test_pack_archive.py::test_selected_pack_tests_cannot_fall_back_to_checkout \
   tests/test_archive_admission.py \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
@@ -50,6 +84,9 @@ uv run --locked python -m pytest -q -m 'not network' \
   packages/dinkster-nodes-vision/tests/test_sam31.py::test_offline_tokenizer_matches_pinned_clip_tokens \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
+  tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
+  tests/test_manifest.py::test_pack_declares_independent_version_and_engine_compatibility \
+  tests/test_manifest.py::test_pack_rejects_invalid_version_or_engine_declaration \
   tests/test_manifest.py::test_catalog_driven_node_source_loads_without_importing_pack \
   tests/test_manifest.py::test_catalog_driven_node_source_rejects_unknown_kinds_and_types \
   tests/test_doctor.py::test_catalog_driven_node_source_is_reported_without_hiding_entry_errors \
@@ -60,6 +97,14 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
   tests/test_compose.py::test_exact_node_claims_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
+  tests/test_compose.py::test_vision_pack_license_checkout_endings_do_not_change_digest \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
-  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency
+  tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection \
+  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency &
+unit_tests=$!
+check_status=0
+wait "$linux_types" || check_status=$?
+wait "$windows_types" || check_status=$?
+wait "$unit_tests" || check_status=$?
+exit "$check_status"

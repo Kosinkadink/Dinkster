@@ -1,5 +1,7 @@
 [pack]
 name = "dinkster-nodes-comfy"
+version = "0.0.12"
+engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
     "simpleeval==1.0.8",
@@ -7,7 +9,7 @@ requires = [
     "pillow",
     "torch",
     "torchvision",
-    "dinkster-inference==0.1.0",
+    "dinkster-inference==0.1.1",
     "av",
     "scipy",
     "einops",
@@ -578,6 +580,9 @@ namespaces = [
     "GetVideoComponents",
     "ConditioningLoader",
     "SaveConditioning",
+    "SAM3DBody_Loader",
+    "SAM3DBody_Predict",
+    "SAM3DBody_FaceExpression",
     "SAM3DBody_Smooth",
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
@@ -589,6 +594,7 @@ namespaces = [
     "SaveSVGNode",
     "SaveImage",
     "PreviewImage",
+    "Painter",
     "LoadImage",
     "LoadImageMask",
     "LoadImageOutput",
@@ -636,6 +642,9 @@ namespaces = [
     "Save3DAdvanced",
     "SaveGaussianSplat",
     "SavePointCloud",
+    "Preview3D",
+    "Load3DAdvanced",
+    "Load3D",
     "Preview3DAdvanced",
     "PreviewGaussianSplat",
     "PreviewPointCloud",
@@ -647,6 +656,7 @@ namespaces = [
     "SAM3DBody_Render",
     "LoadMediaPipeFaceLandmarker",
     "MediaPipeFaceLandmarker",
+    "BuildPoseFile",
 ]
 
 [pack.sandbox]

@@ -1,0 +1,48 @@
+name: Registry default pack admission
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: default-pack-admission-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Configure the same full Linux jail used by registry admission
+        run: bash scripts/setup_probe_jail.sh
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install the engine under test on its published CPU base
+        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+      - name: Install the CPU software shader renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgles2 libvulkan1 mesa-vulkan-drivers
+          lvp=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$lvp"
+          echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+      - name: Resolve defaults and run the registry scanner in process
+        run: |
+          version=$(uv run --no-sync python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
+          uv run --no-sync python -m scripts.check_default_pack_admission \
+            --engine-version "$version"

@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
@@ -18,12 +19,27 @@ def artifact_server(
     range_mode: str = "honor",
     interrupted: bool = False,
     redirect: str | None = None,
+    statuses: list[int] | None = None,
+    responses: list[bytes] | None = None,
+    ranges: list[str | None] | None = None,
 ) -> Iterator[str]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            if ranges is not None:
+                ranges.append(self.headers.get("Range"))
             if self.headers.get("User-Agent") != "dinkster-env":
                 self.send_error(403, "product User-Agent required")
                 return
+            if statuses:
+                status = statuses.pop(0)
+                if status == 0:
+                    self.close_connection = True
+                    return
+                if status != 200:
+                    self.send_response(status)
+                    self.send_header("cf-ray", f"request-{len(statuses)}")
+                    self.end_headers()
+                    return
             if redirect is not None:
                 self.send_response(302)
                 self.send_header("Location", redirect)
@@ -40,9 +56,10 @@ def artifact_server(
                 self.send_header("Content-Range", f"bytes 0-{len(body) - 1}/{len(body)}")
             else:
                 self.send_response(200)
-            self.send_header("Content-Length", str(len(body) - start))
+            response_body = responses.pop(0) if responses else body
+            self.send_header("Content-Length", str(len(response_body) - start))
             self.end_headers()
-            response = body[start:]
+            response = response_body[start:]
             self.wfile.write(response[: len(response) // 2] if interrupted else response)
 
         def log_message(self, format: str, *args: object) -> None:
@@ -214,3 +231,139 @@ def test_metadata_is_bounded_and_read_only_for_local_and_http_sources(tmp_path: 
         read_metadata(str(tmp_path), "channel.json")
     with pytest.raises(DownloadError, match="unsafe artifact path"):
         read_metadata(str(tmp_path), "../channel.json")
+
+
+@pytest.mark.parametrize("metadata", [False, True])
+@pytest.mark.parametrize("status", [500, 0])
+def test_remote_recovers_from_transient_failure(
+    tmp_path: Path, metadata: bool, status: int
+) -> None:
+    data = b"verified release bytes"
+    statuses = [status, 200]
+    with artifact_server(data, statuses=statuses) as mirror:
+        if metadata:
+            assert read_metadata(mirror, "manifest.json") == data
+        else:
+            destination = tmp_path / "artifact.bin"
+            fetch_artifact((mirror,), "artifact.bin", destination, digest(data), len(data))
+            assert destination.read_bytes() == data
+    assert statuses == []
+
+
+@pytest.mark.parametrize("metadata", [False, True])
+@pytest.mark.parametrize("status,attempts", [(500, 3), (404, 1)])
+def test_remote_failure_retains_each_attempt_and_ray(
+    tmp_path: Path, metadata: bool, status: int, attempts: int
+) -> None:
+    statuses = [status] * (attempts + 1)
+    with artifact_server(b"", statuses=statuses) as mirror:
+        with pytest.raises(DownloadError) as failure:
+            if metadata:
+                read_metadata(mirror, "manifest.json")
+            else:
+                fetch_artifact((mirror,), "artifact.bin", tmp_path / "artifact.bin", digest(b""), 0)
+    message = str(failure.value)
+    assert message.count(f"HTTP {status}") == attempts
+    for attempt in range(1, attempts + 1):
+        assert f"attempt {attempt}" in message
+        assert f"cf-ray=request-{attempts + 1 - attempt}" in message
+    assert len(statuses) == 1
+    assert not (tmp_path / "artifact.bin").exists()
+
+
+@pytest.mark.parametrize("metadata,elapsed", [(True, 60), (False, 900)])
+def test_remote_time_budget_bounds_attempts_and_backoff(tmp_path, monkeypatch, metadata, elapsed):
+    from dinkster_supervisor import environment_downloads as downloads
+
+    now = [0.0]
+    sleeps = []
+    timeouts = []
+
+    def sleep(delay):
+        sleeps.append(delay)
+        now[0] += delay
+
+    def open_request(request, *, timeout):
+        timeouts.append(timeout)
+        now[0] += elapsed
+        raise TimeoutError("fixture socket timeout")
+
+    monkeypatch.setattr(downloads, "time", SimpleNamespace(monotonic=lambda: now[0], sleep=sleep))
+    monkeypatch.setattr(downloads, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+    with pytest.raises(DownloadError) as failure:
+        if metadata:
+            read_metadata("https://example.org", "manifest.json")
+        else:
+            fetch_artifact(
+                ("https://example.org",), "artifact.bin", tmp_path / "artifact.bin", digest(b""), 0
+            )
+    assert timeouts == [30, 30]
+    assert sleeps == [1]
+    assert str(failure.value).count("fixture socket timeout") == 2
+
+
+def test_exhausted_remote_falls_back_without_publishing_corrupt_data(tmp_path):
+    data = b"verified release bytes"
+    statuses = [500, 500, 500, 200]
+    with artifact_server(b"wrong", statuses=statuses) as bad, artifact_server(data) as good:
+        destination = tmp_path / "artifact.bin"
+        fetch_artifact((bad, good), "artifact.bin", destination, digest(data), len(data))
+    assert destination.read_bytes() == data
+    assert statuses == [200]
+
+
+def test_transient_recovery_does_not_bypass_digest_verification(tmp_path):
+    statuses = [500, 200, 200]
+    with artifact_server(b"wrong", statuses=statuses) as mirror:
+        destination = tmp_path / "artifact.bin"
+        with pytest.raises(DownloadError) as failure:
+            fetch_artifact((mirror,), "artifact.bin", destination, digest(b"right"), 5)
+    assert "HTTP 500 (cf-ray=request-2)" in str(failure.value)
+    assert "attempt 2: returned corrupt or short data" in str(failure.value)
+    assert "attempt 3: returned corrupt or short data" in str(failure.value)
+    assert statuses == []
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("corruption", ["short", "digest", "oversized"])
+def test_remote_integrity_failure_recovers_with_safe_partial_handling(tmp_path, corruption):
+    data = b"verified release bytes"
+    first = {"short": data[:7], "digest": b"x" * len(data), "oversized": data + b"extra"}[
+        corruption
+    ]
+    ranges: list[str | None] = []
+    destination = tmp_path / "artifact.bin"
+    with artifact_server(data, responses=[first], ranges=ranges) as mirror:
+        fetch_artifact((mirror,), "artifact.bin", destination, digest(data), len(data))
+    assert destination.read_bytes() == data
+    assert ranges == [None, "bytes=7-" if corruption == "short" else None]
+    assert not destination.with_suffix(".bin.part").exists()
+
+
+@pytest.mark.parametrize("saved_prefix", [b"", b"bad prefix"])
+def test_remote_wrong_digest_exhausts_attempts_without_publishing(tmp_path, saved_prefix):
+    data = b"verified release bytes"
+    ranges: list[str | None] = []
+    destination = tmp_path / "artifact.bin"
+    partial = destination.with_suffix(".bin.part")
+    if saved_prefix:
+        partial.write_bytes(saved_prefix)
+    with artifact_server(b"x" * len(data), ranges=ranges) as mirror:
+        with pytest.raises(DownloadError) as failure:
+            fetch_artifact((mirror,), "artifact.bin", destination, digest(data), len(data))
+    message = str(failure.value)
+    for attempt in range(1, 4):
+        assert f"attempt {attempt}: returned corrupt or short data" in message
+    assert ranges == [f"bytes={len(saved_prefix)}-" if saved_prefix else None, None, None]
+    assert not destination.exists()
+    assert not partial.exists()
+
+
+def test_local_integrity_failure_is_not_retried(tmp_path):
+    (tmp_path / "source.bin").write_bytes(b"wrong")
+    destination = tmp_path / "artifact.bin"
+    with pytest.raises(DownloadError) as failure:
+        fetch_artifact((str(tmp_path),), "source.bin", destination, digest(b"right"), 5)
+    assert str(failure.value).count("returned corrupt or short data") == 1
+    assert "attempt" not in str(failure.value)
+    assert not destination.exists()

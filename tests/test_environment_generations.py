@@ -18,6 +18,8 @@ import pytest
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
+    prepare_engine_interpreter,
+    prepare_registry_inputs,
     stage_pack_sources,
 )
 from dinkster_supervisor.environment_state import (
@@ -45,6 +47,90 @@ def _wheel(directory: Path, name: str, version: str, value: int) -> tuple[Path, 
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("mode", ["locks", "empty", "refuse", "escape", "explicit"])
+def test_registry_preparation_allows_custom_locks_from_selected_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from tests.fixtures.environments.build import wheel
+
+    store = tmp_path / "store"
+    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    wheels = store / "wheels"
+    wheels.mkdir()
+    archive = wheel(wheels, "fixture_engine", "1.0", 73, engine=True)
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(
+        f"fixture-engine==1.0 --hash=sha256:{hashlib.sha256(archive.read_bytes()).hexdigest()}\n"
+    )
+    monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "path")
+    explicit = tmp_path / "provided.pack-lock.json"
+    explicit.write_text("explicit input bytes")
+    captured: list[Path] = []
+
+    def custom(engine: Path, catalog: Path, artifacts: Path, output: Path) -> tuple[Path, ...]:
+        captured.append(engine.parent)
+        assert (engine / "constraints.txt").read_bytes() == constraints.read_bytes()
+        assert json.loads(catalog.read_text())["packs"] == []
+        assert artifacts.is_dir()
+        result = subprocess.check_output(
+            [
+                str(interpreter(engine)),
+                "-I",
+                "-B",
+                "-c",
+                "import fixture_engine; print(fixture_engine.VALUE)",
+            ]
+        )
+        assert result.strip() == b"73"
+        if mode in {"refuse", "explicit"}:
+            raise EnvironmentError("custom lock preparation refused")
+        output.mkdir()
+        if mode == "empty":
+            return ()
+        if mode == "escape":
+            return (explicit,)
+        path = output / "custom.pack-lock.json"
+        path.write_text(
+            '{"format":"dinkster.pack-lock/1","pack":"custom","variant":"unpublished-custom","requiresPython":">=3.12","requirements":[],"indexes":[],"packages":[]}'
+        )
+        return (path,)
+
+    def prepare() -> None:
+        with prepare_registry_inputs(
+            store=store,
+            base="sha256:" + "a" * 64,
+            constraints=constraints,
+            variant="unpublished-custom",
+            engine_version="1.0",
+            project=tmp_path / "project",
+            prepare_locks=custom,
+            pack_locks=(explicit,) if mode == "explicit" else (),
+        ) as (catalog, artifacts, locks, unavailable):
+            assert catalog.is_file() and artifacts.is_dir()
+            assert unavailable == {"fixture-pack": "registry offline"}
+            if mode == "explicit":
+                assert locks == (explicit,)
+            elif mode == "empty":
+                assert locks == ()
+            else:
+                assert len(locks) == 1
+                assert json.loads(locks[0].read_text())["variant"] == "unpublished-custom"
+                assert locks[0].parent.parent == catalog.parent == artifacts.parent
+
+    if mode in {"refuse", "escape"}:
+        with pytest.raises(
+            EnvironmentError,
+            match="custom lock preparation refused" if mode == "refuse" else "invalid lock paths",
+        ):
+            prepare()
+    else:
+        prepare()
+    assert all(not path.exists() for path in captured)
+    assert not list(store.glob(".registry-*"))
+    assert not (tmp_path / "project").exists()
+    assert explicit.read_text() == "explicit input bytes"
+
+
 def _standalone_tree(root: Path) -> None:
     source = Path(sys.base_prefix)
     if os.name == "nt":
@@ -70,6 +156,73 @@ def _standalone_tree(root: Path) -> None:
             path = Path(sysconfig.get_config_var("LIBDIR")) / library
             if path.is_file():
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
+
+
+@pytest.mark.parametrize("cached", ["exact", "absent", "corrupt", "directory", "changed-copy"])
+def test_generation_retains_verified_engine_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: str
+) -> None:
+    root, store = tmp_path / "project", tmp_path / "store"
+    base_id = "sha256:" + "a" * 64
+    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    raw = b'{  "version": "0.5", "unknown": [3, 1] }\r\n'
+    release = hashlib.sha256(raw).hexdigest()
+    cached_manifest = store / "engines" / release / "release-manifest.json"
+    if cached != "absent":
+        cached_manifest.parent.mkdir(parents=True)
+        if cached == "directory":
+            cached_manifest.mkdir()
+        else:
+            cached_manifest.write_bytes(raw if cached != "corrupt" else b"corrupt")
+    if cached == "changed-copy":
+        copyfile = shutil.copyfile
+
+        def change_copy(src, dst, **kwargs):
+            result = copyfile(src, dst, **kwargs)
+            if Path(dst).name == "engine-manifest.json":
+                Path(dst).write_bytes(b"changed after copying")
+            return result
+
+        monkeypatch.setattr(shutil, "copyfile", change_copy)
+    callbacks: list[Path] = []
+
+    def prepare(target: Path) -> None:
+        callbacks.append(target)
+        if cached == "exact":
+            assert (target / "engine-manifest.json").read_bytes() == raw
+
+    def build():
+        return build_generation(
+            root=root,
+            number=1,
+            store=store,
+            base=base_id,
+            engine_version="0.5",
+            engine_release="sha256:" + release,
+            constraints=constraints,
+            variant="win-cpu" if os.name == "nt" else "linux-cpu",
+            worker_protocol=1,
+            prepare_packs=prepare,
+        )
+
+    target = root / "generations" / "1"
+    if cached in {"corrupt", "directory", "changed-copy"}:
+        with pytest.raises((EnvironmentError, OSError)):
+            build()
+        assert not target.exists()
+        assert callbacks == []
+    else:
+        generation = build()
+        assert callbacks == [target]
+        assert generation.drift(target) == ()
+        if cached == "exact":
+            assert (target / "engine-manifest.json").read_bytes() == raw
+            assert dict(generation.files)["engine-manifest.json"] == "sha256:" + release
+        else:
+            assert not (target / "engine-manifest.json").exists()
+    assert read_current(root) is None
 
 
 def _workspace_tree(root: Path) -> Path:
@@ -342,7 +495,13 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         channel["engine"]["release"] = "sha256:" + identity
         channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
         channel_path.write_bytes(publisher.canonical_json(channel))
-        code, result = _run(root, *fixture["commands"]["setup"][5:], "--yes")
+        code, result = _run(
+            root,
+            *fixture["commands"]["setup"][5:],
+            "--pack-lock",
+            str(release.parent / identity / lock_path.name),
+            "--yes",
+        )
         if provisioner == "without-acquire":
             assert code == 1, result
             assert "selected engine cannot acquire missing pack wheels" in result["error"]
@@ -376,6 +535,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         "missing",
         "variant",
         "wheel",
+        "custom",
         "repair",
         "repair-extra",
         "repair-missing",
@@ -446,11 +606,22 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     artifacts.mkdir()
     entries, locks = [], []
     wheel_sha: str | None = None
-    variant = "win-cpu" if os.name == "nt" else "linux-cpu"
+    variant = (
+        "studio-cuda" if problem == "custom" else "win-cpu" if os.name == "nt" else "linux-cpu"
+    )
     for name in ("healthy", "other"):
         source = tmp_path / name
         source.mkdir()
-        (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST.replace("healthy", name))
+        manifest_text = HEALTHY_MANIFEST.replace("healthy", name)
+        if problem == "custom":
+            manifest_text = manifest_text.replace("numpy>=1.26", "stable-fixture>=1")
+            if name == "healthy":
+                manifest_text = manifest_text.replace('requires = ["stable-fixture>=1"]', "")
+                manifest_text += (
+                    '\n[pack.extra-requires]\ncpu = ["stable-fixture>=1"]\n'
+                    'cuda = ["unavailable-cuda-fixture>=1"]\n'
+                )
+        (source / "dinkster-pack.toml").write_text(manifest_text)
         (source / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
         archive = artifacts / "staging.zip"
         identity = build_artifact(source, archive)
@@ -513,6 +684,41 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         artifacts=artifacts,
         source_generation=previous,
     )
+    custom = None
+    if problem == "custom":
+        from dinkster_supervisor.environment_custom import prepare_custom_pack_locks
+        from dinkster_supervisor.environment_state import write_document
+
+        custom = {
+            "source": "user-defined",
+            "variant": variant,
+            "workerProtocol": PROTOCOL_VERSION,
+            "localBuild": {"extrasIndex": "https://pypi.org/simple"},
+        }
+        write_document(base.parent / "manifest.json", custom)
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        shutil.copytree(base, scratch / "python", copy_function=os.link)
+        shutil.copyfile(constraints, scratch / "constraints.txt")
+        (scratch / "dinkster.py").write_text(
+            "raise RuntimeError('custom pack preparation imported the working directory')\n"
+        )
+        resolved = prepare_custom_pack_locks(
+            scratch,
+            store=store,
+            base=custom,
+            catalog_lock=catalog,
+            artifacts=artifacts,
+            output=tmp_path / "custom-locks",
+        )
+        assert sorted(path.name for path in scratch.iterdir()) == [
+            "constraints.txt",
+            "dinkster.py",
+            "python",
+        ]
+        invoke = partial(invoke, pack_locks=resolved)
     repairs = {"repair", "repair-extra", "repair-missing"}
     moves = {
         "move",
@@ -524,7 +730,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         "move-cross-volume-missing-resource",
         "move-cross-volume-corrupt-wheel-cache",
     }
-    if problem is not None and problem not in {"update", "extra"} | repairs | moves:
+    if problem is not None and problem not in {"update", "extra", "custom"} | repairs | moves:
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -539,11 +745,28 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         assert generation.drift(target) == ()
         assert not (target / "packs/healthy/bin").exists()
         assert venv_python(target / "packs/other").is_file()
+        if problem == "custom":
+            assert json.loads((target / "base-manifest.json").read_text()) == custom
+            assert json.loads((target / "dinkster.lock").read_text()) == json.loads(
+                catalog.read_text()
+            )
+            set_current(root, 1)
+            next(artifacts.glob("*.zip")).write_bytes(b"damaged selected archive")
+            with pytest.raises(EnvironmentError, match="pack source staging refused"):
+                invoke(number=2, source_generation=target)
+            assert read_current(root) == 1
+            assert not (root / "generations/2").exists()
+            assert generation.drift(target) == ()
         for name in ("healthy", "other"):
             assert f"packs/{name}/pack-lock.json" in dict(generation.files)
             recorded = PackLock.read(target / "packs" / name / "pack-lock.json")
+            assert recorded.variant == variant
             assert tuple(package.name for package in recorded.packages) == (
-                ("unavailable-extra",) if problem == "extra" and name == "other" else ()
+                ("stable-fixture",)
+                if problem == "custom"
+                else ("unavailable-extra",)
+                if problem == "extra" and name == "other"
+                else ()
             )
             manifest = load_manifest(target / "pack-sources" / name / "dinkster-pack.toml")
             prepared = read_catalog(manifest)
@@ -883,7 +1106,7 @@ environment.main()
                 ).strip()
                 == b"73"
             )
-    assert read_current(root) == (1 if problem == "update" else None)
+    assert read_current(root) == (1 if problem in {"update", "custom"} else None)
 
 
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
@@ -893,6 +1116,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     root.mkdir()
     base = store / "bases" / ("a" * 64) / "python"
     _standalone_tree(base)
+    manifest = base.parent / "manifest.json"
+    manifest.write_text(json.dumps({"source": "user-defined", "variant": "studio-cuda"}))
     wheels = store / "wheels"
     wheels.mkdir()
     _, stable_hash = _wheel(wheels, "stable_fixture", "1.0", 40)
@@ -970,6 +1195,37 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert first.in_process_packs == ("fixture",)
     first_dir = root / "generations" / "1"
     set_current(root, 1)
+    constraints.write_text(
+        f"stable-fixture==1.0 --hash=sha256:{stable_hash}\n"
+        f"changed-fixture==2.0 --hash=sha256:{second_hash}\n"
+    )
+    scratch = store / "preflight"
+    target = prepare_engine_interpreter(
+        scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+    )
+    assert (
+        subprocess.check_output(
+            [
+                str(target),
+                "-B",
+                "-c",
+                "import stable_fixture,changed_fixture; "
+                "print(stable_fixture.VALUE+changed_fixture.VALUE)",
+            ]
+        ).strip()
+        == b"47"
+    )
+    assert {path.name for path in scratch.iterdir()} == {"python", "constraints.txt"}
+    assert read_current(root) == 1
+    assert first.drift(first_dir) == ()
+    assert not list(base.rglob("stable_fixture.py"))
+    assert not list(base.rglob("changed_fixture.py"))
+    with pytest.raises(EnvironmentError, match="destination already exists"):
+        prepare_engine_interpreter(
+            scratch, store=store, base="sha256:" + "a" * 64, constraints=constraints
+        )
+    assert target.is_file()
+    shutil.rmtree(scratch)
     second = build(2, "2.0", second_hash)
     second_dir = root / "generations" / "2"
     assert read_current(root) == 1
@@ -990,6 +1246,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     _assert_shared(interpreter(first_dir), interpreter(second_dir))
     assert first.drift(first_dir) == ()
     assert second.drift(second_dir) == ()
+    for directory in (first_dir, second_dir):
+        assert (directory / "base-manifest.json").read_bytes() == manifest.read_bytes()
     assert any(name.endswith("in_process_fixture.py") for name, _ in first.files)
     catalog_name = "pack-sources/fixture/__pycache__/dinkster-schema-catalog/pack.json"
     assert catalog_name in dict(first.files)
