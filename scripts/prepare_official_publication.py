@@ -10,8 +10,9 @@ from urllib.parse import quote
 
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_supervisor.environment_artifacts import validate_manifest
-from dinkster_supervisor.environment_downloads import fetch_artifact
-from dinkster_supervisor.environment_state import content_digest
+from dinkster_supervisor.environment_channels import engine_publication_names
+from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
+from dinkster_supervisor.environment_state import digest
 from dinkster_workers import load_manifest
 from dinkster_workers.boundary import PROTOCOL_VERSION
 
@@ -33,14 +34,13 @@ def prepare_inputs(
         [f"base-{variant}-{identity}" for variant, identity in selections.items()],
         work / "bases",
     )
-    tag = f"main-{commit}"
     engine_dir = work / "engine"
     if candidate:
         engine_dir.mkdir()
         engine = {
             "format": "dinkster.engine/1",
             "repository": "Kosinkadink/Dinkster",
-            "tag": tag,
+            "tag": f"main-{commit}",
             "commit": commit,
             "version": development_version(root),
             "workerProtocol": PROTOCOL_VERSION,
@@ -75,10 +75,22 @@ def prepare_inputs(
 
 def published_engine(work: Path, commit: str) -> dict:
     """Acquire and verify only the engine release produced by this commit."""
+    index = json.loads(read_metadata("https://releases.dinkster.org", "engine/index.json"))
+    if not isinstance(index, list) or any(not isinstance(row, dict) for row in index):
+        raise ValueError("engine index must contain release objects")
+    matches = [row for row in index if row.get("commit") == commit]
+    if len(matches) != 1:
+        raise ValueError(f"engine index must identify one published release for {commit}")
+    selected = matches[0]
+    identity = digest(f"sha256:{selected.get('sha256')}")
     tag = f"main-{commit}"
+    if selected.get("label") is not None:
+        _, tag = engine_publication_names(selected, identity, "main")
     engine_dir = work / "engine"
     release = json.loads(
-        subprocess.check_output(["gh", "api", f"repos/Kosinkadink/Dinkster/releases/tags/{tag}"])
+        subprocess.check_output(
+            ["gh", "api", f"repos/Kosinkadink/Dinkster/releases/tags/{quote(tag, safe='')}"]
+        )
     )
     if release["draft"] or not release["published_at"] or release["tag_name"] != tag:
         raise ValueError(f"official packs require the published engine release for {commit}")
@@ -98,11 +110,14 @@ def published_engine(work: Path, commit: str) -> dict:
         check=True,
     )
     metadata = engine_dir / "release-manifest.json"
-    engine = validate_manifest(metadata.read_bytes(), content_digest(metadata), None)
+    engine = validate_manifest(metadata.read_bytes(), identity, None)
+    name, expected_tag = engine_publication_names(engine, identity, "main")
     if (
         engine["repository"] != "Kosinkadink/Dinkster"
-        or engine["tag"] != tag
+        or expected_tag != tag
         or engine["commit"] != commit
+        or selected.get("path") != f"engine/{name}"
+        or selected.get("version") != engine["version"]
     ):
         raise ValueError("published engine identity mismatch")
     mirror = "https://github.com/Kosinkadink/Dinkster/releases/download/" + quote(tag, safe="")
