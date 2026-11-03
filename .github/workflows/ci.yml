@@ -97,7 +97,7 @@ jobs:
     if: always()
     name: format, lint, types and unit subset
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
