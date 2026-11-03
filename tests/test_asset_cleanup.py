@@ -456,6 +456,10 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
             with vault.writer(digest) as writer:
                 writer.write(data)
                 writer.commit()
+        if not collect:
+            # Read-only WAL inspection creates SQLite sidecars in this writable
+            # directory. Include them in the unchanged recovery-state snapshot.
+            assert len(ProducedScratchState(source.root).publications()) == 2
         before = {
             p.relative_to(source.root): p.read_bytes()
             for p in source.root.rglob("*")
@@ -496,7 +500,9 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
                     if p.is_file()
                 }
                 if collect:
-                    assert set(remaining) == {Path(".produced-scratch.sqlite")}
+                    assert set(remaining) == {
+                        Path(".produced-scratch.sqlite" + suffix) for suffix in ("", "-wal", "-shm")
+                    }
                     state = ProducedScratchState(source.root)
                     assert state.owner() == ("interrupted job", 3)
                     assert state.publications() == ()
@@ -1266,9 +1272,12 @@ def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
             assert not vault.has(digest_bytes(b"unfinished result"))
             assert not any(p.exists() for p in scratch_files)
             assert ProducedScratchState(source.root).publications() == ()
-            assert (
-                result["temporaryBytes"]
-                == (source.root / ".produced-scratch.sqlite").stat().st_size
+            assert {p.name for p in source.root.iterdir()} == {
+                ".produced-scratch.sqlite" + suffix for suffix in ("", "-wal", "-shm")
+            }
+            assert result["temporaryBytes"] == sum(
+                (source.root / (".produced-scratch.sqlite" + suffix)).stat().st_size
+                for suffix in ("", "-wal", "-shm")
             )
             response = await client.post("/api/library/storage/clear", json={})
             assert response.status == 200
