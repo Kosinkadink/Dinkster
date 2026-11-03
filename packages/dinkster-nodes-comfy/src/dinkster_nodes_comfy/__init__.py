@@ -203,6 +203,7 @@ from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
 from .sam3d_export import BuildPoseFile
+from .sam3d_expression import SAM3DBody_FaceExpression
 from .sam3d_prediction import SAM3DBody_Predict
 from .sam3d_render import SAM3DBody_Render
 from .sampler_factories import SAMPLER_FACTORY_NODES
@@ -537,6 +538,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveConditioning,
     SAM3DBody_Loader,
     SAM3DBody_Predict,
+    SAM3DBody_FaceExpression,
     SAM3DBody_Smooth,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
