@@ -221,6 +221,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert any(requirement.startswith("boto3") for requirement in groups["release-publication"])
     assert "-m scripts.publish_environment_channel" in publication["run"]
     assert "--minimum-desktop-version 0.2.0" in publication["run"]
+    assert publication["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert publication["env"]["R2_ACCESS_KEY_ID"] == "${{ secrets.R2_ACCESS_KEY_ID }}"
     assert any(
         "dinkster_supervisor.environment_channels" in step.get("run", "")
