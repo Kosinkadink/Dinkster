@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
-version = "0.0.11"
+version = "0.0.13"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
@@ -582,6 +582,7 @@ namespaces = [
     "SaveConditioning",
     "SAM3DBody_Loader",
     "SAM3DBody_Predict",
+    "SAM3DBody_FaceExpression",
     "SAM3DBody_Smooth",
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
@@ -653,6 +654,8 @@ namespaces = [
     "ImageHistogram",
     "TextOverlay",
     "SAM3DBody_Render",
+    "LoadMediaPipeFaceLandmarker",
+    "MediaPipeFaceLandmarker",
     "BuildPoseFile",
 ]
 

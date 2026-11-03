@@ -10,6 +10,7 @@ from dinkster_api.v1 import AssetWidget, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
 from dinkster_nodes_comfy.sam3d_export import BuildPoseFile
+from dinkster_nodes_comfy.sam3d_expression import SAM3DBody_FaceExpression
 from dinkster_nodes_comfy.sam3d_prediction import SAM3DBody_Predict
 from dinkster_workers import load_manifest
 
@@ -17,7 +18,14 @@ from tools.compare_nodes import compare
 
 
 @pytest.mark.parametrize(
-    "node", (SAM3DBody_Loader, SAM3DBody_Predict, SAM3DBody_Smooth, BuildPoseFile)
+    "node",
+    (
+        SAM3DBody_Loader,
+        SAM3DBody_Predict,
+        SAM3DBody_FaceExpression,
+        SAM3DBody_Smooth,
+        BuildPoseFile,
+    ),
 )
 def test_sam3d_schema_matches_reference(node: type) -> None:
     reference = json.loads(Path("tools/data/comfy_core_reference.json").read_text())
@@ -45,9 +53,12 @@ def test_sam3d_discovery_is_tensor_runtime_free() -> None:
             "sys.modules['dinkster_inference'] = None\n"
             "from dinkster_nodes_comfy.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth\n"
             "from dinkster_nodes_comfy.sam3d_export import BuildPoseFile\n"
+            "from dinkster_nodes_comfy.sam3d_expression import SAM3DBody_FaceExpression\n"
             "from dinkster_nodes_comfy.sam3d_prediction import SAM3DBody_Predict\n"
             "assert SAM3DBody_Loader.define_schema().node_type == 'SAM3DBody_Loader'\n"
             "assert SAM3DBody_Predict.define_schema().node_type == 'SAM3DBody_Predict'\n"
+            "assert SAM3DBody_FaceExpression.define_schema().node_type "
+            "== 'SAM3DBody_FaceExpression'\n"
             "assert SAM3DBody_Smooth.define_schema().node_type == 'SAM3DBody_Smooth'\n"
             "assert BuildPoseFile.define_schema().node_type == 'BuildPoseFile'\n",
         ],

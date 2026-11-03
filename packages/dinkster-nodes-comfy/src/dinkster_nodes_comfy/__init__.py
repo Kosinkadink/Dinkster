@@ -139,6 +139,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
+from .mediapipe_detection import LoadMediaPipeFaceLandmarker, MediaPipeFaceLandmarker
 from .mesh import MESH_NODES
 from .mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from .mesh_decimate import DecimateMesh
@@ -203,6 +204,7 @@ from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
 from .sam3d_export import BuildPoseFile
+from .sam3d_expression import SAM3DBody_FaceExpression
 from .sam3d_prediction import SAM3DBody_Predict
 from .sam3d_render import SAM3DBody_Render
 from .sampler_factories import SAMPLER_FACTORY_NODES
@@ -537,6 +539,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveConditioning,
     SAM3DBody_Loader,
     SAM3DBody_Predict,
+    SAM3DBody_FaceExpression,
     SAM3DBody_Smooth,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
@@ -603,6 +606,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     ImageHistogram,
     TextOverlay,
     SAM3DBody_Render,
+    LoadMediaPipeFaceLandmarker,
+    MediaPipeFaceLandmarker,
     BuildPoseFile,
 )
 
