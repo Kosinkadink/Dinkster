@@ -949,6 +949,8 @@ class ExpressionInspect(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("expression", (True, False))
 def test_smoothing_ordinary_hosts_twice(tmp_path: Path, in_process: bool, expression: bool) -> None:
+    node = SAM3DBody_FaceExpression if expression else SAM3DBody_Smooth
+    node_type = node.schema().node_type
     module = f"sam3d_expression_fixture_{int(in_process)}_{int(expression)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_body_torch import Source, Inspect, ExpressionSource, ExpressionInspect\n"
@@ -991,7 +993,7 @@ def test_smoothing_ordinary_hosts_twice(tmp_path: Path, in_process: bool, expres
                                 else "sam3d-fixture.source"
                             ),
                             "smooth": GraphNode(
-                                "SAM3DBody_FaceExpression" if expression else "SAM3DBody_Smooth",
+                                node_type,
                                 {
                                     "sam3d_body_model": Link("source", "model"),
                                     "mhr_pose_data": Link("source", "pose"),
