@@ -465,6 +465,7 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
             "origin": "user-defined",
             "torchVersion": "2.14.1+cu130",
             "torchIndex": "https://download.pytorch.org/whl/cu130",
+            "label": None,
         }
         human = subprocess.run(
             [
@@ -483,6 +484,96 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
         assert "Variant: my-cuda (user-defined)" in human.stdout
         assert "Torch: 2.14.1+cu130" in human.stdout
         assert "Torch index: https://download.pytorch.org/whl/cu130" in human.stdout
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "labelled",
+        "legacy",
+        "missing",
+        "base-id",
+        "engine-hash",
+        "engine-version",
+        "base-label",
+        "engine-label",
+    ],
+)
+def test_installed_labels_use_active_manifest_identities_without_channel_reads(
+    tmp_path: Path, case: str
+):
+    root = tmp_path / "project"
+    generation = _generation(root, 1).parent
+    base, engine, _ = _mirror(tmp_path / "mirror")
+    if case != "legacy":
+        base["label"] = "2026-10-31-py3.14.10-torch1.0-" + base["id"][7:15]
+        engine["label"] = "2026-11-01-0.4.0.dev1"
+    if case == "base-label":
+        base["label"] = ["not a label"]
+    elif case == "engine-label":
+        engine["label"] = 7
+    store = tmp_path / "cache"
+    base_path = store / "bases" / base["id"][7:] / "manifest.json"
+    base_path.parent.mkdir(parents=True)
+    base_path.write_text(json.dumps(base))
+    (root / "store").write_text(str(store))
+    engine_path = generation / "engine-manifest.json"
+    engine_path.write_text(json.dumps(engine) + "\n")
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_bytes())
+    document.update(base=base["id"], variant=base["variant"])
+    document["engine"] = {"release": content_digest(engine_path), "version": engine["version"]}
+    document["files"]["engine-manifest.json"] = content_digest(engine_path)
+    if case == "base-id":
+        base["python"] = "3.14.9"
+        base_path.write_text(json.dumps(base))
+    elif case == "engine-hash":
+        engine_path.write_text(json.dumps({**engine, "label": "wrong-release"}))
+    elif case == "engine-version":
+        document["engine"]["version"] = "9.0"
+    elif case == "missing":
+        base_path.unlink()
+        engine_path.unlink()
+        del document["files"]["engine-manifest.json"]
+    metadata.write_text(json.dumps(document))
+    (root / "current").write_text("1\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    for operation in ("status", "doctor"):
+        code, result = _run(root, operation)
+        if case in {"base-label", "engine-label"}:
+            assert code == 1 and result["status"] == "error"
+            assert "label must be a string or null" in result["error"]
+        elif case in {"base-id", "engine-hash", "engine-version"}:
+            assert code == 1 and result["status"] == "error"
+            assert "match" in result["error"]
+        elif case == "missing":
+            assert code == 0
+            assert "base" not in result and "engine" not in result
+        else:
+            assert code == 0
+            assert result["base"]["variant"] == base["variant"]
+            assert result["base"]["label"] == base.get("label")
+            assert result["engine"] == {**document["engine"], "label": engine.get("label")}
+            human = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(root),
+                    operation,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            if case == "labelled":
+                assert f"Base label: {base['label']}" in human.stdout
+                assert f"Engine label: {engine['label']}" in human.stdout
+            else:
+                assert "Base label:" not in human.stdout and "Engine label:" not in human.stdout
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
@@ -1415,7 +1506,13 @@ def test_public_fixture_commands_install_update_and_rollback(
         status = run("status")
         assert status["current"] == number
         assert status["engines"][0]["state"] == "ready"
-        assert run("doctor")["status"] == "clean"
+        doctor = run("doctor")
+        assert doctor["status"] == "clean"
+        for result in (status, doctor):
+            assert result["base"]["label"] == base_label
+            assert result["engine"]["version"] == expected["version"]
+            assert result["engine"]["label"] == (engine_label if number == 1 else None)
+            assert result["engine"]["release"] == manifest["engine"]["release"]
         # The offline proxy barrier applies to downloads, not this loopback observation.
         with build_opener(ProxyHandler({})).open(
             status["engines"][0]["url"] + "/api/generation", timeout=5

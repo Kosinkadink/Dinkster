@@ -835,6 +835,14 @@ date, sorting after dated releases. Indexes are discovery aids, not identities
 or replacements for manifest verification. Local store paths continue to use
 full hashes only, never labels.
 
+`dinkster-env status` and `doctor` expose installed labels in their human and
+JSON output. The optional `base` descriptor adds a nullable `label`; the
+optional `engine` descriptor contains the active generation's `release`,
+`version` and nullable `label`. These come from identity-matched installed
+manifests, not the current channel. Missing legacy manifests omit the
+descriptor; an unlabelled legacy or custom manifest yields a null label.
+Labels never change the runtime `engines` bindings or local directory names.
+
 The builder uploads no third-party wheels. Repeated `--base-manifest PATH`
 inputs select verified `dinkster.base/1` manifests. Their producer-owned
 normalized `replaces` names are the sole ownership list, generated in

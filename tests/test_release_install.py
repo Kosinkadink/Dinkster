@@ -1574,6 +1574,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
     sources.mkdir()
     versions = {"first-pack": "1.2.3", "second-pack": "7.0rc1"}
     release_versions = {**versions, "unselected-pack": "0.5.0"}
+    (tmp_path / "uv.lock").write_text("package = []\n")
 
     def artifacts(directory, selected):
         directory.mkdir(exist_ok=True)
@@ -1618,7 +1619,14 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
         "workerProtocol": 12 if mode == "protocol" else 11,
         "archive": {"parts": []},
         "interpreter": {"executable": "python"},
-        "wheels": [{"filename": wheel, "url": "https://example.test/fixture.whl"}],
+        "wheels": [
+            {
+                "filename": wheel,
+                "size": 17,
+                "sha256": "b" * 64,
+                "url": "https://example.test/fixture.whl",
+            }
+        ],
         "nvidia": None,
     }
     manifest = tmp_path / "base.json"
