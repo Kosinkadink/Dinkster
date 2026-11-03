@@ -13,6 +13,7 @@ import tomllib
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -2264,11 +2265,25 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("labelled", [False, True])
 @pytest.mark.parametrize(
-    "problem", [None, "range", "tag", "commit", "missing", "digest", "candidate"]
+    "problem",
+    [
+        None,
+        "range",
+        "tag",
+        "commit",
+        "missing",
+        "digest",
+        "candidate",
+        "index-commit",
+        "index-digest",
+        "index-path",
+        "index-duplicate",
+    ],
 )
 def test_official_publication_workflow_prepares_verified_published_engine_inputs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None, labelled: bool
 ) -> None:
     from dinkster_registry import Lockfile
     from dinkster_supervisor import environment_downloads
@@ -2304,15 +2319,43 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
             {"name": "constraints.txt", "size": 4, "sha256": hashlib.sha256(b"pins").hexdigest()}
         ],
     }
+    if labelled:
+        del engine["tag"]
+        engine.update(label="2026-11-03-0.0.3.dev123+build", builtAt="2026-11-03T10:41:18Z")
+    engine_bytes = json.dumps(engine).encode()
+    identity = hashlib.sha256(engine_bytes).hexdigest()
+    indexed_digest = "f" * 64 if problem == "index-digest" else identity
+    if labelled:
+        tag = f"main-2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}"
+    entry = {
+        "commit": ("e" if problem == "index-commit" else "c") * 40,
+        "sha256": indexed_digest,
+        "label": engine.get("label"),
+        "version": engine["version"],
+        "path": "engine/"
+        + (f"2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}" if labelled else indexed_digest),
+    }
+    if problem == "index-path":
+        entry["path"] = "engine/" + "a" * 64
+
+    def metadata(mirror, path):
+        assert problem != "candidate"
+        assert mirror == "https://releases.dinkster.org" and path == "engine/index.json"
+        entries = [{**entry, "commit": "b" * 40}, entry]
+        if problem == "index-duplicate":
+            entries.append(entry)
+        return json.dumps(entries).encode()
+
     old_check_output, old_run = subprocess.check_output, subprocess.run
 
     def read(command, **kwargs):
         if command[0] != "gh":
             return old_check_output(command, **kwargs)
-        assert command[-1] == f"repos/Kosinkadink/Dinkster/releases/tags/{tag}"
+        if command[-1] != f"repos/Kosinkadink/Dinkster/releases/tags/{quote(tag, safe='')}":
+            raise subprocess.CalledProcessError(1, command, stderr=b"Not Found (HTTP 404)")
         return json.dumps(
             {
-                "tag_name": tag,
+                "tag_name": "wrong" if labelled and problem == "tag" else tag,
                 "draft": problem == "missing",
                 "published_at": "2026-01-01T00:00:00Z",
             }
@@ -2324,19 +2367,22 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
         assert command[3] == tag
         directory = Path(command[-1])
         directory.mkdir()
-        (directory / "release-manifest.json").write_text(json.dumps(engine))
+        (directory / "release-manifest.json").write_bytes(engine_bytes)
         return subprocess.CompletedProcess(command, 0)
 
     original_fetch = environment_downloads.fetch_artifact
     server = _serve_artifacts({"/constraints.txt": b"fake" if problem == "digest" else b"pins"}, [])
 
     def fetch(mirrors, name, destination, digest, size):
-        assert mirrors == (f"https://github.com/Kosinkadink/Dinkster/releases/download/{tag}",)
+        assert mirrors == (
+            "https://github.com/Kosinkadink/Dinkster/releases/download/" + quote(tag, safe=""),
+        )
         return original_fetch(
             (f"http://127.0.0.1:{server.server_port}",), name, destination, digest, size
         )
 
     original_build = preparation.build
+    monkeypatch.setattr(preparation, "read_metadata", metadata, raising=False)
     monkeypatch.setattr(preparation, "acquire", acquire)
     monkeypatch.setattr(subprocess, "check_output", read)
     monkeypatch.setattr(subprocess, "run", run)
