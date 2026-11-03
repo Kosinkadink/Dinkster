@@ -699,6 +699,7 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         "github",
         "head",
         "config",
+        "token",
         "event",
         "superseded",
         "identical",
@@ -783,6 +784,7 @@ def test_channel_publication_exposes_only_verified_payloads(
         "GITHUB_EVENT_NAME": "push",
         "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": engine["commit"],
+        "GITHUB_TOKEN": "test-token",
         "R2_ACCESS_KEY_ID": "test",
         "R2_SECRET_ACCESS_KEY": "test",
         "R2_ACCOUNT_ID": "test",
@@ -792,6 +794,8 @@ def test_channel_publication_exposes_only_verified_payloads(
         monkeypatch.setenv(name, value)
     if failure == "config":
         monkeypatch.delenv("R2_SECRET_ACCESS_KEY")
+    elif failure == "token":
+        monkeypatch.delenv("GITHUB_TOKEN")
     elif failure == "event":
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     elif failure == "base":
@@ -799,11 +803,12 @@ def test_channel_publication_exposes_only_verified_payloads(
     original_urlopen = publisher.urlopen
 
     def published_input(url, **kwargs):
-        if url.startswith("https://api.github.com/"):
-            assert url == (
+        if isinstance(url, publisher.Request):
+            assert url.full_url == (
                 "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
                 f"{published_commit}...{engine['commit']}"
             )
+            assert url.get_header("Authorization") == "Bearer test-token"
             if failure == "compare":
                 raise ValueError("compare unavailable")
             status = (
@@ -883,7 +888,10 @@ def test_channel_publication_exposes_only_verified_payloads(
 
     monkeypatch.setattr(publisher, "urlopen", published_input)
     monkeypatch.setattr(publisher.boto3, "client", lambda *args, **kwargs: ObjectStore())
-    if failure in {
+    if failure == "token":
+        with pytest.raises(ValueError, match="GITHUB_TOKEN is required for channel publication"):
+            publisher.publish(release, [base_path], "main", "0.2.0")
+    elif failure in {
         "base",
         "engine",
         "github",
