@@ -8,6 +8,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._sqlite import connect_journal
 from .identity import AssetError, require_digest
 from .scratch import is_link_or_junction
 
@@ -36,7 +37,7 @@ class ProducedAssetInventory:
         if type(size) is not int or size < 0:
             raise AssetError("produced asset size must be a nonnegative integer")
         try:
-            with closing(sqlite3.connect(self._path)) as db, db:
+            with closing(connect_journal(self._path)) as db, db:
                 db.execute(
                     "CREATE TABLE IF NOT EXISTS adoptions ("
                     "digest TEXT PRIMARY KEY, size INTEGER NOT NULL, adopted_at_ns INTEGER)"
@@ -58,7 +59,7 @@ class ProducedAssetInventory:
     def adopted(self, digest: str, size: int) -> None:
         digest = require_digest(digest)
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with closing(connect_journal(self._path, mode="rw")) as db, db:
                 changed = db.execute(
                     "UPDATE adoptions SET adopted_at_ns = COALESCE(adopted_at_ns, ?) "
                     "WHERE digest = ? AND size = ?",
@@ -78,7 +79,7 @@ class ProducedAssetInventory:
         if not self._path.exists():
             return
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with closing(connect_journal(self._path, mode="rw")) as db, db:
                 row = db.execute(
                     "SELECT size, adopted_at_ns FROM adoptions WHERE digest = ?", (digest,)
                 ).fetchone()
@@ -99,7 +100,7 @@ class ProducedAssetInventory:
         if adoption.adopted_at_ns is None:
             raise AssetError("pending adoption cannot be forgotten")
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with closing(connect_journal(self._path, mode="rw")) as db, db:
                 changed = db.execute(
                     "DELETE FROM adoptions WHERE digest = ? AND size = ? AND adopted_at_ns = ?",
                     (adoption.digest, adoption.size, adoption.adopted_at_ns),
@@ -112,7 +113,7 @@ class ProducedAssetInventory:
     def entries(self) -> tuple[ProducedAssetAdoption, ...]:
         """Read existing recovery state; missing or unreadable state is not emptiness."""
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=ro", uri=True)) as db:
+            with closing(connect_journal(self._path, mode="ro")) as db:
                 rows = db.execute(
                     "SELECT digest, size, adopted_at_ns FROM adoptions "
                     "ORDER BY adopted_at_ns, digest"
