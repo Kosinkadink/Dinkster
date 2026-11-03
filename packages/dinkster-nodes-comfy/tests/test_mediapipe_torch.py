@@ -572,6 +572,8 @@ def test_face_loader_detection_ordinary_hosts_twice(
     """Real asset/model/packet boundaries with controlled architecture and geometry delegation."""
     from safetensors.torch import save_file
 
+    loader_type = LoadMediaPipeFaceLandmarker.schema().node_type
+    detector_type = MediaPipeFaceLandmarker.schema().node_type
     model_module = "dinkster_inference.mediapipe.face_landmarker"
     geometry_module = "dinkster_inference.mediapipe.face_geometry"
     monkeypatch.setitem(sys.modules, model_module, SimpleNamespace(FaceLandmarker=LoaderLandmarker))
@@ -635,11 +637,9 @@ def test_face_loader_detection_ordinary_hosts_twice(
                     Graph(
                         nodes={
                             "source": GraphNode("face-detection-fixture.source"),
-                            "load": GraphNode(
-                                "LoadMediaPipeFaceLandmarker", {"model_name": asset.to_wire()}
-                            ),
+                            "load": GraphNode(loader_type, {"model_name": asset.to_wire()}),
                             "detect": GraphNode(
-                                "MediaPipeFaceLandmarker",
+                                detector_type,
                                 {
                                     "face_detection_model": Link("load", "FACE_DETECTION_MODEL"),
                                     "image": Link("source", "image"),
