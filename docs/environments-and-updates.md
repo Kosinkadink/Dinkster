@@ -240,8 +240,11 @@ are relative to the configured mirror; an immutable GitHub location is
 `{type: "github", repository, tag, asset}`. A location never overrides digest
 verification. The engine id hashes the final release-manifest.json bytes,
 including its trailing newline. New engine manifests carry a readable
-`label: YYYY-MM-DD-<version>` and UTC ISO 8601 `builtAt`, not `tag`:
-publication derives the directory `<label>-<hash8>` and the main prerelease
+`label: YYYY-MM-DD-<public-version>` and UTC ISO 8601 `builtAt`, not `tag`.
+The label omits the PEP 440 local segment (`+...`); the manifest version and
+wheel filenames retain it. For example, `0.0.3.dev1793707626+g<commit>` uses
+label `2026-11-03-0.0.3.dev1793707626`.
+Publication derives the directory `<label>-<hash8>` and the main prerelease
 tag `main-<label>-<hash8>` after finalizing the bytes. Stable tags stay
 `v<version>`. Old manifests with `tag` and old hash-only paths remain valid;
 existing publications are never renamed. Base ids use the base producer's

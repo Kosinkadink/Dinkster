@@ -1188,8 +1188,19 @@ def test_dependency_metadata_uses_producer_ownership_names_per_variant(
         select_dependency_wheels(tmp_path, "uv", manifests[:1])
 
 
+@pytest.mark.parametrize(
+    ("tag", "version", "public_version"),
+    [
+        ("v1.2.3", "1.2.3", "1.2.3"),
+        (None, "1.2.4.dev1793707626+g" + "a" * 40, "1.2.4.dev1793707626"),
+    ],
+)
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str | None,
+    version: str,
+    public_version: str,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
@@ -1249,19 +1260,21 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
     payloads = [payload, bootstrap, archive, catalog]
-    built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
+    monkeypatch.setattr("scripts.build_release.development_version", lambda root: version)
+    built = build(root, output, tag, frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
     built_at = datetime.fromisoformat(manifest["builtAt"])
     assert built_at.tzinfo == UTC
-    assert manifest["label"] == f"{built_at.date().isoformat()}-1.2.3"
+    assert manifest["label"] == f"{built_at.date().isoformat()}-{public_version}"
+    assert manifest["version"] == version
     assert "tag" not in manifest
     assert set(manifest["workspaceWheels"]) == {
-        "dinkster-1.2.3-py2.py3-none-any.whl",
-        "dinkster_api-1.2.3-py2.py3-none-any.whl",
-        "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
+        f"dinkster-{version}-py2.py3-none-any.whl",
+        f"dinkster_api-{version}-py2.py3-none-any.whl",
+        f"dinkster_supervisor-{version}-py2.py3-none-any.whl",
     }
-    with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
+    with zipfile.ZipFile(output / f"dinkster-{version}-py2.py3-none-any.whl") as wheel:
         assert not any(name.startswith("dinkster/official_packs/") for name in wheel.namelist())
         assert not any(name.endswith((".zip", ".pack-lock.json")) for name in wheel.namelist())
     for candidate in payloads:

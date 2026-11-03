@@ -444,7 +444,7 @@ def build(
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
         "builtAt": built_at.isoformat().replace("+00:00", "Z"),
-        "label": f"{built_at.date().isoformat()}-{version}",
+        "label": f"{built_at.date().isoformat()}-{version.partition('+')[0]}",
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),
