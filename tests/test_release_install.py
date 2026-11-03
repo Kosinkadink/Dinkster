@@ -698,11 +698,14 @@ def test_development_version_counts_commits_since_the_last_version_tag(tmp_path:
     head = ""
     for number in range(3):
         parent = f"parent {head}\n" if head else ""
-        head = subprocess.check_output(
-            ["git", "-C", str(root), "hash-object", "-w", "-t", "commit", "--stdin"],
-            input=f"tree {tree}\n{parent}{metadata}\n\nFixture commit {number}\n",
-            text=True,
-        ).strip()
+        head = (
+            subprocess.check_output(
+                ["git", "-C", str(root), "hash-object", "-w", "-t", "commit", "--stdin"],
+                input=f"tree {tree}\n{parent}{metadata}\n\nFixture commit {number}\n".encode(),
+            )
+            .decode("ascii")
+            .strip()
+        )
     subprocess.run(["git", "-C", str(root), "update-ref", "HEAD", head], check=True)
     assert development_version(root) == f"1.2.4.dev3+g{head}"
     subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.3", "HEAD~2"], check=True)
