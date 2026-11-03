@@ -371,10 +371,24 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     )
 
 
+def test_default_pack_admission_uses_complete_version_history() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
+    )
+    checkout = next(
+        step
+        for step in workflow["jobs"]["admission"]["steps"]
+        if step.get("uses") == "actions/checkout@v4"
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+
+
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
     assert build["permissions"] == {"actions": "read", "contents": "read"}
+    checkout = next(step for step in build["steps"] if step.get("uses") == "actions/checkout@v4")
+    assert checkout["with"]["fetch-depth"] == 0
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "-m scripts.build_release" in commands
     assert "--download-external-wheels" not in commands
@@ -668,6 +682,39 @@ def test_repository_versions_match_first_release_tag() -> None:
     assert len(frontend["commit"]) == 40
     assert len(frontend["sha256"]) == 64
     assert set(frontend) == {"repository", "commit", "sha256"}
+
+
+def test_development_version_counts_commits_since_the_last_version_tag(tmp_path: Path) -> None:
+    root = tmp_path / "history"
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    (root / "pyproject.toml").write_text('[project]\nname = "fixture"\nversion = "1.2.3"\n')
+    tree = subprocess.check_output(["git", "-C", str(root), "mktree"], input="", text=True).strip()
+    original = subprocess.check_output(
+        ["git", "-C", str(ROOT), "cat-file", "-p", "HEAD"], text=True
+    )
+    metadata = "\n".join(
+        line for line in original.splitlines() if line.startswith(("author ", "committer "))
+    )
+    head = ""
+    for number in range(3):
+        parent = f"parent {head}\n" if head else ""
+        head = subprocess.check_output(
+            ["git", "-C", str(root), "hash-object", "-w", "-t", "commit", "--stdin"],
+            input=f"tree {tree}\n{parent}{metadata}\n\nFixture commit {number}\n",
+            text=True,
+        ).strip()
+    subprocess.run(["git", "-C", str(root), "update-ref", "HEAD", head], check=True)
+    assert development_version(root) == f"1.2.4.dev3+g{head}"
+    subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.3", "HEAD~2"], check=True)
+    assert development_version(root) == f"1.2.4.dev2+g{head}"
+    subprocess.run(
+        ["git", "-C", str(root), "update-ref", "refs/tags/main-latest", "HEAD"], check=True
+    )
+    assert development_version(root) == f"1.2.4.dev2+g{head}"
+    subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.4", "HEAD~1"], check=True)
+    assert development_version(root) == f"1.2.4.dev1+g{head}"
+    subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.5", "HEAD"], check=True)
+    assert development_version(root) == f"1.2.4.dev0+g{head}"
 
 
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
@@ -1188,8 +1235,19 @@ def test_dependency_metadata_uses_producer_ownership_names_per_variant(
         select_dependency_wheels(tmp_path, "uv", manifests[:1])
 
 
+@pytest.mark.parametrize(
+    ("tag", "version", "public_version"),
+    [
+        ("v1.2.3", "1.2.3", "1.2.3"),
+        (None, "1.2.4.dev412+g" + "a" * 40, "1.2.4.dev412"),
+    ],
+)
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str | None,
+    version: str,
+    public_version: str,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
@@ -1249,19 +1307,21 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
     payloads = [payload, bootstrap, archive, catalog]
-    built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
+    monkeypatch.setattr("scripts.build_release.development_version", lambda root: version)
+    built = build(root, output, tag, frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
     built_at = datetime.fromisoformat(manifest["builtAt"])
     assert built_at.tzinfo == UTC
-    assert manifest["label"] == f"{built_at.date().isoformat()}-1.2.3"
+    assert manifest["label"] == f"{built_at.date().isoformat()}-{public_version}"
+    assert manifest["version"] == version
     assert "tag" not in manifest
     assert set(manifest["workspaceWheels"]) == {
-        "dinkster-1.2.3-py2.py3-none-any.whl",
-        "dinkster_api-1.2.3-py2.py3-none-any.whl",
-        "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
+        f"dinkster-{version}-py2.py3-none-any.whl",
+        f"dinkster_api-{version}-py2.py3-none-any.whl",
+        f"dinkster_supervisor-{version}-py2.py3-none-any.whl",
     }
-    with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
+    with zipfile.ZipFile(output / f"dinkster-{version}-py2.py3-none-any.whl") as wheel:
         assert not any(name.startswith("dinkster/official_packs/") for name in wheel.namelist())
         assert not any(name.endswith((".zip", ".pack-lock.json")) for name in wheel.namelist())
     for candidate in payloads:
@@ -2134,6 +2194,10 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     }
     assert "pull_request_target" not in trigger and "workflow_dispatch" not in trigger
     jobs = workflow["jobs"]
+    checkout = next(
+        step for step in jobs["sources"]["steps"] if step.get("uses") == "actions/checkout@v4"
+    )
+    assert checkout["with"]["fetch-depth"] == 0
     select = next(step for step in jobs["select"]["steps"] if step.get("id") == "select")
     script = select["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
