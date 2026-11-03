@@ -180,6 +180,14 @@
   updates can select another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
+- Published engine and base locations can carry readable dated labels alongside
+  their hash prefix. Existing hash-only locations remain installable, and local
+  stores keep full-hash directory names for both forms. Contributor setup can
+  locate an absent legacy base directory through the variant index, matching
+  only its pinned full content id and verifying the manifest before installation.
+- Status and doctor show installed base and engine labels from identity-matched
+  local manifests without consulting the current channel. Legacy and custom
+  manifests without labels remain supported and do not acquire invented labels.
 - Base acquisition verifies ordered tar+zstd parts before streaming extraction.
   No external decoder executable or runtime decoder download is needed. Unsafe
   members refuse extraction before promotion. Internal symlinks are preserved

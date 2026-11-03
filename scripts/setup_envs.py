@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -114,10 +115,11 @@ def setup(
     from dinkster_supervisor.environment_artifacts import acquire_base, validate_manifest
     from dinkster_supervisor.environment_constraints import effective_constraints
     from dinkster_supervisor.environment_downloads import read_metadata
-    from dinkster_supervisor.environment_state import writer_lock
+    from dinkster_supervisor.environment_state import ArtifactLocation, writer_lock
 
     local = None
     base = None
+    base_sources = {}
     if from_scratch:
         from dinkster_supervisor.environment_local import DEFAULT_VARIANTS, local_selection
 
@@ -133,15 +135,36 @@ def setup(
         other_prefixes = tuple(
             prefix for host, prefix in prefixes.items() if host != platform.system()
         )
-        bases = [
-            validate_manifest(
-                read_metadata(mirror, f"base/{name}/{identity}/manifest.json"),
-                "sha256:" + identity,
-                name,
-            )
-            for name, identity in selections.items()
-            if not name.startswith(other_prefixes)
-        ]
+        bases = []
+        for name, identity in selections.items():
+            if name.startswith(other_prefixes):
+                continue
+            legacy_path = f"base/{name}/{identity}/manifest.json"
+            path = legacy_path
+            try:
+                data = read_metadata(mirror, path)
+            except (FileNotFoundError, HTTPError) as error:
+                if isinstance(error, HTTPError) and error.code != 404:
+                    raise
+                index = json.loads(read_metadata(mirror, f"base/{name}/index.json"))
+                if not isinstance(index, list):
+                    raise ValueError("base index must be an array") from error
+                matches = [
+                    row
+                    for row in index
+                    if isinstance(row, dict) and row.get("id") == "sha256:" + identity
+                ]
+                if len(matches) != 1:
+                    raise ValueError(
+                        f"base index must contain exactly one entry for pinned {name} id"
+                    ) from error
+                path = ArtifactLocation.read(
+                    {"type": "mirror", "path": f"{matches[0].get('path')}/manifest.json"},
+                    legacy_path,
+                ).path
+                data = read_metadata(mirror, path)
+            bases.append(validate_manifest(data, "sha256:" + identity, name))
+            base_sources[name] = f"{mirror.rstrip('/')}/{path.rsplit('/', 1)[0]}"
         base = select_base(bases, variant)
         print(
             f"Installing {base['variant']} base {base['id']} (Python {base['python']})", flush=True
@@ -163,9 +186,7 @@ def setup(
                     shutil.copyfile(store / "wheels" / wheel["sha256"] / wheel["filename"], target)
         else:
             assert base is not None
-            base_root = acquire_base(
-                base, (f"{mirror.rstrip('/')}/base/{base['variant']}/{base['id'][7:]}",), store
-            )
+            base_root = acquire_base(base, (base_sources[base["variant"]],), store)
         assert base is not None
         requirements = root / ".run/workspace-requirements.txt"
         command(

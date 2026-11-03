@@ -99,12 +99,15 @@ def custom_selection(path: Path, variant: str, template: dict[str, Any]) -> dict
 
 def base_details(base: dict[str, Any]) -> dict[str, object]:
     """Describe the active base, never infer provenance from a variant's name."""
+    if base.get("label") is not None and not isinstance(base["label"], str):
+        raise EnvironmentError("base manifest label must be a string or null")
     torch = next((wheel for wheel in base["wheels"] if wheel["name"] == "torch"), None)
     return {
         "variant": base["variant"],
         "origin": "user-defined" if base.get("source") == "user-defined" else "published",
         "torchVersion": torch["version"] if torch else None,
         "torchIndex": torch["index"] if torch else None,
+        "label": base.get("label"),
     }
 
 

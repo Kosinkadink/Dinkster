@@ -1,4 +1,4 @@
-"""Keep the newest 50 commit-named engine prereleases, never stable releases."""
+"""Keep the newest 50 engine prereleases, never stable releases."""
 
 from __future__ import annotations
 
@@ -41,7 +41,11 @@ def prune(repository: str) -> list[int]:
         for release in page
         if release["prerelease"]
         and not release["draft"]
-        and re.fullmatch(r"main-[0-9a-f]{40}", release["tag_name"])
+        and re.fullmatch(
+            r"main-(?:[0-9a-f]{40}|[0-9]{4}-[0-9]{2}-[0-9]{2}-"
+            r"[0-9][A-Za-z0-9._+\-]*-[0-9a-f]{8})",
+            release["tag_name"],
+        )
         and release["published_at"] is not None
     ]
     releases.sort(key=lambda release: (release["published_at"], release["id"]), reverse=True)

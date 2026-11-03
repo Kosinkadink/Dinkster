@@ -465,6 +465,7 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
             "origin": "user-defined",
             "torchVersion": "2.14.1+cu130",
             "torchIndex": "https://download.pytorch.org/whl/cu130",
+            "label": None,
         }
         human = subprocess.run(
             [
@@ -483,6 +484,138 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
         assert "Variant: my-cuda (user-defined)" in human.stdout
         assert "Torch: 2.14.1+cu130" in human.stdout
         assert "Torch index: https://download.pytorch.org/whl/cu130" in human.stdout
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_status_and_doctor_keep_local_manifests_out_of_publication_descriptors(tmp_path: Path):
+    generation = _generation(tmp_path, 1).parent
+    base = {
+        "format": "dinkster.base/1",
+        "source": "local",
+        "variant": "linux-cpu",
+        "wheels": [
+            {
+                "name": "torch",
+                "version": "2.14.1",
+                "filename": "torch.whl",
+                "size": 17,
+                "sha256": "b" * 64,
+                "url": "local",
+            }
+        ],
+    }
+    engine = {
+        "format": "dinkster.engine/1",
+        "source": "local",
+        "version": "0.4.2",
+        "workerProtocol": 1,
+        "wheels": [],
+    }
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_bytes())
+    document["source"] = "local"
+    for name, manifest in (("base-manifest.json", base), ("engine-manifest.json", engine)):
+        path = generation / name
+        path.write_text(json.dumps(manifest))
+        document["files"][name] = content_digest(path)
+    metadata.write_text(json.dumps(document))
+    (tmp_path / "current").write_text("1\n")
+    for operation in ("status", "doctor"):
+        code, result = _run(tmp_path, operation)
+        assert code == 0 and result["status"] == "clean"
+        assert "base" not in result and "engine" not in result
+        if operation == "doctor":
+            assert result["source"] == "local"
+            assert "locally resolved" in result["plan"][0]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "labelled",
+        "legacy",
+        "missing",
+        "base-id",
+        "engine-hash",
+        "engine-version",
+        "base-label",
+        "engine-label",
+    ],
+)
+def test_installed_labels_use_active_manifest_identities_without_channel_reads(
+    tmp_path: Path, case: str
+):
+    root = tmp_path / "project"
+    generation = _generation(root, 1).parent
+    base, engine, _ = _mirror(tmp_path / "mirror")
+    if case != "legacy":
+        base["label"] = "2026-10-31-py3.14.10-torch1.0-" + base["id"][7:15]
+        engine["label"] = "2026-11-01-0.4.0.dev1"
+    if case == "base-label":
+        base["label"] = ["not a label"]
+    elif case == "engine-label":
+        engine["label"] = 7
+    store = tmp_path / "cache"
+    base_path = store / "bases" / base["id"][7:] / "manifest.json"
+    base_path.parent.mkdir(parents=True)
+    base_path.write_text(json.dumps(base))
+    (root / "store").write_text(str(store))
+    engine_path = generation / "engine-manifest.json"
+    engine_path.write_text(json.dumps(engine) + "\n")
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_bytes())
+    document.update(base=base["id"], variant=base["variant"])
+    document["engine"] = {"release": content_digest(engine_path), "version": engine["version"]}
+    document["files"]["engine-manifest.json"] = content_digest(engine_path)
+    if case == "base-id":
+        base["python"] = "3.14.9"
+        base_path.write_text(json.dumps(base))
+    elif case == "engine-hash":
+        engine_path.write_text(json.dumps({**engine, "label": "wrong-release"}))
+    elif case == "engine-version":
+        document["engine"]["version"] = "9.0"
+    elif case == "missing":
+        base_path.unlink()
+        engine_path.unlink()
+        del document["files"]["engine-manifest.json"]
+    metadata.write_text(json.dumps(document))
+    (root / "current").write_text("1\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    for operation in ("status", "doctor"):
+        code, result = _run(root, operation)
+        if case in {"base-label", "engine-label"}:
+            assert code == 1 and result["status"] == "error"
+            assert "label must be a string or null" in result["error"]
+        elif case in {"base-id", "engine-hash", "engine-version"}:
+            assert code == 1 and result["status"] == "error"
+            assert "match" in result["error"]
+        elif case == "missing":
+            assert code == 0
+            assert "base" not in result and "engine" not in result
+        else:
+            assert code == 0
+            assert result["base"]["variant"] == base["variant"]
+            assert result["base"]["label"] == base.get("label")
+            assert result["engine"] == {**document["engine"], "label": engine.get("label")}
+            human = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(root),
+                    operation,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            if case == "labelled":
+                assert f"Base label: {base['label']}" in human.stdout
+                assert f"Engine label: {engine['label']}" in human.stdout
+            else:
+                assert "Base label:" not in human.stdout and "Engine label:" not in human.stdout
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
@@ -1340,6 +1473,48 @@ def test_public_fixture_commands_install_update_and_rollback(
     root = Path(fixture["root"])
     commands = fixture["commands"]
 
+    mirror = Path(fixture["mirror"])
+    channel_path = mirror / "channels/main.json"
+    channel = json.loads(channel_path.read_bytes())
+    variant = fixture["variant"]
+    base_id = channel["base"][variant]["id"][7:]
+    base_directory = mirror / "base" / variant / base_id
+    base = json.loads((base_directory / "manifest.json").read_bytes())
+    base_label = f"2026-10-31-py{base['python']}-torch1.0-{base_id[:8]}"
+    base.update(
+        label=base_label,
+        builtAt="2026-10-31T12:00:00Z",
+        torchVersion="1.0",
+        torchIndex="https://pypi.org/simple",
+        lockSource={"repository": "https://github.com/Kosinkadink/Dinkster", "commit": "d" * 40},
+    )
+    (base_directory / "manifest.json").write_text(json.dumps(base))
+    base_directory.rename(base_directory.with_name(base_label))
+    channel["base"][variant]["locations"][0]["path"] = f"base/{variant}/{base_label}/manifest.json"
+    updated_path = Path(fixture["updatedChannel"])
+    updated_channel = json.loads(updated_path.read_bytes())
+    updated_channel["base"] = channel["base"]
+    updated_path.write_text(json.dumps(updated_channel))
+    engine_directory = mirror / "engine" / channel["engine"]["release"][7:]
+    engine = json.loads((engine_directory / "release-manifest.json").read_bytes())
+    engine_label = "2026-10-31-1.0"
+    engine.pop("tag")
+    engine.update(label=engine_label, builtAt="2026-10-31T12:30:00Z")
+    engine_bytes = (json.dumps(engine) + "\n").encode()
+    engine_id = hashlib.sha256(engine_bytes).hexdigest()
+    (engine_directory / "release-manifest.json").write_bytes(engine_bytes)
+    engine_directory.rename(engine_directory.with_name(f"{engine_label}-{engine_id[:8]}"))
+    channel["engine"].update(
+        release="sha256:" + engine_id,
+        locations=[
+            {
+                "type": "mirror",
+                "path": f"engine/{engine_label}-{engine_id[:8]}/release-manifest.json",
+            }
+        ],
+    )
+    channel_path.write_text(json.dumps(channel))
+
     def run(name: str) -> dict:
         completed = subprocess.run(commands[name], capture_output=True, text=True, timeout=60)
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
@@ -1373,7 +1548,13 @@ def test_public_fixture_commands_install_update_and_rollback(
         status = run("status")
         assert status["current"] == number
         assert status["engines"][0]["state"] == "ready"
-        assert run("doctor")["status"] == "clean"
+        doctor = run("doctor")
+        assert doctor["status"] == "clean"
+        for result in (status, doctor):
+            assert result["base"]["label"] == base_label
+            assert result["engine"]["version"] == expected["version"]
+            assert result["engine"]["label"] == (engine_label if number == 1 else None)
+            assert result["engine"]["release"] == manifest["engine"]["release"]
         # The offline proxy barrier applies to downloads, not this loopback observation.
         with build_opener(ProxyHandler({})).open(
             status["engines"][0]["url"] + "/api/generation", timeout=5
@@ -1383,6 +1564,21 @@ def test_public_fixture_commands_install_update_and_rollback(
     try:
         assert run("setup")["current"] == 1
         check(1, fixture["expected"]["initial"], "setup")
+        store = Path((root / "store").read_text().strip())
+        assert (store / "bases" / base_id).is_dir()
+        assert (store / "downloads" / base_id).is_dir()
+        assert (store / "engines" / engine_id).is_dir()
+        wheel_paths = list((store / "wheels").iterdir())
+        assert wheel_paths and all(
+            len(path.name) == 64 and all(c in "0123456789abcdef" for c in path.name)
+            for path in wheel_paths
+        )
+        for directory in (store, root):
+            assert all(
+                base_label not in part and engine_label not in part
+                for path in directory.rglob("*")
+                for part in path.relative_to(directory).parts
+            )
         run("advance")
         assert run("update")["current"] == 2
         check(2, fixture["expected"]["updated"], "update")

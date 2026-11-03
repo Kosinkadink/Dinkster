@@ -13,7 +13,7 @@ from pathlib import Path
 from platform import machine
 from typing import cast
 
-from .environment_artifacts import acquire, acquire_pack_locks, discover
+from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
     cleanup_collection,
     collect_generations,
@@ -107,11 +107,38 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     result["current"] = current
     if current is not None and args.operation in {"status", "doctor"}:
-        manifest = root / "generations" / str(current) / "base-manifest.json"
-        if manifest.is_file():
+        generation_root = root / "generations" / str(current)
+        generation = Generation.read(generation_root / "generation.json")
+        manifest = generation_root / "base-manifest.json"
+        if generation.source != "local" and manifest.is_file():
             base = read_document(manifest)
-            if base.get("source") == "user-defined":
+            if (
+                base.get("id") != generation.base
+                or base.get("variant") != generation.variant
+                or dict(generation.files).get("base-manifest.json") != content_digest(manifest)
+            ):
+                raise EnvironmentError("retained base manifest does not match active generation")
+            result["base"] = base_details(base)
+        elif generation.source != "local" and (root / "store").is_file():
+            store = Path((root / "store").read_text(encoding="utf-8").strip())
+            if not store.is_absolute():
+                raise EnvironmentError("project store must be absolute")
+            manifest = store / "bases" / generation.base[7:] / "manifest.json"
+            if manifest.is_file():
+                base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
                 result["base"] = base_details(base)
+        manifest = generation_root / "engine-manifest.json"
+        if generation.source != "local" and manifest.is_file():
+            engine = validate_manifest(manifest.read_bytes(), generation.engine_release, None)
+            if engine["version"] != generation.engine_version:
+                raise EnvironmentError("retained engine version does not match active generation")
+            if engine.get("label") is not None and not isinstance(engine["label"], str):
+                raise EnvironmentError("engine manifest label must be a string or null")
+            result["engine"] = {
+                "release": generation.engine_release,
+                "version": generation.engine_version,
+                "label": engine.get("label"),
+            }
     if args.operation == "catalog":
         mirrors = tuple(args.mirror or (cast("list[str]", settings["mirrors"]) if settings else ()))
         channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")
@@ -1087,6 +1114,13 @@ def main() -> None:
             print(f"Variant: {base['variant']} ({base['origin']})")
             print(f"Torch: {base['torchVersion']}")
             print(f"Torch index: {base['torchIndex']}")
+            if base["label"] is not None:
+                print(f"Base label: {base['label']}")
+        if "engine" in result:
+            engine = cast("dict[str, object]", result["engine"])
+            print(f"Engine: {engine['version']} ({engine['release']})")
+            if engine["label"] is not None:
+                print(f"Engine label: {engine['label']}")
         for step in cast("list[str]", result["plan"]):
             print(step)
         for change in cast("list[str]", result.get("changes", [])):
