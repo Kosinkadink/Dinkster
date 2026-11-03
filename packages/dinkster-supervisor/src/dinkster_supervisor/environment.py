@@ -110,7 +110,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
         manifest = generation_root / "base-manifest.json"
-        if manifest.is_file():
+        if generation.source != "local" and manifest.is_file():
             base = read_document(manifest)
             if (
                 base.get("id") != generation.base
@@ -119,7 +119,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             ):
                 raise EnvironmentError("retained base manifest does not match active generation")
             result["base"] = base_details(base)
-        elif (root / "store").is_file():
+        elif generation.source != "local" and (root / "store").is_file():
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
@@ -128,7 +128,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
                 result["base"] = base_details(base)
         manifest = generation_root / "engine-manifest.json"
-        if manifest.is_file():
+        if generation.source != "local" and manifest.is_file():
             engine = validate_manifest(manifest.read_bytes(), generation.engine_release, None)
             if engine["version"] != generation.engine_version:
                 raise EnvironmentError("retained engine version does not match active generation")

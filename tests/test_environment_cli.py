@@ -487,6 +487,48 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
+def test_status_and_doctor_keep_local_manifests_out_of_publication_descriptors(tmp_path: Path):
+    generation = _generation(tmp_path, 1).parent
+    base = {
+        "format": "dinkster.base/1",
+        "source": "local",
+        "variant": "linux-cpu",
+        "wheels": [
+            {
+                "name": "torch",
+                "version": "2.14.1",
+                "filename": "torch.whl",
+                "size": 17,
+                "sha256": "b" * 64,
+                "url": "local",
+            }
+        ],
+    }
+    engine = {
+        "format": "dinkster.engine/1",
+        "source": "local",
+        "version": "0.4.2",
+        "workerProtocol": 1,
+        "wheels": [],
+    }
+    metadata = generation / "generation.json"
+    document = json.loads(metadata.read_bytes())
+    document["source"] = "local"
+    for name, manifest in (("base-manifest.json", base), ("engine-manifest.json", engine)):
+        path = generation / name
+        path.write_text(json.dumps(manifest))
+        document["files"][name] = content_digest(path)
+    metadata.write_text(json.dumps(document))
+    (tmp_path / "current").write_text("1\n")
+    for operation in ("status", "doctor"):
+        code, result = _run(tmp_path, operation)
+        assert code == 0 and result["status"] == "clean"
+        assert "base" not in result and "engine" not in result
+        if operation == "doctor":
+            assert result["source"] == "local"
+            assert "locally resolved" in result["plan"][0]
+
+
 @pytest.mark.parametrize(
     "case",
     [

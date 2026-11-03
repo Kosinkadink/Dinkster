@@ -85,6 +85,8 @@ def test_setup_index_cannot_bypass_source_errors_or_full_identity(
 ) -> None:
     from dinkster_supervisor import environment_downloads
 
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: "x86_64")
     root = tmp_path / "checkout"
     (root / "scripts").mkdir(parents=True)
     identity = "a" * 64
