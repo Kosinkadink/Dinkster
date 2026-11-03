@@ -24,6 +24,11 @@
 - Advanced 3D, splat and point-cloud saves preserve the original file and return
   viewport dimensions, camera and placement data. Explicit camera and placement
   inputs override authored viewport values without modifying them.
+- Deprecated Preview 3D & Animation accepts granted filenames or canonical 3D
+  files without saving a copy. It exposes the original file as a preview output
+  and preserves optional camera and background values. Unlike ComfyUI's deprecated
+  zero-output node, it declares these three outputs; rich preview composition
+  from the sibling camera/background outputs is not verified.
 - Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
   Image, mask, normal and recording captures carry existing granted asset
   identities, rebound to the receiving host, rather than filesystem paths.

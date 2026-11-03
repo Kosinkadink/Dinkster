@@ -7,6 +7,7 @@ from typing import ClassVar, cast
 
 from dinkster_api.v1 import (
     CORE_INT,
+    CORE_STRING,
     FILE_3D_FBX_TYPE,
     FILE_3D_GLB_TYPE,
     FILE_3D_GLTF_TYPE,
@@ -20,9 +21,12 @@ from dinkster_api.v1 import (
     FILE_3D_STL_TYPE,
     FILE_3D_TYPE,
     FILE_3D_USDZ_TYPE,
+    IMAGE_TYPE,
     LOAD3D_CAMERA_TYPE,
     LOAD3D_MODEL_INFO_TYPE,
     LOAD_3D_TYPE,
+    AbsentOutput,
+    Deprecation,
     InputSpec,
     Node,
     NodeSchema,
@@ -30,6 +34,62 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
+
+
+class Preview3D(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="Preview3D",
+            display_name="Preview 3D & Animation (DEPRECATED)",
+            category="3d",
+            description=(
+                "Preview a 3D model file without saving it to the ComfyUI output directory."
+            ),
+            output_node=True,
+            deprecation=Deprecation(
+                "Use Preview 3D (Advanced) instead.", replacement="Preview3DAdvanced"
+            ),
+            search_visibility="deprecated",
+            inputs=(
+                InputSpec(
+                    "model_file",
+                    TypeExpr.union(
+                        CORE_STRING,
+                        FILE_3D_GLB_TYPE,
+                        FILE_3D_GLTF_TYPE,
+                        FILE_3D_FBX_TYPE,
+                        FILE_3D_OBJ_TYPE,
+                        FILE_3D_STL_TYPE,
+                        FILE_3D_USDZ_TYPE,
+                        FILE_3D_TYPE,
+                    ),
+                    default="",
+                ),
+                InputSpec(
+                    "camera_info",
+                    TypeExpr.concrete(LOAD3D_CAMERA_TYPE),
+                    required=False,
+                    advanced=True,
+                ),
+                InputSpec("bg_image", TypeExpr.concrete(IMAGE_TYPE), required=False, advanced=True),
+            ),
+            outputs=(
+                OutputSpec("model_3d", TypeExpr.concrete(FILE_3D_TYPE), preview=True),
+                OutputSpec("camera_info", TypeExpr.concrete(LOAD3D_CAMERA_TYPE), optional=True),
+                OutputSpec("bg_image", TypeExpr.concrete(IMAGE_TYPE), optional=True),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, model_file: object, camera_info: object = None, bg_image: object = None
+    ) -> Mapping[str, object]:
+        return cls.outputs(
+            model_3d=model_file,
+            camera_info=camera_info if camera_info is not None else AbsentOutput("no camera"),
+            bg_image=bg_image if bg_image is not None else AbsentOutput("no background"),
+        )
 
 
 class _Preview3D(Node):
