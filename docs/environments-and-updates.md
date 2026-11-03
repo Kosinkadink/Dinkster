@@ -331,7 +331,7 @@ Its build workflow:
 5. Publishes new bases with tag `base-<variant>-<label>` and R2 directory
    `base/<variant>/<label>/`, where the label is
    `YYYY-MM-DD-py<python>-torch<torch>[-cu<family>]-<hash8>`. Existing full-id
-   publications remain unchanged. New publication requires R2 inventory for
+   publications remain readable until selected by retention. New publication requires R2 inventory for
    collision checking before any upload.
 
 Mirror convergence regenerates `base/<variant>/index.json` from bucket
@@ -1044,7 +1044,7 @@ Settled:
   `opencv-contrib-python-headless` 5.0; `win-nvidia` on cu132;
   `win-nvidia-cu126` keeps torch 2.14.1 when the other variants move.
 - Default engine installs fetch artifacts named by hash on either channel.
-  Rebuilding an expired base archive uses its retained manifest without resolving.
+  Rebuilding from a saved base manifest verifies the original pins without resolving.
   Explicit `setup --from-scratch` instead resolves the checkout's `uv.lock`
   locally using the selected producer variant's torch index. `--source` selects
   the checkout, `--variants` selects producer definitions, and `--python` explicitly
@@ -1098,8 +1098,8 @@ Settled:
 - No telemetry; local journal only.
 - Embargoed releases: artifacts uploaded unreferenced, made live by one
   channel write.
-- Hosting: GitHub releases first, R2 mirror; ten newest bases per variant
-  retained, base manifests and engine releases retained indefinitely.
+- Hosting: GitHub releases first, R2 mirror; channel-aware retention keeps
+  stable engines, newest main engines, base predecessors and pending bases.
 - Manifest signing is a reserved field, required for any mirror Dinkster
   does not operate.
 - A registry is the trusted source for pack browsing, resolution and
