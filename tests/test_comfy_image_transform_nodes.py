@@ -1,6 +1,7 @@
 """Core image transform schemas preserve the ComfyUI workflow contract."""
 
 from dinkster_nodes_comfy.image_transform import IMAGE_TRANSFORM_NODES
+from dinkster_schema import schema_from_wire, schema_to_wire, validate_replacement_references
 
 
 def test_image_transform_nodes_have_the_exact_core_interfaces() -> None:
@@ -54,3 +55,28 @@ def test_image_transform_nodes_have_the_exact_core_interfaces() -> None:
         )
         assert tuple(input_spec.id for input_spec in schema.inputs) == inputs
         assert tuple(output_spec.type.types for output_spec in schema.outputs) == (("IMAGE",),)
+
+
+def test_deprecated_longer_edge_resize_publishes_its_successor_mapping() -> None:
+    schemas = {node.schema().node_type: node.schema() for node in IMAGE_TRANSFORM_NODES}
+    schema = schemas["ImageScaleToMaxDimension"]
+    wire = schema_to_wire(schema)
+    assert wire["replacements"] == [
+        {
+            "from": "ResizeImagesByLongerEdge",
+            "cases": [
+                {
+                    "to": "ImageScaleToMaxDimension",
+                    "inputs": {
+                        "image": {"kind": "copy", "input": "images"},
+                        "largest_size": {"kind": "copy", "input": "longer_edge"},
+                        "upscale_method": {"kind": "constant", "value": "lanczos"},
+                    },
+                    "outputs": {"IMAGE": "images"},
+                }
+            ],
+        }
+    ]
+    assert schema_to_wire(schema_from_wire(wire)) == wire
+    assert "ResizeImagesByLongerEdge" not in schemas
+    assert validate_replacement_references(schemas) == ()

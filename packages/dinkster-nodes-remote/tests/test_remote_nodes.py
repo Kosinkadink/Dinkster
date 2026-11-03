@@ -743,6 +743,12 @@ def test_default_doctor_uses_configured_remote_catalog(
     from dinkster.installer import InstallError
 
     spec = compose.default_pack_spec("dinkster-nodes-remote")
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_bytes(Path(spec.manifest).read_bytes())
+    # Published archives omit tests, so provide an explicit authoring defect
+    # instead of relying on this test module's host imports being scanned.
+    (tmp_path / "invalid_authoring.py").write_text("import dinkster_workers\n", encoding="utf-8")
+    spec = replace(spec, manifest=manifest)
 
     def prepared(spec: compose.PackSpec, **kwargs: object) -> compose.PackSpec:
         return spec

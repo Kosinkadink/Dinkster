@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
-version = "0.0.9"
+version = "0.0.11"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
@@ -642,6 +642,7 @@ namespaces = [
     "Save3DAdvanced",
     "SaveGaussianSplat",
     "SavePointCloud",
+    "Preview3D",
     "Load3DAdvanced",
     "Load3D",
     "Preview3DAdvanced",

@@ -809,7 +809,8 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
         )
     )
     for directory in (source, target):
-        _workspace_tree(directory / "python")
+        packages = _workspace_tree(directory / "python")
+        assert packages.is_relative_to(directory / "python")
     project = root / "project.json"
     settings = {
         "format": "dinkster.project/1",

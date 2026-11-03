@@ -31,6 +31,10 @@ class DownloadError(ValueError):
     """An artifact could not be obtained intact from any configured mirror."""
 
 
+class _ArtifactIntegrityError(DownloadError):
+    """Downloaded bytes do not match the artifact's expected size or digest."""
+
+
 class _SafeRedirects(HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -167,21 +171,26 @@ def _download_from_mirror(
 
     def download(deadline: float) -> None:
         def stream() -> str:
-            if remote:
-                return _download_http(mirror, relative_path, partial, size, deadline)
-            return _download_local(Path(mirror), relative_path, partial, size)
+            try:
+                if remote:
+                    return _download_http(mirror, relative_path, partial, size, deadline)
+                return _download_local(Path(mirror), relative_path, partial, size)
+            except _ArtifactIntegrityError:
+                partial.unlink(missing_ok=True)
+                raise
 
         resumed = partial.exists() and partial.stat().st_size > 0
         streamed_digest = stream()
-        if streamed_digest != sha256 and partial.stat().st_size == size and resumed:
+        if not remote and streamed_digest != sha256 and partial.stat().st_size == size and resumed:
             # A saved prefix may be corrupt even when the resumed suffix is valid.
+            # Remote refetches instead consume the shared retry budget.
             partial.unlink()
             streamed_digest = stream()
         if partial.stat().st_size == size and streamed_digest == sha256:
             return
         if partial.stat().st_size == size:
             partial.unlink()
-        raise DownloadError("returned corrupt or short data")
+        raise _ArtifactIntegrityError("returned corrupt or short data")
 
     if remote:
         _retry_remote(mirror, download, _ARTIFACT_BUDGET_SECONDS)
@@ -210,7 +219,16 @@ def _retry_remote[T](mirror: str, operation: Callable[[float], T], budget: float
             transient = (
                 500 <= exc.code < 600
                 if isinstance(exc, HTTPError)
-                else isinstance(exc, (URLError, HTTPException, ConnectionError, TimeoutError))
+                else isinstance(
+                    exc,
+                    (
+                        URLError,
+                        HTTPException,
+                        ConnectionError,
+                        TimeoutError,
+                        _ArtifactIntegrityError,
+                    ),
+                )
             )
             if isinstance(exc, HTTPError):
                 exc.close()
@@ -287,7 +305,7 @@ def _append_stream(
         ):
             received += len(chunk)
             if received > size:
-                raise ValueError("response exceeds expected size")
+                raise _ArtifactIntegrityError("response exceeds expected size")
             output.write(chunk)
             digest.update(chunk)
     return digest.hexdigest()

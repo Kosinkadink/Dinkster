@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -1203,3 +1204,226 @@ def test_registry_probe_refuses_degraded_isolation(
     result = run_executable_probe(root)
     assert result.blocked and result.findings[0].code == "probe.isolation-unavailable"
     assert result.operator_details == {"jail": "degraded"}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
+@pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "broken",
+        "missing",
+        "skipped",
+        "unpublished-only",
+        "mixed-class",
+        "shadowed",
+        "autouse",
+        "xunit",
+        "class-fixture",
+        "parameter-shadow",
+        "aliased-fixture",
+        "unittest",
+        "class-shadow",
+        "collection",
+        "dependency",
+        "teardown",
+    ],
+)
+def test_selected_pack_tests_cannot_fall_back_to_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    problem: str | None,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "inherited-device")
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cuda")
+    engine = tmp_path / "engine"
+    tests = engine / "tests"
+    tests.mkdir(parents=True)
+    (engine / "pyproject.toml").write_text("")
+    shutil.copytree(
+        Path(__file__).resolve().parents[1] / "src/dinkster",
+        engine / "src/dinkster",
+        ignore=shutil.ignore_patterns("__pycache__", "official_packs"),
+    )
+    checkout_module = engine / "packages/dinkster-nodes-image/src/dinkster_nodes_image"
+    checkout_module.mkdir(parents=True)
+    (checkout_module / "__init__.py").write_text("VALUE = 47\n")
+    (tests / "test_image_nodes.py").write_text(
+        "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
+        "import tomllib\n"
+        "from pathlib import Path\nimport dinkster_nodes_image\n"
+        "from dinkster_nodes_image import VALUE, NEW_NODE as Unpublished\n"
+        + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
+        + (
+            "def selected_value():\n"
+            if problem
+            in {
+                "unpublished-only",
+                "mixed-class",
+                "shadowed",
+                "class-fixture",
+                "aliased-fixture",
+                "xunit",
+                "unittest",
+            }
+            else "def test_selected_value():\n"
+        )
+        + "    assert VALUE == 47\n"
+        "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
+        "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
+        "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
+        "    assert tomllib.loads((pack_root / 'pyproject.toml').read_text()) "
+        "== {'project': {'name': 'selected-image'}}\n"
+        "    from dinkster.compose import default_pack_spec\n"
+        "    info = default_pack_spec('dinkster-nodes-image').packs['dinkster-nodes-image']\n"
+        "    assert info.version == '1.2.3'\n"
+        "    assert info.source == f'local:{pack_root}'\n"
+        "    assert Path(dinkster_nodes_image.__file__).resolve()"
+        ".is_relative_to(pack_root / 'src')\n"
+        "    assert (pack_root / 'dinkster_nodes_image/__init__.py').resolve(strict=True) "
+        "== Path(dinkster_nodes_image.__file__).resolve()\n"
+        "    subprocess.run([sys.executable, '-I', '-c', "
+        '"from pathlib import Path; import sys; import dinkster_nodes_image as pack; '
+        "expected = Path(pack.__file__).resolve(); "
+        "sys.path.insert(0, str(expected.parents[2])); "
+        "del sys.modules['dinkster_nodes_image']; import dinkster_nodes_image as pack; "
+        "assert Path(pack.__file__).resolve() == expected; assert pack.VALUE == 47; "
+        "sys.path.insert(0, str(expected.parents[4] / 'tests')); "
+        'import test_image_nodes"], '
+        "check=True)\n"
+        "    with pytest.raises(importlib.metadata.PackageNotFoundError):\n"
+        "        importlib.metadata.distribution('dinkster-nodes-image')\n"
+        "def future_helper():\n"
+        "    return Unpublished.execute()\n"
+        "@pytest.fixture\n"
+        "def future_value():\n"
+        "    return future_helper()\n"
+        "def test_unpublished_fixture(future_value):\n"
+        "    assert future_value == 17\n"
+        "class TestUnpublished:\n"
+        "    def test_node(self):\n"
+        "        assert Unpublished.execute() == 17\n"
+        + (
+            "    def test_shipped(self):\n        assert VALUE == 47\n"
+            if problem in {None, "mixed-class"}
+            else ""
+        )
+        + (
+            "def test_shadowed():\n    Unpublished = VALUE\n    assert Unpublished == 47\n"
+            if problem == "shadowed"
+            else ""
+        )
+        + (
+            "@pytest.fixture(autouse=True)\ndef future_setup():\n    return Unpublished.execute()\n"
+            if problem == "autouse"
+            else ""
+        )
+        + (
+            "class TestSetup:\n    def setup_method(self):\n        Unpublished.execute()\n"
+            "    def test_shipped(self):\n        assert True\n"
+            if problem == "xunit"
+            else ""
+        )
+        + (
+            "@pytest.fixture\ndef value():\n    return 47\n"
+            "class TestFixture:\n    @pytest.fixture\n    def value(self):\n"
+            "        return Unpublished.execute()\n"
+            "    @pytest.fixture(autouse=True)\n    def configure(self, value):\n"
+            "        assert value == 47\n    def test_shipped(self):\n        assert True\n"
+            if problem == "class-fixture"
+            else ""
+        )
+        + (
+            "@pytest.mark.parametrize('Unpublished', [13])\n"
+            "def test_parameter_shadow(Unpublished):\n    assert Unpublished == 47\n"
+            if problem == "parameter-shadow"
+            else ""
+        )
+        + (
+            "from pytest import fixture as fx\n@fx\ndef value():\n    return 47\n"
+            "class TestAlias:\n    @fx\n    def value(self):\n"
+            "        return Unpublished.execute()\n"
+            "    @fx(autouse=True)\n    def configure(self, value):\n        assert value == 47\n"
+            "    def test_shipped(self):\n        assert True\n"
+            if problem == "aliased-fixture"
+            else ""
+        )
+        + (
+            "import unittest\nclass TestUnit(unittest.TestCase):\n"
+            "    def setUp(self):\n        Unpublished.execute()\n"
+            "    def test_shipped(self):\n        self.assertTrue(True)\n"
+            if problem == "unittest"
+            else ""
+        )
+        + (
+            "class TestClassShadow:\n    Unpublished = VALUE\n"
+            "    @pytest.mark.parametrize('value', [Unpublished])\n"
+            "    def test_shipped(self, value):\n        assert value == 47\n"
+            if problem == "class-shadow"
+            else ""
+        )
+        + (
+            "def test_control():\n    assert True\n"
+            if problem in {"mixed-class", "shadowed", "parameter-shadow"}
+            else ""
+        )
+        + ("COLLECTION_VALUE = Unpublished.execute()\n" if problem == "collection" else "")
+        + ("def teardown_function():\n    Unpublished.execute()\n" if problem == "teardown" else "")
+    )
+    subprocess.run(["git", "init", "-q", str(engine)], check=True)
+    subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+    source = tmp_path / "selected"
+    source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nname = "selected-image"\n')
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        'namespaces = ["image-fixture"]\n'
+        '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
+    )
+    if problem != "missing":
+        module = source / "dinkster_nodes_image"
+        module.mkdir()
+        value = 13 if problem in {"broken", "mixed-class", "shadowed", "class-shadow"} else 47
+        (module / "__init__.py").write_text(
+            ("import missing_selected_internal_dependency\n" if problem == "dependency" else "")
+            + f"VALUE = {value}\nNODES = []\n"
+        )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "pack.zip"
+    digest = build_artifact(source, archive)
+    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of(
+        [
+            LockedPack(
+                pack="dinkster-nodes-image",
+                version="1.2.3",
+                artifact_digest=digest,
+                publisher="dinkster",
+                claims=("image-fixture",),
+                source="registry:https://registry.invalid",
+            )
+        ]
+    )
+    if problem is None:
+        run_selected_tests(engine, catalog, artifacts)
+        output = capfd.readouterr().out
+        assert "2 passed" in output
+        assert "2 skipped" in output
+        assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
+        assert (
+            "Selected test skipped tests/test_image_nodes.py::TestUnpublished::test_node" in output
+        )
+        assert "dinkster_nodes_image:NEW_NODE" in output
+    elif problem == "missing":
+        with pytest.raises(ValueError, match="archive is missing declared module"):
+            run_selected_tests(engine, catalog, artifacts)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            run_selected_tests(engine, catalog, artifacts)
