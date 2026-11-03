@@ -478,7 +478,8 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
                     removed = [
                         value
                         for path, value in before.items()
-                        if path.name != ".produced-scratch.sqlite"
+                        if path.name
+                        not in {".produced-scratch.sqlite", ".produced-scratch.sqlite.lock"}
                     ]
                     expected.update(
                         reclaimedBytes=sum(map(len, removed)) if cycle == 0 else 0,
@@ -496,7 +497,10 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
                     if p.is_file()
                 }
                 if collect:
-                    assert set(remaining) == {Path(".produced-scratch.sqlite")}
+                    assert set(remaining) == {
+                        Path(".produced-scratch.sqlite"),
+                        Path(".produced-scratch.sqlite.lock"),
+                    }
                     state = ProducedScratchState(source.root)
                     assert state.owner() == ("interrupted job", 3)
                     assert state.publications() == ()
