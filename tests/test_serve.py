@@ -2665,20 +2665,21 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
 
 
 @pytest.mark.parametrize(
-    ("in_process", "output_configuration", "variant"),
+    ("in_process", "output_configuration", "engine_variant"),
     [
         (False, "fresh", "linux-cpu"),
         (True, "fresh", "linux-cpu"),
         (True, "custom", "linux-cpu"),
         (True, "read-only", "linux-cpu"),
         (True, "removed", "linux-cpu"),
+        (True, "fresh", "linux-custom-cu130"),
         (True, "fresh", "linux-nvidia"),
         (True, "fresh", "mac-arm64"),
         (False, "fresh", "mac-arm64"),
     ],
 )
 def test_serve_explicit_generation_uses_only_its_sources(
-    tmp_path: Path, in_process: bool, output_configuration: str, variant: str
+    tmp_path: Path, in_process: bool, output_configuration: str, engine_variant: str
 ) -> None:
     import venv
 
@@ -2700,7 +2701,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
-                "variant": variant,
+                "variant": engine_variant,
                 "inProcessPacks": [pack] if in_process else [],
             }
         )
@@ -2741,7 +2742,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
                 "--generation",
                 str(generation),
                 "--strict-packs",
-                *(["--engine-variant", variant] if in_process else []),
+                *(["--engine-variant", engine_variant] if in_process else []),
             ),
             cwd=tmp_path,
             stdout=output,
@@ -2795,7 +2796,11 @@ def test_serve_explicit_generation_uses_only_its_sources(
                             "packs": {pack: {"version": "1.2.3"}},
                         },
                     }
-                    for plan_variant in (None, "win-nvidia", "linux-nvidia"):
+                    for plan_variant in (
+                        (None, "win-nvidia", "linux-nvidia")
+                        if engine_variant != "linux-custom-cu130"
+                        else ("win-nvidia", "linux-nvidia")
+                    ):
                         body: dict[str, object] = {"workflows": [workflow]}
                         if plan_variant is not None:
                             body["variant"] = plan_variant
@@ -2824,6 +2829,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
         for selected_variant, explicit_variant, error in (
             ("linux-cpu", "win-nvidia", "--engine-variant differs"),
             (None, "linux-cpu", "generation variant must be a non-empty string"),
+            ("../custom", "linux-cpu", "generation variant must be a portable variant name"),
         ):
             (generation / "generation.json").write_text(
                 json.dumps(

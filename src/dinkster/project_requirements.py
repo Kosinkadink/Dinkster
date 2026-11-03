@@ -33,6 +33,7 @@ from .workflow_requirements import (
     RequirementError,
     WorkflowRequirements,
     _object,
+    generation_device,
     manifest_unavailability,
     plan_workflow_requirements,
     project_requirements,
@@ -134,8 +135,10 @@ def plan_project_requirements(
     *,
     variant: str,
     source_generation: Path | None = None,
+    target_generation: Path | None = None,
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
+    target_device: str | None = None,
 ) -> dict[str, object]:
     """Plan from operator-supplied, already admitted release metadata.
 
@@ -143,8 +146,19 @@ def plan_project_requirements(
     This boundary verifies cached archives, never downloads or trusts workflow leads.
     Only this project's verified vault bytes count as locally materialized.
     """
-    if variant not in VARIANTS:
-        raise RequirementError(f"unknown engine variant: {variant}")
+    device = target_device
+    if target_device is not None:
+        from dinkster_workers.manifest import KNOWN_ACCELERATORS
+
+        if target_device not in KNOWN_ACCELERATORS:
+            raise RequirementError("unsupported acquired target device")
+        if target_generation is None or catalog_lock is None or artifacts is None:
+            raise RequirementError("acquired target device requires target, catalog and artifacts")
+    elif variant not in VARIANTS:
+        selected = target_generation if target_generation is not None else source_generation
+        if selected is None:
+            raise RequirementError("custom workflow target requires a generation")
+        device = generation_device(selected, variant)
     requirements, inputs = load_project_requirements(root)
     installed = (
         Lockfile.from_record_json((source_generation / "dinkster.lock").read_text("utf-8"))
@@ -204,7 +218,7 @@ def plan_project_requirements(
         entry = target.get(pack.pack)
         if entry is None or entry.version != pack.version:
             return "saved version is unavailable in the selected target release"
-        return manifest_unavailability(pack, manifests[entry.pack], variant)
+        return manifest_unavailability(pack, manifests[entry.pack], variant, device=device)
 
     plan = plan_workflow_requirements(
         requirements,
@@ -233,6 +247,7 @@ def apply_project_requirements(
         root,
         variant=variant,
         source_generation=source_generation,
+        target_generation=generation,
         catalog_lock=catalog_lock,
         artifacts=artifacts,
     )

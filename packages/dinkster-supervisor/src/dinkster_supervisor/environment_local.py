@@ -35,7 +35,7 @@ from .environment_state import (
 DEFAULT_VARIANTS = Path(__file__).with_name("local_variants.toml")
 
 
-def _run(command: list[str], *, cwd: Path, input: str | None = None) -> str:
+def run_local_command(command: list[str], *, cwd: Path, input: str | None = None) -> str:
     environment = os.environ.copy()
     for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"):
         environment.pop(name, None)
@@ -97,7 +97,7 @@ def local_selection(
 def _resolve(
     requirements: Path, constraints: Path, output: Path, *, python: Path, index: str, source: Path
 ) -> dict[str, Any]:
-    _run(
+    run_local_command(
         [
             "uv",
             "pip",
@@ -125,11 +125,11 @@ def _resolve(
     return tomllib.loads(output.read_text(encoding="utf-8"))
 
 
-def _wheels(
+def retain_wheels(
     resolution: dict[str, Any], python: Path, store: Path, source: Path
 ) -> list[dict[str, Any]]:
     version = json.loads(
-        _run(
+        run_local_command(
             [
                 str(python),
                 "-I",
@@ -210,7 +210,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         if selection["override"]:
             python = Path(selection["python"]).resolve()
         elif os.name == "nt":
-            _run(
+            run_local_command(
                 [
                     sys.executable,
                     str(source / "scripts/prepare_windows_python.py"),
@@ -235,7 +235,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
                 payload.extractall(work / "runtime", filter="data")
             python = work / "runtime" / definition["executable"]
         exported = work / "export.txt"
-        _run(
+        run_local_command(
             [
                 "uv",
                 "export",
@@ -288,7 +288,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
             index=selection["index"],
             source=source,
         )
-        base_wheels = _wheels(resolved, python, store, source)
+        base_wheels = retain_wheels(resolved, python, store, source)
         base: dict[str, Any] = {
             "format": "dinkster.base/1",
             "source": "local",
@@ -306,7 +306,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         effective.write_text(effective_constraints(exported.read_text(), base))
         built = work / "built"
         for package in ("dinkster", "dinkster-api", "dinkster-supervisor"):
-            _run(
+            run_local_command(
                 ["uv", "build", "--package", package, "--wheel", "--out-dir", str(built)],
                 cwd=source,
             )
@@ -320,15 +320,17 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
             index=selection["index"],
             source=source,
         )
-        wheels = _wheels(engine, python, store, source)
+        wheels = retain_wheels(engine, python, store, source)
         prefix = Path(
-            _run([str(python), "-I", "-c", "import sys; print(sys.base_prefix)"], cwd=source)
+            run_local_command(
+                [str(python), "-I", "-c", "import sys; print(sys.base_prefix)"], cwd=source
+            )
         )
         staging = work / "base"
         ignored = shutil.ignore_patterns("site-packages", "__pycache__")
         if selection["override"] and os.name != "nt":
             layout = json.loads(
-                _run(
+                run_local_command(
                     [
                         str(python),
                         "-I",
@@ -361,7 +363,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
             for path in sorted((staging / "python").rglob("*"))
             if path.is_file()
         }
-        base["python"] = _run(
+        base["python"] = run_local_command(
             [str(python), "-I", "-c", "import platform; print(platform.python_version())"],
             cwd=source,
         )
@@ -433,7 +435,7 @@ def prepare_local_packs(
         str(store / "wheels" / digest)
         for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))
     ]
-    _run(
+    run_local_command(
         [
             str(interpreter(generation)),
             "-B",
