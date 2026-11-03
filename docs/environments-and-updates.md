@@ -891,8 +891,13 @@ An over-budget release fails before upload.
 
 `python -m scripts.acquire_engine_bases --tag base-<variant>-<label>`
 accepts repeated exact tags from `Kosinkadink/Dinkster-Environments`, including
-legacy `base-<variant>-<id-hex>` tags, validates the label against the canonical
-manifest's variant and full identity, and
+legacy `base-<variant>-<id-hex>` selections. A full-id selection first reads the
+variant index and prefers its unique labelled publication of that exact id;
+an unrelated newer base never changes the pin. Contributor setup uses the same
+selection rule. Without a labelled match (or when the index is absent), both
+use the hash-only publication. Invalid or ambiguous matching rows, broken
+indexes and transport errors refuse rather than silently selecting an alias.
+Acquisition validates the label against the canonical manifest's variant and full identity and
 writes the original documents to `engine-base-manifests/<variant>/manifest.json`.
 The output directory must be new; a failed selection leaves no partial set.
 Acquisition requires a published release, complete archive parts with verified

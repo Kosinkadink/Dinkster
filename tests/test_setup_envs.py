@@ -17,7 +17,7 @@ import pytest
 from scripts import setup_envs
 
 
-@pytest.mark.parametrize("publication", ["legacy", "labelled", "wrong-manifest"])
+@pytest.mark.parametrize("publication", ["legacy", "labelled", "both", "wrong-manifest"])
 def test_setup_uses_pinned_full_id_and_same_archive_location(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publication: str
 ) -> None:
@@ -38,16 +38,19 @@ def test_setup_uses_pinned_full_id_and_same_archive_location(
         if publication == "wrong-manifest":
             base["python"] = "3.14.9"
         published = legacy.with_name(label)
-        legacy.rename(published)
+        if publication == "both":
+            shutil.copytree(legacy, published)
+            (legacy / "manifest.json").write_text("not valid JSON")
+        else:
+            legacy.rename(published)
         (published / "manifest.json").write_text(json.dumps(base))
         index = [
             {"id": "sha256:" + "f" * 64, "path": "base/fixture-cpu/newer-unpinned"},
-            {"id": base["id"], "path": f"base/{base['variant']}/{label}"},
+            {"id": base["id"], "label": label, "path": f"base/{base['variant']}/{label}"},
         ]
+        if publication == "both":
+            index.insert(0, {"id": base["id"], "path": f"base/{base['variant']}/{identity}"})
         (published.parent / "index.json").write_text(json.dumps(index))
-    else:
-        # A stale or broken index must not override a valid legacy location.
-        (legacy.parent / "index.json").write_text("not valid JSON")
     (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: identity}))
     monkeypatch.setenv("DINKSTER_EVIDENCE_ROOT", str(tmp_path / "no-evidence"))
     monkeypatch.setattr(build_release, "workspace_projects", lambda *args: {})
@@ -73,7 +76,7 @@ def test_setup_uses_pinned_full_id_and_same_archive_location(
             store / "bases" / identity / "wheels" / wheel["filename"]
         ).read_bytes()
     assert {path.name for path in (store / "bases").iterdir()} == {identity}
-    if publication == "labelled":
+    if publication in {"labelled", "both"}:
         assert all(label not in path.parts for path in store.rglob("*"))
 
 
@@ -92,7 +95,7 @@ def test_setup_index_cannot_bypass_source_errors_or_full_identity(
     identity = "a" * 64
     (root / "scripts/base_bundles.json").write_text(json.dumps({"linux-cpu": identity}))
     label = "2026-10-31-py3.14.10-torch2.14.1-aaaaaaaa"
-    row = {"id": "sha256:" + identity, "path": f"base/linux-cpu/{label}"}
+    row = {"id": "sha256:" + identity, "label": label, "path": f"base/linux-cpu/{label}"}
     if failure == "wrong-id":
         row["id"] = "sha256:" + "b" * 64
     elif failure == "path":
@@ -102,22 +105,24 @@ def test_setup_index_cannot_bypass_source_errors_or_full_identity(
     index_reads = []
 
     def metadata(mirror, relative):
-        if relative == f"base/linux-cpu/{identity}/manifest.json":
+        if relative == "base/linux-cpu/index.json":
+            index_reads.append(relative)
             if failure == "forbidden":
                 raise HTTPError("https://example.invalid", 403, "forbidden", Message(), None)
             if failure == "transport":
                 raise TimeoutError("metadata transport failed")
             if failure == "corrupt":
                 return b"not valid JSON"
+            return json.dumps([row, row] if failure == "duplicate" else [row]).encode()
+        if failure == "wrong-id":
+            assert relative == f"base/linux-cpu/{identity}/manifest.json"
             raise HTTPError("https://example.invalid", 404, "missing", Message(), None)
-        assert relative == "base/linux-cpu/index.json", "unsafe/unpinned fetch"
-        index_reads.append(relative)
-        return json.dumps([row, row] if failure == "duplicate" else [row]).encode()
+        pytest.fail(f"unsafe/unpinned fetch: {relative}")
 
     monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
     with pytest.raises((ValueError, OSError)):
         setup_envs.setup(root, mirror="https://example.invalid")
-    assert len(index_reads) == (0 if failure in ("forbidden", "transport", "corrupt") else 1)
+    assert len(index_reads) == 1
     assert not (root / ".run").exists()
 
 
@@ -423,7 +428,7 @@ def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, mat
     (root / ".run").mkdir()
     receipt = root / ".run/environment-base.json"
     receipt.write_text(json.dumps(base))
-    monkeypatch.setattr(environment_downloads, "read_metadata", lambda *args: b"")
+    monkeypatch.setattr(environment_downloads, "read_metadata", lambda *args: b"[]")
     monkeypatch.setattr(environment_artifacts, "validate_manifest", lambda *args: base)
     monkeypatch.setattr(environment_artifacts, "acquire_base", lambda *args: base_root)
     monkeypatch.setattr(setup_envs, "select_base", lambda *args: base)

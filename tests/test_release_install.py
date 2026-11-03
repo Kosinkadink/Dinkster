@@ -1823,12 +1823,14 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
 
 @pytest.mark.parametrize("system", ["windows", "macos", "linux"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
-@pytest.mark.parametrize("labelled", [False, True])
+@pytest.mark.parametrize("publication", ["legacy", "labelled", "alias"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str, labelled: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str, publication: str
 ) -> None:
     from copy import deepcopy
+    from io import BytesIO
 
+    from scripts import acquire_engine_bases
     from scripts.acquire_engine_bases import acquire
 
     boundary = tmp_path / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
@@ -1978,7 +1980,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         )
         manifest["signature"] = None
         requested = f"base-{variant}-{identity}"
-        if labelled or change.startswith("label-"):
+        if publication != "legacy" or change.startswith("label-"):
             label = f"2026-10-31-py{python}-torch2.14.1-{identity[:8]}"
             if change == "label-hash":
                 label = label[:-8] + "0" * 8
@@ -2001,11 +2003,33 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         elif change == "extras-format":
             extras["format"] = "dinkster.extras/2"
         extras_payload = b"{" if change == "extras-json" else json.dumps(extras).encode()
-        return requested
+        if change == "pinned-id":
+            return f"base-{variant}-{identity[:8]}{'0' * 56}"
+        return f"base-{variant}-{identity}" if publication == "alias" else requested
+
+    def index_response(request, **kwargs):
+        assert request.full_url == f"https://releases.dinkster.org/base/{variant}/index.json"
+        assert request.get_header("User-agent") == "dinkster-env"
+        manifest = json.loads(payload)
+        identity = manifest["id"]
+        if mutation == "pinned-id":
+            identity = identity[:15] + "0" * 56
+        rows = [{"id": identity, "path": f"base/{variant}/{identity[7:]}"}]
+        if publication == "alias" or mutation == "pinned-id":
+            rows.append(
+                {
+                    "id": identity,
+                    "label": manifest["label"],
+                    "path": f"base/{variant}/{manifest['label']}",
+                }
+            )
+        return BytesIO(json.dumps(rows).encode())
 
     def transport(command: list[str]) -> bytes:
         if "/releases/tags/" not in command[-1]:
             return extras_payload if command[-1].endswith("/2") else payload
+        if mutation in {"valid", "stream", "historical-index", "historical-lock", "pinned-id"}:
+            assert command[-1].endswith("/" + requested)
         if mutation == "missing-release":
             raise subprocess.CalledProcessError(1, command)
         assets: list[dict] = [
@@ -2046,6 +2070,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             )
         ).encode()
 
+    monkeypatch.setattr(acquire_engine_bases, "urlopen", index_response)
     monkeypatch.setattr(subprocess, "check_output", transport)
     popen = subprocess.Popen
 
@@ -2068,6 +2093,8 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     paths = acquire(tmp_path, [prepare("valid")], output)
     assert paths == [output / variant / "manifest.json"]
     assert paths[0].read_bytes() == payload
+    if publication == "alias":
+        assert json.loads(paths[0].read_bytes())["label"] in requested
     streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
     assert streamed[0].read_bytes() == payload
     for change in ("historical-index", "historical-lock"):
@@ -2114,6 +2141,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     assert not duplicate.exists()
     with pytest.raises(ValueError, match="exact variant/id"):
         acquire(tmp_path, ["latest"], tmp_path / "latest")
+    if publication == "alias":
+        with pytest.raises(ValueError, match="pinned full identity"):
+            acquire(tmp_path, [prepare("pinned-id")], tmp_path / "pinned-id")
+        assert not (tmp_path / "pinned-id").exists()
     assert not list(tmp_path.glob("dinkster-base-selection-*"))
 
 

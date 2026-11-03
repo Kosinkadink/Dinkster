@@ -115,7 +115,9 @@ def setup(
     from dinkster_supervisor.environment_artifacts import acquire_base, validate_manifest
     from dinkster_supervisor.environment_constraints import effective_constraints
     from dinkster_supervisor.environment_downloads import read_metadata
-    from dinkster_supervisor.environment_state import ArtifactLocation, writer_lock
+    from dinkster_supervisor.environment_state import writer_lock
+
+    from scripts.acquire_engine_bases import publication_name
 
     local = None
     base = None
@@ -139,31 +141,19 @@ def setup(
         for name, identity in selections.items():
             if name.startswith(other_prefixes):
                 continue
-            legacy_path = f"base/{name}/{identity}/manifest.json"
-            path = legacy_path
             try:
-                data = read_metadata(mirror, path)
+                index = json.loads(read_metadata(mirror, f"base/{name}/index.json"))
             except (FileNotFoundError, HTTPError) as error:
                 if isinstance(error, HTTPError) and error.code != 404:
                     raise
-                index = json.loads(read_metadata(mirror, f"base/{name}/index.json"))
-                if not isinstance(index, list):
-                    raise ValueError("base index must be an array") from error
-                matches = [
-                    row
-                    for row in index
-                    if isinstance(row, dict) and row.get("id") == "sha256:" + identity
-                ]
-                if len(matches) != 1:
-                    raise ValueError(
-                        f"base index must contain exactly one entry for pinned {name} id"
-                    ) from error
-                path = ArtifactLocation.read(
-                    {"type": "mirror", "path": f"{matches[0].get('path')}/manifest.json"},
-                    legacy_path,
-                ).path
-                data = read_metadata(mirror, path)
-            bases.append(validate_manifest(data, "sha256:" + identity, name))
+                index = []
+            published_name = publication_name(index, name, identity)
+            path = f"base/{name}/{published_name}/manifest.json"
+            data = read_metadata(mirror, path)
+            manifest = validate_manifest(data, "sha256:" + identity, name)
+            if published_name != identity and manifest.get("label") != published_name:
+                raise ValueError("indexed base label differs from its manifest")
+            bases.append(manifest)
             base_sources[name] = f"{mirror.rstrip('/')}/{path.rsplit('/', 1)[0]}"
         base = select_base(bases, variant)
         print(
