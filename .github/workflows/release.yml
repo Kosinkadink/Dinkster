@@ -49,6 +49,7 @@ jobs:
         with:
           clean: true
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
