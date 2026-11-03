@@ -180,7 +180,7 @@ from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
 from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning
 from .post_processing import POST_PROCESSING_NODES
-from .preview3d import Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud
+from .preview3d import Preview3D, Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -591,6 +591,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Save3DAdvanced,
     SaveGaussianSplat,
     SavePointCloud,
+    Preview3D,
     Load3DAdvanced,
     Load3D,
     Preview3DAdvanced,

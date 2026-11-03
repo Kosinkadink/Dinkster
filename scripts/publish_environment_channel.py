@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import boto3
 from boto3.exceptions import S3UploadFailedError
@@ -50,6 +50,9 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
     ):
         print("R2 channel publication skipped: credentials or configuration are absent")
         return
+    github_token = os.environ.get("GITHUB_TOKEN")
+    if not github_token:
+        raise ValueError("GITHUB_TOKEN is required for channel publication")
     public = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
     with tempfile.TemporaryDirectory(prefix="engine-channel-") as directory:
         work = Path(directory)
@@ -180,11 +183,12 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                     None,
                 )
                 published_commit = manifest["commit"]
-                with urlopen(
+                request = Request(
                     "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
                     f"{published_commit}...{engine['commit']}",
-                    timeout=120,
-                ) as response:
+                    headers={"Authorization": f"Bearer {github_token}"},
+                )
+                with urlopen(request, timeout=120) as response:
                     status = json.load(response)["status"]
                 if status == "identical":
                     if published_bytes != path.read_bytes():
