@@ -139,9 +139,7 @@ def extract_base(
                 _verify_frame(compressed)
             for source in files:
                 source.seek(0)
-            staging = Path(
-                tempfile.mkdtemp(prefix=f".{destination.name}.stage-", dir=destination.parent)
-            )
+            staging = Path(tempfile.mkdtemp(prefix=".base-stage-", dir=destination.parent))
             insensitive = platform in {"windows", "macos"} or _case_insensitive(staging)
             names: set[str] = set()
             spellings: dict[str, str] = {}

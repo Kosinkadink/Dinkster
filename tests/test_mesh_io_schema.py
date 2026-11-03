@@ -16,6 +16,9 @@ sys.modules['dinkster_inference'] = None
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_nodes_comfy.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
+from dinkster_nodes_comfy.preview3d import (
+    Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud,
+)
 from dinkster_nodes_comfy.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_workers import load_manifest
 assert COMFY_NODES.count(Get3DComponents) == 1
@@ -66,6 +69,16 @@ assert [(slot.id, slot.type.types) for slot in schema.outputs] == [('splat', ('S
 assert 'dinkster_nodes_comfy.mesh_gltf_read' not in sys.modules
 assert 'dinkster_nodes_comfy.mesh_file_read' not in sys.modules
 assert 'dinkster_native.model3d.mesh' not in sys.modules
+for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud):
+    assert COMFY_NODES.count(node) == manifest.namespaces.count(node.__name__) == 1
+    schema = node.schema()
+    assert [slot.id for slot in schema.inputs] == [
+        'model_3d', 'model_3d_info', 'viewport_state', 'camera_info', 'width', 'height'
+    ]
+    assert [slot.id for slot in schema.outputs] == [
+        'model_3d', 'model_3d_info', 'camera_info', 'width', 'height'
+    ]
+    assert schema.output_node and schema.outputs[0].preview
 """,
         ],
         capture_output=True,

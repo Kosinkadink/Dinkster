@@ -5,6 +5,7 @@ import ctypes
 import importlib
 import json
 import os
+import struct
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -483,6 +484,31 @@ def test_default_latent_keeps_existing_identity() -> None:
 
     assert encode_latent(decode_latent(encoded)) == encoded
     assert latent_fingerprint(LATENT_TYPE)(value) == "ab5ebb24357a9feccebd5d0e2f3717711d2b6ddf"
+
+
+@pytest.mark.parametrize(
+    ("dtype", "maximum", "boundary", "format"),
+    (("uint16", 65535, 32768, "H"), ("uint32", 4294967295, 2147483648, "I")),
+)
+def test_unsigned_rig_arrays_preserve_values_above_signed_range(
+    dtype: str, maximum: int, boundary: int, format: str
+) -> None:
+    import numpy as np
+
+    array = np.array([[0, maximum], [boundary, 17]], dtype=dtype)[:, ::-1]
+    encoded = encode_latent({"samples": array})
+    validate_latent_encoded(encoded, {})
+    decoded = decode_latent(encoded)
+    assert isinstance(decoded, dict)
+    assert decoded["samples"] == EncodedLatentTensor(
+        dtype, (2, 2), struct.pack("=" + format * 4, maximum, 0, 17, boundary)
+    )
+    restored = materialize_latent(decoded)["samples"]
+    assert str(restored.dtype) == "torch." + dtype
+    assert restored.tolist() == [[maximum, 0], [17, boundary]]
+    truncated = encode_latent({"samples": EncodedLatentTensor(dtype, (2, 2), array.tobytes()[:-1])})
+    with pytest.raises(ValueError, match="byte length"):
+        validate_latent_encoded(truncated, {})
 
 
 @pytest.mark.parametrize("reserved", ("tensor", "multi", "tuple", "map", "user"))

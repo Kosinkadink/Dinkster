@@ -8,14 +8,18 @@ import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import sysconfig
 import tarfile
 import tempfile
+import time
 import tomllib
 import zipfile
+from http.client import IncompleteRead
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
@@ -36,10 +40,33 @@ def acquire(source: str, destination: Path, size: int, digest: str) -> None:
     elif parsed.scheme:
         if parsed.scheme != "https" or parsed.username or parsed.password:
             raise ValueError("tools acquisition requires credential-free HTTPS")
-        with urlopen(source, timeout=60) as response, destination.open("wb") as target:
-            if urlsplit(response.url).scheme != "https":
-                raise ValueError("tools acquisition redirected outside HTTPS")
-            shutil.copyfileobj(response, target)
+        failures = []
+        for attempt in range(1, 4):
+            try:
+                with urlopen(source, timeout=60) as response, destination.open("wb") as target:
+                    if urlsplit(response.url).scheme != "https":
+                        raise ValueError("tools acquisition redirected outside HTTPS")
+                    shutil.copyfileobj(response, target)
+                break
+            except (
+                URLError,
+                TimeoutError,
+                ConnectionError,
+                ssl.SSLEOFError,
+                IncompleteRead,
+            ) as error:
+                destination.unlink(missing_ok=True)
+                failures.append(f"attempt {attempt}: {error}")
+                reason = error.reason if isinstance(error, URLError) else error
+                permanent = isinstance(reason, ssl.SSLCertVerificationError)
+                if isinstance(error, HTTPError):
+                    permanent = not 500 <= error.code < 600
+                    error.close()
+                if permanent or attempt == 3:
+                    error.add_note(f"Tools acquisition {source}: " + "; ".join(failures))
+                    raise
+                # Restart the payload; partial bytes are never appended or admitted.
+                time.sleep(attempt)
     else:
         shutil.copyfile(source, destination)
     if destination.stat().st_size != size or sha256(destination) != digest:

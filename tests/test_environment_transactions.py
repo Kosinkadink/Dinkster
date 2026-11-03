@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -39,15 +38,12 @@ from dinkster_supervisor.environment_transactions import (
 )
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
-from test_environment_generations import _standalone_tree
 from test_environment_runtime import free_port, make_generation
 
 
 def _target(root: Path, number: int) -> Path:
     make_generation(root, number)
     target = root / "generations" / str(number)
-    shutil.rmtree(target / "python")
-    _standalone_tree(target / "python")
     generation = Generation.read(target / "generation.json")
     hashes = tuple(
         sorted(
@@ -331,12 +327,12 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     migration: bool,
 ) -> None:
     from dinkster_supervisor import environment, environment_transactions
+    from test_environment_generations import _workspace_tree
 
     from dinkster.generation_packs import stage_generation_packs
 
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
@@ -397,6 +393,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     catalog = tmp_path / "official-packs.lock"
     catalog.write_text(lock.record_json())
     core = Path(__file__).resolve().parents[1] / "src/dinkster"
+    package_init = (core / "__init__.py").read_text() + f"\n__path__.append({str(core)!r})\n"
 
     def fixture_build(**kwargs: object) -> None:
         # Admission, acquisition and activation use the real paths over fixture generations.
@@ -414,10 +411,16 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         replace(
             generation, files=files, in_process_packs=("example",), variant=str(kwargs["variant"])
         ).write(target / "generation.json")
-        (root / "dinkster/__init__.py").write_text(f"__path__.append({str(core)!r})\n")
+        (root / "dinkster/__init__.py").write_text(package_init)
 
+    def fixture_prepare(destination: Path, *, constraints: Path, **kwargs: object) -> Path:
+        _workspace_tree(destination / "python")
+        shutil.copyfile(constraints, destination / "constraints.txt")
+        return interpreter(destination)
+
+    monkeypatch.setattr(environment, "prepare_engine_interpreter", fixture_prepare)
     monkeypatch.setattr(environment, "build_generation", fixture_build)
-    (root / "dinkster/__init__.py").write_text(f"__path__.append({str(core)!r})\n")
+    (root / "dinkster/__init__.py").write_text(package_init)
     prior = start_engine(root, 1, "main", port)
     original_start = environment_transactions.start_engine
 
@@ -465,7 +468,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         code = exited.value.code
         result = json.loads(capsys.readouterr().out)
         journals = list((root / "journal").glob("*.json"))
-        assert len(journals) == 1
+        assert len(journals) == 1, result
         if interruption == "none":
             assert code == 0, result
             assert result["status"] == "applied" and read_current(root) == 2

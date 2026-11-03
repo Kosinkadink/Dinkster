@@ -901,3 +901,72 @@ def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> N
         assert again.outputs["s"]["asset"].type_id == ASSET_TYPE
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("format_id", ["gltf", "obj"])
+@pytest.mark.parametrize(
+    "case", ["valid", "empty-format", "missing", "extra", "malformed", "wrong-format"]
+)
+def test_file3d_canonical_submission_checks_declared_resources(
+    tmp_path: Path, format_id: str, case: str
+) -> None:
+    from dinkster_assets import load_file3d, register_file3d_types
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names
+    from dinkster_values import FILE_3D_TYPE
+
+    root = tmp_path / "models"
+    root.mkdir()
+    if format_id == "gltf":
+        primary = b'{"buffers":[{"uri":"mesh.bin"}]}'
+        resources = {"mesh.bin": b"mesh bytes"}
+    else:
+        primary = b"mtllib surface.mtl\nv 1 3 7\n"
+        resources = {"surface.mtl": b"newmtl surface\nKd 0.1 0.3 0.7\n"}
+    (root / f"scene.{format_id}").write_bytes(primary)
+    for name, data in resources.items():
+        (root / name).write_bytes(data)
+    (root / "extra.bin").write_bytes(b"granted but undeclared")
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    source = table.bind_name(f"scene.{format_id}", "media/model3d")
+    assert isinstance(source, LocalAssetRef)
+    packet = load_file3d(source)
+    assert packet is not None
+    registry = TypeRegistry()
+    register_file3d_types(registry, table)
+    wire = json.loads(registry.spec(FILE_3D_TYPE).encode(packet))
+    if case == "missing":
+        wire["resources"] = {}
+    elif case == "extra":
+        extra = table.bind_name("extra.bin", "media/model3d")
+        assert isinstance(extra, LocalAssetRef)
+        wire["resources"]["extra.bin"] = extra.to_wire()
+    elif case == "malformed":
+        wire["source"] = "scene.gltf"
+    elif case == "wrong-format":
+        wire["format"] = "ply"
+    elif case == "empty-format":
+        wire["format"] = ""
+    literal = TypedLiteral(FILE_3D_TYPE, wire)
+    graph = Graph({"preview": GraphNode("preview-file", {"model": literal})})
+    schema = NodeSchema(
+        "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+    )
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+    if case in {"valid", "empty-format"}:
+        prepared, missing = bind_model_names(graph, {schema.node_type: schema}, library)
+        assert not missing
+        assert prepared.nodes["preview"].inputs["model"] is literal
+        assert source.read_bytes() == primary
+    else:
+        error = {
+            "missing": "requires an explicit asset",
+            "extra": "undeclared",
+            "malformed": "asset identities",
+            "wrong-format": "format does not match",
+        }
+        with pytest.raises(AssetError, match=error[case]):
+            bind_model_names(graph, {schema.node_type: schema}, library)

@@ -2,22 +2,69 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sysconfig
 import tarfile
+import time
 import zipfile
+from http.client import HTTPMessage
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.error import HTTPError, URLError
 
 import pytest
 from test_environment_generations import _standalone_tree, _wheel
 
+from scripts import build_environment_tools, build_native_tools
 from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("host,system", [("linux", "linux"), ("darwin", "macos")])
+def test_native_tools_selects_the_producer_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, system: str
+) -> None:
+    (tmp_path / "variants.toml").write_text(
+        '[base]\nrelease = "20261026"\n'
+        '[interpreters.linux]\nfilename = "linux.tar.gz"\nsize = 17\n'
+        f'sha256 = "{"a" * 64}"\nexecutable = "python/bin/python3"\n'
+        '[interpreters.macos]\nfilename = "apple-arm64.tar.gz"\nsize = 29\n'
+        f'sha256 = "{"b" * 64}"\nexecutable = "python/bin/python3"\n',
+        encoding="ascii",
+    )
+    monkeypatch.setattr(build_native_tools, "sys", SimpleNamespace(platform=host))
+
+    def download(source: str, destination: Path, size: int, digest: str) -> None:
+        # Stop at the verified-download boundary; no foreign executable can run here.
+        expected = {
+            "linux": ("linux.tar.gz", 17, "a" * 64),
+            "macos": ("apple-arm64.tar.gz", 29, "b" * 64),
+        }[system]
+        assert (source.rsplit("/", 1)[-1], size, digest) == expected
+        assert "/20261026/" in source
+        raise RuntimeError("selected approved interpreter")
+
+    monkeypatch.setattr(build_native_tools, "acquire", download)
+    with pytest.raises(RuntimeError, match="selected approved interpreter"):
+        build_native_tools.build(tmp_path, tmp_path / "supervisor.whl", tmp_path / "tools")
+    assert not (tmp_path / "tools").exists()
+
+
+def test_native_tools_refuses_unknown_hosts_before_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "variants.toml").write_text("", encoding="ascii")
+    monkeypatch.setattr(build_native_tools, "sys", SimpleNamespace(platform="freebsd"))
+    with pytest.raises(ValueError, match="unsupported native tools platform: freebsd"):
+        build_native_tools.build(tmp_path, tmp_path / "supervisor.whl", tmp_path / "tools")
+    assert not (tmp_path / "tools").exists()
 
 
 def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) -> None:
@@ -27,6 +74,83 @@ def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) 
     with pytest.raises(ValueError, match="size or SHA256 mismatch"):
         acquire(str(source), target, 7, "a" * 64)
     assert not target.exists()
+
+
+@pytest.mark.parametrize("failure", ["handshake", "body", "timeout", "http"])
+def test_tools_acquisition_recovers_verified_bytes_after_transient_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"complete verified wheel")
+    destination = tmp_path / "wheel"
+    attempts = 0
+
+    class Response(io.BytesIO):
+        url = "https://files.pythonhosted.org/fixture.whl"
+
+        def read(self, size: int | None = -1) -> bytes:
+            if failure == "body" and attempts == 1:
+                if self.tell() == 0:
+                    return super().read(5)
+                raise ssl.SSLEOFError("injected body EOF")
+            return super().read(size)
+
+    def open_url(*args: object, **kwargs: object) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            if failure == "handshake":
+                raise URLError(ssl.SSLEOFError("injected handshake EOF"))
+            if failure == "timeout":
+                raise TimeoutError("injected timeout")
+            if failure == "http":
+                raise HTTPError(Response.url, 503, "unavailable", HTTPMessage(), None)
+        return Response(source.read_bytes())
+
+    monkeypatch.setattr(build_environment_tools, "urlopen", open_url)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    acquire(Response.url, destination, source.stat().st_size, sha256(source))
+    assert destination.read_bytes() == source.read_bytes()
+    assert attempts == 2
+
+
+@pytest.mark.parametrize(
+    "failure", ["exhausted", "body-exhausted", "not-found", "certificate", "corrupt"]
+)
+def test_tools_acquisition_refuses_terminal_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    destination = tmp_path / "wheel"
+    attempts = 0
+    url = "https://files.pythonhosted.org/fixture.whl"
+
+    class Response(io.BytesIO):
+        url = "https://files.pythonhosted.org/fixture.whl"
+
+        def read(self, size: int | None = -1) -> bytes:
+            if failure == "body-exhausted":
+                if self.tell() == 0:
+                    return super().read(5)
+                raise ssl.SSLEOFError("injected body EOF")
+            return super().read(size)
+
+    def open_url(*args: object, **kwargs: object) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if failure == "exhausted":
+            raise URLError(ssl.SSLEOFError("injected handshake EOF"))
+        if failure == "not-found":
+            raise HTTPError(url, 404, "missing", HTTPMessage(), None)
+        if failure == "certificate":
+            raise URLError(ssl.SSLCertVerificationError("untrusted certificate"))
+        return Response(b"corrupt")
+
+    monkeypatch.setattr(build_environment_tools, "urlopen", open_url)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    with pytest.raises((URLError, ValueError, ssl.SSLEOFError)):
+        acquire(url, destination, 7, "a" * 64)
+    assert not destination.exists()
+    assert attempts == (3 if failure.endswith("exhausted") else 1)
 
 
 @pytest.mark.parametrize("corruption", [None, "size", "hash", "unadmitted"])

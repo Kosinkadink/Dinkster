@@ -17,7 +17,9 @@ from scripts.build_release import sha256
 
 def build(environments: Path, supervisor_wheel: Path, output: Path, uv: str = "uv") -> None:
     config = tomllib.loads((environments / "variants.toml").read_text(encoding="ascii"))
-    system = "windows" if sys.platform == "win32" else "linux"
+    system = {"win32": "windows", "linux": "linux", "darwin": "macos"}.get(sys.platform)
+    if system is None:
+        raise ValueError(f"unsupported native tools platform: {sys.platform}")
     interpreter = config["interpreters"][system]
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="native-tools-", dir=output.parent) as directory:

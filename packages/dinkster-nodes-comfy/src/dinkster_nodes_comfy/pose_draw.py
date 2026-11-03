@@ -11,8 +11,8 @@ np = importlib.import_module("numpy")
 Image = importlib.import_module("PIL.Image")
 ImageDraw = importlib.import_module("PIL.ImageDraw")
 
-_HEAD_EDGES = [[2, 1], [1, 15], [15, 17], [1, 16], [16, 18]]
-_BODY_EDGES = [
+HEAD_EDGES = [[2, 1], [1, 15], [15, 17], [1, 16], [16, 18]]
+BODY_EDGES = [
     [2, 3],
     [2, 6],
     [3, 4],
@@ -26,7 +26,7 @@ _BODY_EDGES = [
     [12, 13],
     [13, 14],
 ]
-_HAND_EDGES = [
+HAND_EDGES = [
     [0, 1],
     [1, 2],
     [2, 3],
@@ -48,7 +48,7 @@ _HAND_EDGES = [
     [18, 19],
     [19, 20],
 ]
-_COLORS = [
+COLORS = [
     [255, 0, 0],
     [255, 85, 0],
     [255, 170, 0],
@@ -77,7 +77,7 @@ def _disk_offsets(radius: float) -> tuple[Any, Any]:
     return xx[disk], yy[disk]
 
 
-def _draw_disks(
+def draw_disks(
     canvas: Any,
     points: Any,
     radius: float,
@@ -144,7 +144,7 @@ def _ellipse_polygon(center: Any, axes: Any, angle: int) -> Any:
     return pts if len(pts) > 1 else np.asarray([center, center], dtype=np.int32)
 
 
-def _fill_polygons(canvas: Any, polygons: list[tuple[Any, Any]]) -> None:
+def _fill_polygons(canvas: Any, polygons: list[tuple[Any, Any]], alpha: float = 1.0) -> None:
     if not polygons:
         return
     points = np.concatenate([polygon for polygon, _ in polygons])
@@ -157,7 +157,8 @@ def _fill_polygons(canvas: Any, polygons: list[tuple[Any, Any]]) -> None:
         draw = ImageDraw.Draw(image, "RGBA")
         offset = np.array([x_min, y_min], dtype=np.int32)
         for polygon, color in polygons:
-            draw.polygon((polygon - offset).reshape(-1).tolist(), fill=tuple(color))
+            fill = tuple(color) if alpha >= 1.0 else (*color, int(round(alpha * 255.0)))
+            draw.polygon((polygon - offset).reshape(-1).tolist(), fill=fill)
         roi[:] = np.asarray(image)
 
 
@@ -174,13 +175,18 @@ def draw_pose(
     draw_hands: bool,
     stick_width: int,
     face_point_size: int,
+    marker_radius: int = 4,
+    hand_stick_width: int = 2,
+    hand_marker_radius: int = 4,
+    limb_alpha: float = 1.0,
+    hand_dot_color: Any = (0, 0, 255),
 ) -> Any:
     h, w = canvas.shape[:2]
     centers: list[tuple[int, int]] = []
     colors: list[list[int]] = []
     if draw_body or draw_head:
-        edges = (_BODY_EDGES if draw_body else []) + (_HEAD_EDGES if draw_head else [])
-        offset = 0 if draw_body else len(_BODY_EDGES)
+        edges = (BODY_EDGES if draw_body else []) + (HEAD_EDGES if draw_head else [])
+        offset = 0 if draw_body else len(BODY_EDGES)
         polygons: list[tuple[Any, Any]] = []
         for i, (first, second) in enumerate(edges):
             a, b = first - 1, second - 1
@@ -196,8 +202,8 @@ def draw_pose(
             polygon = _ellipse_polygon(
                 (int(my), int(mx)), (int(length / 2), stick_width), int(angle)
             )
-            polygons.append((polygon, _COLORS[(i + offset) % len(_COLORS)]))
-        _fill_polygons(canvas, polygons)
+            polygons.append((polygon, COLORS[(i + offset) % len(COLORS)]))
+        _fill_polygons(canvas, polygons, limb_alpha)
         centers, colors = [], []
         for i in range(18):
             head = i in {0, 14, 15, 16, 17}
@@ -208,8 +214,8 @@ def draw_pose(
             x, y = int(keypoints[i][0]), int(keypoints[i][1])
             if 0 <= x < w and 0 <= y < h:
                 centers.append((x, y))
-                colors.append(_COLORS[i % len(_COLORS)])
-        _draw_disks(canvas, centers, 4, colors)
+                colors.append(COLORS[i % len(COLORS)])
+        draw_disks(canvas, centers, marker_radius, colors)
     if draw_feet:
         centers, colors = [], []
         for i in range(18, 24):
@@ -218,29 +224,36 @@ def draw_pose(
             x, y = int(keypoints[i][0]), int(keypoints[i][1])
             if 0 <= x < w and 0 <= y < h:
                 centers.append((x, y))
-                colors.append(_COLORS[i % len(_COLORS)])
-        _draw_disks(canvas, centers, 4, colors)
+                colors.append(COLORS[i % len(COLORS)])
+        draw_disks(canvas, centers, marker_radius, colors)
     if draw_hands:
-        offsets = _disk_offsets(1.5)
+        line_radius = hand_stick_width / 2 + 0.5 if hand_stick_width > 1 else 0
+        offsets = _disk_offsets(line_radius)
+        hand_colors = np.asarray(hand_dot_color, dtype=int)
+        if hand_colors.ndim == 1:
+            hand_colors = np.tile(hand_colors.reshape(1, 3), (21, 1))
         for start in (92, 113):
-            for ie, (first, second) in enumerate(_HAND_EDGES):
+            for ie, (first, second) in enumerate(HAND_EDGES):
                 a, b = start + first, start + second
                 if scores[a] < threshold or scores[b] < threshold:
                     continue
                 x1, y1 = int(keypoints[a][0]), int(keypoints[a][1])
                 x2, y2 = int(keypoints[b][0]), int(keypoints[b][1])
                 if 0.01 < x1 < w and 0.01 < y1 < h and 0.01 < x2 < w and 0.01 < y2 < h:
-                    rgb = colorsys.hsv_to_rgb(ie / float(len(_HAND_EDGES)), 1.0, 1.0)
+                    rgb = colorsys.hsv_to_rgb(ie / float(len(HAND_EDGES)), 1.0, 1.0)
                     color = tuple(int(c * 255) for c in rgb)
-                    _draw_disks(canvas, _line_points((x1, y1), (x2, y2)), 1.5, color, offsets)
-            centers = []
+                    draw_disks(
+                        canvas, _line_points((x1, y1), (x2, y2)), line_radius, color, offsets
+                    )
+            centers, colors = [], []
             for i in range(start, start + 21):
                 if scores[i] < threshold:
                     continue
                 x, y = int(keypoints[i][0]), int(keypoints[i][1])
                 if 0.01 < x < w and 0.01 < y < h:
                     centers.append((x, y))
-            _draw_disks(canvas, centers, 4, (0, 0, 255))
+                    colors.append(hand_colors[i - start])
+            draw_disks(canvas, centers, hand_marker_radius, colors)
     if draw_face:
         centers = []
         for i in range(24, 92):
@@ -249,5 +262,5 @@ def draw_pose(
             x, y = int(keypoints[i][0]), int(keypoints[i][1])
             if 0.01 < x < w and 0.01 < y < h:
                 centers.append((x, y))
-        _draw_disks(canvas, centers, face_point_size, (255, 255, 255))
+        draw_disks(canvas, centers, face_point_size, (255, 255, 255))
     return canvas

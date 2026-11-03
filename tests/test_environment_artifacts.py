@@ -29,6 +29,7 @@ from dinkster_supervisor.environment_artifacts import (
     discover,
 )
 from dinkster_supervisor.environment_channels import write_channel
+from dinkster_supervisor.environment_custom import custom_selection, variant_file
 from dinkster_supervisor.environment_downloads import DownloadError
 from dinkster_supervisor.environment_state import EnvironmentError
 from test_environment_generations import _standalone_tree
@@ -802,6 +803,7 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         "github",
         "head",
         "config",
+        "token",
         "event",
         "superseded",
         "identical",
@@ -911,6 +913,7 @@ def test_channel_publication_exposes_only_verified_payloads(
         "GITHUB_EVENT_NAME": "push",
         "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": engine["commit"],
+        "GITHUB_TOKEN": "test-token",
         "R2_ACCESS_KEY_ID": "test",
         "R2_SECRET_ACCESS_KEY": "test",
         "R2_ACCOUNT_ID": "test",
@@ -920,6 +923,8 @@ def test_channel_publication_exposes_only_verified_payloads(
         monkeypatch.setenv(name, value)
     if failure == "config":
         monkeypatch.delenv("R2_SECRET_ACCESS_KEY")
+    elif failure == "token":
+        monkeypatch.delenv("GITHUB_TOKEN")
     elif failure == "event":
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     elif failure == "base":
@@ -927,11 +932,12 @@ def test_channel_publication_exposes_only_verified_payloads(
     original_urlopen = publisher.urlopen
 
     def published_input(url, **kwargs):
-        if url.startswith("https://api.github.com/"):
-            assert url == (
+        if isinstance(url, publisher.Request):
+            assert url.full_url == (
                 "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
                 f"{published_commit}...{engine['commit']}"
             )
+            assert url.get_header("Authorization") == "Bearer test-token"
             if failure == "compare":
                 raise ValueError("compare unavailable")
             status = (
@@ -1027,7 +1033,10 @@ def test_channel_publication_exposes_only_verified_payloads(
 
     monkeypatch.setattr(publisher, "urlopen", published_input)
     monkeypatch.setattr(publisher.boto3, "client", lambda *args, **kwargs: ObjectStore())
-    if failure in {
+    if failure == "token":
+        with pytest.raises(ValueError, match="GITHUB_TOKEN is required for channel publication"):
+            publisher.publish(release, [base_path], "main", "0.2.0")
+    elif failure in {
         "base",
         "engine",
         "github",
@@ -1320,3 +1329,120 @@ def test_channel_builder_refuses_invalid_inputs_without_replacing_channels(
             )
         assert {path: path.read_bytes() for path in before} == before
         assert not (tmp_path / "absent").exists()
+
+
+def test_custom_variant_file_precedence_and_optional_extras_index(tmp_path: Path):
+    root, store = tmp_path / "project", tmp_path / "store"
+    assert variant_file(root, store, None) is None
+    assert not root.exists() and not store.exists()
+    root.mkdir()
+    store.mkdir()
+    definition = (
+        "[variants.custom-cuda]\n"
+        'torch = "2.14.1+cu130"\n'
+        'torch-index = "https://download.pytorch.org/whl/cu130"\n'
+    )
+    fallback = store / "variants.toml"
+    fallback.write_text(definition)
+    assert variant_file(root, store, None) == fallback
+    project = root / "variants.toml"
+    project.write_text(definition)
+    assert variant_file(root, store, None) == project
+    explicit = tmp_path / "explicit.toml"
+    explicit.write_text(definition + 'extras-index = "https://extras.example.org/simple"\n')
+    assert variant_file(root, store, explicit) == explicit
+    template = {"platform": {"os": "linux", "arch": "x86_64"}}
+    selected = custom_selection(explicit, "custom-cuda", template)
+    assert selected is not None
+    assert selected["torch"] == "2.14.1+cu130"
+    assert selected["torch-index"] == "https://download.pytorch.org/whl/cu130"
+    assert selected["extras-index"] == "https://extras.example.org/simple"
+    assert selected["sourceFile"] == str(explicit)
+    assert (
+        selected["definitionDigest"]
+        == "sha256:" + hashlib.sha256(explicit.read_bytes()).hexdigest()
+    )
+    default = custom_selection(project, "custom-cuda", template)
+    assert default is not None and default["extras-index"] == "https://pypi.org/simple"
+    assert custom_selection(project, "published-cpu", template) is None
+    assert (
+        explicit.read_text() == definition + 'extras-index = "https://extras.example.org/simple"\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'torch = ">=2.14"',
+        'torch-index = "http://download.pytorch.org/whl/cu130"',
+        'extras-index = "https://user:password@example.org/simple"',
+        'os = "windows"',
+    ],
+)
+def test_custom_variant_rejects_invalid_definitions_before_store_creation(
+    tmp_path: Path, extra: str
+):
+    row = {
+        "torch": 'torch = "2.14.1"',
+        "torch-index": 'torch-index = "https://download.pytorch.org/whl/cu130"',
+    }
+    row[extra.split(" =")[0]] = extra
+    definition = tmp_path / "variants.toml"
+    definition.write_text("[variants.custom-cuda]\n" + "\n".join(row.values()))
+    with pytest.raises(EnvironmentError):
+        custom_selection(definition, "custom-cuda", {"platform": {"os": "linux", "arch": "x86_64"}})
+    assert set(tmp_path.iterdir()) == {definition}
+
+
+def test_custom_rebuild_preserves_recoverable_archive_and_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_custom
+
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    template, _, _ = _mirror(mirror)
+    sources = (str(mirror / "base" / template["variant"] / template["id"][7:]),)
+    definition = tmp_path / "variants.toml"
+    definition.write_text(
+        '[variants.studio-cuda]\ntorch = "2.14.1"\n'
+        'torch-index = "https://download.pytorch.org/whl/cu130"\n'
+    )
+    selection = custom_selection(definition, "studio-cuda", template)
+    assert selection is not None
+    store.mkdir()
+
+    def resolve(command: list[str], *, cwd: Path) -> str:
+        (cwd / "uv.lock").write_text(
+            '[[package]]\nname = "fixture-base"\nversion = "1.0"\n'
+            '[package.source]\nregistry = "https://pypi.org/simple"\n'
+        )
+        (cwd / "pylock.toml").write_text("packages = []\n")
+        return ""
+
+    monkeypatch.setattr(environment_custom, "run_local_command", resolve)
+    monkeypatch.setattr(
+        environment_custom,
+        "retain_wheels",
+        lambda *_: json.loads(json.dumps(template["wheels"])),
+    )
+    first = environment_custom.build_custom_base(selection, template, sources, store)
+    retained = store / "downloads" / first["id"][7:]
+    original = {path.name: path.read_bytes() for path in retained.iterdir()}
+    assert environment_custom.build_custom_base(selection, template, sources, store) == first
+    assert {path.name: path.read_bytes() for path in retained.iterdir()} == original
+
+    download_only = tmp_path / "download-only"
+    shutil.copytree(store / "downloads", download_only / "downloads")
+    assert (
+        environment_custom.build_custom_base(selection, template, sources, download_only) == first
+    )
+    assert {
+        path.name: path.read_bytes()
+        for path in (download_only / "downloads" / first["id"][7:]).iterdir()
+    } == original
+    recovered = environment_artifacts.acquire_base(first, (str(retained),), tmp_path / "recovered")
+    for wheel in first["wheels"]:
+        assert (
+            hashlib.sha256((recovered / "wheels" / wheel["filename"]).read_bytes()).hexdigest()
+            == (wheel["sha256"])
+        )
