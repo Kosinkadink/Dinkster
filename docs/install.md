@@ -155,9 +155,11 @@ Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
 hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
 Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
-content identities from Dinkster-Environments. Setup checks the legacy full-id
-directory first; if absent, it finds that exact pinned id in the variant's
-`index.json` and verifies the labelled manifest before acquiring its archives.
+content identities from Dinkster-Environments. Setup checks the variant's
+`index.json` first and prefers the unique labelled publication for that exact
+pinned id, verifying its manifest before acquiring its archives. It falls back
+to the legacy full-id directory only if the index is absent or has no labelled
+match.
 The index never selects a newer base or overrides a failed verification.
 Hash-locked workspace dependencies
 and editable packages are installed on top without resolving torch again.
