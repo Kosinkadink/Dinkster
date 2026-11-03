@@ -1221,6 +1221,12 @@ def test_registry_probe_refuses_degraded_isolation(
         "xunit",
         "class-fixture",
         "parameter-shadow",
+        "aliased-fixture",
+        "unittest",
+        "class-shadow",
+        "collection",
+        "dependency",
+        "teardown",
     ],
 )
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
@@ -1255,7 +1261,16 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + (
             "def selected_value():\n"
-            if problem in {"unpublished-only", "mixed-class", "shadowed", "class-fixture"}
+            if problem
+            in {
+                "unpublished-only",
+                "mixed-class",
+                "shadowed",
+                "class-fixture",
+                "aliased-fixture",
+                "xunit",
+                "unittest",
+            }
             else "def test_selected_value():\n"
         )
         + "    assert VALUE == 47\n"
@@ -1277,7 +1292,9 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "expected = Path(pack.__file__).resolve(); "
         "sys.path.insert(0, str(expected.parents[2])); "
         "del sys.modules['dinkster_nodes_image']; import dinkster_nodes_image as pack; "
-        'assert Path(pack.__file__).resolve() == expected; assert pack.VALUE == 47"], '
+        "assert Path(pack.__file__).resolve() == expected; assert pack.VALUE == 47; "
+        "sys.path.insert(0, str(expected.parents[4] / 'tests')); "
+        'import test_image_nodes"], '
         "check=True)\n"
         "    with pytest.raises(importlib.metadata.PackageNotFoundError):\n"
         "        importlib.metadata.distribution('dinkster-nodes-image')\n"
@@ -1328,10 +1345,35 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             else ""
         )
         + (
+            "from pytest import fixture as fx\n@fx\ndef value():\n    return 47\n"
+            "class TestAlias:\n    @fx\n    def value(self):\n"
+            "        return Unpublished.execute()\n"
+            "    @fx(autouse=True)\n    def configure(self, value):\n        assert value == 47\n"
+            "    def test_shipped(self):\n        assert True\n"
+            if problem == "aliased-fixture"
+            else ""
+        )
+        + (
+            "import unittest\nclass TestUnit(unittest.TestCase):\n"
+            "    def setUp(self):\n        Unpublished.execute()\n"
+            "    def test_shipped(self):\n        self.assertTrue(True)\n"
+            if problem == "unittest"
+            else ""
+        )
+        + (
+            "class TestClassShadow:\n    Unpublished = VALUE\n"
+            "    @pytest.mark.parametrize('value', [Unpublished])\n"
+            "    def test_shipped(self, value):\n        assert value == 47\n"
+            if problem == "class-shadow"
+            else ""
+        )
+        + (
             "def test_control():\n    assert True\n"
             if problem in {"mixed-class", "shadowed", "parameter-shadow"}
             else ""
         )
+        + ("COLLECTION_VALUE = Unpublished.execute()\n" if problem == "collection" else "")
+        + ("def teardown_function():\n    Unpublished.execute()\n" if problem == "teardown" else "")
     )
     subprocess.run(["git", "init", "-q", str(engine)], check=True)
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
@@ -1347,8 +1389,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem != "missing":
         module = source / "dinkster_nodes_image"
         module.mkdir()
-        value = 13 if problem in {"broken", "mixed-class", "shadowed"} else 47
-        (module / "__init__.py").write_text(f"VALUE = {value}\nNODES = []\n")
+        value = 13 if problem in {"broken", "mixed-class", "shadowed", "class-shadow"} else 47
+        (module / "__init__.py").write_text(
+            ("import missing_selected_internal_dependency\n" if problem == "dependency" else "")
+            + f"VALUE = {value}\nNODES = []\n"
+        )
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     archive = artifacts / "pack.zip"
@@ -1370,9 +1415,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         run_selected_tests(engine, catalog, artifacts)
         output = capfd.readouterr().out
         assert "2 passed" in output
-        assert "1 skipped" in output
-        assert "Unavailable setup tests/test_image_nodes.py::future_value" in output
-        assert "Excluded tests/test_image_nodes.py::TestUnpublished::test_node" in output
+        assert "2 skipped" in output
+        assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
+        assert (
+            "Selected test skipped tests/test_image_nodes.py::TestUnpublished::test_node" in output
+        )
         assert "dinkster_nodes_image:NEW_NODE" in output
     elif problem == "missing":
         with pytest.raises(ValueError, match="archive is missing declared module"):
