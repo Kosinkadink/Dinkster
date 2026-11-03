@@ -371,6 +371,18 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     )
 
 
+def test_default_pack_admission_uses_complete_version_history() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
+    )
+    checkout = next(
+        step
+        for step in workflow["jobs"]["admission"]["steps"]
+        if step.get("uses") == "actions/checkout@v4"
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+
+
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
