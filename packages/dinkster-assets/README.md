@@ -58,6 +58,12 @@ publication. Retrying an interrupted copy preserves the first adoption order;
 already verified destination bytes can complete a pending entry after restart.
 Existing untracked inputs and mounted sources are not added to this inventory.
 Inventory entries describe adoption, not reachability or permission to delete.
+Scratch journals and produced-asset inventories use SQLite WAL with a 30-second
+busy timeout on every connection. Writable opens initialize WAL once per file;
+read-only inspection never changes journal mode or creates a missing database.
+WAL inspection needs readable `-wal`/`-shm` sidecars or a writable containing
+directory where SQLite can create them. A read-only database connection is not
+an immutable snapshot of the file and must not bypass live WAL state.
 Managed engine-vault readers and writers retain vault-wide OS ownership before
 per-digest ownership. `hold_produced_vault()` lets the server extend that
 ownership through result/reference handoff. `claim_inactive_produced_vault()`

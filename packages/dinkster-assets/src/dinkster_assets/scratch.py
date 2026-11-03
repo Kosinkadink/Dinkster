@@ -12,6 +12,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from ._sqlite import connect_journal
 from .identity import AssetError, digest_bytes, is_digest, require_digest
 
 
@@ -37,14 +38,16 @@ class ProducedScratchState:
         if not job or type(attempt) is not int or attempt < 1:
             raise AssetError("produced scratch requires a job and positive attempt")
         try:
-            with closing(sqlite3.connect(self._path)) as db, db:
+            with closing(connect_journal(self._path)) as db, db:
                 db.execute("BEGIN IMMEDIATE")
                 tables = {
                     row[0]
                     for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
                 if not tables:
-                    metadata = {self._path.name, self._path.name + "-journal"}
+                    metadata = {
+                        self._path.name + suffix for suffix in ("", "-journal", "-wal", "-shm")
+                    }
                     if any(path.name not in metadata for path in self._root.iterdir()):
                         raise AssetError("produced scratch contains untracked data")
                     db.execute(
@@ -69,7 +72,7 @@ class ProducedScratchState:
         if type(size) is not int or size < 0:
             raise AssetError("produced scratch size must be a nonnegative integer")
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with closing(connect_journal(self._path, mode="rw")) as db, db:
                 db.execute(
                     "INSERT OR IGNORE INTO publications (digest, size) VALUES (?, ?)",
                     (digest, size),
@@ -83,7 +86,7 @@ class ProducedScratchState:
 
     def offer(self, digests: Iterable[str]) -> None:
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with closing(connect_journal(self._path, mode="rw")) as db, db:
                 for digest in digests:
                     db.execute(
                         "UPDATE publications SET offered = 1 WHERE digest = ?",
@@ -95,7 +98,7 @@ class ProducedScratchState:
     def forget_publications(self, publications: tuple[tuple[str, int, bool], ...]) -> None:
         """Retire exact handoff rows only after owned scratch bytes have been removed."""
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+            with closing(connect_journal(self._path, mode="rw")) as db, db:
                 for digest, size, offered in publications:
                     changed = db.execute(
                         "DELETE FROM publications WHERE digest = ? AND size = ? AND offered = ?",
@@ -109,7 +112,7 @@ class ProducedScratchState:
     def publications(self) -> tuple[tuple[str, int, bool], ...]:
         """Read existing publication state without creating or repairing a journal."""
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=ro", uri=True)) as db:
+            with closing(connect_journal(self._path, mode="ro")) as db:
                 rows = db.execute(
                     "SELECT digest, size, offered FROM publications ORDER BY digest"
                 ).fetchall()
@@ -133,7 +136,7 @@ class ProducedScratchState:
     def owner(self) -> tuple[str, int]:
         """Read an existing owner without binding or repairing publication state."""
         try:
-            with closing(sqlite3.connect(self._path.as_uri() + "?mode=ro", uri=True)) as db:
+            with closing(connect_journal(self._path, mode="ro")) as db:
                 rows = db.execute("SELECT singleton, job, attempt FROM owner").fetchall()
         except sqlite3.Error as exc:
             raise AssetError("produced scratch owner is unavailable") from exc

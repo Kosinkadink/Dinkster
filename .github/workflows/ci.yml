@@ -89,8 +89,8 @@ jobs:
       - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py tests/test_release_install.py::test_development_version_counts_commits_since_the_last_version_tag
       - name: Verify published setup and bounded subprocess diagnostics
         run: uv run --no-sync python -m pytest -q tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal tests/test_supervisor_subprocess.py
-      - name: Verify produced source adoption before publication
-        run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py::test_in_process_control_sources_are_adopted_before_publication
+      - name: Verify produced assets and shared SQLite journals
+        run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py tests/test_environment_downloads.py
 
   fast:
     needs: [changes, torch-cpu]
