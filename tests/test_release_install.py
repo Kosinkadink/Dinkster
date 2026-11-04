@@ -232,7 +232,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Environments"
     ) == {
         "repository": "Kosinkadink/Dinkster-Environments",
-        "ref": "326c58a0ae79a9cf020c6d7ee81f07263940a558",
+        "ref": "a88726d8bb80adf124e118ab6702b001611d85e6",
         "path": ".release/retention",
         "persist-credentials": False,
     }
