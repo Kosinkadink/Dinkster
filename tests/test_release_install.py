@@ -214,6 +214,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     retention = next(step for step in channel["steps"] if "--scope engine" in step.get("run", ""))
     assert channel["steps"].index(retention) > channel["steps"].index(publication)
     assert retention["if"] == "github.ref == 'refs/heads/main'"
+    assert "--dry-run" in retention["run"]
     assert "--output retention-report.json" in retention["run"]
     assert "continue-on-error" not in retention
     assert (
@@ -232,7 +233,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Environments"
     ) == {
         "repository": "Kosinkadink/Dinkster-Environments",
-        "ref": "a88726d8bb80adf124e118ab6702b001611d85e6",
+        "ref": "e3c7a6180a2b61de5a5b338a87af4efeb37cb04c",
         "path": ".release/retention",
         "persist-credentials": False,
     }
