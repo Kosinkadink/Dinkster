@@ -331,14 +331,14 @@ Its build workflow:
 5. Publishes new bases with tag `base-<variant>-<label>` and R2 directory
    `base/<variant>/<label>/`, where the label is
    `YYYY-MM-DD-py<python>-torch<torch>[-cu<family>]-<hash8>`. Existing full-id
-   publications remain unchanged. New publication requires R2 inventory for
+   publications remain readable until selected by retention. New publication requires R2 inventory for
    collision checking before any upload.
 
 Mirror convergence regenerates `base/<variant>/index.json` from bucket
 manifests and matching extras, newest first with undated legacy entries last.
 Rows carry `label`, full `id`, `builtAt`, `python`, `torchVersion`, `torchIndex`,
 total publication `size` and bucket-relative `path`. Size includes declared
-archive parts even after archive retention; metadata without matching extras
+archive parts; metadata without matching extras
 is omitted until convergence completes it. Retained seven-zip metadata is
 listed using its historical identity and volume sizes, without restoring
 seven-zip builds or installation. The index is discovery metadata, never a
@@ -915,7 +915,8 @@ otherwise acquisition streams and hashes the part bytes. The adjacent extras
 index must match the selected base and variant; its downloaded size and any
 GitHub asset digest are checked, without inventing an extras hash field in the
 base manifest. Published tags follow the producer's no-reupload convention;
-GitHub's immutable-release setting is not required, since old parts are pruned.
+GitHub's immutable-release setting is not required; channel-aware retention
+removes complete old publications under the rule below.
 The helper does not
 publish, resolve, select latest or turn planning/build-run artifacts into durable
 channel locations. The channel writer consumes these qualified documents, not
@@ -1011,14 +1012,27 @@ or the supervisor station, and the same commands work without Desktop.
 GitHub releases host Dinkster artifacts first. R2 under `releases.dinkster.org`
 mirrors them with no egress cost, and clients try artifact mirrors in a configured
 order. Third-party engine wheels come from their locked package origins or an
-explicit package mirror, not the Dinkster artifact mirror. Base bundles are kept for the ten
-newest ids per variant; every base manifest is kept forever. A client that
-needs a base whose archive is gone rebuilds it locally from the base
-manifest: it fetches each listed wheel by hash from the source index the
-manifest names and the interpreter from python-build-standalone. Stable engine
-releases are kept indefinitely. The workflow retains the newest 50
-main prereleases, including legacy commit-named ones; stable releases, drafts and other prerelease
-tags are never removed by this cleanup. A region-specific mirror is one more
+explicit package mirror, not the Dinkster artifact mirror. Retention keeps
+every stable engine release, every channel target and the newest ten distinct
+main releases. Older engines carrying third-party wheels are not kept by the
+newest-ten rule, but channel targets remain protected. Per base variant, it
+keeps every channel target, its predecessor by publication order and every
+newer base pending adoption. Labelled aliases share the full content identity;
+hash-only copies remain until channels use verified labelled copies and fresh
+channel installs succeed. Unknown directories and unmatched tags stay.
+
+The engine workflow runs one retention step after verified channel publication;
+the base workflow does the same after all publishers succeed. Both use the
+shared module and tracked retention.json policy from a landed
+Dinkster-Environments pin. Publication/channel writes and retention share a
+conditional bucket lock across repositories. The release-retention workflow
+artifact lists every candidate directory, its bytes and the complete keep set.
+Deletion requires recorded approval and the real dry-run listing posted before
+application. Until then the workflow only reports. Application removes matching
+GitHub releases/tags by exact manifest commit or label, logs already-absent
+releases, updates bucket indexes and reports remaining bytes. There is no
+separate GitHub-only prerelease pruner. Local installed content is not refetched
+or renamed. A region-specific mirror is one more
 entry in the client's mirror list and, when Dinkster does not operate it,
 serves only signed documents.
 
@@ -1030,7 +1044,7 @@ Settled:
   `opencv-contrib-python-headless` 5.0; `win-nvidia` on cu132;
   `win-nvidia-cu126` keeps torch 2.14.1 when the other variants move.
 - Default engine installs fetch artifacts named by hash on either channel.
-  Rebuilding an expired base archive uses its retained manifest without resolving.
+  Rebuilding from a saved base manifest verifies the original pins without resolving.
   Explicit `setup --from-scratch` instead resolves the checkout's `uv.lock`
   locally using the selected producer variant's torch index. `--source` selects
   the checkout, `--variants` selects producer definitions, and `--python` explicitly
@@ -1084,8 +1098,8 @@ Settled:
 - No telemetry; local journal only.
 - Embargoed releases: artifacts uploaded unreferenced, made live by one
   channel write.
-- Hosting: GitHub releases first, R2 mirror; ten newest bases per variant
-  retained, base manifests and engine releases retained indefinitely.
+- Hosting: GitHub releases first, R2 mirror; channel-aware retention keeps
+  stable engines, newest main engines, base predecessors and pending bases.
 - Manifest signing is a reserved field, required for any mirror Dinkster
   does not operate.
 - A registry is the trusted source for pack browsing, resolution and

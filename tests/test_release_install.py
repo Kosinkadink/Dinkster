@@ -161,7 +161,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "finalize",
         "install",
         "release",
-        "prune",
         "channel",
         "publish",
         "publish-api",
@@ -204,19 +203,39 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     channel = workflow["jobs"]["channel"]
     assert channel["needs"] == "release"
-    pruning = workflow["jobs"]["prune"]
-    assert pruning["needs"] == "release"
-    assert pruning["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-    assert pruning["permissions"] == {"contents": "write"}
-    assert not pruning.get("continue-on-error", False)
-    assert any("prune_engine_prereleases.py" in step.get("run", "") for step in pruning["steps"])
-    assert not any(
-        "prune_engine_prereleases.py" in step.get("run", "")
-        for step in workflow["jobs"]["release"]["steps"]
-    )
+    assert channel["permissions"] == {"contents": "write"}
     assert channel["if"] == "github.event_name == 'push'"
     assert channel["concurrency"]["cancel-in-progress"] is False
-    publication = channel["steps"][-1]
+    publication = next(
+        step
+        for step in channel["steps"]
+        if "--command python -m scripts.publish_environment_channel" in step.get("run", "")
+    )
+    retention = next(step for step in channel["steps"] if "--scope engine" in step.get("run", ""))
+    assert channel["steps"].index(retention) > channel["steps"].index(publication)
+    assert retention["if"] == "github.ref == 'refs/heads/main'"
+    assert "--output retention-report.json" in retention["run"]
+    assert "continue-on-error" not in retention
+    assert (
+        sum(
+            "--scope engine" in step.get("run", "")
+            for job in workflow["jobs"].values()
+            for step in job.get("steps", [])
+        )
+        == 1
+    )
+    assert "prune_engine_prereleases" not in commands
+    assert "retention.py" in publication["run"]
+    assert next(
+        step["with"]
+        for step in channel["steps"]
+        if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Environments"
+    ) == {
+        "repository": "Kosinkadink/Dinkster-Environments",
+        "ref": "a88726d8bb80adf124e118ab6702b001611d85e6",
+        "path": ".release/retention",
+        "persist-credentials": False,
+    }
     assert "uv sync --locked --only-group release-publication" in publication["run"]
     groups = tomllib.loads((ROOT / "pyproject.toml").read_text())["dependency-groups"]
     assert "dinkster-supervisor" in groups["release-publication"]
@@ -1746,79 +1765,6 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
             assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
     assert {path: path.read_bytes() for path in before} == before
     assert not list(tmp_path.glob("release-pack-locks-*"))
-
-
-@pytest.mark.parametrize("failure", [None, "recover", "exhaust", "forbidden"])
-def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
-    monkeypatch: pytest.MonkeyPatch, capsys, failure: str | None
-) -> None:
-    from scripts import prune_engine_prereleases as pruner
-
-    releases = {
-        number: {
-            "id": number,
-            "tag_name": (
-                f"main-{number:040x}" if number % 2 else f"main-2026-10-31-0.4.2-{number:08x}"
-            ),
-            "published_at": f"2026-10-28T00:00:{number:02d}Z",
-            "prerelease": True,
-            "draft": False,
-        }
-        for number in range(1, 54)
-    }
-    for number, fields in (
-        (101, {"prerelease": False}),
-        (102, {"draft": True}),
-        (103, {"tag_name": "other-prerelease"}),
-    ):
-        releases[number] = {**releases[1], "id": number, **fields}
-
-    attempts = 0
-    sleeps = []
-
-    def read_api(command: list[str], *, text: bool, stderr=None) -> str:
-        nonlocal attempts
-        if "--paginate" in command:
-            attempts += 1
-            if failure in {"exhaust", "forbidden"} or (failure == "recover" and attempts < 3):
-                raise subprocess.CalledProcessError(
-                    1,
-                    command,
-                    stderr=(
-                        "HTTP 403: Resource not accessible"
-                        if failure == "forbidden"
-                        else "stream error: stream ID 1; CANCEL; received from peer"
-                    ),
-                )
-            rows = list(releases.values())
-            return json.dumps([rows[:20], rows[20:]])
-        number = int(command[-1].rsplit("/", 1)[1])
-        if number == 1:
-            releases[number]["prerelease"] = False
-        return json.dumps(releases[number])
-
-    def delete_api(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
-        assert command[:4] == ["gh", "api", "--method", "DELETE"]
-        number = int(command[-1].rsplit("/", 1)[1])
-        del releases[number]
-        return subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setattr(subprocess, "check_output", read_api)
-    monkeypatch.setattr(subprocess, "run", delete_api)
-    monkeypatch.setattr(pruner.time, "sleep", sleeps.append)
-    if failure in {"exhaust", "forbidden"}:
-        with pytest.raises(subprocess.CalledProcessError):
-            pruner.prune("Kosinkadink/Dinkster")
-        assert set(releases) == {*range(1, 54), 101, 102, 103}
-        assert attempts == (4 if failure == "exhaust" else 1)
-        assert sleeps == ([1, 2, 4] if failure == "exhaust" else [])
-        assert ("stream error" if failure == "exhaust" else "HTTP 403") in capsys.readouterr().err
-        return
-    assert set(pruner.prune("Kosinkadink/Dinkster")) == {2, 3}
-    assert attempts == (3 if failure == "recover" else 1)
-    assert sleeps == ([1, 2] if failure == "recover" else [])
-    assert set(releases) == {1, *range(4, 54), 101, 102, 103}
-    assert releases[1]["prerelease"] is False
 
 
 @pytest.mark.parametrize("system", ["windows", "macos", "linux"])
