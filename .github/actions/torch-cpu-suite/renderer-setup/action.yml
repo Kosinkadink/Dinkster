@@ -23,6 +23,7 @@ runs:
           -o "Dir::Cache::archives=$RENDERER_APT_CACHE/archives"
           -o "Dir::State::lists=$RENDERER_APT_CACHE/lists"
           -o Acquire::http::Timeout=30
+          -o Acquire::https::Timeout=30
           -o Acquire::Retries=3
         )
         if [ "$RENDERER_APT_CACHE_HIT" != "true" ]; then
@@ -33,6 +34,7 @@ runs:
           echo "Install the CPU software shader renderer: cached packages restored"
         fi
         sudo apt-get "${apt_options[@]}" --no-download install -y --no-install-recommends libegl1 libgles2 libvulkan1 mesa-vulkan-drivers
+        sudo chown -R "$(id -u):$(id -g)" "$RENDERER_APT_CACHE"
         lvp=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
         test -n "$lvp"
         echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
