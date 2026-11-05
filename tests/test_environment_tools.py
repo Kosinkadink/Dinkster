@@ -32,6 +32,63 @@ from scripts.build_release import sha256
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [("engine-source", False), ("engine-lock", False), ("tools-lock", True), ("supervisor", True)],
+)
+def test_tools_build_selection_ignores_engine_only_changes(
+    tmp_path: Path, changed: str, expected: bool
+) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    lock = """
+[[package]]
+name = "dinkster-supervisor"
+version = "1.0"
+dependencies = [{ name = "transport" }]
+[package.dev-dependencies]
+environment-tools = [{ name = "uv" }]
+[[package]]
+name = "transport"
+version = "2.0"
+dependencies = [{ name = "codec", extra = ["native"] }]
+[[package]]
+name = "codec"
+version = "3.0"
+[package.optional-dependencies]
+native = [{ name = "native-codec" }]
+[[package]]
+name = "native-codec"
+version = "4.0"
+[[package]]
+name = "uv"
+version = "5.0"
+[[package]]
+name = "dinkster-engine"
+version = "6.0"
+"""
+    (tmp_path / "uv.lock").write_text(lock, encoding="ascii")
+
+    def snapshot() -> str:
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        return subprocess.check_output(["git", "write-tree"], cwd=tmp_path, text=True).strip()
+
+    before = snapshot()
+    if changed.endswith("lock"):
+        (tmp_path / "uv.lock").write_text(
+            lock.replace('version = "6.0"', 'version = "6.1"')
+            if changed == "engine-lock"
+            else lock.replace('version = "4.0"', 'version = "4.1"'),
+            encoding="ascii",
+        )
+    else:
+        source = tmp_path / (
+            "packages/dinkster-supervisor/client.py" if changed == "supervisor" else "src/engine.py"
+        )
+        source.parent.mkdir(parents=True)
+        source.write_text("new_behavior = True\n", encoding="ascii")
+    assert build_tools_release.inputs_changed(tmp_path, before, snapshot()) is expected
+
+
 @pytest.mark.parametrize("damage", [None, "manifest", "archive"])
 def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     tools_publication: tuple[Path, dict[str, bytes]],

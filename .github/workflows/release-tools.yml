@@ -21,7 +21,11 @@ on:
       - scripts/publish_tools_release.py
       - scripts/build_native_tools.py
       - scripts/build_environment_tools.py
+      - scripts/build_release.py
+      - scripts/publish_environment_channel.py
       - packages/dinkster-supervisor/**
+      - pyproject.toml
+      - uv.lock
 
 permissions:
   contents: read
@@ -31,7 +35,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.inputs.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - name: Select only changed tools build inputs
+        id: inputs
+        env:
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_tools_release --changed-from "$BEFORE" >> "$GITHUB_OUTPUT"
+
   wheel:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
