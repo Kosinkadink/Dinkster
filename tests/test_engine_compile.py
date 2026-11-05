@@ -61,6 +61,8 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
+from tests.async_scenarios import run_scenario
+
 
 def _compiler_registry() -> GraphCompilerRegistrySnapshot:
     contribution = KeyedContribution(
@@ -512,7 +514,7 @@ def test_empty_registry_run_skips_compile_and_preserves_outputs_cache_and_events
             ("node_cached", "g"),
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_empty_registry_run_id_refusal_still_precedes_runtime_pinning(
@@ -529,7 +531,7 @@ def test_empty_registry_run_id_refusal_still_precedes_runtime_pinning(
         with pytest.raises(ValueError, match="non-empty"):
             await engine.run(_graph(), ["g"], run_id="")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_empty_registry_compile_returns_typed_snapshot_without_rpc() -> None:
@@ -542,7 +544,7 @@ def test_empty_registry_compile_returns_typed_snapshot_without_rpc() -> None:
         assert set(compiled.graph.nodes) == {"g"}
         assert compiled.origins == {}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_empty_registry_run_preserves_submitted_generated_prefix_id() -> None:
@@ -562,7 +564,7 @@ def test_empty_registry_run_preserves_submitted_generated_prefix_id() -> None:
             node_id,
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nonempty_run_calls_transport_once_exactly_and_reuses_one_runtime(
@@ -603,7 +605,7 @@ def test_nonempty_run_calls_transport_once_exactly_and_reuses_one_runtime(
         assert calls == [(runtime.extension_snapshot_digest, graph_to_wire(_graph()), ("g",))]
         assert pins == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nonempty_run_reserves_run_id_while_compiling() -> None:
@@ -629,7 +631,7 @@ def test_nonempty_run_reserves_run_id_while_compiling() -> None:
         release.set()
         assert (await first).executed == ("g",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_raw_mutation_after_transport_entry_cannot_change_request_or_compiled_bytes() -> None:
@@ -656,7 +658,7 @@ def test_raw_mutation_after_transport_entry_cannot_change_request_or_compiled_by
         assert seen["wire"] == graph_to_wire(_graph())
         assert graph_to_wire(compiled.graph) == graph_to_wire(_graph())
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_run_compiled_matches_digest_never_recompiles_and_refuses_drift_first(
@@ -683,7 +685,7 @@ def test_run_compiled_matches_digest_never_recompiles_and_refuses_drift_first(
             await engine.run_compiled(drift, run_id="", execution=runtime)
         assert caught.value.code == GRAPH_COMPILE_ERROR_GENERATION_MISMATCH
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_recursive_input_selector_generated_prefix_and_output_selector_refusals() -> None:
@@ -742,7 +744,7 @@ def test_recursive_input_selector_generated_prefix_and_output_selector_refusals(
             await engine.compile_for_execution(plain, ["g"], execution=emitted_runtime)
         assert caught.value.code == GRAPH_COMPILE_ERROR_SELECTOR_EMITTED
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_recursive_limits_accept_depth_16_and_refuse_depth_17_and_node_4097() -> None:
@@ -827,7 +829,7 @@ def test_recursive_limits_accept_depth_16_and_refuse_depth_17_and_node_4097() ->
             await engine.compile_for_execution(oversized, ["n0"], execution=runtime)
         assert caught.value.code == GRAPH_COMPILE_ERROR_NODE_LIMIT
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_link_limit_accepts_16384_and_refuses_16385() -> None:
@@ -872,7 +874,7 @@ def test_link_limit_accepts_16384_and_refuses_16385() -> None:
             await engine.compile_for_execution(illegal, ["target"], execution=runtime)
         assert caught.value.code == GRAPH_COMPILE_ERROR_LINK_LIMIT
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pass_generated_origin_identity_coverage_and_zero_pass_change_refusals() -> None:
@@ -978,7 +980,7 @@ def test_pass_generated_origin_identity_coverage_and_zero_pass_change_refusals()
                 )
             assert caught.value.code == code
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_strict_generated_region_descendants_require_independent_full_path_origins() -> None:
@@ -1030,7 +1032,7 @@ def test_strict_generated_region_descendants_require_independent_full_path_origi
         )
         assert set(compiled.origins) == {outer, f"{outer}/{inner}"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_target_order_generation_framing_blobs_unknown_keys_and_non_json_are_checked() -> None:
@@ -1076,7 +1078,7 @@ def test_target_order_generation_framing_blobs_unknown_keys_and_non_json_are_che
         )
         assert compiled.targets == ("a", "b")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_envelope_canonical_size_limit_is_measured_before_framing() -> None:
@@ -1095,7 +1097,7 @@ def test_full_envelope_canonical_size_limit_is_measured_before_framing() -> None
             )
         assert caught.value.code == GRAPH_COMPILE_ERROR_REPLY_OVERSIZE
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_errors_transport_failure_timeout_and_caller_cancellation(
@@ -1167,7 +1169,7 @@ def test_remote_errors_transport_failure_timeout_and_caller_cancellation(
             await task
         assert cancelled.is_set()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_returned_unknown_node_type_is_graph_validation_not_malformed_reply() -> None:
@@ -1186,7 +1188,7 @@ def test_returned_unknown_node_type_is_graph_validation_not_malformed_reply() ->
         with pytest.raises(GraphValidationError):
             await engine.run(_graph(), ["g"], execution=_runtime(engine, transport))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_engine_event_public_schema_is_unchanged() -> None:

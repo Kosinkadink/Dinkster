@@ -162,6 +162,7 @@ async def main():
     finally:
         await composition.close()
 
+# Standalone host script uses the parent subprocess deadline, not pytest helpers.
 asyncio.run(main())
 """
 

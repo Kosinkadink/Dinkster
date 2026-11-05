@@ -20,6 +20,8 @@ from dinkster_memory import (
     Shedder,
 )
 
+from tests.async_scenarios import run_scenario
+
 VRAM0 = "vram:cuda:0"
 _T = TypeVar("_T")
 
@@ -65,7 +67,7 @@ def test_acquire_reserves_and_release_frees() -> None:
         # Releasing again is a miss, not an error: the lease is gone.
         assert await broker.release(lease.lease_id) is False
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ttl_expiry_frees_the_reservation() -> None:
@@ -81,7 +83,7 @@ def test_ttl_expiry_frees_the_reservation() -> None:
         assert broker.leases() == []
         assert await broker.release(lease.lease_id) is False
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_renew_extends_and_expired_lease_cannot_renew(
@@ -109,7 +111,7 @@ def test_renew_extends_and_expired_lease_cannot_renew(
             while reserved(governor) > 0:
                 await asyncio.sleep(0.01)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ttl_is_capped_by_max_ttl() -> None:
@@ -122,7 +124,7 @@ def test_ttl_is_capped_by_max_ttl() -> None:
         with pytest.raises(ValueError, match="ttl must be > 0"):
             await broker.acquire(VRAM0, 10, ttl=0.0)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governor_verdicts_are_relayed_not_rewritten() -> None:
@@ -139,7 +141,7 @@ def test_governor_verdicts_are_relayed_not_rewritten() -> None:
         assert reserved(governor) == 100  # the failed acquire left no residue
         await broker.release(lease.lease_id)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_waiting_acquire_gets_full_ttl_at_grant(
@@ -169,7 +171,7 @@ def test_waiting_acquire_gets_full_ttl_at_grant(
         assert remaining > 0.4
         await broker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class FakeCache(Shedder):
@@ -196,7 +198,7 @@ def test_acquire_sheds_consumers_like_any_reservation() -> None:
         assert cache.holding <= 40  # the governor shed the cache to fit
         await broker.release(lease.lease_id)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_close_releases_everything_and_refuses_new_leases() -> None:
@@ -211,4 +213,4 @@ def test_close_releases_everything_and_refuses_new_leases() -> None:
         with pytest.raises(RuntimeError, match="closed"):
             await broker.acquire(VRAM0, 1, ttl=1.0)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

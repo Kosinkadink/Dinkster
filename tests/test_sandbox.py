@@ -42,6 +42,8 @@ from dinkster_workers import (
 from dinkster_workers.accelerator import ACCELERATOR_ENV
 from dinkster_workers.launch import SubprocessLauncher
 
+from tests.async_scenarios import run_scenario
+
 REPO_ROOT = Path(__file__).parents[1]
 DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 
@@ -109,7 +111,7 @@ def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
         )
         assert await trusted.wait() == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert absent_result.read_text(encoding="utf-8") == "<absent>"
     assert trusted_result.read_text(encoding="utf-8") == "/host-owned"
 
@@ -442,7 +444,7 @@ class TestDetection:
             with pytest.raises(SandboxUnavailable, match="blocked"):
                 await launcher.launch(make_spec(tmp_path))
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_degraded_mode_refuses_even_without_secret_environment(self, tmp_path: Path) -> None:
         launcher = BubblewrapLauncher(
@@ -458,7 +460,7 @@ class TestDetection:
             with pytest.raises(SandboxUnavailable, match="mount-only degraded mode is refused"):
                 await launcher.launch(make_spec(tmp_path, env={}))
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_bubblewrap_process_inherits_no_parent_environment(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -496,7 +498,7 @@ class TestDetection:
             process = await launcher.launch(make_spec(tmp_path))
             assert process is sentinel
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
         assert observed["env"] == {}
         assert "sekrit" not in observed["argv"]
         assert "DINKSTER_PACK_SCRATCH" not in observed["worker_env"]
@@ -550,7 +552,7 @@ def test_egress_proxy_lives_with_the_sandbox_process(
             await asyncio.sleep(0.01)
         assert not socket_path.exists()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_policy_derives_pack_grants_and_proxied_egress(
@@ -606,7 +608,7 @@ def test_serving_policy_derives_pack_grants_and_proxied_egress(
         assert str(writable) not in launcher.policy.ro_binds
         assert str(writable) in launcher.policy.rw_binds
     finally:
-        asyncio.run(composer.close())
+        run_scenario(composer.close())
 
 
 def test_serving_policy_requires_both_manifest_requests_and_host_grants(
@@ -839,8 +841,8 @@ def test_pack_scratch_reaches_sandboxed_and_unsandboxed_workers(tmp_path: Path) 
     assert expected.is_dir()
     if os.name == "posix":
         assert expected.stat().st_mode & 0o777 == 0o700
-    asyncio.run(sandboxed.close())
-    asyncio.run(unsandboxed.close())
+    run_scenario(sandboxed.close())
+    run_scenario(unsandboxed.close())
 
 
 def test_pack_scratch_is_scoped_for_groups_and_staging(tmp_path: Path) -> None:
@@ -885,8 +887,8 @@ def test_pack_scratch_is_scoped_for_groups_and_staging(tmp_path: Path) -> None:
         manifests,
     )
     assert staged_env["DINKSTER_PACK_SCRATCH"] == group_env["DINKSTER_PACK_SCRATCH"]
-    asyncio.run(staged.close())
-    asyncio.run(composer.close())
+    run_scenario(staged.close())
+    run_scenario(composer.close())
 
 
 def test_pack_scratch_refuses_symlink_and_unsafe_group_name(tmp_path: Path) -> None:
@@ -915,7 +917,7 @@ def test_pack_scratch_refuses_symlink_and_unsafe_group_name(tmp_path: Path) -> N
             ),
             (manifest,),
         )
-    asyncio.run(composer.close())
+    run_scenario(composer.close())
 
 
 def test_pack_scratch_is_absent_without_a_library_root() -> None:
@@ -928,7 +930,7 @@ def test_pack_scratch_is_absent_without_a_library_root() -> None:
         (manifest,),
     )
     assert "DINKSTER_PACK_SCRATCH" not in environment
-    asyncio.run(composer.close())
+    run_scenario(composer.close())
 
 
 def test_single_job_sandbox_lanes_share_writable_rendezvous(
@@ -960,7 +962,7 @@ def test_single_job_sandbox_lanes_share_writable_rendezvous(
         launcher = lane.worker._launcher  # pyright: ignore[reportPrivateUsage]
         assert isinstance(launcher, BubblewrapLauncher)
         assert str(rendezvous.parent) in launcher.policy.rw_binds
-    asyncio.run(pool.close())
+    run_scenario(pool.close())
     assert not rendezvous.parent.exists()
 
 
@@ -1000,8 +1002,8 @@ def test_multi_gpu_sandbox_lanes_share_pack_scratch(
         launcher = lane.worker._launcher  # pyright: ignore[reportPrivateUsage]
         assert isinstance(launcher, BubblewrapLauncher)
         assert expected in launcher.policy.rw_binds
-    asyncio.run(pool.close())
-    asyncio.run(composer.close())
+    run_scenario(pool.close())
+    run_scenario(composer.close())
 
 
 @pytest.mark.skipif(
@@ -1095,7 +1097,7 @@ assert not Path({str(hidden)!r}).exists()
                     process.terminate()
                     await process.wait()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_public_embedding_roots_remain_read_only_and_scoped(self, tmp_path: Path) -> None:
         from dinkster_assets import MountDef, MountTable
@@ -1150,7 +1152,7 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                     process.terminate()
                     await process.wait()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_secret_reaches_child_without_appearing_in_process_arguments(
         self, tmp_path: Path
@@ -1179,7 +1181,7 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                 process.terminate()
                 await process.wait()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_egress_uses_the_proxy_while_host_loopback_stays_hidden(
         self,
@@ -1237,7 +1239,7 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                 server.close()
                 await server.wait_closed()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_openai_transport_uses_unix_egress_with_loopback_unavailable(
         self,
@@ -1320,7 +1322,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 server.close()
                 await server.wait_closed()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_isolated_worker_runs_inside_bwrap(self) -> None:
         """The full worker boundary - hello, schemas, an image graph - inside
@@ -1357,7 +1359,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             finally:
                 await worker.close()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
 
     def test_dinkster_serve_sandbox_hides_host_secrets_and_loopback(self, tmp_path: Path) -> None:
         """The production flag reaches a real pack worker. Its declared vault
@@ -1558,7 +1560,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 assert own_scratch_output.read_text("utf-8") == "sandbox-write"
 
         try:
-            asyncio.run(scenario())
+            run_scenario(scenario())
         finally:
             process.terminate()
             try:

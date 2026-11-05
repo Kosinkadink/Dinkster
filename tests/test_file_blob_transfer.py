@@ -17,6 +17,8 @@ from dinkster_workers.blobs import BlobTransfer
 from dinkster_workers.boundary import ValueCodec
 from dinkster_workers.session import BoundarySession
 
+from tests.async_scenarios import run_scenario
+
 
 def linked_pair(
     sender_store: DiskCAS, receiver_store: DiskCAS
@@ -117,7 +119,7 @@ def test_file_payload_streams_once_and_persists_locally(
         sender.close()
         receiver.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_wrong_file_digest_never_reaches_receiver(tmp_path: Path) -> None:
@@ -140,7 +142,7 @@ def test_wrong_file_digest_never_reaches_receiver(tmp_path: Path) -> None:
         sender.close()
         receiver.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_file_changed_after_local_adoption_fails_receiver_verification(tmp_path: Path) -> None:
@@ -168,7 +170,7 @@ def test_file_changed_after_local_adoption_fails_receiver_verification(tmp_path:
         sender.close()
         receiver.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_interrupted_file_stream_closes_source_and_receiver_temp(
@@ -218,7 +220,7 @@ def test_interrupted_file_stream_closes_source_and_receiver_temp(
         assert not list(receiver_store.root.glob("incoming-*"))
         sender.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("blocked_open", [1, 2], ids=["publication", "read"])
@@ -304,7 +306,7 @@ def test_file_io_finishes_before_repeated_cancellation_releases_source(
             sender.close()
             receiver.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_received_source_stays_pinned_until_result_replay_after_disconnect(tmp_path: Path) -> None:
@@ -340,4 +342,4 @@ def test_received_source_stays_pinned_until_result_replay_after_disconnect(tmp_p
         store.put(b"cache pressure after final close")
         assert not store.has(source), "final close must release the retained query pins"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

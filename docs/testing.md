@@ -33,6 +33,29 @@ makes, and these rules keep it that way as the codebase grows.
 - **Extension factories have explicit consumers.** The fast CI scanner checks
   extension contribution factories against the committed source baseline.
 
+## Test deadlines
+
+`tests.async_scenarios.run_scenario(coroutine, timeout=120)` runs async test
+scenarios under `asyncio.timeout()`. Its default deadline is 120 seconds;
+expiry fails with the current test name and allows the next test to run.
+Use `run_scenario(scenario(), timeout=240)` only when measured work needs
+longer, with a one-line reason at that call site. Cancellation must remain
+cooperative, including scenario cleanup.
+
+pytest-timeout applies a 300-second backstop to each whole test, including
+setup and teardown, using `timeout_method = "thread"` on every platform.
+Blocking synchronous code or cancellation-resistant cleanup can prevent the
+cooperative deadline from firing; the backstop dumps thread stacks naming
+the active test and exits the process, so the rest of that shard cannot run.
+For a measured longer whole-test requirement, use
+`@pytest.mark.timeout(seconds)` with a reason, keeping the helper deadline
+below that backstop and the backstop below the CI job budget. Job limits are
+the final outer bound; neither timeout skips a test. pytest-xdist is not used.
+
+The defaults allow over four times the 28.25-second slowest call reported
+by the hosted Windows shard 1 sample in
+[full-validation run 42071734785](https://github.com/Kosinkadink/Dinkster/actions/runs/42071734785/job/127401249972).
+
 ## Platform golden evidence
 
 Portable golden baselines remain in Dinkster. Platform-specific variants live

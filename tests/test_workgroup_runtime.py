@@ -48,13 +48,15 @@ from dinkster_workers import (
     WorkGroupRuntimeError,
 )
 
+from tests.async_scenarios import run_scenario
+
 
 def async_test(
     function: Callable[[], Coroutine[Any, Any, None]],
 ) -> Callable[[], None]:
     @wraps(function)
     def run() -> None:
-        asyncio.run(function())
+        run_scenario(function())
 
     return run
 
@@ -752,7 +754,7 @@ def test_endpoint_is_immutable_attempt_bound_and_validates_before_send() -> None
                 PrepareReplica(**child_kwargs("a", attempt=2), recipe=recipe())
             )
 
-    asyncio.run(exercise())
+    run_scenario(exercise())
     assert fake.sent == []
     with pytest.raises(ValueError, match="definition"):
         WorkGroupCoordinator(RecordingReservations(events)).validate(fresh, (fake.endpoint,))

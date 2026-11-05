@@ -61,6 +61,8 @@ from produced_video_nodes import ProduceAudio, ProduceVideo
 from test_remote import TOKEN, start_service, stop_service
 from test_reservations import core_registry, make_invocation
 
+from tests.async_scenarios import run_scenario
+
 
 @pytest.fixture
 def vaults(tmp_path: Path) -> tuple[AssetVault, AssetVault]:
@@ -458,7 +460,7 @@ def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) 
             10,
         )
 
-    paths = asyncio.run(scenario())
+    paths = run_scenario(scenario())
     assert len(set(paths)) == 3
     assert all(
         path.is_relative_to(tmp_path / "scratch" / "produced-assets" / "jobs") for path in paths
@@ -531,7 +533,7 @@ def test_completed_produced_scope_refuses_detached_tasks_and_held_writers(
                 assert not owns
             assert _publish(vault, data).read_bytes() == data
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("configured_vault", [False, True])
@@ -592,7 +594,7 @@ def test_in_process_produced_sources_require_durable_adoption(
         assert source.local_path() == engine.resolve(digests[0])
         assert source.read_bytes() == original
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("configured_vault", [False, True])
@@ -701,7 +703,7 @@ def test_in_process_control_sources_are_adopted_before_publication(
             await saved_contexts[0].publish_run_value("target", {})
         state.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:
@@ -1118,7 +1120,7 @@ def test_produced_video_survives_shutdown_and_transfer_eviction(
             if proc is not None:
                 await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cancel", [False, True], ids=["resume", "repeated-cancel"])
@@ -1283,7 +1285,7 @@ def test_produced_video_adoption_owns_source_until_finished(
             await worker.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("pressure", [False, True])
@@ -1363,7 +1365,7 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
             await session.close()
             await asyncio.gather(pending, return_exceptions=True)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("expanded", [False, True])

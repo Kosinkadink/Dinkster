@@ -104,6 +104,7 @@ from dinkster_workers.session import BoundarySession, WorkerDied
 from dinkster_workers.transport import TOKEN_ENV, BoundaryListener, connect_endpoint
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 REPO_ROOT = Path(__file__).parents[1]
@@ -206,7 +207,7 @@ def test_ordinary_isolated_worker_keeps_workgroup_capability_absent(tmp_path: Pa
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_imports_pack_from_a_different_working_directory(
@@ -231,7 +232,7 @@ def test_isolated_worker_imports_pack_from_a_different_working_directory(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_isolated_worker_imports_packs_from_a_different_working_directory(
@@ -262,7 +263,7 @@ def test_group_isolated_worker_imports_packs_from_a_different_working_directory(
         finally:
             await group.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_and_doctor_reject_implicit_distribution_source_root(tmp_path: Path) -> None:
@@ -285,7 +286,7 @@ def test_worker_and_doctor_reject_implicit_distribution_source_root(tmp_path: Pa
             await worker.start()
         await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path) -> None:
@@ -318,7 +319,7 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_launched_worker_announces_comfy_translation_registries(tmp_path: Path) -> None:
@@ -346,7 +347,7 @@ def test_launched_worker_announces_comfy_translation_registries(tmp_path: Path) 
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_launched_child_resolves_workgroup_handler_without_parent_import(tmp_path: Path) -> None:
@@ -393,7 +394,7 @@ def test_launched_child_resolves_workgroup_handler_without_parent_import(tmp_pat
             await worker.close()
         assert "isopack_nodes" not in sys.modules
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_validates_every_workgroup_handler_before_connecting(
@@ -424,7 +425,7 @@ def test_group_validates_every_workgroup_handler_before_connecting(
             )
         assert connected == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cancel_before_second", [False, True])
@@ -500,7 +501,7 @@ def test_group_connects_all_peers_before_synchronous_hello_preparation(
                     await writer.wait_closed()
                 await listener.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_launched_child_keeps_handler_present_and_absent_members_distinct(
@@ -559,7 +560,7 @@ def test_group_launched_child_keeps_handler_present_and_absent_members_distinct(
         finally:
             await group.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def negotiated_session() -> BoundarySession:
@@ -670,7 +671,7 @@ def test_separately_shipped_worker_negotiates_protocol(
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> None:
@@ -715,8 +716,8 @@ def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> N
 
     token = attention_token()
     capabilities = attention_capabilities()
-    assert asyncio.run(negotiate(attention_route_token_to_wire(token))) == (token, None)
-    assert asyncio.run(
+    assert run_scenario(negotiate(attention_route_token_to_wire(token))) == (token, None)
+    assert run_scenario(
         negotiate(
             attention_route_token_to_wire(token),
             attention_capability_evidence_to_wire(capabilities),
@@ -725,15 +726,15 @@ def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> N
     malformed = attention_route_token_to_wire(token)
     malformed["forged"] = True
     with pytest.raises(RuntimeError, match="malformed attentionRouteToken"):
-        asyncio.run(negotiate(malformed))
+        run_scenario(negotiate(malformed))
     malformed_capabilities = attention_capability_evidence_to_wire(capabilities)
     malformed_capabilities["forged"] = True
     with pytest.raises(RuntimeError, match="malformed attentionCapabilities"):
-        asyncio.run(negotiate(attention_route_token_to_wire(token), malformed_capabilities))
+        run_scenario(negotiate(attention_route_token_to_wire(token), malformed_capabilities))
     with pytest.raises(RuntimeError, match="without attentionRouteToken"):
-        asyncio.run(negotiate(None, attention_capability_evidence_to_wire(capabilities)))
+        run_scenario(negotiate(None, attention_capability_evidence_to_wire(capabilities)))
     with pytest.raises(RuntimeError, match="inconsistent with attentionRouteToken"):
-        asyncio.run(
+        run_scenario(
             negotiate(
                 attention_route_token_to_wire(attention_token(torch_version="forged")),
                 attention_capability_evidence_to_wire(capabilities),
@@ -822,7 +823,7 @@ def test_host_requires_exact_optional_attention_evidence_before_reservation_plan
         await attempt(None, startup_token, False)
         await attempt(startup_token, forged, False)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_attention_discovery_is_disabled_when_torch_is_unavailable() -> None:
@@ -1125,7 +1126,7 @@ def test_isolated_workers_default_to_aimdo_auto(tmp_path: Path, grouped: bool) -
         assert launcher.spec is not None
         assert launcher.spec.command[-3:] == ("--aimdo-init", "--aimdo-arm", "auto")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_aimdo_argv_matrix(tmp_path: Path) -> None:
@@ -1163,7 +1164,7 @@ def test_isolated_worker_aimdo_argv_matrix(tmp_path: Path) -> None:
                 expected += ("--aimdo-arm", arm)
                 assert command == expected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_isolated_worker_aimdo_argv_matrix(tmp_path: Path) -> None:
@@ -1202,7 +1203,7 @@ def test_group_isolated_worker_aimdo_argv_matrix(tmp_path: Path) -> None:
                 expected += ("--aimdo-arm", arm)
                 assert command == expected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_comfy_args_reach_child_argv_exactly_and_not_env(
@@ -1224,7 +1225,7 @@ def test_isolated_worker_comfy_args_reach_child_argv_exactly_and_not_env(
         assert launcher.spec.command[index + 1] == json.dumps(supplied)
         assert all("COMFY_ARG" not in name for name in launcher.spec.env)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_aimdo_headroom_argv_translates_device_map(
@@ -1253,7 +1254,7 @@ def test_isolated_worker_aimdo_headroom_argv_translates_device_map(
             "0=20000",
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_classic_policy_argv_includes_headroom_and_budget(
@@ -1279,7 +1280,7 @@ def test_isolated_worker_classic_policy_argv_includes_headroom_and_budget(
             "0=20000",
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_unmappable_budget_degrades_with_diagnostic(
@@ -1421,7 +1422,7 @@ def test_headroom_mirror_translates_deduplicates_and_tracks_lifecycle(
         assert unmappable.frames[-1]["extraBytes"] == 0
         assert "translation unavailable for vram:cuda:0" in caplog.text
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_registers_classic_and_aimdo_policy_sessions(
@@ -1455,7 +1456,7 @@ def test_isolated_worker_registers_classic_and_aimdo_policy_sessions(
             await worker.close()
             assert len(mirror.deregistered) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
@@ -1828,7 +1829,7 @@ def test_hello_announces_schemas_in_wire_format() -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_hello_advertises_legacy_conversion_and_worker_executes_resolver(
@@ -1863,7 +1864,7 @@ def test_hello_advertises_legacy_conversion_and_worker_executes_resolver(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_conversion_refusal_is_distinct_from_transport_failure(
@@ -1899,7 +1900,7 @@ def test_worker_conversion_refusal_is_distinct_from_transport_failure(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("broken", ["torch", "torch-api", "safetensors", "safetensors-api"])
@@ -1960,7 +1961,7 @@ def test_worker_hello_discovers_broken_runtime_without_importing_it(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
@@ -1986,7 +1987,7 @@ def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) -> None:
@@ -2010,7 +2011,7 @@ def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) ->
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_converter_delegates_retryable_classification_to_compat(
@@ -2087,7 +2088,7 @@ def test_admission_session_pending_request_terminates(
             assert ("not running" if finish == "close" else "malformed") in result.explanation
         await session.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_conversion_pending_rpc_fails_with_worker_died_on_session_close(
@@ -2118,7 +2119,7 @@ def test_conversion_pending_rpc_fails_with_worker_died_on_session_close(
         with pytest.raises(WorkerDied):
             await pending
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_status_session_refuses_skew_and_malformed_reply(
@@ -2185,7 +2186,7 @@ def test_lazy_status_session_refuses_skew_and_malformed_reply(
         assert isinstance(pending.exception(), WorkerDied)
         assert session._lazy_pending == {}  # noqa: SLF001
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_status_terminal_send_failure_aborts_connection(
@@ -2223,7 +2224,7 @@ def test_lazy_status_terminal_send_failure_aborts_connection(
         server.close()
         await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_instance_token_lives_and_dies_with_the_session() -> None:
@@ -2245,7 +2246,7 @@ def test_worker_instance_token_lives_and_dies_with_the_session() -> None:
         assert not worker.alive
         assert worker.instance_token is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_run_matches_in_process_run() -> None:
@@ -2293,7 +2294,7 @@ def test_isolated_run_matches_in_process_run() -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unregistered_type_is_interrogable_but_not_resolvable() -> None:
@@ -2321,7 +2322,7 @@ def test_unregistered_type_is_interrogable_but_not_resolvable() -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_opaque_value_relays_back_across_the_boundary(tmp_path: Path) -> None:
@@ -2349,7 +2350,7 @@ def test_opaque_value_relays_back_across_the_boundary(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires POSIX signals")
@@ -2390,7 +2391,7 @@ def test_isolated_close_cancellation_still_kills_reaps_and_cleans(
         assert not cleanup_dir.exists()
         await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_close_is_idempotent_after_child_already_died(tmp_path: Path) -> None:
@@ -2405,7 +2406,7 @@ def test_isolated_close_is_idempotent_after_child_already_died(tmp_path: Path) -
         await asyncio.gather(worker.close(), worker.close())
         assert process.returncode == _KILLED_RETURN_CODE
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
@@ -2435,7 +2436,7 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
         assert process is not None
         assert process.returncode == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -2477,7 +2478,7 @@ def test_isolated_host_supplies_export_snapshot(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shm_transport_for_large_payloads_and_cleanup(shm_segments: set[str]) -> None:
@@ -2521,7 +2522,7 @@ def test_shm_transport_for_large_payloads_and_cleanup(shm_segments: set[str]) ->
         assert shm_segments
         assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shm_used_above_threshold(tmp_path: Path) -> None:
@@ -2556,7 +2557,7 @@ def test_shm_used_above_threshold(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_node_error_carries_message_and_worker_survives(tmp_path: Path) -> None:
@@ -2585,7 +2586,7 @@ def test_node_error_carries_message_and_worker_survives(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
@@ -2636,7 +2637,7 @@ def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lazy_hook_protocol_and_attribution(
@@ -2758,7 +2759,7 @@ def test_isolated_lazy_hook_protocol_and_attribution(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lazy_route_executes_only_the_selected_dynamic_member() -> None:
@@ -2794,7 +2795,7 @@ def test_isolated_lazy_route_executes_only_the_selected_dynamic_member() -> None
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_crash_fails_cleanly(tmp_path: Path) -> None:
@@ -2829,7 +2830,7 @@ def test_worker_crash_fails_cleanly(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancellation_reaches_the_worker(tmp_path: Path) -> None:
@@ -2865,7 +2866,7 @@ def test_cancellation_reaches_the_worker(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_routing_worker_mixes_isolated_and_in_process(tmp_path: Path) -> None:
@@ -2898,7 +2899,7 @@ def test_routing_worker_mixes_isolated_and_in_process(tmp_path: Path) -> None:
         finally:
             await isolated.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_routing_worker_unroutable_type() -> None:
@@ -2907,7 +2908,7 @@ def test_routing_worker_unroutable_type() -> None:
         with pytest.raises(KeyError, match="no worker routes"):
             await worker.prepare(["nope"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_routing_worker_add_routes_is_additive_and_atomic() -> None:
@@ -2934,7 +2935,7 @@ def test_routing_worker_add_routes_is_additive_and_atomic() -> None:
         worker.add_routes({"dev.image.gradient": local})
         await worker.prepare(["dev.image.gradient"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_diagnostics_report_execute_and_boundary_time(tmp_path: Path) -> None:
@@ -2963,7 +2964,7 @@ def test_diagnostics_report_execute_and_boundary_time(tmp_path: Path) -> None:
         assert {c.edge_id for c in diag.inputs} == {"value", "seconds"}
         assert {c.edge_id for c in diag.outputs} == {"value"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(
@@ -3026,7 +3027,7 @@ def test_pack_runs_in_its_own_provisioned_venv(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_manifest_validation(tmp_path: Path) -> None:

@@ -48,6 +48,8 @@ from dinkster_values import (
     register_resource_handle_type,
 )
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 HANDLE_LIST = TypeExpr.list_of(TypeExpr.concrete(RESOURCE_HANDLE_TYPE))
 
@@ -211,7 +213,7 @@ def test_selected_arm_is_reported_for_execution_and_cache_reuse(diagnostic: str 
                     assert event.detail["attentionDiagnostic"] == f"{diagnostic}: {event.run_id}"
         assert len(worker.invocations) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_plan_runs_once_before_lookup_and_target_rides_invocation() -> None:
@@ -263,7 +265,7 @@ def test_plan_runs_once_before_lookup_and_target_rides_invocation() -> None:
         assert multi_gpu_configs == [multi_gpu, multi_gpu]
         assert len(worker.invocations) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_attention_route_partitions_cache_entries_on_the_same_arm() -> None:
@@ -307,7 +309,7 @@ def test_attention_route_partitions_cache_entries_on_the_same_arm() -> None:
             derive_attention_route_token(evidence, role),
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_selected_plain_nodes_admit_per_execution_arm() -> None:
@@ -338,7 +340,7 @@ def test_selected_plain_nodes_admit_per_execution_arm() -> None:
         assert worker.peak == 2
         assert "compute:cuda:1" in engine._resource_slots
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_sources_propagate_per_run_without_changing_cache_identity() -> None:
@@ -357,7 +359,7 @@ def test_media_sources_propagate_per_run_without_changing_cache_identity() -> No
         assert len(worker.invocations) == 1
         assert worker.invocations[0].media_sources == (authority,)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_malformed_media_sources_do_not_poison_run_state() -> None:
@@ -374,7 +376,7 @@ def test_malformed_media_sources_do_not_poison_run_state() -> None:
         result = await engine.run(_graph(), ["p"], run_id="reusable")
         assert result.run_id == "reusable"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_plan_failure_fails_the_node_loudly() -> None:
@@ -393,7 +395,7 @@ def test_plan_failure_fails_the_node_loudly() -> None:
         assert worker.invocations == []  # never fell through to a guess
         assert finished == ["failed-run"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_tag_partitions_entries_and_rotation_is_named() -> None:
@@ -433,7 +435,7 @@ def test_cache_tag_partitions_entries_and_rotation_is_named() -> None:
         ]
         assert rotation  # the rotation was explained, not misreported
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_target_alone_partitions_entries_even_with_a_shared_tag() -> None:
@@ -465,7 +467,7 @@ def test_target_alone_partitions_entries_even_with_a_shared_tag() -> None:
         ]
         assert rotation  # named as a selection change, not misreported
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unenrolled_none_preserves_ordinary_cache_identity() -> None:
@@ -492,7 +494,7 @@ def test_unenrolled_none_preserves_ordinary_cache_identity() -> None:
         await engine_plain.run(_graph(), ["p"])
         assert len(worker.invocations) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_current_wire_sets_the_empty_extension_cache_key() -> None:
@@ -505,7 +507,7 @@ def test_current_wire_sets_the_empty_extension_cache_key() -> None:
         assert finished.detail["cache_key"] == "86dabbd3c53e379977e825d25175e98782062319"
         assert worker.invocations[0].extension_snapshot_digest is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_extension_snapshot_pins_concurrent_runs_and_rotates_cache_identity() -> None:
@@ -567,7 +569,7 @@ def test_extension_snapshot_pins_concurrent_runs_and_rotates_cache_identity() ->
         assert len(worker.invocations) == 3
         assert worker.invocations[-1].extension_snapshot_digest is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_enrollment_marker_does_not_collide_with_pre_enrollment_cache() -> None:
@@ -586,7 +588,7 @@ def test_enrollment_marker_does_not_collide_with_pre_enrollment_cache() -> None:
         await enrolled.run(_graph(), ["p"])
         assert len(worker.invocations) == 2
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dead_owner_hit_recomputes_and_entry_is_overwritten() -> None:
@@ -618,7 +620,7 @@ def test_dead_owner_hit_recomputes_and_entry_is_overwritten() -> None:
         await engine.run(_load_graph(), ["p"])
         assert len(worker.invocations) == 2  # fresh result overwrote the entry
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fresh_dead_owner_fails_loudly_and_is_not_cached() -> None:
@@ -643,4 +645,4 @@ def test_fresh_dead_owner_fails_loudly_and_is_not_cached() -> None:
         result = await engine_live.run(_load_graph(), ["p"])
         assert tuple(result.executed) == ("p",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -30,6 +30,7 @@ from dinkster_workers.catalog import read_catalog, worker_declarations
 
 from dinkster.compose import PackSpec, ServingComposer
 from dinkster.extension_assets import read_module, resolve_frontend_modules
+from tests.async_scenarios import run_scenario
 
 PROOF_ROOT = Path(__file__).resolve().parents[1] / "packages/dinkster-video/preview"
 PROOF_PACK = "dinkster-video-preview"
@@ -204,7 +205,7 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_module_symlinks_and_digest_changes_are_rejected(
@@ -285,7 +286,7 @@ def test_http_route_capabilities_json_validation_and_generation_retraction() -> 
             assert (await client.post(path, json={"count": 4})).status == 404
             assert len(calls) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_event_contract_requires_finite_bounded_json() -> None:
@@ -366,7 +367,7 @@ def test_http_route_request_and_response_enforce_safe_integer_bounds(field_type:
                 assert await response.json() == {"error": "pack-route-failed"}
                 assert len(calls) == count + 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_same_pack_catalog_identity_and_stale_module_rejection(preview_manifest: Path) -> None:
@@ -452,7 +453,7 @@ def test_typed_event_uses_pinned_generation_and_rejects_invalid_payloads(field_t
         }
         assert "schemaVersion" not in emitted[-1].detail
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("close", [False, True])
@@ -489,4 +490,4 @@ def test_route_rpc_cancellation_and_worker_death_clear_pending(
             assert sent[-1] == {"type": "cancelPackRoute", "requestId": "route-0"}
         assert session._route_pending == {}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

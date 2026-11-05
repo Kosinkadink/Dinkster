@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 from fractions import Fraction
 from typing import Any, cast
@@ -36,6 +35,8 @@ from dinkster_nodes_media_io import AssembleVideo, register_media_types
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 
 def _frames(count: int = 3, height: int = 6, width: int = 8, channels: int = 3) -> np.ndarray:
@@ -422,4 +423,4 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
             pixels = _video_frames(result) if type_id == VIDEO_TYPE else result
             np.testing.assert_array_equal(pixels, frames)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

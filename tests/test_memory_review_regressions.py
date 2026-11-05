@@ -16,6 +16,8 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 
+from tests.async_scenarios import run_scenario
+
 
 class HungShedder:
     def footprint(self, device: str) -> int:
@@ -36,7 +38,7 @@ def test_reservation_timeout_bounds_hung_shedder() -> None:
                 pass
         assert asyncio.get_running_loop().time() - started < 0.5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_close_cancels_acquire_pending_in_admission() -> None:
@@ -52,7 +54,7 @@ def test_close_cancels_acquire_pending_in_admission() -> None:
             await acquire
         assert not broker._holder_tasks
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_consumer_item_snapshots_residency_mapping() -> None:
@@ -90,7 +92,7 @@ def test_keyed_residents_share_alternating_loads_and_reload_after_pressure() -> 
         assert len(candidates) == 1
         assert await pool.release("ram", candidates) == {candidates[0].item_id: 15}
 
-    asyncio.run(release())
+    run_scenario(release())
     assert pool.footprint("ram") == 16
     assert obtain("checkpoint-bb") is second
     assert obtain("checkpoint-a") == first

@@ -1,6 +1,5 @@
 """Public face-box geometry and Torch-free native discovery."""
 
-import asyncio
 import copy
 import os
 import subprocess
@@ -23,6 +22,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.sdpose import SDPoseFaceBBoxes
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize(
@@ -223,4 +223,4 @@ def test_native_face_boxes_cross_ordinary_hosts_twice(tmp_path: Path, in_process
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

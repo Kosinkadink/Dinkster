@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 import sys
 from pathlib import Path
@@ -14,6 +13,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.utilities import ComfyNumberConvert, SeedNode
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize(
@@ -110,4 +110,4 @@ def test_isolated_manifest_converts_text_and_linked_seed_without_rounding_intege
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

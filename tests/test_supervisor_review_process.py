@@ -12,6 +12,8 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from dinkster_supervisor import EngineLink, EngineProcess
 
+from tests.async_scenarios import run_scenario
+
 
 def _write_engine(path: Path, *, answer_health: bool) -> None:
     response = (
@@ -61,7 +63,7 @@ def test_startup_timeout_reaps_stalled_health_process(tmp_path: Path) -> None:
         assert "did not become healthy" in link.detail
         await engine.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_health_answer_after_startup_deadline_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,7 +101,7 @@ def test_health_answer_after_startup_deadline_is_rejected(monkeypatch: pytest.Mo
             finally:
                 await engine.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_overlapping_restarts_leave_only_latest_child(tmp_path: Path) -> None:
@@ -122,4 +124,4 @@ def test_overlapping_restarts_leave_only_latest_child(tmp_path: Path) -> None:
         assert first_process.returncode is not None
         await engine.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

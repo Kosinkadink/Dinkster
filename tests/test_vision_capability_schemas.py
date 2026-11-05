@@ -32,6 +32,7 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import IsolatedWorker
 
 from dinkster.compose import Composition
+from tests.async_scenarios import run_scenario
 
 CAPABILITIES = (
     (DetectObjects, "dinkster.detection.detect", DETECT_PROVIDER_CHOICE),
@@ -332,4 +333,4 @@ def test_isolated_vision_accepts_canonical_typed_literals_without_aliases(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +27,7 @@ from dinkster_nodes_comfy.mochi import EmptyMochiLatentVideo
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
@@ -381,4 +381,4 @@ def test_manifest_executes_latent_and_mask_without_host_types(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

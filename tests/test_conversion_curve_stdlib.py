@@ -6,7 +6,6 @@ explicitly identifies an external source below.
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 import math
@@ -46,6 +45,7 @@ from dinkster_schema.replace import rule_from_wire, rule_to_wire
 from dinkster_values import RenditionUnavailable, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
 from tools.generate_foundation_comfy_aliases import CONVERSION_EVIDENCE, build_aliases
 
 ALIAS_PATH = (
@@ -423,7 +423,7 @@ def test_conversion_and_curve_nodes_execute_through_engine() -> None:
         assert result.outputs["convert"]["int"].resolve() == 1
         assert result.outputs["convert"]["float"].type_id == "core.absent"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_conversion_curve_schemas_are_consolidated() -> None:

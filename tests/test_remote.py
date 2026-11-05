@@ -41,6 +41,8 @@ from dinkster_workers.service import READY_LINE_PREFIX
 from test_isolated import DEV_MANIFEST, FOUNDATION_MANIFEST, core_registry, image_graph
 from test_relay import eventually
 
+from tests.async_scenarios import run_scenario
+
 TESTS_DIR = Path(__file__).parent
 TOKEN = "remote-secret-token-0123456789ab"
 
@@ -150,7 +152,7 @@ def test_remote_admission_rejects_and_same_connection_accepts(tmp_path: Path) ->
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def big_image_graph() -> Graph:
@@ -197,7 +199,7 @@ def test_remote_lazy_route_executes_only_the_selected_dynamic_member(tmp_path: P
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_service_main_pins_argv_before_loading_the_pack(
@@ -315,7 +317,7 @@ def test_remote_graph_matches_local_fingerprints_and_never_shm(
     async def scenario() -> None:
         assert await run_remote() == await run_local()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_big_payloads_ride_cas_and_dedup(tmp_path: Path) -> None:
@@ -365,7 +367,7 @@ def test_remote_big_payloads_ride_cas_and_dedup(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_wrong_token_is_refused(tmp_path: Path) -> None:
@@ -388,7 +390,7 @@ def test_wrong_token_is_refused(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_stale_protocol_client_is_refused_at_hello(tmp_path: Path) -> None:
@@ -422,7 +424,7 @@ def test_stale_protocol_client_is_refused_at_hello(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ordinary_remote_service_stays_workgroup_capability_absent(tmp_path: Path) -> None:
@@ -452,7 +454,7 @@ def test_ordinary_remote_service_stays_workgroup_capability_absent(tmp_path: Pat
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_daemon_outlives_clients_and_refuses_concurrent_ones(tmp_path: Path) -> None:
@@ -500,7 +502,7 @@ def test_daemon_outlives_clients_and_refuses_concurrent_ones(tmp_path: Path) -> 
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_daemon_waits_for_detached_sync_invocation_before_handover(tmp_path: Path) -> None:
@@ -611,7 +613,7 @@ def test_daemon_waits_for_detached_sync_invocation_before_handover(tmp_path: Pat
             finish.touch(exist_ok=True)
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_service_death_fails_pending_invocations(tmp_path: Path) -> None:
@@ -659,7 +661,7 @@ def test_service_death_fails_pending_invocations(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_relay_qualifies_devices_and_collapses_on_death(
@@ -723,7 +725,7 @@ def test_remote_relay_qualifies_devices_and_collapses_on_death(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_never_accepts_shm_descriptors() -> None:
@@ -767,7 +769,7 @@ def test_tls_round_trip_executes(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_tls_wrong_ca_is_refused_and_daemon_serves_the_next_client(tmp_path: Path) -> None:
@@ -791,7 +793,7 @@ def test_tls_wrong_ca_is_refused_and_daemon_serves_the_next_client(tmp_path: Pat
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_plaintext_client_against_tls_daemon_fails_fast(tmp_path: Path) -> None:
@@ -810,7 +812,7 @@ def test_plaintext_client_against_tls_daemon_fails_fast(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_tls_client_against_plaintext_daemon_fails_fast(tmp_path: Path) -> None:
@@ -831,7 +833,7 @@ def test_tls_client_against_plaintext_daemon_fails_fast(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_wrong_token_over_tls_is_refused_silently(tmp_path: Path) -> None:
@@ -857,7 +859,7 @@ def test_wrong_token_over_tls_is_refused_silently(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_service_main_requires_cert_and_key_together(

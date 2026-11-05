@@ -75,6 +75,7 @@ from dinkster.compose import (
 )
 from dinkster.remotes import RemoteSpec
 from dinkster.serve import merge_remote_budgets
+from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
 MEDIA_IO_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-media-io" / "dinkster-pack.toml"
@@ -190,7 +191,7 @@ def test_add_remote_composes_surface_and_executes_remotely(tmp_path: Path) -> No
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_add_remote_composes_full_media_pack_with_lazy_capture_choices(
@@ -239,7 +240,7 @@ def test_add_remote_composes_full_media_pack_with_lazy_capture_choices(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_add_remote_composes_eager_choices_from_service(tmp_path: Path) -> None:
@@ -262,7 +263,7 @@ def test_add_remote_composes_eager_choices_from_service(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_add_remote_over_tls_composes_and_executes(tmp_path: Path) -> None:
@@ -286,7 +287,7 @@ def test_add_remote_over_tls_composes_and_executes(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_add_remote_refuses_unreadable_tls_ca_file_before_dialing(tmp_path: Path) -> None:
@@ -305,7 +306,7 @@ def test_add_remote_refuses_unreadable_tls_ca_file_before_dialing(tmp_path: Path
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submission_hint_splits_workers_and_separates_worker_cache_identity(
@@ -427,7 +428,7 @@ def test_submission_hint_splits_workers_and_separates_worker_cache_identity(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_vision_provider_preflights_with_consent_and_reports_actual_execution(
@@ -564,7 +565,7 @@ def test_remote_vision_provider_preflights_with_consent_and_reports_actual_execu
             await stop_service(proc)
             await source.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_generation_provider_uses_hidden_routing_input(tmp_path: Path) -> None:
@@ -630,7 +631,7 @@ def test_remote_generation_provider_uses_hidden_routing_input(tmp_path: Path) ->
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_hint_overrides_policy_requiring_an_unavailable_native_arm(tmp_path: Path) -> None:
@@ -681,7 +682,7 @@ def test_remote_hint_overrides_policy_requiring_an_unavailable_native_arm(tmp_pa
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_hint_dispatch_carries_policy_execution_identity(tmp_path: Path) -> None:
@@ -733,7 +734,7 @@ def test_remote_hint_dispatch_carries_policy_execution_identity(tmp_path: Path) 
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_hint_does_not_share_cache_across_different_execution_identities(tmp_path: Path) -> None:
@@ -784,7 +785,7 @@ def test_hint_does_not_share_cache_across_different_execution_identities(tmp_pat
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_local_remote_name_is_reserved_before_connect(tmp_path: Path) -> None:
@@ -796,7 +797,7 @@ def test_local_remote_name_is_reserved_before_connect(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_region_hint_is_recursive_and_residency_conflict_is_loud(tmp_path: Path) -> None:
@@ -871,7 +872,7 @@ def test_region_hint_is_recursive_and_residency_conflict_is_loud(tmp_path: Path)
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_surface_survives_pack_reload(tmp_path: Path) -> None:
@@ -904,7 +905,7 @@ def test_remote_surface_survives_pack_reload(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_matching_node_types_compose_as_placement_targets(tmp_path: Path) -> None:
@@ -932,7 +933,7 @@ def test_matching_node_types_compose_as_placement_targets(tmp_path: Path) -> Non
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_resident_producer_and_consumer_on_the_same_remote(tmp_path: Path) -> None:
@@ -990,7 +991,7 @@ def test_remote_resident_producer_and_consumer_on_the_same_remote(tmp_path: Path
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _dev_pack_variant(tmp_path: Path, name: str, old: str, new: str) -> Path:
@@ -1154,7 +1155,7 @@ def test_remote_composes_comfy_registries_for_selected_owned_nodes(tmp_path: Pat
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_presentation_divergent_matching_type_composes_by_signature(tmp_path: Path) -> None:
@@ -1191,7 +1192,7 @@ def test_presentation_divergent_matching_type_composes_by_signature(tmp_path: Pa
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> None:
@@ -1222,7 +1223,7 @@ def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> N
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_over_local_pack_updates_arms(
@@ -1252,7 +1253,7 @@ def test_remote_over_local_pack_updates_arms(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_provider_routes_an_unrouted_schema_owner(tmp_path: Path) -> None:
@@ -1296,7 +1297,7 @@ def test_remote_provider_routes_an_unrouted_schema_owner(tmp_path: Path) -> None
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nodes_allowlist_filters_announced_types(tmp_path: Path) -> None:
@@ -1323,7 +1324,7 @@ def test_nodes_allowlist_filters_announced_types(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nodes_allowlist_naming_unannounced_type_refused(tmp_path: Path) -> None:
@@ -1344,7 +1345,7 @@ def test_nodes_allowlist_naming_unannounced_type_refused(tmp_path: Path) -> None
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 RESERVED_NODES_MODULE = '''\
@@ -1436,7 +1437,7 @@ def test_reserved_root_requires_trust(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reserved_root_composes_with_trust(tmp_path: Path) -> None:
@@ -1452,7 +1453,7 @@ def test_reserved_root_composes_with_trust(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dead_daemon_fails_atomically(tmp_path: Path) -> None:
@@ -1472,7 +1473,7 @@ def test_dead_daemon_fails_atomically(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 ARMED_NODES_MODULE = '''\
@@ -1604,7 +1605,7 @@ def test_remote_body_arm_is_policy_selectable_only_under_placement(tmp_path: Pat
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_body_arm_naming_unannounced_type_is_refused() -> None:

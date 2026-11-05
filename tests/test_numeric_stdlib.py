@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 import math
@@ -53,6 +52,7 @@ from dinkster_workers import InProcessWorker
 from hypothesis import given
 from hypothesis import strategies as st
 
+from tests.async_scenarios import run_scenario
 from tools.generate_foundation_comfy_aliases import NUMERIC_EVIDENCE, build_aliases
 from tools.generate_math_expression_vector import (
     CASES,
@@ -650,7 +650,7 @@ def test_numeric_nodes_execute_through_engine() -> None:
         assert result.outputs["expression"]["float"].resolve() == 8.0
         assert result.outputs["compare"]["result"].resolve() is True
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_numeric_node_schemas_are_well_formed() -> None:

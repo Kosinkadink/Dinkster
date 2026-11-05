@@ -43,6 +43,7 @@ from dinkster.remote_reconnect import (
     backoff_delays,
 )
 from dinkster.remotes import RemoteSpec
+from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
 
@@ -91,7 +92,7 @@ def test_first_remote_redial_prepares_validation_before_publication() -> None:
     state.replace.return_value = 2
     delta = PackDelta("box1", {}, {}, {})
 
-    assert asyncio.run(announce_remote_delta(state, delta)) == 2
+    assert run_scenario(announce_remote_delta(state, delta)) == 2
     state.prepare_replace.assert_awaited_once_with((), (), {}, {}, {})
     assert state.replace.call_args.kwargs["_validation"] is sentinel.validation
 
@@ -137,7 +138,7 @@ def test_reattach_after_daemon_restart_swaps_in_a_new_session(tmp_path: Path) ->
                 await stop_service(restarted)
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reattach_to_the_same_daemon_process_is_same_instance(tmp_path: Path) -> None:
@@ -160,7 +161,7 @@ def test_reattach_to_the_same_daemon_process_is_same_instance(tmp_path: Path) ->
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_inflight_invocation_resumes_after_same_daemon_network_cut(tmp_path: Path) -> None:
@@ -198,7 +199,7 @@ def test_inflight_invocation_resumes_after_same_daemon_network_cut(tmp_path: Pat
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
@@ -296,7 +297,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_resume_publication_preserves_invocation_for_retry(
@@ -350,7 +351,7 @@ def test_failed_resume_publication_preserves_invocation_for_retry(
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_completed_result_replays_after_reconnect(tmp_path: Path) -> None:
@@ -418,7 +419,7 @@ def test_completed_result_replays_after_reconnect(tmp_path: Path) -> None:
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_result_replays_when_acknowledgement_transport_is_lost(tmp_path: Path) -> None:
@@ -466,7 +467,7 @@ def test_result_replays_when_acknowledgement_transport_is_lost(tmp_path: Path) -
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_persistent_result_transfer_restarts_after_network_cut(tmp_path: Path) -> None:
@@ -513,7 +514,7 @@ def test_persistent_result_transfer_restarts_after_network_cut(tmp_path: Path) -
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancellation_during_disconnect_is_applied_before_rebind(tmp_path: Path) -> None:
@@ -555,7 +556,7 @@ def test_cancellation_during_disconnect_is_applied_before_rebind(tmp_path: Path)
             await composer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reattach_adopts_a_changed_daemon_surface(tmp_path: Path) -> None:
@@ -590,7 +591,7 @@ def test_reattach_adopts_a_changed_daemon_surface(tmp_path: Path) -> None:
                 await stop_service(restarted)
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reattach_refuses_a_surface_change_that_strands_dependents(tmp_path: Path) -> None:
@@ -634,7 +635,7 @@ def test_reattach_refuses_a_surface_change_that_strands_dependents(tmp_path: Pat
             await stop_service(proc2)
             await stop_service(proc1)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reattach_aborts_when_the_old_session_cannot_be_reaped(
@@ -679,7 +680,7 @@ def test_reattach_aborts_when_the_old_session_cannot_be_reaped(
                 await stop_service(restarted)
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_supervisor_redials_and_hinted_jobs_resume(
@@ -777,4 +778,4 @@ def test_supervisor_redials_and_hinted_jobs_resume(
                 await stop_service(restarted)
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

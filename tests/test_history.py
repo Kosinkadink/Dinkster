@@ -47,6 +47,8 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 
 SOURCE_DIGEST = "blake3:" + "ab" * 32
@@ -599,7 +601,7 @@ def test_attention_diagnostic_survives_execution_cache_and_durable_history(tmp_p
         finally:
             reopened.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_terminal_jobs_are_recorded_with_source_document(tmp_path: Path) -> None:
@@ -657,7 +659,7 @@ def test_terminal_jobs_are_recorded_with_source_document(tmp_path: Path) -> None
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_history_endpoint_query_contract(tmp_path: Path) -> None:
@@ -699,7 +701,7 @@ def test_history_endpoint_query_contract(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_history_delete_endpoints(tmp_path: Path) -> None:
@@ -749,7 +751,7 @@ def test_history_delete_endpoints(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_history_auth_scope_default_ambiguity_and_unknown_scope_posture(
@@ -796,7 +798,7 @@ def test_history_auth_scope_default_ambiguity_and_unknown_scope_posture(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shutdown_drains_history_writes(tmp_path: Path) -> None:
@@ -828,7 +830,7 @@ def test_shutdown_drains_history_writes(tmp_path: Path) -> None:
         assert read_accepted(tmp_path / "history.sqlite") == []
         reopened.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- durable queue: accepted table + interrupted recovery ---------------------
@@ -1001,7 +1003,7 @@ def test_accepted_row_exists_before_submit_acknowledgment(tmp_path: Path) -> Non
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_restart_surfaces_interrupted_history_and_empty_queue(tmp_path: Path) -> None:
@@ -1039,7 +1041,7 @@ def test_restart_surfaces_interrupted_history_and_empty_queue(tmp_path: Path) ->
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_accepted_write_refuses_submission(tmp_path: Path) -> None:
@@ -1065,7 +1067,7 @@ def test_failed_accepted_write_refuses_submission(tmp_path: Path) -> None:
         assert queue.get("c1", "j1") is None
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_accepted_write_leaves_terminal_predecessor_intact(tmp_path: Path) -> None:
@@ -1101,4 +1103,4 @@ def test_failed_accepted_write_leaves_terminal_predecessor_intact(tmp_path: Path
         assert queue.job_for_run(first.run_id) is first
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

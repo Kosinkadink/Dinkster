@@ -45,6 +45,7 @@ from dinkster.generation_api import (
     _stream_native,
     add_generation_routes,
 )
+from tests.async_scenarios import run_scenario
 
 PROVIDER_ID = "dinkster.test-generation"
 MODEL_IDENTITY = "test:qwen:" + "1" * 64
@@ -471,7 +472,7 @@ def test_native_generation_sessions_are_principal_owned_and_lifecycle_managed() 
             await client.close()
         assert made[-1].closed is True
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_public_session_ids_do_not_collide_across_provider_instances() -> None:
@@ -535,7 +536,7 @@ def test_native_generation_stream_uses_protocol_events() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_openai_completion_and_chat_adapters_map_neutral_requests() -> None:
@@ -608,7 +609,7 @@ def test_openai_completion_and_chat_adapters_map_neutral_requests() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_responses_adapter_stores_and_continues_sessions_by_default() -> None:
@@ -656,7 +657,7 @@ def test_responses_adapter_stores_and_continues_sessions_by_default() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -720,7 +721,7 @@ def test_responses_store_false_does_not_preserve_initial_or_continued_session(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_responses_stream_emits_complete_typed_event_lifecycle() -> None:
@@ -767,7 +768,7 @@ def test_responses_stream_emits_complete_typed_event_lifecycle() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_generation_adapters_refuse_malformed_or_unsupported_requests() -> None:
@@ -803,7 +804,7 @@ def test_generation_adapters_refuse_malformed_or_unsupported_requests() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_openai_streams_emit_typed_failures_after_headers() -> None:
@@ -843,7 +844,7 @@ def test_openai_streams_emit_typed_failures_after_headers() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("stream_kind", ["native", "completion"])
@@ -878,7 +879,7 @@ def test_stream_prepare_failure_closes_provider_stream(
         service.close()
 
     monkeypatch.setattr("aiohttp.web.StreamResponse.prepare", fail_prepare)
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_terminal_write_failure_discards_unpublished_session(
@@ -911,7 +912,7 @@ def test_native_terminal_write_failure_discards_unpublished_session(
 
     monkeypatch.setattr("aiohttp.web.StreamResponse.prepare", prepare)
     monkeypatch.setattr("dinkster.generation_api._write_sse", fail_result)
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("mode", ["drop", "replace"])
@@ -1134,7 +1135,7 @@ def test_models_endpoint_runs_service_lookup_off_event_loop(
             watchdog.cancel()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class _BlockingStream(_Stream):
@@ -1217,4 +1218,4 @@ def test_stream_disconnect_cancels_and_closes_provider_stream() -> None:
             if not closed:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

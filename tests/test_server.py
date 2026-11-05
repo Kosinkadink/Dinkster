@@ -114,6 +114,8 @@ from scaffold_nodes import (
     scaffold_lazy_choices,
 )
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 FLOAT = TypeExpr.concrete("FLOAT")
 
@@ -361,7 +363,7 @@ def test_queue_runs_job_to_completion() -> None:
         assert transitions == [("c1/j1", "queued"), ("c1/j1", "running"), ("c1/j1", "completed")]
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_passes_job_attempt_to_engine_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -383,7 +385,7 @@ def test_queue_passes_job_attempt_to_engine_invocations(monkeypatch: pytest.Monk
         assert attempts == [5, 5]
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_passes_no_cache_to_compiled_execution() -> None:
@@ -424,7 +426,7 @@ def test_queue_passes_no_cache_to_compiled_execution() -> None:
         assert no_cache.result.cached == ()
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_idempotent_active_submit_and_different_content_conflict() -> None:
@@ -444,7 +446,7 @@ def test_queue_idempotent_active_submit_and_different_content_conflict() -> None
         queue.submit("c2", "j1", echo_graph(), ["s"])
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_export_snapshot_changes_default_fingerprint_and_resubmission() -> None:
@@ -542,7 +544,7 @@ def test_queue_export_snapshot_changes_default_fingerprint_and_resubmission() ->
         assert queue.job_for_run(first.run_id) is None
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_priority_order_with_fifo_tiebreak() -> None:
@@ -571,7 +573,7 @@ def test_queue_priority_order_with_fifo_tiebreak() -> None:
         assert order == ["blocker", "high", "low-a", "low-b"]
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_set_max_running_validates_and_kicks_dispatch_on_raise() -> None:
@@ -603,7 +605,7 @@ def test_queue_set_max_running_validates_and_kicks_dispatch_on_raise() -> None:
         await wait_for_state(first, "completed")
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_cancel_queued_and_running() -> None:
@@ -628,7 +630,7 @@ def test_queue_cancel_queued_and_running() -> None:
         assert recancelled is not None and recancelled.state == "cancelled"
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_pause_holds_dispatch_and_resume_releases(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -658,7 +660,7 @@ def test_queue_pause_holds_dispatch_and_resume_releases(monkeypatch: pytest.Monk
         assert held.state == "cancelled"
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_clear_cancels_queued_never_running() -> None:
@@ -688,7 +690,7 @@ def test_queue_clear_cancels_queued_never_running() -> None:
         await wait_for_state(running, "completed")
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_history_forgets_oldest_terminal_jobs() -> None:
@@ -707,7 +709,7 @@ def test_queue_history_forgets_oldest_terminal_jobs() -> None:
         assert queue.job_for_run(jobs[3].run_id) is jobs[3]
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_new_job_ref_globally_unique_and_time_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -751,7 +753,7 @@ def test_queue_resubmit_survives_predecessor_eviction() -> None:
         assert queue.get("c", "same") is None  # evicted by filler, as the oldest
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_failure_shapes() -> None:
@@ -832,7 +834,7 @@ def test_queue_failure_shapes() -> None:
         assert "traceback" in debug_shape_boom.error
         await debug_queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_compiled_dispatch_digest_failure_and_raw_fingerprint_fallback(
@@ -907,7 +909,7 @@ def test_queue_compiled_dispatch_digest_failure_and_raw_fingerprint_fallback(
         await raw_queue.close()
         await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_close_cancels_pending_and_running() -> None:
@@ -926,7 +928,7 @@ def test_queue_close_cancels_pending_and_running() -> None:
         with pytest.raises(RuntimeError, match="closed"):
             queue.submit("c", "late", echo_graph(), ["s"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- HTTP/WS protocol ---------------------------------------------------------
@@ -969,7 +971,7 @@ def test_health_endpoint() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class StubAuthenticator:
@@ -1019,7 +1021,7 @@ def test_auth_off_attaches_implicit_local_superuser_without_changing_responses()
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pluggable_authenticator_attaches_only_its_request_principal() -> None:
@@ -1045,7 +1047,7 @@ def test_pluggable_authenticator_attaches_only_its_request_principal() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_authentication_failures_are_structured_and_never_echo_tokens() -> None:
@@ -1074,7 +1076,7 @@ def test_authentication_failures_are_structured_and_never_echo_tokens() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_auth_policy_fails_closed_only_for_matched_unclassified_routes() -> None:
@@ -1100,7 +1102,7 @@ def test_auth_policy_fails_closed_only_for_matched_unclassified_routes() -> None
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_missing_capability_is_403_for_every_route_family() -> None:
@@ -1140,7 +1142,7 @@ def test_missing_capability_is_403_for_every_route_family() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_generation_routes_require_their_declared_capabilities() -> None:
@@ -1178,7 +1180,7 @@ def test_generation_routes_require_their_declared_capabilities() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_late_mounted_session_routes_use_read_and_write_capabilities() -> None:
@@ -1205,7 +1207,7 @@ def test_late_mounted_session_routes_use_read_and_write_capabilities() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_catalog_is_open_to_any_authenticated_principal_and_health_is_public() -> None:
@@ -1232,7 +1234,7 @@ def test_catalog_is_open_to_any_authenticated_principal_and_health_is_public() -
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_websocket_authentication_is_rejected_before_upgrade() -> None:
@@ -1253,7 +1255,7 @@ def test_websocket_authentication_is_rejected_before_upgrade() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ws_ticket_is_single_use_expiring_and_never_authenticates_plain_http(
@@ -1304,7 +1306,7 @@ def test_ws_ticket_is_single_use_expiring_and_never_authenticates_plain_http(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_scope_resolution_stamps_jobs_and_lists_readable_scope_union() -> None:
@@ -1378,7 +1380,7 @@ def test_submit_scope_resolution_stamps_jobs_and_lists_readable_scope_union() ->
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_auth_off_submission_stays_local_and_collab_keeps_explicit_scopes() -> None:
@@ -1416,7 +1418,7 @@ def test_auth_off_submission_stays_local_and_collab_keeps_explicit_scopes() -> N
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cross_scope_job_resources_are_all_hidden_as_existing_404_shapes() -> None:
@@ -1454,7 +1456,7 @@ def test_cross_scope_job_resources_are_all_hidden_as_existing_404_shapes() -> No
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_websocket_events_filter_job_scopes_but_broadcast_non_job_frames() -> None:
@@ -1509,7 +1511,7 @@ def test_websocket_events_filter_job_scopes_but_broadcast_non_job_frames() -> No
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_session_scope_binding_and_ticket_authenticated_event_stream() -> None:
@@ -1576,7 +1578,7 @@ def test_session_scope_binding_and_ticket_authenticated_event_stream() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_static_auth_file_loads_frozen_scoped_grants(tmp_path: Path) -> None:
@@ -1605,7 +1607,7 @@ personal = ["jobs:submit"]
         with pytest.raises(TypeError):
             principal.grants["other"] = frozenset()  # type: ignore[index]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1653,7 +1655,7 @@ def test_cors_disabled_by_default() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_browser_boundary_accepts_loopback_and_rejects_foreign_host() -> None:
@@ -1676,7 +1678,7 @@ def test_browser_boundary_accepts_loopback_and_rejects_foreign_host() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_browser_boundary_preserves_same_origin_development_proxy() -> None:
@@ -1695,7 +1697,7 @@ def test_browser_boundary_preserves_same_origin_development_proxy() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_browser_boundary_rejects_foreign_origin_on_state_change() -> None:
@@ -1724,7 +1726,7 @@ def test_browser_boundary_rejects_foreign_origin_on_state_change() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_browser_boundary_rejects_websocket_upgrade_with_foreign_host() -> None:
@@ -1737,7 +1739,7 @@ def test_browser_boundary_rejects_websocket_upgrade_with_foreign_host() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cors_exact_origin() -> None:
@@ -1788,7 +1790,7 @@ def test_cors_exact_origin() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cors_wildcard() -> None:
@@ -1806,7 +1808,7 @@ def test_cors_wildcard() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[str, object]:
@@ -1884,7 +1886,7 @@ def test_nodes_endpoint_serves_native_schema_wire() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nodes_endpoint_does_not_negotiate_schema_wire_versions() -> None:
@@ -1900,7 +1902,7 @@ def test_nodes_endpoint_does_not_negotiate_schema_wire_versions() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_workers_endpoint_shape_and_authentication() -> None:
@@ -1944,7 +1946,7 @@ def test_workers_endpoint_shape_and_authentication() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1986,7 +1988,7 @@ def test_job_placement_validation_errors(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_job_submission_migrates_retired_node_type_before_placement() -> None:
@@ -2043,7 +2045,7 @@ def test_job_submission_migrates_retired_node_type_before_placement() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -2115,7 +2117,7 @@ def test_job_placement_rejects_nodes_removed_by_selector_lowering(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_job_placement_rejects_remote_lazy_node() -> None:
@@ -2151,7 +2153,7 @@ def test_job_placement_rejects_remote_lazy_node() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_local_placement_attribution_and_unhinted_compatibility() -> None:
@@ -2194,7 +2196,7 @@ def test_local_placement_attribution_and_unhinted_compatibility() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_provider_resolution_failure_is_actionable_before_queue() -> None:
@@ -2232,7 +2234,7 @@ def test_provider_resolution_failure_is_actionable_before_queue() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_provider_resolution_failure_identifies_the_responsible_node() -> None:
@@ -2287,7 +2289,7 @@ def test_provider_resolution_failure_identifies_the_responsible_node() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_provider_resolution_is_transient_in_queued_graph() -> None:
@@ -2326,7 +2328,7 @@ def test_provider_resolution_is_transient_in_queued_graph() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_placement_participates_in_job_idempotency_only() -> None:
@@ -2353,7 +2355,7 @@ def test_placement_participates_in_job_idempotency_only() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
@@ -2407,7 +2409,7 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nodes_endpoint_pack_provenance() -> None:
@@ -2450,7 +2452,7 @@ def test_nodes_endpoint_pack_provenance() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_provenance_pins_on_the_wire() -> None:
@@ -2498,7 +2500,7 @@ def test_pack_provenance_pins_on_the_wire() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_comfy_alias_registry_is_dedicated_wire_metadata() -> None:
@@ -2527,7 +2529,7 @@ def test_pack_comfy_alias_registry_is_dedicated_wire_metadata() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_comfy_group_registry_is_dedicated_wire_metadata() -> None:
@@ -2736,7 +2738,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("publication", ["replace", "generation"])
@@ -2747,9 +2749,9 @@ def test_prepared_surface_validation_rejects_a_stale_epoch(publication: str) -> 
     packs = {"native": PackInfo("Native")}
     node_packs = {"late.echo": "native"}
     if publication == "replace":
-        prepared = asyncio.run(state.prepare_replace((), (), late, packs, node_packs))
+        prepared = run_scenario(state.prepare_replace((), (), late, packs, node_packs))
     else:
-        prepared = asyncio.run(state.prepare_generation({**SCHEMAS, **late}, packs, node_packs))
+        prepared = run_scenario(state.prepare_generation({**SCHEMAS, **late}, packs, node_packs))
 
     assert state.replace((), (), {}, {}, {}) == 2
     before_schemas = dict(state.schemas)
@@ -2845,7 +2847,7 @@ def test_published_registries_follow_carrier_removal_and_republication() -> None
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_replace_allows_live_comfy_sources_beside_import_registries() -> None:
@@ -2962,7 +2964,7 @@ def test_pack_icon_endpoint() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
@@ -3077,7 +3079,7 @@ def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
                 "values"
             ] == {"label": "other"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_blueprint_endpoint() -> None:
@@ -3164,7 +3166,7 @@ def test_pack_blueprint_endpoint() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_template_endpoints() -> None:
@@ -3325,7 +3327,7 @@ def test_pack_template_endpoints() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_docs_index_marker_and_immutable_routes() -> None:
@@ -3462,7 +3464,7 @@ def test_pack_docs_index_marker_and_immutable_routes() -> None:
             unknown = await client.get(f"/api/packs/docs-pack/docs/pages/{unknown_digest}")
             assert unknown.status == 404
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_doc_front_matter_is_descriptor_only(tmp_path: Path) -> None:
@@ -3507,7 +3509,7 @@ def test_pack_doc_front_matter_is_descriptor_only(tmp_path: Path) -> None:
             assert response.status == 200
             assert await response.read() == body
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_locale_catalog_wire_and_immutable_route() -> None:
@@ -3561,7 +3563,7 @@ def test_pack_locale_catalog_wire_and_immutable_route() -> None:
             ).status == 404
             assert (await client.get("/api/packs/catalog-pack/locales/sha256:nope")).status == 404
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_diagnostics_endpoint_reports_cross_pack_replacement_problems() -> None:
@@ -3617,7 +3619,7 @@ def test_diagnostics_endpoint_reports_cross_pack_replacement_problems() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_diagnostics_surfaces_sorted_core_and_legacy_compat_skips() -> None:
@@ -3676,7 +3678,7 @@ def test_diagnostics_surfaces_sorted_core_and_legacy_compat_skips() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_export_snapshot_admission_and_idempotency() -> None:
@@ -3748,7 +3750,7 @@ def test_native_export_snapshot_admission_and_idempotency() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_http_output_reads_detached_export_metadata() -> None:
@@ -3822,7 +3824,7 @@ def test_native_http_output_reads_detached_export_metadata() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_source_document_passthrough() -> None:
@@ -3861,7 +3863,7 @@ def test_source_document_passthrough() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_job_lifecycle_over_http() -> None:
@@ -3907,7 +3909,7 @@ def test_job_lifecycle_over_http() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_list_output_descriptor_reports_length() -> None:
@@ -3938,7 +3940,7 @@ def test_list_output_descriptor_reports_length() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_value_descriptor_recurses_and_truncates() -> None:
@@ -3988,7 +3990,7 @@ def test_scalar_output_descriptor_has_no_length() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_validation_diagnostics_carry_input_id() -> None:
@@ -4017,7 +4019,7 @@ def test_validation_diagnostics_carry_input_id() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_validation_errors() -> None:
@@ -4044,7 +4046,7 @@ def test_submit_validation_errors() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_no_cache_submission_reexecutes_with_warm_runtime_and_process(
@@ -4108,7 +4110,7 @@ def test_no_cache_submission_reexecutes_with_warm_runtime_and_process(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_control_is_normalized_job_idempotency_content() -> None:
@@ -4131,7 +4133,7 @@ def test_cache_control_is_normalized_job_idempotency_content() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_attention_submit_validation_and_idempotency() -> None:
@@ -4253,7 +4255,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_multi_gpu_submit_validation_and_idempotency() -> None:
@@ -4301,7 +4303,7 @@ def test_single_job_multi_gpu_submit_validation_and_idempotency() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_active_submit_idempotency_over_http() -> None:
@@ -4358,7 +4360,7 @@ def test_active_submit_idempotency_over_http() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_empty_registry_server_skips_compile_and_preserves_generated_id_event_values(
@@ -4411,7 +4413,7 @@ def test_empty_registry_server_skips_compile_and_preserves_generated_id_event_va
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
@@ -4549,7 +4551,7 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_server_compile_errors_and_cancellation_queue_nothing(
@@ -4625,7 +4627,7 @@ def test_server_compile_errors_and_cancellation_queue_nothing(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_job_event_sequences_replay_and_by_ref_routes() -> None:
@@ -4684,7 +4686,7 @@ def test_job_event_sequences_replay_and_by_ref_routes() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancel_by_ref_matches_keyed_cancel() -> None:
@@ -4704,7 +4706,7 @@ def test_cancel_by_ref_matches_keyed_cancel() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_by_ref_routes_preserve_legacy_by_ref_client_id() -> None:
@@ -4721,7 +4723,7 @@ def test_by_ref_routes_preserve_legacy_by_ref_client_id() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_job_replay_pressure_blob_omission_and_retention() -> None:
@@ -4783,7 +4785,7 @@ def test_job_replay_pressure_blob_omission_and_retention() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_job_replay_evicts_oldest_droppable_for_new_droppable() -> None:
@@ -4948,7 +4950,7 @@ def test_progress_events_throttled_at_ingestion_final_survives_in_replay() -> No
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5006,7 +5008,7 @@ def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queue_clear_over_http_and_queue_state_broadcast() -> None:
@@ -5052,7 +5054,7 @@ def test_queue_clear_over_http_and_queue_state_broadcast() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_websocket_event_stream() -> None:
@@ -5084,7 +5086,7 @@ def test_websocket_event_stream() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_websocket_filters_other_clients() -> None:
@@ -5108,7 +5110,7 @@ def test_websocket_filters_other_clients() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_node_events_over_websocket_with_binary_preview() -> None:
@@ -5166,7 +5168,7 @@ def test_node_events_over_websocket_with_binary_preview() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_encode_binary_event_frame_layout() -> None:
@@ -5193,7 +5195,7 @@ def test_hub_broadcast_reaches_client_filtered_subscribers() -> None:
         assert "seq" not in event
         hub.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_status_events_broadcast_when_governed() -> None:
@@ -5233,7 +5235,7 @@ def test_memory_status_events_broadcast_when_governed() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_status_endpoint() -> None:
@@ -5260,7 +5262,7 @@ def test_memory_status_endpoint() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_status_reports_governor_when_supplied() -> None:
@@ -5281,7 +5283,7 @@ def test_memory_status_reports_governor_when_supplied() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets() -> None:
@@ -5350,7 +5352,7 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- cross-instance memory coordination (DESIGN 3.10) --------------------------
@@ -5402,7 +5404,7 @@ def test_coordination_endpoints_answer_409_when_ungoverned() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("device", ["mps", "cuda:1", "xpu:0", "cpu", None])
@@ -5457,7 +5459,7 @@ def test_pack_resident_device_and_cost_reach_memory_status(
             await client.close()
             pool.remove(resource_id.removeprefix("resident:"))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reserve_status_renew_release_round_trip() -> None:
@@ -5496,7 +5498,7 @@ def test_reserve_status_renew_release_round_trip() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reserve_maps_governor_verdicts_to_507_and_503() -> None:
@@ -5522,7 +5524,7 @@ def test_reserve_maps_governor_verdicts_to_507_and_503() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lease_ttl_expiry_frees_reservation_over_http() -> None:
@@ -5544,7 +5546,7 @@ def test_lease_ttl_expiry_frees_reservation_over_http() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_shed_and_cache_trim() -> None:
@@ -5589,7 +5591,7 @@ def test_memory_shed_and_cache_trim() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_free_requires_and_preserves_paused_idle_queue() -> None:
@@ -5657,7 +5659,7 @@ def test_memory_free_requires_and_preserves_paused_idle_queue() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_free_reports_incomplete_participant_and_validates_nonce() -> None:
@@ -5689,7 +5691,7 @@ def test_memory_free_reports_incomplete_participant_and_validates_nonce() -> Non
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_free_checks_declared_consumer_statuses_for_completion() -> None:
@@ -5718,7 +5720,7 @@ def test_memory_free_checks_declared_consumer_statuses_for_completion() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_memory_free_refuses_running_queue_without_cancelling_job() -> None:
@@ -5753,7 +5755,7 @@ def test_memory_free_refuses_running_queue_without_cancelling_job() -> None:
             Sleeper.gate.set()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_coordination_request_validation() -> None:
@@ -5788,7 +5790,7 @@ def test_coordination_request_validation() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_app_cleanup_releases_active_leases() -> None:
@@ -5803,7 +5805,7 @@ def test_app_cleanup_releases_active_leases() -> None:
         await client.close()  # app cleanup closes the broker
         assert governor.reserved("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- consumer detail contract over the wire (DESIGN 3.10 observability) --------
@@ -5867,7 +5869,7 @@ def test_status_details_serves_items_with_geometry() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_trim_items_unloads_one_model_by_stable_id() -> None:
@@ -5892,7 +5894,7 @@ def test_trim_items_unloads_one_model_by_stable_id() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_trim_items_validation() -> None:
@@ -5915,7 +5917,7 @@ def test_trim_items_validation() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reset_peak_and_usage_metrics_over_http() -> None:
@@ -5952,7 +5954,7 @@ def test_reset_peak_and_usage_metrics_over_http() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_status_reports_measured_telemetry_over_the_wire() -> None:
@@ -5971,7 +5973,7 @@ def test_status_reports_measured_telemetry_over_the_wire() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- frozen-run value peeking (/api/values, DESIGN 3.5) -------------------------
@@ -6062,7 +6064,7 @@ def test_job_result_descriptors_inline_small_scalars() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_serves_target_and_intermediate() -> None:
@@ -6099,7 +6101,7 @@ def test_values_endpoint_serves_target_and_intermediate() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_reports_eviction_never_substitutes() -> None:
@@ -6122,7 +6124,7 @@ def test_values_endpoint_reports_eviction_never_substitutes() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_identity_refusals() -> None:
@@ -6154,7 +6156,7 @@ def test_values_endpoint_identity_refusals() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_refuses_running_job() -> None:
@@ -6176,7 +6178,7 @@ def test_values_endpoint_refuses_running_job() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_element_traversal() -> None:
@@ -6198,7 +6200,7 @@ def test_values_endpoint_element_traversal() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
@@ -6276,7 +6278,7 @@ def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -> None:
@@ -6337,7 +6339,7 @@ def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_image_png_rendition() -> None:
@@ -6408,7 +6410,7 @@ def test_values_endpoint_image_png_rendition() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
@@ -6517,7 +6519,7 @@ def test_values_endpoint_layer_document_rendition(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_comfy_image_png_rendition() -> None:
@@ -6597,7 +6599,7 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
@@ -6656,7 +6658,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
@@ -6853,7 +6855,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
@@ -7087,7 +7089,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- progressive schema announcement -------------------------------------------
@@ -7203,7 +7205,7 @@ def test_announce_grows_surface_bumps_epoch_and_orders_event() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_announce_refuses_bad_deltas_without_mutating() -> None:
@@ -7240,7 +7242,7 @@ def test_announce_refuses_bad_deltas_without_mutating() -> None:
         assert state.announce({}, {"p": PackInfo(display_name="P")}, {}) == 3
         assert state.schemas["late.echo"] is late["late.echo"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_announce_rejects_comfy_alias_collisions_without_mutating() -> None:
@@ -7330,7 +7332,7 @@ def test_composition_narration_health_nodes_flag_and_events() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composition_report_pack_failures_and_endpoint() -> None:
@@ -7420,4 +7422,4 @@ def test_composition_report_pack_failures_and_endpoint() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

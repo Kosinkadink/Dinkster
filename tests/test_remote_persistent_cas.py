@@ -27,6 +27,8 @@ from dinkster_workers.blobs import BlobTransfer
 from test_isolated import DEV_MANIFEST, core_registry
 from test_remote import big_image_graph, make_engine, remote_worker, start_service, stop_service
 
+from tests.async_scenarios import run_scenario
+
 BIG = 256 * 1024
 
 
@@ -108,7 +110,7 @@ def test_value_crosses_once_then_reference_only(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reconnect_after_socket_death_reuses_stores(tmp_path: Path) -> None:
@@ -167,7 +169,7 @@ def test_reconnect_after_socket_death_reuses_stores(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unnegotiated_peers_fall_back_to_conversation_cas(tmp_path: Path) -> None:
@@ -208,7 +210,7 @@ def test_unnegotiated_peers_fall_back_to_conversation_cas(tmp_path: Path) -> Non
             assert all(edge.transport == "cas" for edge in edges)
             assert all(edge.network_bytes == 0 for edge in edges)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_corrupt_daemon_blob_fails_loudly_then_heals(tmp_path: Path) -> None:
@@ -254,7 +256,7 @@ def test_corrupt_daemon_blob_fails_loudly_then_heals(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def linked_pair(
@@ -327,7 +329,7 @@ def test_budget_eviction_refetches_evicted_blobs(tmp_path: Path) -> None:
         moved = await sender.ensure_peer_holds([(digest_x, blob_x)])
         assert moved[digest_x] == (0, 0.0)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_working_set_larger_than_budget_lands_whole(tmp_path: Path) -> None:
@@ -348,7 +350,7 @@ def test_working_set_larger_than_budget_lands_whole(tmp_path: Path) -> None:
         assert receiver_store.get(digest_x) == blob_x
         assert receiver_store.get(digest_y) == blob_y
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_landing_missing_blob_never_evicts_held_blob_of_same_query(tmp_path: Path) -> None:
@@ -371,7 +373,7 @@ def test_landing_missing_blob_never_evicts_held_blob_of_same_query(tmp_path: Pat
         assert receiver_store.get(digest_x) == blob_x
         assert receiver_store.get(digest_y) == blob_y
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_outbound_persist_never_evicts_pinned_inbound_working_set(tmp_path: Path) -> None:
@@ -396,7 +398,7 @@ def test_outbound_persist_never_evicts_pinned_inbound_working_set(tmp_path: Path
         assert receiver_store.get(digest_x) == blob_x
         assert receiver_store.get(digest_z) == blob_z
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shared_store_respects_other_conversations_pins(tmp_path: Path) -> None:
@@ -423,7 +425,7 @@ def test_shared_store_respects_other_conversations_pins(tmp_path: Path) -> None:
         assert shared.get(digest_x) == blob_x
         assert shared.get(digest_z) == blob_z
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_trim_respects_pin_registered_after_it_started(tmp_path: Path) -> None:
@@ -472,7 +474,7 @@ def test_trim_respects_pin_registered_after_it_started(tmp_path: Path) -> None:
         assert store.get(digest_x) == blob_x
         assert store.get(digest_slow) == blob_slow
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_close_releases_pins(tmp_path: Path) -> None:
@@ -492,7 +494,7 @@ def test_close_releases_pins(tmp_path: Path) -> None:
         assert not receiver_store.has(digest_x)
         assert receiver_store.get(digest_z) == blob_z
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancelled_transfer_does_not_poison_the_next_one(
@@ -531,7 +533,7 @@ def test_cancelled_transfer_does_not_poison_the_next_one(
         assert receiver_store.get(digest) == blob
         assert not list(receiver_store.root.glob("incoming-*"))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_closed_transfer_raises_instead_of_sending(tmp_path: Path) -> None:
@@ -542,7 +544,7 @@ def test_closed_transfer_raises_instead_of_sending(tmp_path: Path) -> None:
         with pytest.raises(ConnectionError):
             await sender.ensure_peer_holds([(digest_bytes(blob), blob)])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_close_during_persist_raises_instead_of_hanging(tmp_path: Path) -> None:
@@ -580,7 +582,7 @@ def test_close_during_persist_raises_instead_of_hanging(tmp_path: Path) -> None:
                 transfer.ensure_peer_holds([(digest_bytes(blob), blob)]), timeout=5.0
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_multi_chunk_blob_lands_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -593,7 +595,7 @@ def test_multi_chunk_blob_lands_verified(tmp_path: Path, monkeypatch: pytest.Mon
         assert moved[digest][0] == len(blob)
         assert receiver_store.get(digest) == blob
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_truncated_and_corrupt_transfers_roll_back_to_nothing(tmp_path: Path) -> None:
@@ -629,7 +631,7 @@ def test_truncated_and_corrupt_transfers_roll_back_to_nothing(tmp_path: Path) ->
         transfer.close()
         assert not list(store.root.glob("incoming-*"))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dedup_graph_streams_shared_payload_once(tmp_path: Path) -> None:
@@ -677,4 +679,4 @@ def test_dedup_graph_streams_shared_payload_once(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

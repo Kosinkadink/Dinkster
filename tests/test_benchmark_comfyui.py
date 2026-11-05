@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from dinkster_workers.backend_env import validate_benchmark_report
 
+from tests.async_scenarios import run_scenario
 from tests.test_backend_env import complete_benchmark_report, complete_report
 from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
 
@@ -2589,7 +2590,7 @@ class TestShimUnloadEndpoint:
                 await worker
             return response
 
-        response = asyncio.run(scenario())
+        response = run_scenario(scenario())
         assert response.status == 200
         assert response.payload == {"residual_allocated_bytes": 0}
         assert harness.events.index("handler_returned") > harness.events.index("free_path_finished")

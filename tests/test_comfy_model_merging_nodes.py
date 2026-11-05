@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -21,6 +20,7 @@ from dinkster_nodes_comfy.model_merging import (
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 class ScalarPatcher:
@@ -232,4 +232,4 @@ def test_manifest_registers_model_types_for_graph_execution(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

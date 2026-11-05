@@ -42,6 +42,8 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from test_leases import lease_clock as lease_clock
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 
 
@@ -128,7 +130,7 @@ def test_server_announces_real_endpoint_and_close_withdraws(tmp_path: Path) -> N
         assert reader.peers() == []
         await server.close()  # idempotent
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_heartbeat_refreshes_the_registry_entry(tmp_path: Path) -> None:
@@ -150,7 +152,7 @@ def test_heartbeat_refreshes_the_registry_entry(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_server_runs_without_discovery() -> None:
@@ -159,7 +161,7 @@ def test_server_runs_without_discovery() -> None:
             async with PeerClient(server.endpoint) as client:
                 assert "devices" in await client.status()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- peer client round trips ---------------------------------------------------
@@ -195,7 +197,7 @@ def test_peer_lease_round_trip_and_verdict_relay() -> None:
                 await client.reserve("vram:cuda:0", 50, timeout=0.05)
             await client.release(blocker.lease_id)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_peer_shed_and_trim() -> None:
@@ -216,7 +218,7 @@ def test_peer_shed_and_trim() -> None:
             assert (cache.holding, pool.holding) == (0, 20)
             assert await client.trim("ram") == 20  # full maintenance
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class ItemPool(TrimmableCache):
@@ -264,7 +266,7 @@ def test_peer_details_and_item_trim() -> None:
             data = await client.status(details=True)
             assert data["consumerDetails"]["models"] == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ungoverned_peer_raises_peer_ungoverned() -> None:
@@ -280,7 +282,7 @@ def test_ungoverned_peer_raises_peer_ungoverned() -> None:
             # Status still answers, honestly ungoverned.
             assert (await client.status())["memoryGovernor"] is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_held_renews_past_the_original_ttl_and_releases_on_exit(
@@ -317,7 +319,7 @@ def test_held_renews_past_the_original_ttl_and_releases_on_exit(
                 assert governor.reserved("ram") == 60  # renewal kept it alive
             assert governor.reserved("ram") == 0  # exit released it
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- discovery to coordination, end to end --------------------------------------
@@ -345,4 +347,4 @@ def test_instance_discovers_peer_and_takes_a_lease(tmp_path: Path) -> None:
             await b.close()
             await a.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

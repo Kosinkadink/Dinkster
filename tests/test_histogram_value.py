@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -26,6 +25,7 @@ from dinkster_values import (
 from dinkster_values.builtin_types import HISTOGRAM_TYPE as CANONICAL_HISTOGRAM_TYPE
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 # Hand-derived synthetic contract input; not a ComfyUI source fixture.
 HISTOGRAM = [0, -7, 2**63, -(2**63), 13]
@@ -174,4 +174,4 @@ def test_histogram_crosses_distinct_isolated_workers_with_cached_replay(tmp_path
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

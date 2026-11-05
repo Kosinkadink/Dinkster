@@ -64,6 +64,7 @@ from dinkster.compose import (
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
+from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
 DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
@@ -189,7 +190,7 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_default_pack_specs_verify_independently_versioned_checkout_sources(
@@ -264,7 +265,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
             finally:
                 await composer.close()
 
-        asyncio.run(catalog_is_required())
+        run_scenario(catalog_is_required())
         origin.write_text("NODES = ()\nVALUE = 'tampered'\n", encoding="utf-8")
         with pytest.raises(CompositionError, match="installed artifact is"):
             compose.default_pack_spec("dinkster-nodes-foundation")
@@ -358,7 +359,7 @@ def test_image_pack_starts_with_canonical_inference_types() -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 STANDARD_OWNER_PACKS = {
@@ -438,7 +439,7 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_comfy_model_roots_preserve_every_category_root_with_safe_ids(
@@ -907,7 +908,7 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         ordered = composer.order_pack_entries((consumer_spec, provider_spec))
         assert [Path(spec.manifest) for spec in ordered] == [provider, consumer]
     finally:
-        asyncio.run(composer.close())
+        run_scenario(composer.close())
 
 
 def test_requirement_ordering_survives_unresolvable_contracts(tmp_path: Path) -> None:
@@ -1007,8 +1008,8 @@ def test_serving_composer_registers_inference_boundary_types() -> None:
         assert all(type_id in supplied.composition._registry for type_id in inference_types)
         assert "test.caller_value" in supplied.composition._registry
     finally:
-        asyncio.run(default.close())
-        asyncio.run(supplied.close())
+        run_scenario(default.close())
+        run_scenario(supplied.close())
 
 
 def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None:
@@ -1059,7 +1060,7 @@ def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_capabilities(
@@ -1130,7 +1131,7 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_capabiliti
         with pytest.raises(CompositionError, match="requires host contract"):
             composer.order_pack_entries((spec(contract_mismatch, "mismatch"),))
     finally:
-        asyncio.run(composer.close())
+        run_scenario(composer.close())
 
 
 def test_composed_generation_records_contract_and_capability_resolution(tmp_path: Path) -> None:
@@ -1179,7 +1180,7 @@ def test_composed_generation_records_contract_and_capability_resolution(tmp_path
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unpinned_pack_records_development_mode_when_production_was_requested(
@@ -1200,7 +1201,7 @@ def test_unpinned_pack_records_development_mode_when_production_was_requested(
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_defaults_only(
@@ -1342,7 +1343,7 @@ def test_compose_serving_default_resolution_is_atomic(
     monkeypatch.setattr("dinkster.compose.default_pack_specs", fail_defaults)
 
     with pytest.raises(CompositionError, match="default pack unavailable"):
-        asyncio.run(compose_serving())
+        run_scenario(compose_serving())
 
 
 @pytest.mark.parametrize(
@@ -1986,7 +1987,7 @@ def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
                 [DEV_PACK_MANIFEST, second], include_default_packs=False, worker_env=WORKER_ENV
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_conformance_proof_nodes_follow_explicit_dev_pack_composition(
@@ -2045,7 +2046,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
     from dinkster_workers import BoundaryDiagnostic, EdgeCost
 
@@ -2111,7 +2112,7 @@ def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Pa
         finally:
             await restarted.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_free_clears_memory_execution_cache_but_preserves_disk(
@@ -2158,7 +2159,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_free_releases_tensors_held_by_memory_execution_cache(
@@ -2193,7 +2194,7 @@ def test_full_free_releases_tensors_held_by_memory_execution_cache(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_reserved_pack_name(tmp_path: Path) -> None:
@@ -2202,7 +2203,7 @@ def test_compose_rejects_reserved_pack_name(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="reserved"):
             await compose_serving([manifest], worker_env=WORKER_ENV)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_duplicate_pack_name(tmp_path: Path) -> None:
@@ -2212,7 +2213,7 @@ def test_compose_rejects_duplicate_pack_name(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="duplicate pack name"):
             await compose_serving([first, second], worker_env=WORKER_ENV)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
@@ -2236,7 +2237,7 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
         ):
             await compose_serving([first, second], worker_env=WORKER_ENV)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2263,7 +2264,7 @@ def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.Monk
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("explicit", (False, True))
@@ -2397,7 +2398,7 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -2479,7 +2480,7 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -2548,7 +2549,7 @@ def test_asset_literals_use_host_and_worker_resolvers(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -2595,7 +2596,7 @@ def test_comfy_manifest_registers_bound_assets_with_host(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -2624,7 +2625,7 @@ def test_native_comfy_pack_registers_container_literals(in_process: bool) -> Non
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_nested_namespace_claims(tmp_path: Path) -> None:
@@ -2643,7 +2644,7 @@ def test_compose_rejects_nested_namespace_claims(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="overlaps 'iso'"):
             await compose_serving([first, second], worker_env=WORKER_ENV)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_separator_equivalent_pack_names(tmp_path: Path) -> None:
@@ -2657,7 +2658,7 @@ def test_compose_rejects_separator_equivalent_pack_names(tmp_path: Path) -> None
         with pytest.raises(CompositionError, match="one identity"):
             await compose_serving([first, second], worker_env=WORKER_ENV)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_uncovered_node_type(tmp_path: Path) -> None:
@@ -2671,7 +2672,7 @@ def test_compose_rejects_uncovered_node_type(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
             await compose_serving([manifest], worker_env=WORKER_ENV)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
@@ -2696,7 +2697,7 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composed_server_end_to_end(tmp_path: Path) -> None:
@@ -2827,7 +2828,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -2900,7 +2901,7 @@ def test_pack_type_owners_are_discovered_without_activation_and_retracted(
                 await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Path) -> None:
@@ -2979,7 +2980,7 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) -> None:
@@ -3005,7 +3006,7 @@ def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
@@ -3054,7 +3055,7 @@ def test_cold_catalog_pack_renditions_relay_through_composed_registry(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
@@ -3096,7 +3097,7 @@ def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_preserves_pack_owned_host_codecs_and_providers(tmp_path: Path) -> None:
@@ -3149,7 +3150,7 @@ def test_reload_preserves_pack_owned_host_codecs_and_providers(tmp_path: Path) -
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_comfy_compat_specs_carry_host_types(
@@ -3334,7 +3335,7 @@ def test_serving_composer_incremental(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("ending", ["success", "failure", "cancel", "native failure"])
@@ -3435,7 +3436,7 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
             await asyncio.gather(*tasks, return_exceptions=True)
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broken_default_pack_leaves_zero_node_host_and_registry_healthy(tmp_path: Path) -> None:
@@ -3477,7 +3478,7 @@ def test_broken_default_pack_leaves_zero_node_host_and_registry_healthy(tmp_path
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_generation_staging_rebuilds_pack_type_registrations(tmp_path: Path) -> None:
@@ -3508,7 +3509,7 @@ def test_generation_staging_rebuilds_pack_type_registrations(tmp_path: Path) -> 
             await old.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_registers_and_deregisters_armed_headroom_sessions(
@@ -3558,7 +3559,7 @@ def test_serving_composer_registers_and_deregisters_armed_headroom_sessions(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_maintains_asset_catalog(tmp_path: Path) -> None:
@@ -3630,7 +3631,7 @@ def test_serving_composer_maintains_asset_catalog(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_failed_add_pack_reaps_on_close(
@@ -3674,7 +3675,7 @@ def test_serving_composer_failed_add_pack_reaps_on_close(
         assert len(started) == 2  # the bad pack failed only after its hello
         assert set(closed) == set(started)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
@@ -3722,7 +3723,7 @@ def test_serving_composer_starts_ordered_cuda_replica_workers(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
@@ -3749,7 +3750,7 @@ def test_serving_composer_sets_sequence_attention_environment(tmp_path: Path) ->
         assert environment["DINKSTER_SINGLE_JOB_WORLD_SIZE"] == "2"
         assert environment["DINKSTER_SINGLE_JOB_MULTI_GPU_MODE"] == "sequence"
         assert not any(key.startswith("DINKSTER_SINGLE_JOB_SEQUENCE_") for key in environment)
-    asyncio.run(pool.close())
+    run_scenario(pool.close())
 
 
 def test_serving_composer_failed_add_pack_merges_nothing(tmp_path: Path) -> None:
@@ -3778,7 +3779,7 @@ def test_serving_composer_failed_add_pack_merges_nothing(tmp_path: Path) -> None
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_start_reaps_started_workers(
@@ -3821,7 +3822,7 @@ def test_failed_start_reaps_started_workers(
         assert len(started) == 1
         assert started[0] in closed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_contract_conflict_refuses_before_launch(tmp_path: Path) -> None:
@@ -3843,7 +3844,7 @@ def test_group_contract_conflict_refuses_before_launch(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="incompatible launch contracts"):
             await compose_serving(specs)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_spec_custom_attribution(tmp_path: Path) -> None:
@@ -3873,7 +3874,7 @@ def test_pack_spec_custom_attribution(tmp_path: Path) -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_spec_attribution_outside_table_fails(tmp_path: Path) -> None:
@@ -3891,7 +3892,7 @@ def test_pack_spec_attribution_outside_table_fails(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="not among this spec's pack"):
             await compose_serving([spec])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
@@ -3930,7 +3931,7 @@ def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
         with pytest.raises(CompositionError, match="different info"):
             await compose_serving([first, second])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_table_rejects_comfy_alias_collisions_without_mutating() -> None:
@@ -4152,7 +4153,7 @@ def test_composition_close_is_idempotent(tmp_path: Path) -> None:
         await composition.close()
         await composition.close()  # second close is a no-op, not an error
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composition_close_is_exactly_once_concurrent_and_cancellation_safe() -> None:
@@ -4187,7 +4188,7 @@ def test_composition_close_is_exactly_once_concurrent_and_cancellation_safe() ->
         await composition.close()
         assert close_calls == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- memory governance (DESIGN 3.10) ---------------------------------------
@@ -4238,7 +4239,7 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
@@ -4328,7 +4329,7 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_full_free_serializes_group_members_by_process(
@@ -4387,7 +4388,7 @@ def test_serving_composer_full_free_serializes_group_members_by_process(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_serving_composer_full_free_cancellation_waits_for_settlement(
@@ -4419,7 +4420,7 @@ def test_serving_composer_full_free_cancellation_waits_for_settlement(
         assert not composer._mutate.locked()
         await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
@@ -4458,7 +4459,7 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
         # Composition close closes every worker: measurements die with it.
         assert reported.devices() == frozenset()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -4563,7 +4564,7 @@ def test_authored_input_worker_validates_its_own_declaration(drift: str) -> None
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_serving_wires_worker_reservations(tmp_path: Path) -> None:
@@ -4601,4 +4602,4 @@ def test_compose_serving_wires_worker_reservations(tmp_path: Path) -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

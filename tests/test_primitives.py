@@ -11,7 +11,6 @@ worker crash.
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 from collections.abc import Mapping
@@ -50,6 +49,7 @@ from dinkster_values import (
 from dinkster_workers import InProcessWorker
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 PRIMITIVE_TYPES = {node.schema().node_type for node in PRIMITIVE_NODES}
 PRIMITIVE_TEST_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES]
@@ -300,7 +300,7 @@ def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
             mount="project-output", prefix="computed/linked-scene"
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class ColorSource(api.Node):
@@ -430,7 +430,7 @@ def test_color_and_resolution_preview_types_cross_pack_hosts(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_primitives_execute_with_values_and_defaults() -> None:
@@ -473,7 +473,7 @@ def test_primitives_execute_with_values_and_defaults() -> None:
         # An unlinked preview accepts absence and previews "None".
         assert result.outputs["preview_any"]["text"].resolve() == "None"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_preview_text_formats_like_comfy_preview_any() -> None:
@@ -533,4 +533,4 @@ def test_unresolvable_payload_fails_as_node_error() -> None:
         assert "not registered" in result.error.message
         assert "Traceback" not in result.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

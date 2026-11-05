@@ -1,6 +1,5 @@
 """Latent operations preserve metadata, schedule boundaries, and frame ownership."""
 
-import asyncio
 import gc
 import os
 import sys
@@ -23,6 +22,7 @@ from dinkster_nodes_comfy.latent_operations import (
 from test_comfy_latent_nodes import ArrayTensor
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 _STORAGE: list[weakref.ReferenceType[Any]] = []
 
@@ -151,7 +151,7 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
             await composer.full_free("ordinary-resident-cleanup")
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_operation_interfaces_keep_exact_input_order_and_optional_groups() -> None:

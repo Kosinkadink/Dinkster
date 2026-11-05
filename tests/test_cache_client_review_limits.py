@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from dinkster_server.cache_client import PeerCacheStore
 from dinkster_values import TypeRegistry
+
+from tests.async_scenarios import run_scenario
 
 
 def test_peer_blob_limit_rejects_manifest_size_and_lying_response() -> None:
@@ -38,4 +38,4 @@ def test_peer_blob_limit_rejects_manifest_size_and_lying_response() -> None:
             await peer.close()
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -31,6 +30,7 @@ from dinkster_values.audio_codec import (
 from dinkster_values.audio_lazy import AUDIO_WINDOW_LIMIT
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 torch = pytest.importorskip("torch")
 
@@ -232,4 +232,4 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
