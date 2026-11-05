@@ -218,7 +218,22 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
 
 @pytest.mark.parametrize(
     "corrupt",
-    [None, "github", "mirror", "behind", "diverged", "ahead", "identical", "replay", "identity"],
+    [
+        None,
+        "github",
+        "mirror",
+        "behind",
+        "diverged",
+        "ahead",
+        "identical",
+        "replay",
+        "identity",
+        "empty",
+        "partial",
+        "partial-corrupt",
+        "asset-size",
+        "extra-asset",
+    ],
 )
 def test_tools_publication_exposes_channel_only_after_both_sources_verify(
     tmp_path: Path,
@@ -236,6 +251,19 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
     manifest = json.loads(data)
     label = manifest["label"] + "-" + digest[:8]
     public, github = tmp_path / "mirror", tmp_path / "github"
+    if corrupt in {"empty", "partial", "partial-corrupt", "asset-size", "extra-asset"}:
+        github.mkdir()
+        if corrupt != "empty":
+            for name in ("tools-manifest.json", "dinkster-tools-linux-x86_64.zip"):
+                shutil.copyfile(output / name, github / name)
+        if corrupt == "partial-corrupt":
+            path = github / "dinkster-tools-linux-x86_64.zip"
+            path.write_bytes(b"X" + path.read_bytes()[1:])
+        elif corrupt == "asset-size":
+            (github / "dinkster-tools-linux-x86_64.zip").write_bytes(b"short")
+        elif corrupt == "extra-asset":
+            (github / "unadmitted.zip").write_bytes(b"unexpected")
+    initial_github = {path.name: path.read_bytes() for path in github.glob("*")}
     (public / "channels").mkdir(parents=True)
     channel = {
         "format": "dinkster.channel/1",
@@ -321,11 +349,25 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
                     command,
                     0,
                     json.dumps(
-                        {"tagName": "tools-" + label, "targetCommitish": manifest["commit"]}
+                        {
+                            "tagName": "tools-" + label,
+                            "targetCommitish": manifest["commit"],
+                            "assets": [
+                                {"name": path.name, "size": path.stat().st_size}
+                                for path in github.iterdir()
+                            ],
+                        }
                     ),
                     "",
                 )
             return subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[:3] == ["gh", "release", "upload"]:
+            assert "--clobber" not in command
+            for source in command[6:]:
+                path = Path(source)
+                assert not (github / path.name).exists()
+                shutil.copyfile(path, github / path.name)
+            return subprocess.CompletedProcess(command, 0, "", "")
         assert command[:3] == ["gh", "release", "create"]
         assert command[3] == "tools-" + label
         assert command[command.index("--target") + 1] == manifest["commit"]
@@ -351,10 +393,20 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
         return io.BytesIO(json.dumps({"status": status}).encode("ascii"))
 
     monkeypatch.setattr(publisher, "urlopen", compare)
-    if corrupt in {"github", "mirror"}:
+    if corrupt in {"github", "mirror", "partial-corrupt"}:
         with pytest.raises(DownloadError):
             publisher.publish(output)
         assert (public / "channels/main.json").read_bytes() == before
+        if corrupt == "partial-corrupt":
+            assert {path.name: path.read_bytes() for path in github.iterdir()} == initial_github
+            assert not (public / "tools" / label).exists()
+        return
+    if corrupt in {"asset-size", "extra-asset"}:
+        with pytest.raises(ValueError, match="unexpected or conflicting assets"):
+            publisher.publish(output)
+        assert {path.name: path.read_bytes() for path in github.iterdir()} == initial_github
+        assert (public / "channels/main.json").read_bytes() == before
+        assert not (public / "tools" / label).exists()
         return
     if corrupt in {"identical", "identity"}:
         with pytest.raises(ValueError, match="same source|identity differs"):

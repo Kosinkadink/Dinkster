@@ -223,7 +223,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Kosinkadink/Dinkster-Environments
-          ref: 2b5549e2f2b4b8788d223e0a704b6f3e19b3d3d9
+          ref: 022b8234976065d0d3344a9717dd150ec6347bfa
           path: .release/retention
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5

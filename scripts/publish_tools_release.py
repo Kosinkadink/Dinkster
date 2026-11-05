@@ -62,7 +62,7 @@ def publish(release: Path) -> None:
             "--repo",
             "Kosinkadink/Dinkster",
             "--json",
-            "tagName,targetCommitish",
+            "tagName,targetCommitish,assets",
         ],
         capture_output=True,
         text=True,
@@ -72,6 +72,18 @@ def publish(release: Path) -> None:
         identity = json.loads(existing.stdout)
         if identity["tagName"] != tag or identity["targetCommitish"] != manifest["commit"]:
             raise ValueError("existing tools release targets a different commit")
+        assets = identity["assets"]
+        expected_sizes = {path.name: path.stat().st_size for path in files}
+        if not isinstance(assets, list) or any(
+            not isinstance(asset, dict)
+            or asset.get("name") not in expected_sizes
+            or asset.get("size") != expected_sizes[asset["name"]]
+            for asset in assets
+        ):
+            raise ValueError("existing tools release has unexpected or conflicting assets")
+        present = {asset["name"] for asset in assets}
+        if len(present) != len(assets):
+            raise ValueError("existing tools release has duplicate assets")
     else:
         # A failed lookup never permits overwriting a release or its assets.
         subprocess.run(
@@ -94,9 +106,26 @@ def publish(release: Path) -> None:
             ],
             check=True,
         )
+        present = {path.name for path in files}
     with tempfile.TemporaryDirectory(prefix="tools-publication-") as directory:
         work = Path(directory)
         github = f"https://github.com/Kosinkadink/Dinkster/releases/download/{quote(tag, safe='')}"
+        # Verify retained bytes before completing a partially uploaded release.
+        for path in files:
+            if path.name in present:
+                fetch_artifact(
+                    (github,),
+                    path.name,
+                    work / "github" / path.name,
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    path.stat().st_size,
+                )
+        missing = [str(path) for path in files if path.name not in present]
+        if missing:
+            subprocess.run(
+                ["gh", "release", "upload", tag, "--repo", "Kosinkadink/Dinkster", *missing],
+                check=True,
+            )
         for path in files:
             sha = hashlib.sha256(path.read_bytes()).hexdigest()
             size = path.stat().st_size
