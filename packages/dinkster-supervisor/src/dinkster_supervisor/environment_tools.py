@@ -93,9 +93,18 @@ def tools_reference(value: object) -> dict[str, str]:
             or url.fragment
         ):
             raise EnvironmentError("tools inputs require absolute paths or credential-free HTTPS")
-    if result["manifest"] != result["release"] + "/tools-manifest.json" or not result[
-        "release"
-    ].endswith("/tools/" + result["label"]):
+    release = Path(result["release"])
+    if release.is_absolute():
+        matches = (
+            Path(result["manifest"]) == release / "tools-manifest.json"
+            and release.name == result["label"]
+            and release.parent.name == "tools"
+        )
+    else:
+        matches = result["manifest"] == result["release"] + "/tools-manifest.json" and result[
+            "release"
+        ].endswith("/tools/" + result["label"])
+    if not matches:
         raise EnvironmentError("channel tools locations differ from the publication label")
     return result
 
