@@ -164,7 +164,7 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
     return document
 
 
-def _trusted_metadata(mirror: str) -> None:
+def trusted_metadata(mirror: str) -> None:
     parsed = urlparse(mirror)
     if not parsed.scheme or Path(mirror).is_absolute():
         return
@@ -198,7 +198,7 @@ def _sources(
         else:
             prefix, filename = location.path.rsplit("/", 1)
             for mirror in mirrors:
-                _trusted_metadata(mirror)
+                trusted_metadata(mirror)
                 if urlparse(mirror).scheme and not Path(mirror).is_absolute():
                     root = mirror.rstrip("/") + "/" + prefix
                 else:
@@ -211,7 +211,7 @@ def _sources(
     return tuple(sources)
 
 
-def _discover_manifest(
+def discover_manifest(
     locations: tuple[ArtifactLocation, ...],
     mirrors: tuple[str, ...],
     expected: str,
@@ -264,7 +264,7 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     channel: Channel | None = None
     for mirror in mirrors:
         try:
-            _trusted_metadata(mirror)
+            trusted_metadata(mirror)
             document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
             channel = Channel.parse(document)
             break
@@ -272,7 +272,7 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
             continue
     if channel is None or document is None:
         raise EnvironmentError("no mirror supplied a valid trusted channel")
-    engine, engine_sources, engine_bytes = _discover_manifest(
+    engine, engine_sources, engine_bytes = discover_manifest(
         channel.engine_locations, mirrors, channel.engine_release
     )
     if engine["version"] != channel.engine_version:
@@ -280,7 +280,7 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     bases: dict[str, dict[str, object]] = {}
     sources: dict[str, tuple[str, ...]] = {}
     for variant, locations in channel.base_locations:
-        base, roots, _ = _discover_manifest(locations, mirrors, channel.base_for(variant), variant)
+        base, roots, _ = discover_manifest(locations, mirrors, channel.base_for(variant), variant)
         if base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError("base and engine workerProtocol mismatch")
         bases[variant], sources[variant] = base, roots

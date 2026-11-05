@@ -66,6 +66,7 @@ from .environment_stores import (
     setup_registration,
     store_projects,
 )
+from .environment_tools import acquire_tools
 from .environment_transactions import (
     activate,
     begin_activation,
@@ -1021,6 +1022,9 @@ def main() -> None:
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "main"))
+    tools = commands.add_parser("tools", help="acquire the channel's verified native tools ZIP")
+    tools.add_argument("--mirror", action="append", required=True)
+    tools.add_argument("--channel", choices=("stable", "main"), default="main")
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
@@ -1065,11 +1069,11 @@ def main() -> None:
     move.add_argument("--data", type=Path)
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (tools, doctor, setup, update, start, stop, rollback, gc, move):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (catalog, status, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (tools, catalog, status, doctor, setup, update, start, stop, rollback, gc, move):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -1088,7 +1092,15 @@ def main() -> None:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
-        if args.operation == "doctor" and args.repair:
+        if args.operation == "tools":
+            selected = acquire_tools(tuple(args.mirror), args.channel, args.root, download=args.yes)
+            result.update(
+                tools=selected,
+                status="applied" if args.yes else "planned",
+                plan=[f"verified tools {selected['label']}: {selected['archive']}"],
+            )
+            code = 0
+        elif args.operation == "doctor" and args.repair:
             code = _repair(args, result)
         elif args.operation in {"setup", "update"}:
             code = _install(args, result)
