@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -18,13 +19,86 @@ from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
+from dinkster_supervisor.environment_state import EnvironmentError
+from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
 from test_environment_generations import _standalone_tree, _wheel
 
-from scripts import build_environment_tools, build_native_tools
+from scripts import build_environment_tools, build_native_tools, build_tools_release
 from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "packages/dinkster-supervisor"
+    project.mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster-supervisor"\nversion = "2.7.4"\n', encoding="ascii"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster"\nversion = "9.1.2"\n', encoding="ascii"
+    )
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "--quiet", "-m", "Tools inputs"], check=True
+    )
+    output = tmp_path / "publication"
+    output.mkdir()
+    payloads = {
+        "dinkster-tools-linux-x86_64.zip": b"linux payload",
+        "dinkster-tools-windows-x86_64.zip": b"windows payload with different length",
+        "dinkster-tools-macos-arm64.zip": b"mac payload",
+    }
+    for name, data in payloads.items():
+        (output / name).write_bytes(data)
+    manifest = build_tools_release.build(tmp_path, output)
+    data = (output / "tools-manifest.json").read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    assert validate_tools_manifest(data, digest) == manifest
+    assert manifest["version"] == "2.7.4"
+    assert str(manifest["label"]).endswith("-2.7.4")
+    assert manifest["artifacts"] == [
+        {
+            "name": name,
+            "size": len(payloads[name]),
+            "sha256": hashlib.sha256(payloads[name]).hexdigest(),
+        }
+        for name in sorted(payloads)
+    ]
+    checksums = (output / "SHA256SUMS").read_text(encoding="ascii").splitlines()
+    assert set(checksums) == {
+        f"{hashlib.sha256(payload).hexdigest()}  {name}" for name, payload in payloads.items()
+    } | {f"{digest}  tools-manifest.json"}
+    with pytest.raises(EnvironmentError, match="SHA256 mismatch"):
+        validate_tools_manifest(data + b" ", digest)
+    document = json.loads(data)
+    document["artifacts"].pop()
+    incomplete = json.dumps(document).encode("ascii")
+    with pytest.raises(EnvironmentError, match="all three native archives"):
+        validate_tools_manifest(incomplete, hashlib.sha256(incomplete).hexdigest())
+
+
+@pytest.mark.parametrize("release", ["https://releases.dinkster.org", "/absolute/mirror"])
+def test_channel_tools_pin_binds_locations_to_immutable_publication(release: str) -> None:
+    label = "2026-11-05-2.7.4-12345678"
+    release += "/tools/" + label
+    pin = {
+        "label": label,
+        "sha256": "12345678" + "a" * 56,
+        "release": release,
+        "manifest": release + "/tools-manifest.json",
+    }
+    assert tools_reference(pin) == pin
+    with pytest.raises(EnvironmentError, match="dated version and hash8"):
+        tools_reference({**pin, "label": "2026-11-05-2.7.4-87654321"})
+    with pytest.raises(EnvironmentError, match="locations differ"):
+        tools_reference({**pin, "manifest": release + "/release-manifest.json"})
+    with pytest.raises(EnvironmentError, match="credential-free HTTPS"):
+        tools_reference({**pin, "release": "https://user:password@example.org/tools/" + label})
 
 
 @pytest.mark.parametrize("host,system", [("linux", "linux"), ("darwin", "macos")])
