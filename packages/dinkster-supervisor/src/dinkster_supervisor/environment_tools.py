@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sys
 from datetime import datetime
+from http.client import HTTPException
 from pathlib import Path
+from platform import machine
 from typing import cast
 from urllib.parse import urlsplit
 
 from packaging.version import InvalidVersion, Version
 
-from .environment_artifacts import artifact_rows, parse_metadata
-from .environment_state import EnvironmentError
+from .environment_artifacts import (
+    artifact_rows,
+    discover_manifest,
+    parse_metadata,
+    trusted_metadata,
+)
+from .environment_downloads import fetch_artifact, read_metadata
+from .environment_state import Channel, EnvironmentError
 
 TOOLS_ARCHIVES = frozenset(
     f"dinkster-tools-{platform}.zip"
@@ -89,3 +98,51 @@ def tools_reference(value: object) -> dict[str, str]:
     ].endswith("/tools/" + result["label"]):
         raise EnvironmentError("channel tools locations differ from the publication label")
     return result
+
+
+def acquire_tools(
+    mirrors: tuple[str, ...], channel_name: str, destination: Path, *, download: bool
+) -> dict[str, object]:
+    """Resolve native tools independently of engine/base payloads, then verify transport."""
+    if channel_name not in {"main", "stable"}:
+        raise EnvironmentError("channel must be stable or main")
+    channel = None
+    document: dict[str, object] = {}
+    for mirror in mirrors:
+        try:
+            trusted_metadata(mirror)
+            document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
+            channel = Channel.parse(document)
+            break
+        except (OSError, ValueError, HTTPException):
+            continue
+    if channel is None:
+        raise EnvironmentError("no mirror supplied a valid trusted channel")
+    if "tools" in document:
+        reference = tools_reference(document["tools"])
+        data = read_metadata(reference["release"], "tools-manifest.json")
+        manifest = validate_tools_manifest(data, reference["sha256"])
+        label = f"{manifest['label']}-{reference['sha256'][:8]}"
+        if label != reference["label"]:
+            raise EnvironmentError("tools manifest identity differs from channel")
+        sources = (reference["release"],)
+    else:
+        # Old channels retain their engine source until both consumers switch.
+        manifest, sources, _ = discover_manifest(
+            channel.engine_locations, mirrors, channel.engine_release
+        )
+        label = channel.engine_release[7:]
+    architecture = machine().lower()
+    architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
+    system = {"win32": "windows", "darwin": "macos", "linux": "linux"}.get(sys.platform)
+    name = f"dinkster-tools-{system}-{architecture}.zip"
+    row = next(
+        (row for row in artifact_rows(manifest.get("artifacts"), "name") if row["name"] == name),
+        None,
+    )
+    if row is None:
+        raise EnvironmentError("publication has no tools for this operating system/architecture")
+    archive = destination / label / name
+    if download:
+        fetch_artifact(sources, name, archive, cast("str", row["sha256"]), cast("int", row["size"]))
+    return {"label": label, "release": sources[0], "archive": str(archive), **row}

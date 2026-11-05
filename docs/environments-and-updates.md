@@ -54,13 +54,33 @@ the development `--from-scratch` path remains explicitly opt-in.
 
 ## Environment tools bootstrap
 
-The native client bootstrap is an engine-release artifact named
+The native client bootstrap has its own publication, independent of engine releases, named
 `dinkster-tools-<os>-<arch>.zip` (`linux`, `windows`, `macos`; `x86_64` or
-`arm64`). Its ordinary `artifacts` row in the hash-verified `dinkster.engine/1`
+`arm64`). Its `artifacts` row in the hash-verified `dinkster.tools/1`
 manifest supplies the complete archive size and SHA256. It contains only a
-standalone `python/` tree with the release's supervisor wheel, its locked
+standalone `python/` tree with the independently versioned supervisor wheel, its locked
 runtime dependency closure and pinned uv, not the engine or torch. ZIP is the
 bootstrap container and does not change the base bundle's tar+zstd format.
+
+The supervisor package version supplies the tools version. The manifest records
+`repository`, source `commit`, `version`, UTC `builtAt`, the dated `label`, and
+the three native `artifacts` rows (`name`, `size`, `sha256`). Publication uses
+`tools/YYYY-MM-DD-<public-supervisor-version>-<manifest-hash8>/`,
+`tools/index.json`, and a GitHub prerelease tagged `tools-<publication-label>`.
+`SHA256SUMS` covers all ZIPs and `tools-manifest.json`.
+The `Supervisor tools publication` workflow runs only when supervisor sources,
+native build scripts, publication scripts or their build inputs change.
+Its native jobs run the same extraction/relocation checks as the engine tools
+jobs. Engine releases retain tools during the consumer migration; channels
+without `tools` still resolve the engine's hash-verified native tools row.
+
+`dinkster-env --root /absolute/tools-cache tools --channel main --mirror
+https://releases.dinkster.org --yes --json` downloads the native ZIP selected by
+the channel and returns its verified archive path. Without `--yes`, it only
+plans and creates no cache. A channel tools pointer requires neither engine
+nor base payloads; an invalid tools manifest or ZIP fails without falling back
+to engine assets. Extraction and launching use the verified ZIP, not a host
+package resolver.
 
 Desktop verifies the archive bytes before safe extraction into a new owned
 directory, preserving Unix executable mode bits. Internal interpreter aliases
@@ -88,9 +108,10 @@ Before setup, update or catalog starts an environment command, packaged Desktop
 checks the selected channel's `minimumDesktopVersion` and refuses with
 `DesktopVersionTooOld` if the shell must update. A trusted channel can explicitly
 select newer tools using an optional `tools` object containing the immutable
-engine `manifest` location, its `sha256`, and the `release` directory. Locations
+tools `manifest` location, its `sha256`, the `release` directory, and its
+publication `label`. Locations
 are absolute paths or credential-free HTTPS, and the selected tools ZIP must
-match its engine manifest's size and hash. Without that object, bundled tools
+match its tools manifest's size and hash. Without that object, bundled tools
 remain the default. This does not change engine artifact selection or updates.
 
 The native build/acquisition command and input pinning are documented in
@@ -223,6 +244,12 @@ active generation; they do not authorize data deletion.
         { "type": "mirror", "path": "base/win-cpu/2026-10-30-py3.14.10-torch2.14.1-<hash8>/manifest.json" }
       ]
     }
+  },
+  "tools": {
+    "label": "2026-11-05-0.0.2-<tools-hash8>",
+    "manifest": "https://releases.dinkster.org/tools/2026-11-05-0.0.2-<tools-hash8>/tools-manifest.json",
+    "sha256": "<tools-manifest-hex>",
+    "release": "https://releases.dinkster.org/tools/2026-11-05-0.0.2-<tools-hash8>"
   },
   "minimumDesktopVersion": "0.2.0",
   "signature": null

@@ -264,6 +264,10 @@
 - Native tools builds retry transient HTTPS input failures up to three times,
   preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
   corrupt payloads fail without retry; exhausted failures retain attempt details.
+- The environment client acquires its native tools ZIP from the channel's
+  independently versioned tools publication without engine or base payloads.
+  Planning creates no cache; confirmed acquisition checks manifest and archive
+  integrity and refuses corrupt tools rather than falling back to engine assets.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.

@@ -9,6 +9,7 @@ import os
 import shutil
 import ssl
 import subprocess
+import sys
 import sysconfig
 import tarfile
 import time
@@ -21,6 +22,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 from dinkster_supervisor.environment_state import EnvironmentError
 from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
+from test_environment_artifacts import _mirror
 from test_environment_generations import _standalone_tree, _wheel
 
 from scripts import build_environment_tools, build_native_tools, build_tools_release
@@ -28,6 +30,71 @@ from scripts.build_environment_tools import acquire, build, locked_wheels
 from scripts.build_release import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("damage", [None, "manifest", "archive"])
+def test_tools_cli_acquires_channel_publication_without_engine_payloads(
+    tools_publication: tuple[Path, dict[str, bytes]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    damage: str | None,
+) -> None:
+    from dinkster_supervisor import environment, environment_tools
+
+    output, payloads = tools_publication
+    mirror = tmp_path / "mirror"
+    _, _, channel = _mirror(mirror)
+    data = (output / "tools-manifest.json").read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    label = f"{json.loads(data)['label']}-{sha[:8]}"
+    release = mirror / "tools" / label
+    shutil.copytree(output, release)
+    channel["tools"] = {
+        "manifest": str(release / "tools-manifest.json"),
+        "sha256": sha,
+        "release": str(release),
+        "label": label,
+    }
+    (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
+    shutil.rmtree(mirror / "engine")
+    shutil.rmtree(mirror / "base")
+    destination = tmp_path / "acquired"
+    monkeypatch.setattr(environment_tools, "machine", lambda: "x86_64")
+    monkeypatch.setattr(environment_tools, "sys", SimpleNamespace(platform="linux"))
+    arguments = [
+        "dinkster-env",
+        "--root",
+        str(destination),
+        "tools",
+        "--mirror",
+        str(mirror),
+        "--json",
+    ]
+    monkeypatch.setattr(sys, "argv", [*arguments, "--plan"])
+    with pytest.raises(SystemExit) as planned:
+        environment.main()
+    assert planned.value.code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "planned"
+    assert not destination.exists()
+    name = "dinkster-tools-linux-x86_64.zip"
+    if damage:
+        (release / ("tools-manifest.json" if damage == "manifest" else name)).write_bytes(b"wrong")
+    monkeypatch.setattr(sys, "argv", [*arguments, "--yes"])
+    with pytest.raises(SystemExit) as applied:
+        environment.main()
+    result = json.loads(capsys.readouterr().out)
+    archive = destination / label / name
+    if damage:
+        assert applied.value.code == 1
+        assert result["status"] == "error"
+        assert not archive.exists()
+    else:
+        assert applied.value.code == 0
+        assert result["tools"]["release"] == str(release)
+        assert result["tools"]["label"] == label
+        assert archive.read_bytes() == payloads[name]
+        assert not (destination / "project.json").exists()
 
 
 @pytest.fixture
