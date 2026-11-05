@@ -7,6 +7,8 @@ import os
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+import pytest
+
 T = TypeVar("T")
 
 
@@ -17,10 +19,13 @@ def run_scenario(scenario: Coroutine[Any, Any, T], *, timeout: float = 120) -> T
         deadline = asyncio.timeout(timeout)
         try:
             async with deadline:
-                return await scenario
+                result = await scenario
         except TimeoutError:
             if not deadline.expired():
                 raise
-            raise AssertionError(f"{name}: async scenario exceeded {timeout:g}s deadline") from None
+        else:
+            if not deadline.expired():
+                return result
+        pytest.fail(f"{name}: async scenario exceeded {timeout:g}s deadline", pytrace=False)
 
     return asyncio.run(bounded())

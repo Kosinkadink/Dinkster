@@ -7,21 +7,30 @@ import pytest
 from tests.async_scenarios import run_scenario
 
 
-def test_deadline_names_the_test_and_cleans_up_before_next_scenario() -> None:
+@pytest.mark.parametrize("suppress_cancellation", [False, True])
+def test_deadline_names_the_test_and_cleans_up_before_next_scenario(
+    suppress_cancellation: bool,
+) -> None:
     cleaned_up = False
 
     async def hang() -> None:
         nonlocal cleaned_up
         try:
             await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if not suppress_cancellation:
+                raise
         finally:
             cleaned_up = True
 
     with pytest.raises(
-        AssertionError,
+        pytest.fail.Exception,
         match="test_deadline_names_the_test_and_cleans_up_before_next_scenario.*deadline",
     ):
-        run_scenario(hang(), timeout=0.01)
+        try:
+            run_scenario(hang(), timeout=0.01)
+        except Exception:
+            pytest.fail("deadline was swallowed by an ordinary exception handler")
     assert cleaned_up
 
     async def result() -> int:
