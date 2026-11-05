@@ -108,7 +108,7 @@ def write_index(client, output: Path, scope: str = "engine") -> None:
         ]
         rows.append(
             {
-                "label": engine.get("label"),
+                "label": prefix.split("/")[1] if scope == "tools" else engine.get("label"),
                 "sha256": identity[7:],
                 "commit": engine["commit"],
                 "version": engine["version"],

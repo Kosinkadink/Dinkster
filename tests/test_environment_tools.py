@@ -277,6 +277,7 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
         assert (github / name).read_bytes() == payload
     index = json.loads((public / "tools/index.json").read_bytes())
     assert len(index) == 1
+    assert index[0]["label"] == label
     assert index[0]["path"] == "tools/" + label
     assert index[0]["sha256"] == digest
     assert index[0]["size"] == sum(path.stat().st_size for path in output.iterdir())
