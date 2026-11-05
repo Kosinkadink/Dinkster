@@ -22,16 +22,6 @@ runs:
     - name: Install the published CPU base and locked workspace
       shell: bash
       run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-    - name: Install the CPU software shader renderer
-      if: inputs.suite != 'vision'
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends libegl1 libgles2 libvulkan1 mesa-vulkan-drivers
-        lvp=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-        test -n "$lvp"
-        echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
-        echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
     - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
