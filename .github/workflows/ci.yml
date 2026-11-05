@@ -66,6 +66,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Install the CPU software shader renderer
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
+        timeout-minutes: 2
       - uses: ./.github/actions/torch-cpu-suite
         with:
           suite: comfy

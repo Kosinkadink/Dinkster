@@ -22,43 +22,6 @@ runs:
     - name: Install the published CPU base and locked workspace
       shell: bash
       run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-    - name: Restore CPU software shader renderer packages
-      id: renderer-apt-cache
-      if: inputs.suite != 'vision'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-      with:
-        path: |
-          ${{ runner.temp }}/renderer-apt-cache/archives
-          ${{ runner.temp }}/renderer-apt-cache/lists
-        key: ${{ runner.os }}-renderer-apt-${{ hashFiles('.github/actions/torch-cpu-suite/action.yml') }}
-    - name: Install the CPU software shader renderer
-      if: inputs.suite != 'vision'
-      timeout-minutes: 2
-      shell: bash
-      env:
-        RENDERER_APT_CACHE: ${{ runner.temp }}/renderer-apt-cache
-        RENDERER_APT_CACHE_HIT: ${{ steps.renderer-apt-cache.outputs.cache-hit }}
-      run: |
-        echo "Install the CPU software shader renderer: preparing package archive"
-        mkdir -p "$RENDERER_APT_CACHE/archives/partial" "$RENDERER_APT_CACHE/lists/partial"
-        apt_options=(
-          -o "Dir::Cache::archives=$RENDERER_APT_CACHE/archives"
-          -o "Dir::State::lists=$RENDERER_APT_CACHE/lists"
-          -o Acquire::http::Timeout=30
-          -o Acquire::Retries=3
-        )
-        if [ "$RENDERER_APT_CACHE_HIT" != "true" ]; then
-          echo "Install the CPU software shader renderer: downloading packages"
-          sudo apt-get "${apt_options[@]}" update
-          sudo apt-get "${apt_options[@]}" --download-only install -y --no-install-recommends libegl1 libgles2 libvulkan1 mesa-vulkan-drivers
-        else
-          echo "Install the CPU software shader renderer: cached packages restored"
-        fi
-        sudo apt-get "${apt_options[@]}" --no-download install -y --no-install-recommends libegl1 libgles2 libvulkan1 mesa-vulkan-drivers
-        lvp=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-        test -n "$lvp"
-        echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
-        echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
     - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
