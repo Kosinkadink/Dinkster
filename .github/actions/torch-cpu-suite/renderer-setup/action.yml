@@ -19,6 +19,7 @@ runs:
       run: |
         echo "Install the CPU software shader renderer: preparing package archive"
         mkdir -p "$RENDERER_APT_CACHE/archives/partial" "$RENDERER_APT_CACHE/lists/partial"
+        sudo install -d -o _apt -g root -m 700 "$RENDERER_APT_CACHE/archives/partial" "$RENDERER_APT_CACHE/lists/partial"
         apt_options=(
           -o "Dir::Cache::archives=$RENDERER_APT_CACHE/archives"
           -o "Dir::State::lists=$RENDERER_APT_CACHE/lists"
