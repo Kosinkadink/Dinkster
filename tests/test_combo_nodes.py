@@ -7,7 +7,6 @@ no aliases are claimed, and neither node carries a widget of its own.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, cast
 
 import pytest
@@ -18,6 +17,8 @@ from dinkster_nodes_foundation import COMBO_EDGE_NODES, FOUNDATION_NODES
 from dinkster_schema import build_node_types, build_schemas, schema_to_wire
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 STRING_TYPE = {"kind": "concrete", "types": ["STRING"]}
 COMBO_TYPE = {"kind": "concrete", "types": ["COMBO"]}
@@ -87,7 +88,7 @@ def test_combo_edge_nodes_execute_as_identity() -> None:
         assert result.outputs["t"]["text"].resolve() == "not-a-choice.txt"
         assert result.outputs["t"]["text"].type_id == "STRING"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -106,4 +107,4 @@ def test_scalar_combo_literals_execute_without_string_payload_leaks(
             assert type(value.resolve()) is str
             assert value.resolve() == expected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

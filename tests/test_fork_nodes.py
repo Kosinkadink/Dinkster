@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import gc
 import importlib
 import weakref
@@ -25,6 +24,8 @@ from dinkster_protocol import Invocation
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import ResidentLookupError, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 CONDITIONING = TypeExpr.concrete("CONDITIONING")
 INT = TypeExpr.concrete("INT")
@@ -196,7 +197,7 @@ def test_hook_conditioning_release_invalidates_only_dependent_values() -> None:
         with pytest.raises(ResidentLookupError):
             spec.decode(replacement_bytes)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_types_register_resident_model_patches() -> None:
@@ -226,7 +227,7 @@ def test_native_latent_operation_full_release_invalidates_encoded_closure() -> N
     spec = registry.spec("LATENT_OPERATION")
     encoded = spec.encode(operation)
 
-    assert asyncio.run(default_pool().full_release()).status == "complete"
+    assert run_scenario(default_pool().full_release()).status == "complete"
     del operation, storage
     gc.collect()
 
@@ -249,7 +250,7 @@ def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
     )
     schema = _ConditioningConsumer.schema()
     worker = InProcessWorker({schema.node_type: _ConditioningConsumer}, registry)
-    result = asyncio.run(
+    result = run_scenario(
         worker.invoke(
             Invocation(
                 "invocation",

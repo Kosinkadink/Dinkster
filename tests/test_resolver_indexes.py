@@ -45,6 +45,7 @@ from test_server import SCHEMAS, make_engine
 
 from dinkster.guess_api import add_guess_routes
 from dinkster.resolver_api import add_resolver_index_routes
+from tests.async_scenarios import run_scenario
 
 MODEL_BYTES = b"resolver-index model bytes" * 32
 MODEL_DIGEST = digest_bytes(MODEL_BYTES)
@@ -751,7 +752,7 @@ def test_hosted_subscription_revalidates_with_etag_at_most_every_six_hours(
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @asynccontextmanager
@@ -807,7 +808,7 @@ def test_hosted_resolver_rejects_malformed_cursor(tmp_path: Path, cursor: object
                 await asyncio.to_thread(store.subscribe, url)
             assert not state.exists()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_first_page_not_modified_requires_a_cached_complete_index(tmp_path: Path) -> None:
@@ -823,7 +824,7 @@ def test_first_page_not_modified_requires_a_cached_complete_index(tmp_path: Path
                 await asyncio.to_thread(store.subscribe, url)
             assert store.subscriptions() == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @contextmanager
@@ -873,7 +874,7 @@ def test_http_resolver_does_not_initialize_tls(pages: int) -> None:
             assert len(parse_resolver_index(data).entries) == pages
             assert calls == pages
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_https_resolver_creates_one_verified_tls_context() -> None:
@@ -1024,7 +1025,7 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
             assert 0 < sent < 100
             assert store.subscriptions() == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("phase", ["dns", "http-connect", "tls-context", "tls-connect"])
@@ -1339,7 +1340,7 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resolver_api_refreshes_local_subscriptions_on_startup(tmp_path: Path) -> None:
@@ -1373,7 +1374,7 @@ def test_resolver_api_refreshes_local_subscriptions_on_startup(tmp_path: Path) -
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1432,7 +1433,7 @@ def test_resolver_api_startup_refresh_persistence_failure_is_nonfatal(
             await client.close()
 
     with patch.object(store, "refresh", side_effect=OSError("disk full")):
-        asyncio.run(scenario())
+        run_scenario(scenario())
     assert "resolver index startup refresh failed: disk full" in caplog.text
 
 
@@ -1461,7 +1462,7 @@ def test_resolver_management_api_validates_requests(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_refresh_io_does_not_block_resolver_reads(tmp_path: Path) -> None:
@@ -1623,7 +1624,7 @@ def test_official_bootstrap_identity_configuration_and_unsubscribe(tmp_path: Pat
                 is None
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ["identity", "json", "partial", "save"])
@@ -1660,7 +1661,7 @@ def test_official_bootstrap_failure_is_atomic_and_retryable(tmp_path: Path, fail
                 is not None
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("terminal_null", [False, True])
@@ -1751,7 +1752,7 @@ def test_cursor_refresh_refetches_all_pages_despite_unchanged_first_page_etag(
                 (first_path, None),
             ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1877,7 +1878,7 @@ def test_failed_cursor_refresh_retains_http_state(
             reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
             assert reloaded.subscriptions() == store.subscriptions()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("late_response", ["new-snapshot", "not-modified"])
@@ -2014,7 +2015,7 @@ def test_legacy_resolver_cache_requires_complete_unconditional_refresh(tmp_path:
             assert not revalidated["error"]
             assert store.subscriptions()[0].refreshed_at == now[0]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -2092,7 +2093,7 @@ def test_resolver_api_official_bootstrap_with_fixture_provider(
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("terminal_null", [False, True])
@@ -2164,7 +2165,7 @@ def test_official_bootstrap_complete_snapshot_identity(tmp_path: Path, terminal_
             with pytest.raises(ResolverSubscriptionError, match="identity"):
                 ResolverSubscriptionStore(state, provenance)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(

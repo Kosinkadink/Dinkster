@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import os
 import subprocess
@@ -27,6 +26,7 @@ from dinkster_values import LATENT_TYPE, encode_latent
 from dinkster_workers import load_manifest
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 PERSON = {
     field: [number + offset / 8 for number in range(count * 3)]
@@ -240,4 +240,4 @@ def test_pose_keypoints_cross_ordinary_hosts_twice(tmp_path: Path, in_process: b
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

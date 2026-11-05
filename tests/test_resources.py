@@ -34,6 +34,8 @@ from dinkster_schema import (
 from dinkster_values import RESOURCES_META_KEY, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 MODEL = TypeExpr.concrete("test.model")
 
@@ -258,7 +260,7 @@ def test_gpu_nodes_serialize_by_default() -> None:
         await engine.run(fanout("test.gpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
         assert GpuSleeper.peak == 1  # one occupying invocation at a time
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_configured_capacity_allows_overlap() -> None:
@@ -268,7 +270,7 @@ def test_configured_capacity_allows_overlap() -> None:
         await engine.run(fanout("test.gpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
         assert GpuSleeper.peak == 2  # a powerful GPU runs two, never three
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_io_nodes_overlap_while_gpu_serializes() -> None:
@@ -288,7 +290,7 @@ def test_io_nodes_overlap_while_gpu_serializes() -> None:
         assert GpuSleeper.peak == 1  # gpu lane serialized
         assert IoSleeper.peak == 2  # io nodes unaffected by gpu admission
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_plain_nodes_serialize_by_default() -> None:
@@ -299,7 +301,7 @@ def test_plain_nodes_serialize_by_default() -> None:
         assert CpuSleeper.peak == 1  # implicit compute lane, capacity 1
         assert "compute" in engine._resource_slots
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compute_capacity_widens_plain_parallelism() -> None:
@@ -309,7 +311,7 @@ def test_compute_capacity_widens_plain_parallelism() -> None:
         await engine.run(fanout("test.cpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
         assert CpuSleeper.peak == 2  # widened deliberately, still bounded
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_io_nodes_overlap_freely() -> None:
@@ -319,7 +321,7 @@ def test_io_nodes_overlap_freely() -> None:
         await engine.run(fanout("test.io_sleeper", "a", "b", "c"), ["a", "b", "c"])
         assert IoSleeper.peak == 3  # exempt from the compute lane
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_admission_is_engine_wide_across_runs() -> None:
@@ -332,7 +334,7 @@ def test_admission_is_engine_wide_across_runs() -> None:
         )
         assert GpuSleeper.peak == 1  # capacity holds across concurrent workflows
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_hits_need_no_permit() -> None:
@@ -349,7 +351,7 @@ def test_cache_hits_need_no_permit() -> None:
         finally:
             engine._resource_slot("gpu").release()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_flight_waiter_consumes_no_permit() -> None:
@@ -373,7 +375,7 @@ def test_single_flight_waiter_consumes_no_permit() -> None:
         assert worker.invocations == 1
         assert engine._resource_slots["gpu"]._value == 2  # everything released
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_multiple_kinds_acquired_and_released() -> None:
@@ -385,7 +387,7 @@ def test_multiple_kinds_acquired_and_released() -> None:
         assert engine._resource_slots["gpu"]._value == 1
         assert engine._resource_slots["npu"]._value == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_permits_released_after_worker_error() -> None:
@@ -399,7 +401,7 @@ def test_permits_released_after_worker_error() -> None:
         assert result.executed == ("ok",)
         assert engine._resource_slots["gpu"]._value == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_permits_released_after_cancellation() -> None:
@@ -418,7 +420,7 @@ def test_permits_released_after_cancellation() -> None:
         assert result.executed == ("next",)
         assert engine._resource_slots["gpu"]._value == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_invalid_capacity_is_rejected() -> None:
@@ -491,7 +493,7 @@ def test_samplers_on_different_devices_overlap() -> None:
         assert "gpu:cuda:1" in engine._resource_slots
         assert "gpu" not in engine._resource_slots  # every kind was bound
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_samplers_on_the_same_device_serialize() -> None:
@@ -502,7 +504,7 @@ def test_samplers_on_the_same_device_serialize() -> None:
         await engine.run(graph, ["sample_a", "sample_b"])
         assert Sampler.peak == 1  # one lane, default capacity 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_per_device_capacity_override() -> None:
@@ -513,7 +515,7 @@ def test_per_device_capacity_override() -> None:
         await engine.run(graph, ["sample_a", "sample_b"])
         assert Sampler.peak == 2  # this one device admits two
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_bound_lane_inherits_kind_capacity() -> None:
@@ -524,7 +526,7 @@ def test_bound_lane_inherits_kind_capacity() -> None:
         await engine.run(graph, ["sample_a", "sample_b"])
         assert Sampler.peak == 2  # "gpu:cuda:0" falls back to the "gpu" figure
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_spanning_model_occupies_every_device() -> None:
@@ -544,7 +546,7 @@ def test_spanning_model_occupies_every_device() -> None:
         for lane in ("gpu:cuda:0", "gpu:cuda:1", "gpu:cuda:2"):
             assert lane in engine._resource_slots
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_device_never_changes_cache_identity() -> None:
@@ -559,7 +561,7 @@ def test_device_never_changes_cache_identity() -> None:
         second = await engine.run(sampler_graph(("cuda:1", "t")), ["sample_t"])
         assert "sample_t" in second.cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_elaboration_preserves_occupies() -> None:
@@ -617,7 +619,7 @@ def test_resource_status_idle_then_active_then_released() -> None:
         await run
         assert engine.resource_status()["gpu"]["executionInUse"] == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resource_status_exact_count_with_wider_capacity() -> None:
@@ -646,7 +648,7 @@ def test_resource_status_exact_count_with_wider_capacity() -> None:
         await run
         assert engine.resource_status()["gpu"]["executionInUse"] == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resource_status_released_after_error() -> None:
@@ -656,7 +658,7 @@ def test_resource_status_released_after_error() -> None:
             await engine.run(fanout("test.gpu_fail", "x"), ["x"])
         assert engine.resource_status()["gpu"]["executionInUse"] == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resource_status_released_after_cancellation() -> None:
@@ -671,7 +673,7 @@ def test_resource_status_released_after_cancellation() -> None:
             await run
         assert engine.resource_status()["gpu"]["executionInUse"] == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resource_status_reports_bound_lanes() -> None:
@@ -683,4 +685,4 @@ def test_resource_status_reports_bound_lanes() -> None:
         # The bound lane inherits its kind's configured capacity.
         assert status["gpu:cuda:0"] == {"executionCapacity": 2, "executionInUse": 0}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -15,7 +15,6 @@ enforcement half of the promise:
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -28,6 +27,8 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 GOLDEN_V1_SURFACE = (
     "TriangleMeshBatch",
@@ -1158,7 +1159,7 @@ def test_pack_authored_through_the_door_runs() -> None:
             "say": GraphNode("weather.describe", {"reading": Link("read", "reading")}),
         }
     )
-    result = asyncio.run(engine.run(graph, ["read", "say"]))
+    result = run_scenario(engine.run(graph, ["read", "say"]))
 
     assert result.outputs["say"]["text"].resolve() == "21.5 C"
     reading = result.outputs["read"]["reading"]

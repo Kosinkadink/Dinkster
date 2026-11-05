@@ -5,7 +5,6 @@ and never filesystem paths, and an asset's cache fingerprint IS its digest
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from collections.abc import Mapping
@@ -57,6 +56,7 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker, ValueCodec
 
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 # --- identity ---------------------------------------------------------------
@@ -844,7 +844,7 @@ def test_engine_run_with_asset_literal(tmp_path: Path) -> None:
         )
         assert again.executed == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> None:
@@ -900,7 +900,7 @@ def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> N
         assert again.cached == ("s",)
         assert again.outputs["s"]["asset"].type_id == ASSET_TYPE
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("format_id", ["gltf", "obj"])

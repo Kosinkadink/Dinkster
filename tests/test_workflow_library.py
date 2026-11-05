@@ -64,6 +64,8 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from PIL import Image
 
+from tests.async_scenarios import run_scenario
+
 WORKFLOW_MEDIA_TYPE = "application/x-dinkster-workflow+json"
 
 STRING = TypeExpr.concrete("STRING")
@@ -445,7 +447,7 @@ def test_local_binding_http_reads_live_grants_without_content_identity(tmp_path:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("kind", ["document", "history", "shown-result", "preview"])
@@ -502,7 +504,7 @@ def test_retained_assets_http_survive_restart_and_reject_stale_release(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_retained_assets_cross_store_revisions_and_all_scope_write_barrier(tmp_path: Path) -> None:
@@ -663,7 +665,7 @@ def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> None:
@@ -709,7 +711,7 @@ def test_retention_completeness_and_acknowledged_replacement(tmp_path: Path) -> 
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_legacy_retention_migration_preserves_unknown_ownership(tmp_path: Path) -> None:
@@ -876,7 +878,7 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ["", "catalog", "revoked"])
@@ -1005,7 +1007,7 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
         finally:
             await restarted.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_anonymous_vault_inventory_is_operator_only_and_does_not_grant_scope(
@@ -1143,7 +1145,7 @@ def test_anonymous_vault_inventory_is_operator_only_and_does_not_grant_scope(
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_catalog_backfills_known_scopes_without_claiming_anonymous_bytes(tmp_path: Path) -> None:
@@ -1240,7 +1242,7 @@ def test_catalog_backfills_known_scopes_without_claiming_anonymous_bytes(tmp_pat
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_upload_and_fetch_roundtrip(tmp_path: Path) -> None:
@@ -1280,7 +1282,7 @@ def test_upload_and_fetch_roundtrip(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_transferred_asset_retains_scoped_history_after_catalog_failure(
@@ -1416,7 +1418,7 @@ def test_transferred_asset_retains_scoped_history_after_catalog_failure(
                 if attempt == 0:
                     await source.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_path: Path) -> None:
@@ -1486,7 +1488,7 @@ def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_named_upload_refuses_project_exclusion_before_publication(
@@ -1532,7 +1534,7 @@ def test_named_upload_refuses_project_exclusion_before_publication(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ("before-observation", "after-observation"))
@@ -1620,7 +1622,7 @@ def test_upload_catalog_recovers_failed_publication(
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("published,changed", ((False, False), (True, False), (True, True)))
@@ -1661,6 +1663,7 @@ async def upload():
     Image.new('RGB', (3, 2), (21, 50, 100)).save(image, format='PNG')
     await client.post('/api/assets/media?scope=local&name=portrait.png&kind=media/image',
         data=image.getvalue(), headers={'Content-Type': 'image/png'})
+# This crash-injection child is bounded by subprocess.run(timeout=30) in its parent.
 asyncio.run(upload())
 """,
             str(tmp_path),
@@ -1710,7 +1713,7 @@ asyncio.run(upload())
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Path) -> None:
@@ -1801,7 +1804,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_catalog_persists_aliases_and_pages_identities(
@@ -1915,7 +1918,7 @@ def test_asset_catalog_persists_aliases_and_pages_identities(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("tied_time", (False, True))
@@ -2024,7 +2027,7 @@ def test_chunked_upload_reads_complete_png_body(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
@@ -2062,7 +2065,7 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("destination", ("anonymous", "named", "transfer"))
@@ -2119,7 +2122,7 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_library_crud_over_http(tmp_path: Path) -> None:
@@ -2186,7 +2189,7 @@ def test_library_crud_over_http(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_library_browse_query_first_paging(tmp_path: Path) -> None:
@@ -2243,4 +2246,4 @@ def test_library_browse_query_first_paging(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

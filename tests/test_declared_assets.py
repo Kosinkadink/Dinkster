@@ -10,7 +10,6 @@ calls ``dinkster_api.v1.declared_asset`` against a real vault.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -35,6 +34,8 @@ from dinkster_graph import Graph, GraphNode
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import IsolatedWorker, load_manifest
 from dinkster_workers.host import load_pack
+
+from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
 
@@ -297,7 +298,7 @@ def test_isolated_worker_reads_declared_asset(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_unacquired_fails_with_consent_pointer(tmp_path: Path) -> None:
@@ -337,4 +338,4 @@ def test_isolated_worker_unacquired_fails_with_consent_pointer(tmp_path: Path) -
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

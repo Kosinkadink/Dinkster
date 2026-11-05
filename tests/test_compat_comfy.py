@@ -90,6 +90,8 @@ from dinkster_workers import (
 )
 from dinkster_workers.execution import use_execution_context
 
+from tests.async_scenarios import run_scenario
+
 # --- fake v1 classes: the shapes real ComfyUI nodes use -----------------
 
 
@@ -1259,7 +1261,7 @@ def test_output_node_and_is_changed_are_never_cached() -> None:
         assert first.cached == () and second.cached == ()
         assert V1Changed.rolls == 2
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_translation_records_alias_and_output_node() -> None:
@@ -1362,7 +1364,7 @@ def test_v1_lazy_hook_is_instance_bound_and_receives_execution_inputs() -> None:
     registry = TypeRegistry()
     register_core_types(registry)
     translation.register_types(registry)
-    result = asyncio.run(
+    result = run_scenario(
         InProcessWorker(build_node_types((node_class,)), registry).check_lazy_status(
             LazyStatusInvocation(
                 request_id="lazy-hook",
@@ -1455,20 +1457,20 @@ def test_async_lazy_hooks_await_in_pack_and_execution_contexts() -> None:
             effective_schema=schema,
         )
 
-    first = asyncio.run(worker.check_lazy_status(invocation("round-1")))
-    second = asyncio.run(worker.check_lazy_status(invocation("round-2", with_value=True)))
+    first = run_scenario(worker.check_lazy_status(invocation("round-1")))
+    second = run_scenario(worker.check_lazy_status(invocation("round-2", with_value=True)))
     assert first.requested_inputs == ("value",)
     assert second.requested_inputs == ()
     assert AsyncLazyNode.seen == [(True, "async-lazy")] * 4
 
     AsyncLazyNode.behavior = "error"
-    failed = asyncio.run(worker.check_lazy_status(invocation("error")))
+    failed = run_scenario(worker.check_lazy_status(invocation("error")))
     assert failed.error is not None
     assert failed.error.message == "lazy-hook-failed: async lazy failure"
     assert "RuntimeError: async lazy failure" in failed.error.traceback
 
     AsyncLazyNode.behavior = "malformed"
-    malformed = asyncio.run(worker.check_lazy_status(invocation("malformed")))
+    malformed = run_scenario(worker.check_lazy_status(invocation("malformed")))
     assert malformed.error is not None
     assert malformed.error.message == (
         "lazy-hook-failed: check_lazy_status must return a list or tuple"
@@ -1498,7 +1500,7 @@ def test_translated_async_v1_lazy_hook_returns_awaitable_to_worker() -> None:
     registry = TypeRegistry()
     register_core_types(registry)
     translation.register_types(registry)
-    result = asyncio.run(
+    result = run_scenario(
         InProcessWorker(build_node_types((node_class,)), registry).check_lazy_status(
             LazyStatusInvocation(
                 request_id="translated-async-lazy",
@@ -1655,7 +1657,7 @@ def test_v1_whole_list_lazy_sync_preserves_demand_projection_and_cache() -> None
         assert demands[0]["producerNodes"] == ["source"]
         assert demands[-1]["requestedInputs"] == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v3_whole_list_lazy_async_failure_cancellation_and_non_idempotent_retry() -> None:
@@ -1751,7 +1753,7 @@ def test_v3_whole_list_lazy_async_failure_cancellation_and_non_idempotent_retry(
         assert "consumer" not in first.cached and "consumer" not in second.cached
         assert not engine._inflight
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v1_tuple_outputs_become_id_keyed_values() -> None:
@@ -1768,7 +1770,7 @@ def test_v1_tuple_outputs_become_id_keyed_values() -> None:
         assert outs["model"].type_id == comfy_type_id("MODEL")
         assert outs["model"].fingerprint
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_output_node_runs_with_hidden_inputs_defaulted() -> None:
@@ -1780,7 +1782,7 @@ def test_output_node_runs_with_hidden_inputs_defaulted() -> None:
         await engine.run(graph, ["s"])
         assert V1Save.saved == [("hello", None, "s")]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v1_unique_id_receives_submitted_prompt_node_id() -> None:
@@ -1813,7 +1815,7 @@ def test_v1_unique_id_receives_submitted_prompt_node_id() -> None:
             == "submitted-prompt-node-17"
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unique_id_input_is_list_receives_wrapped_node_id() -> None:
@@ -1840,7 +1842,7 @@ def test_unique_id_input_is_list_receives_wrapped_node_id() -> None:
         assert seen == [["submitted-list-node"]]
         assert result.outputs["submitted-list-node"]["string"].resolve() == "ok"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_prompt_hidden_stays_none_and_unique_id_direct_call_falls_back_to_none() -> None:
@@ -1897,7 +1899,7 @@ def test_non_output_wrapper_keeps_export_hidden_values_none() -> None:
         )
         assert result.outputs["non-output"]["string"].resolve() == "ok"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert seen == [(None, None)]
 
 
@@ -1956,7 +1958,7 @@ def test_output_wrappers_do_not_share_extra_pnginfo_mutations() -> None:
             ),
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert observed == [{"workflow": {"nodes": []}}]
 
 
@@ -1987,7 +1989,7 @@ def test_unique_id_nodes_are_not_shared_across_engine_cache_keys() -> None:
         assert result.outputs["cache-node-b"]["string"].resolve() == "cache-node-b"
         assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_opaque_values_flow_between_compat_nodes() -> None:
@@ -2038,7 +2040,7 @@ def test_opaque_values_flow_between_compat_nodes() -> None:
             "m": "multiply",
         }
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_translated_image_and_mask_share_the_image_array_codec() -> None:
@@ -2140,7 +2142,7 @@ def test_zero_input_compat_node_executes_once() -> None:
         assert result.outputs["zero"]["int"].resolve() == 7
         assert V1ZeroInput.calls == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_list_flags_translate_schema_shapes() -> None:
@@ -2170,7 +2172,7 @@ def test_input_is_list_calls_once_with_whole_lists() -> None:
         assert outs["total"].resolve() == 12  # sum * default scale [2]
         assert outs["count"].resolve() == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_output_is_list_values_flow_as_native_lists() -> None:
@@ -2189,7 +2191,7 @@ def test_output_is_list_values_flow_as_native_lists() -> None:
         # The envelope carries the canonical runtime list type id.
         assert parts.type_id == "list<INT>"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v1_fanout_scalar_mapping_and_list_aggregation_execute_end_to_end() -> None:
@@ -2241,7 +2243,7 @@ def test_v1_fanout_scalar_mapping_and_list_aggregation_execute_end_to_end() -> N
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["collect"]["values"].resolve() == [0, 4, 8]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v1_hook_fanout_through_conditioning_preserves_shared_identity() -> None:
@@ -2311,7 +2313,7 @@ def test_v1_hook_fanout_through_conditioning_preserves_shared_identity() -> None
 
         assert result.outputs["same"]["boolean"].resolve() is True
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_core_list_wave_split_tiles_map_and_whole_list_merge() -> None:
@@ -2388,7 +2390,7 @@ def test_core_list_wave_split_tiles_map_and_whole_list_merge() -> None:
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["merge"]["merged"].resolve() == "100,110,111,120,121,122"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("node_name", ["RebatchImages", "RebatchLatents"])
@@ -2428,7 +2430,7 @@ def test_core_list_wave_whole_list_rebatch_in_and_out(node_name: str) -> None:
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["rebatch"]["batches"].resolve() == [1, 5, 4]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_core_list_wave_shuffle_preserves_aligned_multi_output_order() -> None:
@@ -2486,7 +2488,7 @@ def test_core_list_wave_shuffle_preserves_aligned_multi_output_order() -> None:
             "caption-1",
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_core_list_wave_temporal_chunk_map_and_merge_flattens_in_order() -> None:
@@ -2565,7 +2567,7 @@ def test_core_list_wave_temporal_chunk_map_and_merge_flattens_in_order() -> None
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["merge"]["video"].resolve() == "1/2/11/12/21/22"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_core_list_wave_mapped_dataset_loader_flattens_aligned_outputs() -> None:
@@ -2609,7 +2611,7 @@ def test_core_list_wave_mapped_dataset_loader_flattens_aligned_outputs() -> None
         assert result.outputs["load"]["images"].resolve() == [0, 10, 11]
         assert result.outputs["load"]["texts"].resolve() == ["0:0", "1:0", "1:1"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_core_list_wave_wandancer_emits_three_aligned_lists_once() -> None:
@@ -2660,7 +2662,7 @@ def test_core_list_wave_wandancer_emits_three_aligned_lists_once() -> None:
             "audio-2",
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v1_mapping_result_with_expand_refuses_loudly() -> None:
@@ -3175,7 +3177,7 @@ def test_v3_shim_unique_id_tuple_receives_submitted_node_id() -> None:
         assert result.outputs["v3-node-23"]["string"].resolve() == "v3-node-23"
         assert translation.node_classes[0].schema().idempotent is False
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -3211,7 +3213,7 @@ def test_only_closed_unique_id_hidden_shapes_are_synthesized(hidden_type: object
             ["negative-shape"],
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert seen == [None]
 
 
@@ -3227,7 +3229,7 @@ def test_v3_node_output_unwraps_to_id_keyed_values() -> None:
         result = await engine.run(graph, ["i"])
         assert result.outputs["i"]["int"].resolve() == 7
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v3_ui_only_node_output_is_a_valid_empty_result() -> None:
@@ -3400,7 +3402,7 @@ def test_async_v3_node_executes_and_unwraps_after_await(
         )
         assert result.outputs["async"]["int"].resolve() == 8
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_async_v1_failure_keeps_exception_fidelity() -> None:
@@ -3427,7 +3429,7 @@ def test_async_v1_failure_keeps_exception_fidelity() -> None:
         assert "in run" in exc_info.value.error.traceback
         assert "RuntimeError: upstream async failure" in exc_info.value.error.traceback
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_async_v1_cancellation_runs_cleanup_and_allows_retry() -> None:
@@ -3473,7 +3475,7 @@ def test_async_v1_cancellation_runs_cleanup_and_allows_retry() -> None:
         assert result.outputs["async"]["int"].resolve() == 5
         assert V1AsyncResource.active is False
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_async_v1_list_mapping_preserves_output_order() -> None:
@@ -3527,7 +3529,7 @@ def test_async_v1_list_mapping_preserves_output_order() -> None:
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["collect"]["values"].resolve() == "0,10,20"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- V3 dynamic declarations through the v1 shim -----------------------
@@ -3617,8 +3619,8 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
             effective_schema=schema,
         )
 
-    waiting = asyncio.run(worker.check_lazy_status(invocation("waiting")))
-    ready = asyncio.run(worker.check_lazy_status(invocation("ready", with_selected_value=True)))
+    waiting = run_scenario(worker.check_lazy_status(invocation("waiting")))
+    ready = run_scenario(worker.check_lazy_status(invocation("ready", with_selected_value=True)))
     assert waiting.requested_inputs == ("on_true",)
     assert ready.error is None
     assert ready.requested_inputs == ()
@@ -3868,7 +3870,7 @@ def test_v3_matchtype_autogrow_lists_share_output_variable_and_execute() -> None
         assert value.type_id == "list<INT>"
         assert value.resolve() == [0, 1, 0, 1, 2]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v3_matchtype_autogrow_anytype_is_unconstrained() -> None:
@@ -4288,7 +4290,7 @@ def test_v3_combo_in_combo_executes_with_construct_scoped_selector_submission() 
             }
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v3_family_in_combo_and_empty_family_lower_upstream_names() -> None:
@@ -4544,7 +4546,7 @@ def test_v3_dynamic_slot_maps_open_form_and_lowers_dependents() -> None:
         assert absent.outputs["absent"]["int"].resolve() == 0
         assert SlotNode.seen == [{"source": 3, "scale": 4}, None]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_v3_list_calling_convention_reaches_dynamic_nested_values() -> None:

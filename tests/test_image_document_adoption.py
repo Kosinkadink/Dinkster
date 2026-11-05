@@ -27,6 +27,7 @@ from dinkster_server.library import ServerLibrary, add_library_routes
 from PIL import Image
 
 from dinkster.serve import _validate_collaboration_snapshot
+from tests.async_scenarios import run_scenario
 
 MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
 
@@ -228,7 +229,7 @@ def test_adoption_round_trip_is_idempotent_and_persistent(tmp_path: Path) -> Non
         with closing(LibraryStore(tmp_path / "library.sqlite")) as reopened:
             assert reopened.get_dependencies(parent_digest) == adopted["dependencies"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("alpha_mode", ["premultiplied", "opaque"])
@@ -252,7 +253,7 @@ def test_adoption_preserves_declared_resource_alpha_interpretation(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -298,7 +299,7 @@ def test_invalid_documents_never_publish(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_hostile_json_and_request_contract_are_rejected(tmp_path: Path) -> None:
@@ -335,7 +336,7 @@ def test_hostile_json_and_request_contract_are_rejected(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_missing_or_tampered_resources_are_not_adopted(tmp_path: Path) -> None:
@@ -369,7 +370,7 @@ def test_missing_or_tampered_resources_are_not_adopted(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_corrupt_raster_pixel_payload_is_not_adopted(tmp_path: Path) -> None:
@@ -392,7 +393,7 @@ def test_corrupt_raster_pixel_payload_is_not_adopted(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dependency_manifests_are_immutable_and_survive_reopen(tmp_path: Path) -> None:
@@ -567,7 +568,7 @@ def test_actor_scoped_ids_and_raster_masks_are_adopted(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_storage_failure_leaves_retryable_bytes_without_an_adoption_manifest(
@@ -596,7 +597,7 @@ def test_storage_failure_leaves_retryable_bytes_without_an_adoption_manifest(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fixed_document_limit_ignores_larger_generic_upload_configuration(tmp_path: Path) -> None:
@@ -613,7 +614,7 @@ def test_fixed_document_limit_ignores_larger_generic_upload_configuration(tmp_pa
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fixed_document_limit_ignores_smaller_generic_upload_configuration(tmp_path: Path) -> None:
@@ -631,7 +632,7 @@ def test_fixed_document_limit_ignores_smaller_generic_upload_configuration(tmp_p
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_raster_verification_refuses_when_decode_slots_are_busy(tmp_path: Path) -> None:
@@ -659,7 +660,7 @@ def test_raster_verification_refuses_when_decode_slots_are_busy(tmp_path: Path) 
             library.image_document_decode_slots.release()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_document_without_rasters_bypasses_decode_slots(tmp_path: Path) -> None:
@@ -682,7 +683,7 @@ def test_document_without_rasters_bypasses_decode_slots(tmp_path: Path) -> None:
             library.image_document_decode_slots.release()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_decode_reservation_accounts_for_container_memory() -> None:
@@ -760,7 +761,7 @@ def test_raster_verification_reserves_decoded_memory_across_requests(
                     await first
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancelled_raster_verification_keeps_capacity_until_worker_settles(
@@ -809,7 +810,7 @@ def test_cancelled_raster_verification_keeps_capacity_until_worker_settles(
                     await task
             await _client_instance.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_concurrent_adoption_instances_commit_one_manifest_without_deleting_bytes(
@@ -844,7 +845,7 @@ def test_concurrent_adoption_instances_commit_one_manifest_without_deleting_byte
             await first.close()
             await second.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_image_library_records_require_typed_adoption(tmp_path: Path) -> None:
@@ -908,7 +909,7 @@ def test_image_library_records_require_typed_adoption(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_adopted_blank_document_can_enter_image_library(tmp_path: Path) -> None:
@@ -935,7 +936,7 @@ def test_adopted_blank_document_can_enter_image_library(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_adoption_requires_write_scope_and_scoped_resource_authority(tmp_path: Path) -> None:
@@ -972,4 +973,4 @@ def test_adoption_requires_write_scope_and_scoped_resource_authority(tmp_path: P
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from collections.abc import Mapping
@@ -39,6 +38,7 @@ from dinkster_workers.catalog import read_catalog
 
 from dinkster.compose import PackSpec, ServingComposer
 from dinkster.lazy_worker import LazyWorker
+from tests.async_scenarios import run_scenario
 
 INT = TypeExpr.concrete("INT")
 STRING = TypeExpr.concrete("STRING")
@@ -187,7 +187,7 @@ def test_expression_executes_links_and_cache_identity(
         diagnostics = validate(graph(), build_schemas([MathExpressions, AddInts]), ["sum"])
         assert any(item.severity == "error" for item in diagnostics)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_entry_list_fan_out(runtime: tuple[Engine, InProcessWorker, TypeRegistry]) -> None:
@@ -213,7 +213,7 @@ def test_entry_list_fan_out(runtime: tuple[Engine, InProcessWorker, TypeRegistry
             "b": "ready",
         }
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_entry_list_fan_out_interface_depends_only_on_stored_descriptors(
@@ -266,7 +266,7 @@ def test_entry_list_fan_out_interface_depends_only_on_stored_descriptors(
         diagnostics = validate(removed, build_schemas([EntryFanOut, AddInts]), ["sum"])
         assert "dangling-output" in {item.code for item in diagnostics}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("changed", ["order", "name", "type", "id"])
@@ -288,7 +288,7 @@ def test_worker_reprojects_descriptors(
         outputs[0] = replace(outputs[0], type=STRING)
     else:
         outputs[0] = replace(outputs[0], id="different")
-    result = asyncio.run(
+    result = run_scenario(
         worker.invoke(
             Invocation(
                 invocation_id="test",
@@ -377,7 +377,7 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
             await composer.close()
             sys.modules.pop("descriptor_nodes", None)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
@@ -422,6 +422,6 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
             ),
         }
     )
-    result = asyncio.run(engine.run(graph, ["lazy"]))
+    result = run_scenario(engine.run(graph, ["lazy"]))
     assert result.outputs["lazy"]["answer"].resolve() == 42
     assert "producer" not in result.executed

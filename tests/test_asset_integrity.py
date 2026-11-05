@@ -43,6 +43,7 @@ from dinkster_server import asset_stream as asset_stream_module
 from dinkster_server.asset_stream import open_verified_sized, stream_verified
 from test_server import SCHEMAS, make_engine
 
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 
@@ -754,7 +755,7 @@ def test_asset_endpoint_serves_verified_bytes_and_refuses_stale(
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_api_asset_get_and_metadata_refuse_stale_vault_content(tmp_path: Path) -> None:
@@ -791,7 +792,7 @@ def test_api_asset_get_and_metadata_refuse_stale_vault_content(tmp_path: Path) -
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- cancellation: a dead request never leaks or races the descriptor --------
@@ -830,7 +831,7 @@ def test_open_helper_closes_descriptor_when_cancelled_mid_hash(
             while not (opened and opened[0].closed):
                 await asyncio.sleep(0.01)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_stream_cancellation_defers_close_to_the_worker_read(
@@ -872,4 +873,4 @@ def test_stream_cancellation_defers_close_to_the_worker_read(
                 await asyncio.sleep(0.01)
         assert events == ["read-returned", "closed"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

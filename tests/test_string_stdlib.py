@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 import re
 from typing import Any, cast
@@ -36,6 +35,8 @@ from dinkster_nodes_foundation.string_ops import (
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 
 def _transform(text: str, operation: str, **changes: Any) -> str:
@@ -513,4 +514,4 @@ def test_string_nodes_execute_through_engine() -> None:
         assert result.outputs["transform"]["text"].resolve() == "Hello"
         assert result.outputs["length"]["length"].resolve() == 5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

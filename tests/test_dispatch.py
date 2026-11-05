@@ -6,7 +6,6 @@ owner provenance is producer-stamped and relay-preserved, and manifest
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
@@ -61,6 +60,8 @@ from dinkster_workers.boundary import (
 )
 from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import ManifestError, load_manifest
+
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete("STRING")
 
@@ -172,7 +173,7 @@ def test_prepare_fans_out_to_every_arm() -> None:
         assert compat.prepared == [("test.produce",)]
         assert native.prepared == [("test.produce",)]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_hook_uses_owner_arm_and_alternate_execution_succeeds() -> None:
@@ -203,7 +204,7 @@ def test_lazy_hook_uses_owner_arm_and_alternate_execution_succeeds() -> None:
         assert alternate_result.error is None
         assert len(alternate.invocations) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_hook_accepts_resident_input_from_same_session_alternate_arm() -> None:
@@ -230,7 +231,7 @@ def test_lazy_hook_accepts_resident_input_from_same_session_alternate_arm() -> N
         assert status.error is None
         assert owner.lazy_invocations == [lazy]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_hook_rejects_resident_input_from_another_residency_domain() -> None:
@@ -255,7 +256,7 @@ def test_lazy_hook_rejects_resident_input_from_another_residency_domain() -> Non
         assert "cannot cross residency domains" in status.error.message
         assert owner.lazy_invocations == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_selected_arm_alone_is_invoked_and_events_forward() -> None:
@@ -272,7 +273,7 @@ def test_selected_arm_alone_is_invoked_and_events_forward() -> None:
         assert [inv.invocation_id for inv in native.invocations] == ["inv-1"]
         assert [(e.name, dict(e.data)) for e in events] == [("progress", {"value": 1.0})]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_missing_or_unknown_selection_is_a_loud_wiring_error() -> None:
@@ -289,7 +290,7 @@ def test_missing_or_unknown_selection_is_a_loud_wiring_error() -> None:
         assert "unknown arm 'compat'" in result.error.message
         assert native.invocations == []  # never fell through to a guess
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("as_list", [False, True])
@@ -325,7 +326,7 @@ def test_resident_inputs_must_resolve_to_the_selected_arm(as_list: bool) -> None
         assert result.error is None
         assert len(native.invocations) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_outputs_owned_by_another_arm_are_refused() -> None:
@@ -349,7 +350,7 @@ def test_outputs_owned_by_another_arm_are_refused() -> None:
         assert result.error is None
         assert result.outputs is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
@@ -740,7 +741,7 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
             outcome = await result(value, target)
             assert outcome.error is not None and message in outcome.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_model_enters_native_load_lora_body() -> None:
@@ -773,7 +774,7 @@ def test_native_model_enters_native_load_lora_body() -> None:
         assert default.invocations == []
         assert native.invocations == [invocation]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("use_shm", [False, True])
@@ -830,7 +831,7 @@ def test_sampling_settings_cross_domains_but_guider_remains_affine(
         assert rejected.error is not None
         assert "cannot cross residency domains" in rejected.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("use_shm", [False, True])
@@ -939,7 +940,7 @@ def test_residency_domains_use_identity_not_value_equality() -> None:
         assert outcome.error is not None
         assert "cannot cross residency domains" in outcome.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_producer_stamping_walks_lists_and_preserves_foreign_provenance() -> None:
@@ -989,7 +990,7 @@ def test_arm_worker_stamps_exact_replica_arm_on_nested_resident_outputs() -> Non
             "pack@native:cuda:4",
         ).invoke(_invocation(executor="pack@native:cuda:4"))
 
-    result = asyncio.run(scenario())
+    result = run_scenario(scenario())
     assert result.outputs is not None
     children = list_children(result.outputs["local"])
     assert children is not None

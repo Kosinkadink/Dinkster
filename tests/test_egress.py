@@ -19,6 +19,8 @@ from dinkster_inference_wire import (
 )
 from dinkster_workers.egress import EgressProxy, EgressProxyError, normalize_egress_origin
 
+from tests.async_scenarios import run_scenario
+
 
 @pytest.mark.parametrize(
     ("value", "expected"),
@@ -141,7 +143,7 @@ def test_egress_proxy_allows_only_listed_origins_and_cleans_up(
             await echo_server.wait_closed()
         assert not socket_path.exists()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires Unix sockets")
@@ -202,7 +204,7 @@ def test_openai_transport_reaches_https_through_egress_proxy(
             upstream.close()
             await upstream.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires Unix sockets")
@@ -243,7 +245,7 @@ def test_egress_proxy_rejects_non_public_dns_answers(
         finally:
             await proxy.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires Unix sockets")
@@ -285,4 +287,4 @@ def test_egress_proxy_bounds_idle_and_concurrent_clients(
             await first_writer.wait_closed()
             await proxy.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

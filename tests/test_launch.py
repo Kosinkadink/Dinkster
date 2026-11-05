@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import builtins
 import json
 import urllib.error
@@ -17,6 +16,7 @@ from dinkster.cli import main as cli_main
 from dinkster.frontend import install_frontend
 from dinkster.mounts_api import MountService
 from dinkster.project_folders import ProjectFolders
+from tests.async_scenarios import run_scenario
 
 
 def test_frontend_discovery_finds_a_sibling_development_build(tmp_path: Path, monkeypatch) -> None:
@@ -396,7 +396,7 @@ def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, m
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_frontend_dev_proxies_http_and_websockets() -> None:
@@ -449,4 +449,4 @@ def test_frontend_dev_proxies_http_and_websockets() -> None:
             await client.close()
             await vite_server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

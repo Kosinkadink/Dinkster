@@ -14,7 +14,6 @@ planner so they can never disagree.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -52,6 +51,8 @@ from dinkster_values import (
     runtime_type_atom,
 )
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 # ---------------------------------------------------------------------------
 # Grammar
@@ -539,7 +540,7 @@ def test_decode_lift_and_merge_execute(tmp_path: Path) -> None:
         )
         assert merge.outputs["u"]["text"].resolve() == "ALPHA+BETA"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_widget_scalar_decodes_stamped_asset(tmp_path: Path) -> None:
@@ -551,7 +552,7 @@ def test_asset_widget_scalar_decodes_stamped_asset(tmp_path: Path) -> None:
         )
         assert result.outputs["u"]["text"].resolve() == "ALPHA"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_widget_scalar_merges_stamped_asset_list(tmp_path: Path) -> None:
@@ -563,7 +564,7 @@ def test_asset_widget_scalar_merges_stamped_asset_list(tmp_path: Path) -> None:
         )
         assert result.outputs["u"]["text"].resolve() == "ALPHA+BETA"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_widget_scalar_merge_requires_registered_merger(tmp_path: Path) -> None:
@@ -575,7 +576,7 @@ def test_asset_widget_scalar_merge_requires_registered_merger(tmp_path: Path) ->
         assert [d.code for d in err.value.diagnostics] == ["asset-coercion-unavailable"]
         assert "batch merge for type 'STRING'" in str(err.value)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_widget_scalar_unstamped_literal_fails_structurally(tmp_path: Path) -> None:
@@ -586,7 +587,7 @@ def test_asset_widget_scalar_unstamped_literal_fails_structurally(tmp_path: Path
             await make_engine(resolver).run(graph, ["u"])
         assert [d.code for d in err.value.diagnostics] == ["unstamped-asset-widget-literal"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_of_list_decodes_to_the_whole_list(tmp_path: Path) -> None:
@@ -621,7 +622,7 @@ def test_asset_of_list_decodes_to_the_whole_list(tmp_path: Path) -> None:
         )
         assert result.outputs["j"]["text"].resolve() == "alpha|beta"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_provider_identity_keys_the_cache(tmp_path: Path) -> None:
@@ -641,7 +642,7 @@ def test_provider_identity_keys_the_cache(tmp_path: Path) -> None:
         bumped = await make_engine(resolver, decoder_id="t.text@2", cache=cache).run(graph, ["u"])
         assert bumped.executed == ("u",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_merger_identity_keys_the_cache(tmp_path: Path) -> None:
@@ -656,7 +657,7 @@ def test_merger_identity_keys_the_cache(tmp_path: Path) -> None:
         bumped = await make_engine(resolver, merger_id="t.join@2", cache=cache).run(graph, ["u"])
         assert bumped.executed == ("u",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_different_stamps_on_the_same_asset_never_share_a_cache_entry(
@@ -713,7 +714,7 @@ def test_different_stamps_on_the_same_asset_never_share_a_cache_entry(
         again = await engine.run(graph("asset<STRING>"), ["i"])
         assert again.cached == ("i",)  # same stamp still hits
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_missing_providers_fail_validation_in_the_engine(tmp_path: Path) -> None:
@@ -725,7 +726,7 @@ def test_missing_providers_fail_validation_in_the_engine(tmp_path: Path) -> None
             await engine.run(graph, ["u"])
         assert any(d.code == "asset-coercion-unavailable" for d in err.value.diagnostics)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_decode_failure_is_a_node_error(tmp_path: Path) -> None:
@@ -754,7 +755,7 @@ def test_decode_failure_is_a_node_error(tmp_path: Path) -> None:
         assert "coercing asset<STRING>" in str(err.value)
         assert "corrupt" in str(err.value)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_declared_asset_inputs_still_receive_refs(tmp_path: Path) -> None:
@@ -800,7 +801,7 @@ def test_declared_asset_inputs_still_receive_refs(tmp_path: Path) -> None:
         )
         assert result.outputs["i"]["name"].resolve() == "asset0.txt"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # ---------------------------------------------------------------------------

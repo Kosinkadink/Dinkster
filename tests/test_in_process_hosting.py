@@ -36,6 +36,7 @@ from dinkster.installer import (
     lock_local_pack,
 )
 from dinkster.manager import _validated_plan_topology
+from tests.async_scenarios import run_scenario
 
 
 def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
@@ -63,7 +64,7 @@ def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
             },
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 PINS = {"torch": "2.13.0", "comfy-aimdo": "0.4.13"}
@@ -263,7 +264,7 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             await composer.close()
             await isolated.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridable(
@@ -383,7 +384,7 @@ def test_in_process_pack_refuses_non_torch_runtime_pin_drift_and_contradictory_s
         await non_torch.close()
         await drift.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_pack_refuses_extensions_registry_absence_and_reload(
@@ -436,7 +437,7 @@ def test_in_process_pack_refuses_extensions_registry_absence_and_reload(
         await staged.close()
         await loaded.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_refusal_blocks(
@@ -520,7 +521,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         assert refused_registry.live == {}
         await refused.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @dataclass
@@ -689,4 +690,4 @@ def test_fake_tenant_registry_enforces_all_amendment_contracts() -> None:
         await asyncio.wait_for(closing, 1)
         assert deadlock_registry.live == {}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

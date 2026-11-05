@@ -36,6 +36,7 @@ from dinkster_server import create_app
 from dinkster_workers.manifest import load_pack_templates
 
 from dinkster.compose import Composition, PackSpec, compose_serving
+from tests.async_scenarios import run_scenario
 
 REPO_ROOT = Path(__file__).parent.parent
 DEV_PACK_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
@@ -179,7 +180,7 @@ def test_gallery_widget_wire_coverage() -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_gallery_socket_wire_coverage() -> None:
@@ -236,7 +237,7 @@ def test_gallery_socket_wire_coverage() -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_gallery_explicit_pack_surface(
@@ -342,7 +343,7 @@ def test_gallery_choice_and_template_endpoints() -> None:
                 await client.close()
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_gallery_template_references_real_ports() -> None:
@@ -397,7 +398,7 @@ def test_gallery_template_references_real_ports() -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_gallery_manifest_template_matches_module() -> None:
@@ -441,4 +442,4 @@ def test_gallery_nodes_execute() -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

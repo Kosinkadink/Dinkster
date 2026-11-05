@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +10,7 @@ from dinkster_workers import load_manifest
 from dinkster_workers.doctor import diagnose
 
 from dinkster.compose import compose_serving, default_pack_spec
+from tests.async_scenarios import run_scenario
 
 REPO_ROOT = Path(__file__).parents[1]
 FOUNDATION_ROOT = REPO_ROOT / "packages" / "dinkster-nodes-foundation"
@@ -94,4 +94,4 @@ def test_loop_templates_are_discoverable_and_load_byte_exactly() -> None:
             await client.close()
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -9,7 +9,6 @@ catalogs and pack-declared assets."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -48,6 +47,7 @@ from dinkster_workers import InProcessWorker
 
 from dinkster.guess_api import add_guess_routes
 from dinkster.mounts_api import MountService, add_mount_routes
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete("STRING")
 
@@ -203,7 +203,7 @@ def test_guess_endpoint_over_mounts(tmp_path: Path) -> None:
         assert matches[1]["candidates"] == []
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_guess_endpoint_over_declared_assets(tmp_path: Path) -> None:
@@ -254,7 +254,7 @@ def test_guess_endpoint_over_declared_assets(tmp_path: Path) -> None:
         assert candidate["held"] is False  # digest known, bytes not local yet
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_guess_endpoint_prefers_held_bytes_over_declarations(
@@ -299,7 +299,7 @@ def test_guess_endpoint_prefers_held_bytes_over_declarations(
         assert candidate["virtualPath"] == "mounts/models/loras/add_detail.safetensors"
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hints_mix_with_unchanged_name_guessing(tmp_path: Path) -> None:
@@ -347,7 +347,7 @@ def test_digest_hints_mix_with_unchanged_name_guessing(tmp_path: Path) -> None:
         assert unhinted == baseline_match
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hint_matches_renamed_local_entry(tmp_path: Path) -> None:
@@ -370,7 +370,7 @@ def test_digest_hint_matches_renamed_local_entry(tmp_path: Path) -> None:
         assert candidate["virtualPath"] == ("mounts/models/new/location/completely-renamed.bin")
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hint_orders_every_local_reference_and_caps_at_ten(
@@ -403,7 +403,7 @@ def test_digest_hint_orders_every_local_reference_and_caps_at_ten(
         assert all(candidate["confidence"] == "digest" for candidate in candidates)
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hint_uses_ready_local_mounts_only(tmp_path: Path) -> None:
@@ -450,7 +450,7 @@ def test_digest_hint_uses_ready_local_mounts_only(tmp_path: Path) -> None:
         assert "declaredBy" not in candidate
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hint_zero_matches_without_name_fallback(tmp_path: Path) -> None:
@@ -472,7 +472,7 @@ def test_digest_hint_zero_matches_without_name_fallback(tmp_path: Path) -> None:
         assert (await resp.json())["matches"] == [{"query": "model.safetensors", "candidates": []}]
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hint_validation_is_closed(tmp_path: Path) -> None:
@@ -497,7 +497,7 @@ def test_digest_hint_validation_is_closed(tmp_path: Path) -> None:
             assert resp.status == 400, (body, await resp.text())
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_hint_preserves_repeated_name_occurrences(tmp_path: Path) -> None:
@@ -520,7 +520,7 @@ def test_digest_hint_preserves_repeated_name_occurrences(tmp_path: Path) -> None
         assert first["candidates"][0]["confidence"] == "digest"
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_guess_endpoint_without_corpus_answers_empty(tmp_path: Path) -> None:
@@ -532,7 +532,7 @@ def test_guess_endpoint_without_corpus_answers_empty(tmp_path: Path) -> None:
         assert match["candidates"] == []
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_guess_endpoint_validates(tmp_path: Path) -> None:
@@ -557,4 +557,4 @@ def test_guess_endpoint_validates(tmp_path: Path) -> None:
         assert resp.status == 400
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

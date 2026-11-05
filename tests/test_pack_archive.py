@@ -28,6 +28,7 @@ from dinkster.pack_archive import (
     build_pack_archive,
 )
 from scripts.build_official_packs import build as build_official_packs
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 MANIFEST = '[pack]\nname = "archive-test"\n\n[pack.entry]\nnodes = "nodes:NODES"\n'
@@ -932,7 +933,6 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
 
 
 def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
-    import asyncio
     import json
     from dataclasses import replace
 
@@ -1022,7 +1022,7 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
         finally:
             await composer.close()
 
-    asyncio.run(execute())
+    run_scenario(execute())
 
 
 @pytest.mark.parametrize("problem", [None, "path", "case", "compression", "order", "junk"])

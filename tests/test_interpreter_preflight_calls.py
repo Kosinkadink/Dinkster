@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 from pathlib import Path
@@ -15,6 +14,7 @@ from dinkster_workers.provision import ProvisionError
 from dinkster import comfy_compose, port
 from dinkster.compose import CompositionError
 from dinkster.port import PortError
+from tests.async_scenarios import run_scenario
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -183,7 +183,7 @@ def test_isolated_worker_preflights_before_launcher(
         launcher=_UnexpectedLauncher(),  # type: ignore[arg-type]
     )
     with pytest.raises(RuntimeError, match="unsupported selected interpreter"):
-        asyncio.run(worker.start())
+        run_scenario(worker.start())
 
 
 def test_isolated_worker_group_preflights_before_launcher(
@@ -198,4 +198,4 @@ def test_isolated_worker_group_preflights_before_launcher(
         launcher=_UnexpectedLauncher(),  # type: ignore[arg-type]
     )
     with pytest.raises(RuntimeError, match="unsupported selected interpreter"):
-        asyncio.run(worker.start())
+        run_scenario(worker.start())

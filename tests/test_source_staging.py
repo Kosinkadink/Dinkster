@@ -26,6 +26,7 @@ from dinkster_workers import current_execution_context
 from dinkster_workers.boundary import ValueCodec, encode_invocation, read_frame, write_frame
 from dinkster_workers.host import serve_connection
 
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 requires_confined_source_staging = pytest.mark.skipif(
@@ -209,12 +210,12 @@ def test_host_closes_before_success_and_turns_cleanup_failure_into_node_error(
     ref = _ref(source)
 
     events: list[str] = []
-    result = asyncio.run(_host_result(ref, _HostProvider(events)))
+    result = run_scenario(_host_result(ref, _HostProvider(events)))
     assert "outputs" in result and "error" not in result
     assert events == ["sweep", "open", "materialize", "close"]
 
     events = []
-    result = asyncio.run(_host_result(ref, _HostProvider(events, close_error=True)))
+    result = run_scenario(_host_result(ref, _HostProvider(events, close_error=True)))
     assert result["error"]["message"].startswith("source staging cleanup failed")
     assert events == ["sweep", "open", "materialize", "close"]
 
@@ -223,7 +224,7 @@ def test_host_keeps_node_error_primary_when_cleanup_also_fails(tmp_path: Path) -
     source = tmp_path / "source.png"
     source.write_bytes(_png())
     events: list[str] = []
-    result = asyncio.run(
+    result = run_scenario(
         _host_result(
             _ref(source),
             _HostProvider(events, close_error=True),
@@ -288,7 +289,7 @@ def test_host_reserve_denial_creates_no_staging_residue(tmp_path: Path) -> None:
         await server.wait_closed()
         assert events == ["sweep"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class _BlockingSession(_HostSession):
@@ -401,7 +402,7 @@ def test_host_terminal_paths_close_and_refuse_late_materialization(
         await server.wait_closed()
         assert events == ["sweep", "open", "materialize", "materialize", "close"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class _DoubleCancelWorker(_HostWorker):
@@ -506,7 +507,7 @@ def test_cancel_then_disconnect_refuses_late_materialization_before_cleanup_star
             await server.wait_closed()
         assert events == ["sweep", "open", "materialize", "materialize", "close"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @requires_confined_source_staging

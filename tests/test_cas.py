@@ -60,6 +60,8 @@ from dinkster_workers.boundary import EncodedPayloadValidationError, encode_resu
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from test_engine import InProcessWorkerFactory, image_graph
 
+from tests.async_scenarios import run_scenario
+
 
 class ExplodingMapping(Mapping[str, object]):
     def __getitem__(self, key: str) -> object:
@@ -562,7 +564,7 @@ def test_disk_cache_survives_restart(tmp_path: Path) -> None:
         assert await second.get("missing") is None
         assert second.misses == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_unknown_type_relays(tmp_path: Path) -> None:
@@ -591,7 +593,7 @@ def test_disk_cache_unknown_type_relays(tmp_path: Path) -> None:
         with pytest.raises(UnresolvablePayload, match="not registered"):
             rehydrated.resolve()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_encoded_validator_failure_is_counted_as_disk_cache_miss(tmp_path: Path) -> None:
@@ -614,7 +616,7 @@ def test_encoded_validator_failure_is_counted_as_disk_cache_miss(tmp_path: Path)
         assert store.hits == 0
         assert store.misses == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("encoded", [b"json:null", b"json:9007199254740993"])
@@ -635,7 +637,7 @@ def test_core_combo_encoded_validation_is_enforced_by_disk_cache(
         assert store.hits == 0
         assert store.misses == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_core_combo_valid_boundary_and_disk_cache_round_trips(tmp_path: Path) -> None:
@@ -661,7 +663,7 @@ def test_core_combo_valid_boundary_and_disk_cache_round_trips(tmp_path: Path) ->
         assert store.hits == 1
         assert store.misses == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_refuses_resource_stubs(tmp_path: Path) -> None:
@@ -682,7 +684,7 @@ def test_disk_cache_refuses_resource_stubs(tmp_path: Path) -> None:
         assert await store.get("key-stub") is None
         assert store.drop_referencing("res-1") == 0  # nothing persisted
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_missing_blob_is_miss(tmp_path: Path) -> None:
@@ -696,7 +698,7 @@ def test_disk_cache_missing_blob_is_miss(tmp_path: Path) -> None:
         # The unservable manifest was dropped, not left advertising a lie.
         assert list((tmp_path / "entries").glob("*.json")) == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_trims_lru_and_gcs_blobs(tmp_path: Path) -> None:
@@ -721,7 +723,7 @@ def test_disk_cache_trims_lru_and_gcs_blobs(tmp_path: Path) -> None:
         referenced = len(list((tmp_path / "entries").glob("*.json")))
         assert len(cas.digests()) == referenced
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_hit_refreshes_lru_across_store_instances(tmp_path: Path) -> None:
@@ -745,7 +747,7 @@ def test_disk_cache_hit_refreshes_lru_across_store_instances(tmp_path: Path) -> 
         assert await reopened.get("key-b") is None
         assert await reopened.get("key-c") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_shared_root_concurrent_writes_are_complete(tmp_path: Path) -> None:
@@ -768,7 +770,7 @@ def test_disk_cache_shared_root_concurrent_writes_are_complete(tmp_path: Path) -
             assert hit["out"].resolve() == value
         assert not list((tmp_path / "entries").glob("*.tmp"))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_process_lock_waits_for_another_instance(
@@ -828,8 +830,8 @@ def test_disk_cache_process_lock_waits_for_another_instance(
                 release.set()
                 retry.set()
             store = waiting.result(timeout=15)
-        asyncio.run(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
-        assert asyncio.run(store.get("after-lock")) is not None
+        run_scenario(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
+        assert run_scenario(store.get("after-lock")) is not None
     finally:
         release.set()
         holder.join(timeout=15)
@@ -857,7 +859,7 @@ def test_disk_cache_startup_recovers_orphans_and_interrupted_manifests(tmp_path:
         assert not interrupted.exists()
         assert not malformed.exists()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_cache_shared_blob_survives_one_eviction(tmp_path: Path) -> None:
@@ -898,7 +900,7 @@ def test_disk_cache_shared_blob_survives_one_eviction(tmp_path: Path) -> None:
         assert hit is not None
         assert hit["out"].resolve() == "shared payload " * 100
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- LayeredCache ------------------------------------------------------------
@@ -934,7 +936,7 @@ def test_layered_cache_promotes_hits(tmp_path: Path) -> None:
         assert await layered.get("key-1") is None
         assert await layered.get("key-2") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_layered_cache_invalidation_fans_out(tmp_path: Path) -> None:
@@ -954,7 +956,7 @@ def test_layered_cache_invalidation_fans_out(tmp_path: Path) -> None:
         assert layered.drop_referencing("res-1") == 1  # disk refused it
         assert await layered.get("key-stub") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_layered_cache_keeps_unencodable_values_in_memory(tmp_path: Path) -> None:
@@ -976,7 +978,7 @@ def test_layered_cache_keeps_unencodable_values_in_memory(tmp_path: Path) -> Non
         assert memory_hit["out"].resolve() == 5
         assert await DiskCacheStore(tmp_path, registry).get("key-unpersistable") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- boundary cas transport ---------------------------------------------------
@@ -1186,7 +1188,7 @@ def test_types_without_encoded_validator_keep_boundary_and_cache_behavior(
         assert store.hits == 1
         assert store.misses == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- engine restart persistence ----------------------------------------------
@@ -1239,4 +1241,4 @@ def test_engine_cache_survives_restart(tmp_path: Path) -> None:
         assert rerun.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
         assert all(e.kind != "node_started" for e in events)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

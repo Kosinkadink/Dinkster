@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import tomllib
 from pathlib import Path
 
@@ -18,6 +17,7 @@ from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
+from tests.async_scenarios import run_scenario
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -105,4 +105,4 @@ def test_efficient_sam_provider_populates_owner_choice_and_scopes_models() -> No
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
