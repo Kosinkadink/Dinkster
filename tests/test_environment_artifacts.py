@@ -872,6 +872,29 @@ def test_channel_publication_exposes_only_verified_payloads(
         document = json.loads((public / "channels/main.json").read_bytes())
         document["minimumDesktopVersion"] = "0.1.0"
         (public / "channels/main.json").write_bytes(_json(document))
+    tools = None
+    if failure in {None, "identical"}:
+        from dinkster_supervisor.environment_state import write_document
+
+        from scripts.build_tools_release import build as build_tools
+
+        tools_root = public / "tools/build"
+        tools_root.mkdir(parents=True)
+        for platform in ("linux-x86_64", "windows-x86_64", "macos-arm64"):
+            (tools_root / f"dinkster-tools-{platform}.zip").write_bytes(platform.encode("ascii"))
+        tools_manifest = build_tools(Path(__file__).resolve().parents[1], tools_root)
+        sha = hashlib.sha256((tools_root / "tools-manifest.json").read_bytes()).hexdigest()
+        label = f"{tools_manifest['label']}-{sha[:8]}"
+        tools_root = tools_root.rename(tools_root.with_name(label))
+        tools = {
+            "label": label,
+            "sha256": sha,
+            "manifest": str(tools_root / "tools-manifest.json"),
+            "release": str(tools_root),
+        }
+        document = json.loads((public / "channels/main.json").read_bytes())
+        document["tools"] = tools
+        write_document(public / "channels/main.json", document)
     previous = (public / "channels/main.json").read_bytes()
     if failure == "absent":
         (public / "channels/main.json").unlink()
@@ -1093,6 +1116,7 @@ def test_channel_publication_exposes_only_verified_payloads(
         selected = discover((str(public),), "main")
         assert selected.engine == engine
         assert selected.bases == {"fixture-cpu": base}
+        assert selected.document.get("tools") == tools
         index = json.loads((public / "engine/index.json").read_bytes())
         full_id = hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
         assert len(index) == 1

@@ -30,9 +30,8 @@ from scripts.build_release import sha256
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
-    tmp_path: Path,
-) -> None:
+@pytest.fixture
+def tools_publication(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     subprocess.run(
         ["git", "clone", "--quiet", "--shared", "--no-checkout", str(ROOT), str(tmp_path)],
         check=True,
@@ -54,8 +53,16 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
     }
     for name, data in payloads.items():
         (output / name).write_bytes(data)
-    manifest = build_tools_release.build(tmp_path, output)
+    build_tools_release.build(tmp_path, output)
+    return output, payloads
+
+
+def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
+    tools_publication: tuple[Path, dict[str, bytes]],
+) -> None:
+    output, payloads = tools_publication
     data = (output / "tools-manifest.json").read_bytes()
+    manifest = json.loads(data)
     digest = hashlib.sha256(data).hexdigest()
     assert validate_tools_manifest(data, digest) == manifest
     assert (
@@ -83,6 +90,129 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
     incomplete = json.dumps(document).encode("ascii")
     with pytest.raises(EnvironmentError, match="all three native archives"):
         validate_tools_manifest(incomplete, hashlib.sha256(incomplete).hexdigest())
+
+
+@pytest.mark.parametrize("corrupt", [None, "github", "mirror"])
+def test_tools_publication_exposes_channel_only_after_both_sources_verify(
+    tmp_path: Path,
+    tools_publication: tuple[Path, dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+    corrupt: str | None,
+) -> None:
+    from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact
+
+    from scripts import publish_tools_release as publisher
+
+    output, payloads = tools_publication
+    data = (output / "tools-manifest.json").read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    manifest = json.loads(data)
+    label = manifest["label"] + "-" + digest[:8]
+    public, github = tmp_path / "mirror", tmp_path / "github"
+    (public / "channels").mkdir(parents=True)
+    channel = {
+        "format": "dinkster.channel/1",
+        "engine": {
+            "version": "9.1.2",
+            "release": "sha256:" + "a" * 64,
+            "locations": [
+                {"type": "mirror", "path": "engine/" + "a" * 64 + "/release-manifest.json"}
+            ],
+        },
+        "base": {
+            "linux-cpu": {
+                "id": "sha256:" + "b" * 64,
+                "locations": [
+                    {"type": "mirror", "path": "base/linux-cpu/" + "b" * 64 + "/manifest.json"}
+                ],
+            }
+        },
+        "minimumDesktopVersion": "0.2.0",
+        "signature": None,
+    }
+    before = json.dumps(channel).encode("ascii")
+    (public / "channels/main.json").write_bytes(before)
+    (public / "channels/stable.json").write_bytes(b"stable stays unchanged")
+    for key, value in {
+        "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": manifest["commit"],
+        "R2_PUBLIC_BASE_URL": str(public),
+        "R2_BUCKET": "fixture",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    class Bucket:
+        def get_paginator(self, name):
+            return self
+
+        def paginate(self, *, Bucket, Prefix):
+            return [
+                {
+                    "Contents": [
+                        {"Key": path.relative_to(public).as_posix(), "Size": path.stat().st_size}
+                        for path in public.rglob("*")
+                        if path.is_file() and path.relative_to(public).as_posix().startswith(Prefix)
+                    ]
+                }
+            ]
+
+        def get_object(self, *, Bucket, Key):
+            return {"Body": io.BytesIO((public / Key).read_bytes())}
+
+        def upload_file(self, source, bucket, key, **kwargs):
+            destination = public / key
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            if corrupt == "mirror" and key.endswith(".zip"):
+                destination.write_bytes(b"corruption")
+
+    def release_command(command, **kwargs):
+        if command[:3] == ["gh", "release", "view"]:
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+        assert command[:3] == ["gh", "release", "create"]
+        assert command[3] == "tools-" + label
+        assert command[command.index("--target") + 1] == manifest["commit"]
+        github.mkdir()
+        for path in output.iterdir():
+            shutil.copyfile(path, github / path.name)
+        if corrupt == "github":
+            (github / "dinkster-tools-linux-x86_64.zip").write_bytes(b"corruption")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def download(sources, name, destination, sha, size):
+        if sources[0].startswith("https://github.com/"):
+            sources = (str(github),)
+        return fetch_artifact(sources, name, destination, sha, size)
+
+    monkeypatch.setattr(publisher, "object_store", Bucket)
+    monkeypatch.setattr(publisher.subprocess, "run", release_command)
+    monkeypatch.setattr(publisher, "fetch_artifact", download)
+    if corrupt:
+        with pytest.raises(DownloadError):
+            publisher.publish(output)
+        assert (public / "channels/main.json").read_bytes() == before
+        return
+    publisher.publish(output)
+    after = json.loads((public / "channels/main.json").read_bytes())
+    reference = after.pop("tools")
+    assert after == channel
+    assert reference == {
+        "label": label,
+        "sha256": digest,
+        "release": f"{public}/tools/{label}",
+        "manifest": f"{public}/tools/{label}/tools-manifest.json",
+    }
+    assert (public / "channels/stable.json").read_bytes() == b"stable stays unchanged"
+    for name, payload in payloads.items():
+        assert (public / "tools" / label / name).read_bytes() == payload
+        assert (github / name).read_bytes() == payload
+    index = json.loads((public / "tools/index.json").read_bytes())
+    assert len(index) == 1
+    assert index[0]["path"] == "tools/" + label
+    assert index[0]["sha256"] == digest
+    assert index[0]["size"] == sum(path.stat().st_size for path in output.iterdir())
 
 
 @pytest.mark.parametrize("release", ["https://releases.dinkster.org", "/absolute/mirror"])

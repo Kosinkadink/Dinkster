@@ -27,7 +27,8 @@ from botocore.exceptions import (
 from dinkster_supervisor.environment_artifacts import parse_metadata, validate_manifest
 from dinkster_supervisor.environment_channels import engine_publication_names, write_channel
 from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
-from dinkster_supervisor.environment_state import Channel, content_digest
+from dinkster_supervisor.environment_state import Channel, content_digest, write_document
+from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
 
 
 def object_store():
@@ -47,30 +48,36 @@ def object_store():
     )
 
 
-def inventory(client) -> tuple[dict[str, int], list[tuple[str, str, dict]]]:
+def inventory(client, scope: str = "engine") -> tuple[dict[str, int], list[tuple[str, str, dict]]]:
+    manifest_name = "tools-manifest.json" if scope == "tools" else "release-manifest.json"
     objects = {
         row["Key"]: row["Size"]
         for page in client.get_paginator("list_objects_v2").paginate(
-            Bucket=os.environ["R2_BUCKET"], Prefix="engine/"
+            Bucket=os.environ["R2_BUCKET"], Prefix=scope + "/"
         )
         for row in page.get("Contents", [])
     }
     manifests = []
     for key in sorted(objects):
-        if not key.endswith("/release-manifest.json") or len(key.split("/")) != 3:
+        if not key.endswith("/" + manifest_name) or len(key.split("/")) != 3:
             continue
         data = client.get_object(Bucket=os.environ["R2_BUCKET"], Key=key)["Body"].read()
         identity = "sha256:" + hashlib.sha256(data).hexdigest()
-        engine = validate_manifest(data, identity, None)
-        name, _ = engine_publication_names(engine, identity, "main")
-        if key != f"engine/{name}/release-manifest.json":
-            raise ValueError(f"engine directory differs from its manifest identity: {key}")
-        manifests.append((key, identity, engine))
+        if scope == "tools":
+            manifest = validate_tools_manifest(data, identity[7:])
+            name = f"{manifest['label']}-{identity[7:15]}"
+        else:
+            manifest = validate_manifest(data, identity, None)
+            name, _ = engine_publication_names(manifest, identity, "main")
+        if key != f"{scope}/{name}/{manifest_name}":
+            raise ValueError(f"{scope} directory differs from its manifest identity: {key}")
+        manifests.append((key, identity, manifest))
     return objects, manifests
 
 
-def check_collision(client, identity: str) -> None:
-    objects, manifests = inventory(client)
+def check_collision(client, identity: str, scope: str = "engine") -> None:
+    objects, manifests = inventory(client, scope)
+    manifest_name = "tools-manifest.json" if scope == "tools" else "release-manifest.json"
     known = {key: full_id for key, full_id, _ in manifests}
     for directory in {key.split("/")[1] for key in objects if len(key.split("/")) >= 3}:
         short = (
@@ -80,13 +87,13 @@ def check_collision(client, identity: str) -> None:
         )
         if short != identity[7:15]:
             continue
-        existing = known.get(f"engine/{directory}/release-manifest.json")
+        existing = known.get(f"{scope}/{directory}/{manifest_name}")
         if existing is None or existing != identity:
-            raise ValueError(f"engine hash8 collision or unidentifiable directory: {directory}")
+            raise ValueError(f"{scope} hash8 collision or unidentifiable directory: {directory}")
 
 
-def write_index(client, output: Path) -> None:
-    objects, manifests = inventory(client)
+def write_index(client, output: Path, scope: str = "engine") -> None:
+    objects, manifests = inventory(client, scope)
     rows = []
     for key, identity, engine in manifests:
         prefix = key.rsplit("/", 1)[0]
@@ -112,6 +119,51 @@ def write_index(client, output: Path) -> None:
         )
     rows.sort(key=lambda row: (row["builtAt"] or "", row["sha256"]), reverse=True)
     output.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+
+
+def upload(client, path: Path, key: str, *, extra: dict[str, str] | None = None) -> None:
+    """Use the same bounded transfer/retry policy for engine and tools objects."""
+    transfer = TransferConfig(
+        multipart_threshold=64 * 1024 * 1024,
+        multipart_chunksize=64 * 1024 * 1024,
+        max_concurrency=1,
+        use_threads=False,
+        preferred_transfer_client="classic",
+    )
+    for attempt in range(4):
+        try:
+            client.upload_file(
+                str(path), os.environ["R2_BUCKET"], key, ExtraArgs=extra, Config=transfer
+            )
+            return
+        except (
+            S3UploadFailedError,
+            ClientError,
+            ConnectionClosedError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        ) as error:
+            cause = (
+                error.__cause__ or error.__context__
+                if isinstance(error, S3UploadFailedError)
+                else error
+            )
+            transient = isinstance(
+                cause, (ConnectionClosedError, EndpointConnectionError, ReadTimeoutError)
+            ) or (
+                isinstance(cause, ClientError)
+                and (
+                    cause.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                    in {429, 500, 502, 503, 504}
+                    or cause.response.get("Error", {}).get("Code")
+                    in {"ServiceUnavailable", "SlowDown", "RequestTimeout", "InternalError"}
+                )
+            )
+            if not transient or attempt == 3:
+                raise
+            delay = 2**attempt
+            print(f"Transient R2 upload failure for {key}; retrying in {delay}s", flush=True)
+            time.sleep(delay)
 
 
 def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_version: str) -> None:
@@ -165,52 +217,6 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                 raise ValueError(f"public base manifest differs: {base['variant']}")
         client = object_store()
         check_collision(client, identity)
-        transfer = TransferConfig(
-            multipart_threshold=64 * 1024 * 1024,
-            multipart_chunksize=64 * 1024 * 1024,
-            max_concurrency=1,
-            use_threads=False,
-            preferred_transfer_client="classic",
-        )
-
-        def upload(path: Path, key: str, *, extra: dict[str, str] | None = None) -> None:
-            for attempt in range(4):
-                try:
-                    client.upload_file(
-                        str(path), os.environ["R2_BUCKET"], key, ExtraArgs=extra, Config=transfer
-                    )
-                    return
-                except (
-                    S3UploadFailedError,
-                    ClientError,
-                    ConnectionClosedError,
-                    EndpointConnectionError,
-                    ReadTimeoutError,
-                ) as error:
-                    cause = (
-                        error.__cause__ or error.__context__
-                        if isinstance(error, S3UploadFailedError)
-                        else error
-                    )
-                    transient = isinstance(
-                        cause, (ConnectionClosedError, EndpointConnectionError, ReadTimeoutError)
-                    ) or (
-                        isinstance(cause, ClientError)
-                        and (
-                            cause.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                            in {429, 500, 502, 503, 504}
-                            or cause.response.get("Error", {}).get("Code")
-                            in {"ServiceUnavailable", "SlowDown", "RequestTimeout", "InternalError"}
-                        )
-                    )
-                    if not transient or attempt == 3:
-                        raise
-                    delay = 2**attempt
-                    print(
-                        f"Transient R2 upload failure for {key}; retrying in {delay}s", flush=True
-                    )
-                    time.sleep(delay)
-
         prefix = f"engine/{name}"
         rows = [
             *(
@@ -232,7 +238,7 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                     raise
             else:
                 continue
-            upload(release / row["name"], key)
+            upload(client, release / row["name"], key)
         for row in rows:
             fetch_artifact(
                 (f"{public}/{prefix}",),
@@ -244,6 +250,7 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
         index = work / "engine-index.json"
         write_index(client, index)
         upload(
+            client,
             index,
             "engine/index.json",
             extra={"ContentType": "application/json", "CacheControl": "no-cache"},
@@ -259,7 +266,16 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                 if not isinstance(cause, HTTPError) or cause.code != 404:
                     raise
             else:
-                published = Channel.parse(parse_metadata(published_bytes))
+                published_document = parse_metadata(published_bytes)
+                published = Channel.parse(published_document)
+                if "tools" in published_document:
+                    tools = tools_reference(published_document["tools"])
+                    validate_tools_manifest(
+                        read_metadata(tools["release"], "tools-manifest.json"), tools["sha256"]
+                    )
+                    document = parse_metadata(path.read_bytes())
+                    document["tools"] = tools
+                    write_document(path, document)
                 manifest = validate_manifest(
                     read_metadata(
                         public,
@@ -294,6 +310,7 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                 if status != "ahead":
                     raise ValueError(f"unexpected GitHub comparison status: {status}")
         upload(
+            client,
             path,
             f"channels/{channel}.json",
             extra={"ContentType": "application/json", "CacheControl": "no-cache"},
