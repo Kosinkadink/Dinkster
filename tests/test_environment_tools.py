@@ -33,6 +33,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
     tmp_path: Path,
 ) -> None:
+    subprocess.run(
+        ["git", "clone", "--quiet", "--shared", "--no-checkout", str(ROOT), str(tmp_path)],
+        check=True,
+    )
     project = tmp_path / "packages/dinkster-supervisor"
     project.mkdir(parents=True)
     (project / "pyproject.toml").write_text(
@@ -40,11 +44,6 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
     )
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "dinkster"\nversion = "9.1.2"\n', encoding="ascii"
-    )
-    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
-    subprocess.run(
-        ["git", "-C", str(tmp_path), "commit", "--quiet", "-m", "Tools inputs"], check=True
     )
     output = tmp_path / "publication"
     output.mkdir()
@@ -59,6 +58,9 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
     data = (output / "tools-manifest.json").read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     assert validate_tools_manifest(data, digest) == manifest
+    assert manifest["commit"] == subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
+    ).strip()
     assert manifest["version"] == "2.7.4"
     assert str(manifest["label"]).endswith("-2.7.4")
     assert manifest["artifacts"] == [
