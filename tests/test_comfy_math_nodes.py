@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from pathlib import Path
 from typing import cast
@@ -13,6 +12,7 @@ from dinkster_nodes_comfy.math import ComfyMathExpression
 from simpleeval import FeatureNotAvailable
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize(
@@ -124,4 +124,4 @@ def test_isolated_manifest_evaluates_ordered_numeric_union_family() -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

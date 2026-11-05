@@ -31,6 +31,8 @@ from dinkster_protocol import (
 from dinkster_workers import ExecutionContext
 from dinkster_workers.execution import use_execution_context
 
+from tests.async_scenarios import run_scenario
+
 
 def route_token(*, policy: str = "auto", torch_version: str = "2.13.0") -> AttentionRouteToken:
     return AttentionRouteToken(
@@ -804,7 +806,7 @@ def test_sampling_model_preparation_is_invocation_local_and_resets_on_failure() 
     assert prepare_sampling_model(model) is model
     with use_execution_context(context(Runtime(routed))):
         assert prepare_sampling_model(model) is routed
-        assert asyncio.run(threaded()) is routed
+        assert run_scenario(threaded()) is routed
         with use_execution_context(context(None)):
             assert prepare_sampling_model(model) is model
         with pytest.raises(ValueError, match="inner failure"):
@@ -882,4 +884,4 @@ def test_in_process_sampling_preserves_invocation_distributed_configuration(nest
         assert result.outputs is not None
         assert result.outputs["value"].resolve() == str(config)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

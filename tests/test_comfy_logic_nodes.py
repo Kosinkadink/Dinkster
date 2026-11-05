@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
@@ -14,6 +12,8 @@ from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize("index", [0, -7, 205])
@@ -106,4 +106,4 @@ def test_switch_only_demands_the_selected_connected_arm(
             assert "unused" not in result.executed
             assert "selected" not in result.executed or connected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

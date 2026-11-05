@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import aiohttp
@@ -20,6 +19,8 @@ from dinkster_server.auth import (
     handle_ws_ticket,
     install_auth,
 )
+
+from tests.async_scenarios import run_scenario
 
 
 def _authenticator(*, include_limited: bool = False) -> StaticBearerAuthenticator:
@@ -84,7 +85,7 @@ def test_token_kind_parsing_defaults_to_human_and_remains_strict(tmp_path: Path)
             await agent_authenticator.authenticate("secret"),
         )
 
-    human, agent = asyncio.run(principals())
+    human, agent = run_scenario(principals())
     assert human is not None and human.kind == "human"
     assert agent is not None and agent.kind == "agent"
 
@@ -242,7 +243,7 @@ def test_permission_management_and_runtime_toggle_flow() -> None:
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_permission_store_persists_explicit_values_and_memory_matches(tmp_path: Path) -> None:
@@ -311,4 +312,4 @@ def test_websocket_ticket_applies_current_mask_to_original_token_grants() -> Non
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

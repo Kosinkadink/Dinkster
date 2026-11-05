@@ -29,6 +29,8 @@ from dinkster_schema import (
 from dinkster_values import TypeRegistry, ValueMeta, is_absent, list_children, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
+from tests.async_scenarios import run_scenario
+
 NODES = (
     *LOOP_NODES,
     ComfyMathExpression,
@@ -139,7 +141,7 @@ def test_carried_value_and_empty_loop(
             )
             assert result.outputs["end"]["outputs"].resolve() == expected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("mode", ["For", "List"])
@@ -163,7 +165,7 @@ def test_loop_modes(mode: str) -> None:
             "end": GraphNode("EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}),
         }
     )
-    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
+    result = run_scenario(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
     assert result.outputs["end"]["outputs"].resolve() == (
         [6, 12, 18] if mode == "For" else [18, 4, 10]
     )
@@ -210,7 +212,7 @@ def test_nested_loop_keeps_each_occurrences_results(inner_cache: bool) -> None:
             executed_body = [node for node in result.executed if node.endswith("_body")]
             assert len(executed_body) == (0 if run and inner_cache else 6)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("worker_kind", ["isolated", "governed"])
@@ -271,7 +273,7 @@ def test_loop_expansion_and_publication_across_worker_boundary(
         finally:
             await boundary.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("accumulate", [False, True])
@@ -294,7 +296,7 @@ def test_accumulation_control_reads_its_value(accumulate: bool, linked: bool) ->
             ),
         }
     )
-    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
+    result = run_scenario(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
     assert result.outputs["end"]["outputs"].resolve() == ([0, 1, 2] if accumulate else [2])
 
 
@@ -347,7 +349,7 @@ def test_loop_collection_preserves_child_envelopes() -> None:
             if replay:
                 assert "items" in result.cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -403,7 +405,7 @@ def test_absent_loop_dependency_completes(cache_enabled: bool, absent_input: str
             else:
                 assert output.resolve() == [0]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_loop_inside_map_can_override_its_end() -> None:
@@ -431,5 +433,5 @@ def test_loop_inside_map_can_override_its_end() -> None:
             )
         }
     )
-    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["region"]), 3))
+    result = run_scenario(asyncio.wait_for(make_engine().run(graph, ["region"]), 3))
     assert result.outputs["region"]["values"].resolve() == [[0, 1]]

@@ -44,6 +44,8 @@ from dinkster_workers.boundary import (
 )
 from dinkster_workers.session import BoundarySession, WorkerDied
 
+from tests.async_scenarios import run_scenario
+
 
 def registry() -> TypeRegistry:
     result = TypeRegistry()
@@ -500,7 +502,7 @@ def test_frame_reader_refuses_non_strict_json(header_text: str) -> None:
         return await read_frame(reader)
 
     with pytest.raises(BoundaryError):
-        asyncio.run(read())
+        run_scenario(read())
 
 
 def test_frame_reader_normalizes_invalid_utf8() -> None:
@@ -511,7 +513,7 @@ def test_frame_reader_normalizes_invalid_utf8() -> None:
         return await read_frame(reader)
 
     with pytest.raises(BoundaryError):
-        asyncio.run(read())
+        run_scenario(read())
 
 
 def test_frame_writer_refuses_non_strict_json_before_writing() -> None:
@@ -533,7 +535,7 @@ def test_frame_writer_refuses_non_strict_json_before_writing() -> None:
             await write_frame(cast(Any, writer), {"data": float("nan")}, [])
         return writer
 
-    writer = asyncio.run(write())
+    writer = run_scenario(write())
     assert writer.writes == []
 
 
@@ -559,7 +561,7 @@ def test_frame_writer_refuses_oversized_header_before_writing(
         return writer
 
     monkeypatch.setattr(boundary, "_MAX_HEADER_BYTES", 1)
-    writer = asyncio.run(write())
+    writer = run_scenario(write())
     assert writer.writes == []
 
 
@@ -587,7 +589,7 @@ def test_non_strict_invocation_header_is_a_node_error_without_session_death() ->
         assert session.alive
         return result
 
-    result = cast(InvocationResult, asyncio.run(scenario()))
+    result = cast(InvocationResult, run_scenario(scenario()))
     assert result.error is not None
     assert result.error.message == "frame header is not strict JSON"
 
@@ -609,7 +611,7 @@ def test_failed_invocation_write_rolls_back_cas_for_retry() -> None:
         export_snapshot=ExportSnapshot(prompt={"value": float("nan")}),
     )
 
-    result = asyncio.run(session.invoke(invalid))
+    result = run_scenario(session.invoke(invalid))
     assert result.error is not None
     retry = Invocation("retry", "node", "Node", {"value": value}, NodeSchema("Node"))
     header, blobs, _, _ = boundary.encode_invocation(codec, retry)
@@ -660,7 +662,7 @@ def test_failed_invocation_write_releases_registered_shared_memory(
     )
 
     with pytest.raises(BoundaryError, match="strict JSON"):
-        asyncio.run(session._send_invocation(invalid))  # noqa: SLF001
+        run_scenario(session._send_invocation(invalid))  # noqa: SLF001
     assert writes == []
     assert len(released) == 1
     assert session._sent_segments == {}  # noqa: SLF001
@@ -703,7 +705,7 @@ def test_concurrent_invocation_write_rollback_keeps_cas_peer_coherent() -> None:
             session._send_lock.release()  # noqa: SLF001
         return await asyncio.gather(invalid_task, valid_task, return_exceptions=True)
 
-    results = asyncio.run(scenario())
+    results = run_scenario(scenario())
     assert isinstance(results[0], BoundaryError)
     assert isinstance(results[1], dict)
     header = cast(dict[str, Any], json.loads(writes[1]))
@@ -788,7 +790,7 @@ def test_queued_invocation_refuses_after_session_close_starts(
             finish_close.set()
             await close_task
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert codec.conversation_checkpoint() == ({}, 0)
     assert created_segments == []
     assert released_segments == []
@@ -852,7 +854,7 @@ def test_queued_generic_send_releases_prebuilt_segment_after_close_cleanup(
             finish_close.set()
             await close_task
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert writes == []
     assert released == [segment]
 

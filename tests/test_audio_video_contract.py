@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import sys
 from fractions import Fraction
@@ -50,6 +49,8 @@ from dinkster_workers.devices import DeviceMap
 from test_av_codec import FakeTensor
 from test_remote import TOKEN, start_service, stop_service
 from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost
+
+from tests.async_scenarios import run_scenario
 
 
 def _encoded_video_audio(
@@ -573,7 +574,7 @@ def test_nested_audio_roundtrip_binds_without_decoding(
         assert encode_video(cached["video"].resolve()) == encoded
         assert cached["video"].meta == transported.meta
 
-    asyncio.run(reuse())
+    run_scenario(reuse())
     audio = (
         rebound["complete_audio"]
         if complete
@@ -672,4 +673,4 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -30,6 +30,8 @@ from test_declared_assets import (
 from test_relay import eventually
 from test_remote import TOKEN, start_service, stop_service
 
+from tests.async_scenarios import run_scenario
+
 ENDPOINT_TOKEN = "staging-bearer-secret-0123456789"
 
 
@@ -171,7 +173,7 @@ def test_empty_daemon_stages_from_engine_then_executes(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_held_asset_short_circuits_without_transfer(tmp_path: Path) -> None:
@@ -206,7 +208,7 @@ def test_held_asset_short_circuits_without_transfer(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_digest_mismatch_rolls_back_and_names_digest_and_worker(tmp_path: Path) -> None:
@@ -240,7 +242,7 @@ def test_digest_mismatch_rolls_back_and_names_digest_and_worker(tmp_path: Path) 
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_interrupted_transfer_cleans_up(tmp_path: Path) -> None:
@@ -274,7 +276,7 @@ def test_interrupted_transfer_cleans_up(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancellation_aborts_download_and_rolls_back(tmp_path: Path) -> None:
@@ -328,7 +330,7 @@ def test_cancellation_aborts_download_and_rolls_back(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_old_daemon_without_staging_refused_when_needed(tmp_path: Path) -> None:
@@ -357,4 +359,4 @@ def test_old_daemon_without_staging_refused_when_needed(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

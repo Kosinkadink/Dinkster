@@ -38,6 +38,8 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 REPO = Path(__file__).resolve().parent.parent
 GOLDEN = REPO / "tests" / "goldens" / "lazy_input_m1.json"
 
@@ -519,7 +521,7 @@ def test_every_contract_case_runs_through_the_real_engine() -> None:
         for case in cases:
             assert await _run_real_case(case) == case["expected"], case["id"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shared_producer_is_deduplicated_in_demand_event() -> None:
@@ -538,7 +540,7 @@ def test_shared_producer_is_deduplicated_in_demand_event() -> None:
     events = cast("list[dict[str, object]]", replayed["demandEvents"])
     first_data = cast("dict[str, object]", events[0]["data"])
     assert first_data["producerNodes"] == ["shared_source"]
-    real = asyncio.run(_run_real_case(case))
+    real = run_scenario(_run_real_case(case))
     real_events = cast("list[dict[str, object]]", real["demandEvents"])
     real_first = cast("dict[str, object]", real_events[0]["data"])
     assert real_first["producerNodes"] == ["shared_source"]

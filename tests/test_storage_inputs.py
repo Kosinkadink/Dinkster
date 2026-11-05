@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 from collections.abc import Mapping
 from dataclasses import replace
@@ -29,6 +28,8 @@ from dinkster_schema import (
 )
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker
+
+from tests.async_scenarios import run_scenario
 
 IMAGE = TypeExpr.concrete("test.image")
 BF16 = np.dtype([("bfloat16", "<u2")])
@@ -325,7 +326,7 @@ def test_invocation_storage_contract_crosses_worker_boundary(
             if isinstance(worker, IsolatedWorker):
                 await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import cast
 
 import numpy as np
@@ -23,6 +22,8 @@ from dinkster_nodes_image import (
 from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr, build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 
 def _detection(
@@ -263,5 +264,5 @@ def test_list_element_selects_a_detection() -> None:
             ),
         }
     )
-    result = asyncio.run(engine.run(graph, ["select"]))
+    result = run_scenario(engine.run(graph, ["select"]))
     assert cast("Detection", result.outputs["select"]["item"].resolve()).label == "dog"

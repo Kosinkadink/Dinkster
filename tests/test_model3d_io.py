@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import shutil
@@ -58,6 +57,7 @@ from dinkster_values import TypeRegistry, decode_model3d, register_core_types
 from dinkster_workers import InProcessWorker
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -199,7 +199,7 @@ def test_native_advanced_loader_runs_after_common_source_preflight(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_load_file3d_binds_only_declared_adjacent_files_and_roundtrips(
@@ -443,7 +443,7 @@ def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
         assert result.outputs["load"]["file"].resolve() is None
         assert not result.artifacts
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     linked = Graph({"load": GraphNode(schema.node_type, {"model": Link("producer", "file")})})
     prepared, missing = bind_model_names(linked, {schema.node_type: schema}, None)
     assert prepared == linked
@@ -537,7 +537,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_load_file3d_worker_requires_indexed_or_host_granted_contained_bytes(
@@ -909,7 +909,7 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def glb_bytes(document: bytes = b'{"asset":{"version":"2.0"}}') -> bytes:
@@ -1210,7 +1210,7 @@ def test_worker_hands_load_the_asset_and_decodes_it_for_preview(tmp_path: Path) 
         assert result.outputs["load"]["model"].resolve() == expected
         assert result.outputs["preview"]["model"].resolve() == expected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class Advanced3DFileSource(Node):
@@ -1377,7 +1377,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_file3d_null_roundtrip_preserves_type_and_declares_no_assets() -> None:
@@ -1771,7 +1771,7 @@ def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
             assert sidecar.read_bytes() == FILE3D_SIDECAR
             assert vault.has(source.digest) and vault.has(sidecar.digest)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_schemas_declare_upload_save_and_preview_intent() -> None:
@@ -2000,4 +2000,4 @@ def test_viewport_capture_survives_workers_and_persistent_cache(
             assert restored["camera_info"] == VIEWPORT_CAMERA
             assert vault.has(capture.digest)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

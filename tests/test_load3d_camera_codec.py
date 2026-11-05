@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -28,6 +27,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import LATENT_TYPE, EncodedLatentTensor, RenditionUnavailable, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 PERSPECTIVE = {
     "position": {"x": 1, "y": 2.5, "z": -3},
@@ -355,7 +355,7 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("empty", (False, True))
@@ -440,4 +440,4 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

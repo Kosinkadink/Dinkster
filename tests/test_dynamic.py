@@ -3,7 +3,6 @@ validation against the effective schema, and output-family representability."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 
 import pytest
@@ -39,6 +38,8 @@ from dinkster_schema import (
 from dinkster_values import TypeRegistry, Value, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
+
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete("STRING")
 FLOAT = TypeExpr.concrete("FLOAT")
@@ -639,7 +640,7 @@ def test_dynamic_inputs_execute_and_cache_deterministically() -> None:
         back = await engine.run(join_graph(("a", "x"), ("b", "y")), ["j"])
         assert back.cached == ("j",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_family_members_accept_links() -> None:
@@ -657,7 +658,7 @@ def test_family_members_accept_links() -> None:
         result = await engine.run(graph, ["j"])
         assert result.outputs["j"]["text"].resolve() == "hello world"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_min_members_enforced_at_run() -> None:
@@ -666,7 +667,7 @@ def test_min_members_enforced_at_run() -> None:
         with pytest.raises(GraphValidationError):
             await engine.run(join_graph(), ["j"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class WrongOutputs(Node):
@@ -708,7 +709,7 @@ def test_worker_validates_against_the_effective_schema() -> None:
         with pytest.raises(ExecutionError):
             await engine.run(graph, ["n"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- output families: elaboration is document-determined ---
@@ -885,7 +886,7 @@ def test_dynamic_outputs_execute_and_cache_deterministically() -> None:
         assert grown.executed == ("s",)
         assert grown.outputs["s"]["parts.c"].resolve() == "c"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dynamic_outputs_link_into_downstream_nodes() -> None:
@@ -911,7 +912,7 @@ def test_dynamic_outputs_link_into_downstream_nodes() -> None:
         result = await engine.run(graph, ["j"])
         assert result.outputs["j"]["text"].resolve() == "z-x"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_min_output_members_enforced_at_run() -> None:
@@ -920,7 +921,7 @@ def test_min_output_members_enforced_at_run() -> None:
         with pytest.raises(GraphValidationError):
             await engine.run(split_graph(()), ["s"])  # min_members=1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class SpecProbe(Node):
@@ -961,7 +962,7 @@ def test_output_spec_exposes_exact_ordered_membership() -> None:
         assert SpecProbe.seen.family("unknown") == ()
         assert set(result.outputs["n"]) == {"results.z", "results.a", "results.m"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class CountSpecProbe(Node):
@@ -1005,7 +1006,7 @@ def test_counted_output_members_reach_worker_output_spec() -> None:
         assert CountSpecProbe.seen.family("results") == ("0", "1", "2")
         assert set(result.outputs["n"]) == {"results.0", "results.1", "results.2"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class BadFanout(Node):
@@ -1043,7 +1044,7 @@ def test_wrong_grouped_return_members_fail_at_the_worker_boundary() -> None:
         with pytest.raises(ExecutionError, match="missing outputs: results.a"):
             await engine.run(graph, ["n"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_rejects_invocation_provenance_skew() -> None:
@@ -1087,7 +1088,7 @@ def test_worker_rejects_invocation_provenance_skew() -> None:
         assert result.error is not None
         assert "schema skew" in result.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class WrongShapeCache:
@@ -1122,7 +1123,7 @@ def test_cache_hit_with_wrong_dynamic_shape_is_a_miss() -> None:
         assert result.outputs["s"]["parts.b"].resolve() == "b c"
         assert cache.puts == 1  # and overwritten
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class PlainStatic(Node):
@@ -1149,7 +1150,7 @@ def test_static_nodes_never_receive_output_spec() -> None:
         result = await engine.run(graph, ["n"])
         assert result.outputs["n"]["out"].resolve() == "v"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- the run-scoped snapshot: topology is fixed at run() entry ---
@@ -1222,4 +1223,4 @@ def test_run_executes_the_snapshot_even_if_the_document_mutates_mid_run() -> Non
         assert result.outputs["j"]["text"].resolve() == "x y"
         assert set(result.outputs["s"]) == {"parts.a", "parts.b"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

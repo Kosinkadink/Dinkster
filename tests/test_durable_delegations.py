@@ -39,6 +39,8 @@ from test_token_authenticator import (
     _sign,
 )
 
+from tests.async_scenarios import run_scenario
+
 
 @asynccontextmanager
 async def identity() -> AsyncIterator[tuple[OKPKey, str]]:
@@ -245,7 +247,7 @@ def test_delegation_and_revocation_survive_restart(tmp_path: Path) -> None:
                     > 0
                 )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_freshness_suspends_http_and_both_sockets_then_resumes(
@@ -322,7 +324,7 @@ def test_freshness_suspends_http_and_both_sockets_then_resumes(
             listed = await (await client.get("/api/auth/delegations", headers=human)).json()
             assert [item["id"] for item in listed] == [issued["id"]]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fresher_user_jwt_replaces_original_expiry_and_role_ceiling(tmp_path: Path) -> None:
@@ -361,7 +363,7 @@ def test_fresher_user_jwt_replaces_original_expiry_and_role_ceiling(tmp_path: Pa
                     assert closed.type == WSMsgType.CLOSE
                     assert closed.data == 1008 and closed.extra == "authorization-expired"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
@@ -409,7 +411,7 @@ def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
                         == 4096
                     )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_auth_off_agents_do_not_need_a_fresh_jwt(
@@ -458,4 +460,4 @@ def test_auth_off_agents_do_not_need_a_fresh_jwt(
                 assert event["type"] == "job_state"
                 assert event["jobId"] == "after-expiry"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

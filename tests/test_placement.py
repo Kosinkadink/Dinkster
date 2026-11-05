@@ -8,8 +8,6 @@ parent namespace, so device strings here name silicon unambiguously.
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import (
@@ -37,6 +35,8 @@ from dinkster_values import (
     register_core_types,
 )
 from dinkster_workers import InProcessWorker, PlacementWorker, RoutingWorker
+
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete(CORE_STRING)
 SCHEMA = NodeSchema(
@@ -99,7 +99,7 @@ def two_workers() -> tuple[FakeWorker, FakeWorker, PlacementWorker]:
 
 
 def run_placed(placement: PlacementWorker, inputs: dict[str, Value]) -> InvocationResult:
-    return asyncio.run(placement.invoke(make_invocation(inputs)))
+    return run_scenario(placement.invoke(make_invocation(inputs)))
 
 
 def placed_on(result: InvocationResult) -> str:
@@ -135,7 +135,7 @@ def test_placed_admission_uses_unpinned_policy(route: bool) -> None:
         )
         assert result.outputs["check"]["value"].resolve() == 3.5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unknown_device_owner_fails_at_construction() -> None:
@@ -276,6 +276,6 @@ def test_residency_beats_policy() -> None:
 
 def test_prepare_reaches_every_worker() -> None:
     a, b, placement = two_workers()
-    asyncio.run(placement.prepare(["test.sample"]))
+    run_scenario(placement.prepare(["test.sample"]))
     assert a.prepared == [["test.sample"]]
     assert b.prepared == [["test.sample"]]

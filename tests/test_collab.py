@@ -34,6 +34,8 @@ from dinkster_collab import (
     validate_patch,
 )
 
+from tests.async_scenarios import run_scenario
+
 REPLACE = [{"op": "replace", "path": ["meta", "title"], "value": "new"}]
 
 
@@ -410,7 +412,7 @@ def test_session_lifecycle_over_http() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_image_session_kind_and_snapshot_validation_over_http() -> None:
@@ -470,7 +472,7 @@ def test_image_session_kind_and_snapshot_validation_over_http() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_protocol_version_and_validation_refusals() -> None:
@@ -523,7 +525,7 @@ def test_protocol_version_and_validation_refusals() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_http_ops_refuse_actor_reuse_by_another_principal() -> None:
@@ -562,7 +564,7 @@ def test_http_ops_refuse_actor_reuse_by_another_principal() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acl_routes_enforce_roles_and_guard_the_last_owner() -> None:
@@ -632,7 +634,7 @@ def test_acl_routes_enforce_roles_and_guard_the_last_owner() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acl_demotion_closes_live_event_socket() -> None:
@@ -666,7 +668,7 @@ def test_acl_demotion_closes_live_event_socket() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_legacy_session_acl_is_visible_but_cannot_be_claimed(tmp_path: Path) -> None:
@@ -708,7 +710,7 @@ def test_legacy_session_acl_is_visible_but_cannot_be_claimed(tmp_path: Path) -> 
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_op_rate_limit_refills_and_rotating_actors_share_principal_budget(tmp_path: Path) -> None:
@@ -794,7 +796,7 @@ def test_op_rate_limit_refills_and_rotating_actors_share_principal_budget(tmp_pa
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_presence_rate_limit_drops_excess_frames_only() -> None:
@@ -831,7 +833,7 @@ def test_presence_rate_limit_drops_excess_frames_only() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ws_presence_binds_actors_and_drops_spoofed_frames() -> None:
@@ -869,7 +871,7 @@ def test_ws_presence_binds_actors_and_drops_spoofed_frames() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ws_delivers_ops_and_relays_presence() -> None:
@@ -925,7 +927,7 @@ def test_ws_delivers_ops_and_relays_presence() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ws_synthesizes_session_closed_when_delete_wins_the_handshake() -> None:
@@ -974,7 +976,7 @@ def test_ws_synthesizes_session_closed_when_delete_wins_the_handshake() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_delete_always_delivers_session_closed_to_registered_subscribers() -> None:
@@ -1006,4 +1008,4 @@ def test_delete_always_delivers_session_closed_to_registered_subscribers() -> No
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

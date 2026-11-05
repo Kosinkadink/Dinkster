@@ -19,6 +19,8 @@ from dinkster_assets import (
     rank_transport_candidates,
 )
 
+from tests.async_scenarios import run_scenario
+
 ASSET_BYTES = b"transport resolver fixture" * 32
 ASSET_DIGEST = digest_bytes(ASSET_BYTES)
 FakeStatus = TransferStatus | Literal["stalled"]
@@ -109,7 +111,7 @@ def _resolver(
 
 
 def _resolve(resolver: TransportResolver) -> Path | None:
-    return asyncio.run(resolver.resolve(ASSET_DIGEST))
+    return run_scenario(resolver.resolve(ASSET_DIGEST))
 
 
 def test_transport_ranking_is_exact_and_stable() -> None:
@@ -344,7 +346,7 @@ def test_one_writer_per_digest_and_waiters_reuse_result(tmp_path: Path) -> None:
         assert results[0] == results[1]
         assert results[0] is not None and results[0].read_bytes() == ASSET_BYTES
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_one_writer_per_digest_across_event_loop_threads(tmp_path: Path) -> None:
@@ -393,7 +395,7 @@ def test_one_writer_per_digest_across_event_loop_threads(tmp_path: Path) -> None
 
     def resolve(resolver: TransportResolver) -> None:
         try:
-            results.append(asyncio.run(resolver.resolve(ASSET_DIGEST)))
+            results.append(run_scenario(resolver.resolve(ASSET_DIGEST)))
         except BaseException as exc:
             errors.append(exc)
 

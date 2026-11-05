@@ -12,7 +12,6 @@ conservative: a miss, never a corrupt Value.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -29,6 +28,8 @@ from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from test_cas import PoisonWorker
 from test_engine import InProcessWorkerFactory, image_graph
 from test_server import SCHEMAS, make_engine
+
+from tests.async_scenarios import run_scenario
 
 
 def make_registry() -> TypeRegistry:
@@ -74,7 +75,7 @@ def test_cache_endpoints(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_endpoints_absent_without_export() -> None:
@@ -88,7 +89,7 @@ def test_endpoints_absent_without_export() -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_peer_cache_store_round_trip(tmp_path: Path) -> None:
@@ -113,7 +114,7 @@ def test_peer_cache_store_round_trip(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class TamperingExport:
@@ -147,7 +148,7 @@ def test_peer_cache_store_rejects_tampered_bytes(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_peer_down_is_a_miss() -> None:
@@ -157,7 +158,7 @@ def test_peer_down_is_a_miss() -> None:
         ) as peer:
             assert await peer.get("any-key") is None  # conservative, no raise
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_second_instance_hits_shared_cache(tmp_path: Path) -> None:
@@ -210,4 +211,4 @@ def test_second_instance_hits_shared_cache(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

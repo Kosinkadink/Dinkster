@@ -32,6 +32,7 @@ from dinkster_supervisor import (
 
 import dinkster.installer as installer_module
 from dinkster.installer import Installer, lock_local_pack
+from tests.async_scenarios import run_scenario
 
 # Ports below the kernel's ephemeral range (32768+) cannot be claimed by
 # outgoing connections between this probe and the eventual server bind.
@@ -201,7 +202,7 @@ def test_station_ports_bind_before_any_engine(tmp_path: Path) -> None:
         finally:
             await station.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_station_start_stop_restart_lifecycle(tmp_path: Path) -> None:
@@ -253,7 +254,7 @@ def test_station_start_stop_restart_lifecycle(tmp_path: Path) -> None:
         finally:
             await station.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_station_autostart_and_failure_isolation(tmp_path: Path) -> None:
@@ -300,7 +301,7 @@ def test_station_autostart_and_failure_isolation(tmp_path: Path) -> None:
         finally:
             await station.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_station_refuses_management_port_collision(tmp_path: Path) -> None:
@@ -309,7 +310,7 @@ def test_station_refuses_management_port_collision(tmp_path: Path) -> None:
         with pytest.raises(InstallsError, match="management port"):
             await start_station((install,), port=install.port)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- two real engines over one shared store ----------------------------
@@ -421,4 +422,4 @@ def test_station_two_real_engines_share_one_store(
         finally:
             await station.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

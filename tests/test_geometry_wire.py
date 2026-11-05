@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import struct
 import subprocess
@@ -35,6 +34,7 @@ from dinkster_values import EncodedLatentTensor, encode_latent, register_core_ty
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize("type_id", ("DA3_MODEL", "FACE_DETECTION_MODEL", "SAM3D_BODY_MODEL"))
@@ -405,7 +405,7 @@ def test_shape_subdivides_survives_ordinary_hosts_and_cache_restart(
             finally:
                 await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -695,4 +695,4 @@ def test_vision_packet_crosses_workers_and_persistent_cache(tmp_path: Path) -> N
             finally:
                 await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

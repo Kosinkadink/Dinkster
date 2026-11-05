@@ -11,7 +11,6 @@ rolls the complete staged generation back with ordered diagnostics.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from dataclasses import replace
@@ -29,6 +28,7 @@ import dinkster.installer as installer_module
 from dinkster.activation import add_activation_routes, compute_plan
 from dinkster.compose import ServingComposer, default_pack_spec
 from dinkster.installer import Installer, lock_local_pack
+from tests.async_scenarios import run_scenario
 
 MODULE_TEMPLATE = '''\
 """Activation test pack {name!r}, marker {marker!r}."""
@@ -304,7 +304,7 @@ def test_activation_plan_and_apply_end_to_end(
                 await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_activation_reuses_unchanged_in_process_default_packs(tmp_path: Path) -> None:
@@ -355,7 +355,7 @@ def test_activation_reuses_unchanged_in_process_default_packs(tmp_path: Path) ->
                 await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_extension_snapshot_activation_transport_and_deactivation(tmp_path: Path) -> None:
@@ -414,7 +414,7 @@ def test_extension_snapshot_activation_transport_and_deactivation(tmp_path: Path
                 await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_exclusive_extension_collision_rolls_back_deterministically(
@@ -456,7 +456,7 @@ def test_exclusive_extension_collision_rolls_back_deterministically(
                 await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compute_plan_with_no_generation_is_empty(tmp_path: Path) -> None:
@@ -479,4 +479,4 @@ def test_compute_plan_with_no_generation_is_empty(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

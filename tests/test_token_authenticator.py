@@ -23,6 +23,8 @@ from joserfc import jwt
 from joserfc.jwk import OctKey, OKPKey
 from test_server import SCHEMAS, make_engine
 
+from tests.async_scenarios import run_scenario
+
 ISSUER = "https://identity.example"
 AUDIENCE = "dinkster-session"
 KID = "identity-key"
@@ -139,7 +141,7 @@ def test_token_authenticator_maps_verified_principal_without_deriving_grants(
         with pytest.raises(TypeError):
             principal.grants[SCOPE] = frozenset()  # type: ignore[index]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
     assert len(instances) == 1
     verifier = instances[0]
@@ -182,7 +184,7 @@ def test_composite_authenticator_uses_declared_order() -> None:
         assert await fallback.authenticate("jwt") is token_principal
         assert calls == ["static:jwt", "token:jwt"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_token_authenticator_rejects_invalid_credentials_without_raising() -> None:
@@ -233,7 +235,7 @@ def test_token_authenticator_rejects_invalid_credentials_without_raising() -> No
         finally:
             await service.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_token_authenticator_shares_fresh_and_stale_jwks_cache(
@@ -266,7 +268,7 @@ def test_token_authenticator_shares_fresh_and_stale_jwks_cache(
         finally:
             await service.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_identity_bearer_reaches_protected_endpoint_with_verified_principal() -> None:
@@ -311,7 +313,7 @@ def test_identity_bearer_reaches_protected_endpoint_with_verified_principal() ->
             await client.close()
             await service.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_static_principal_management_survives_composition() -> None:
@@ -346,4 +348,4 @@ def test_static_principal_management_survives_composition() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

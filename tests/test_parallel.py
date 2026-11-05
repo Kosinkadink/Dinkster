@@ -31,6 +31,8 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 
 
@@ -179,7 +181,7 @@ def test_independent_nodes_execute_concurrently() -> None:
         for tag in "abc":
             assert result.outputs[tag]["out"].resolve() == tag
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_max_concurrency_bounds_parallelism() -> None:
@@ -189,7 +191,7 @@ def test_max_concurrency_bounds_parallelism() -> None:
         await engine.run(sleeper_fanout("a", "b", "c"), ["a", "b", "c"])
         assert Sleeper.peak == 1  # serialized by the slot budget
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dependencies_are_respected_under_parallelism() -> None:
@@ -216,7 +218,7 @@ def test_dependencies_are_respected_under_parallelism() -> None:
         assert result.executed[-1] == "join"  # join completes last
         assert result.executed[0] == "root"  # root completes first
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_parallel_and_serial_schedules_produce_identical_results() -> None:
@@ -246,7 +248,7 @@ def test_parallel_and_serial_schedules_produce_identical_results() -> None:
         assert isinstance(text, str)
         return text
 
-    assert asyncio.run(run_with(None)) == asyncio.run(run_with(1)) == "xy-l xy-r"
+    assert run_scenario(run_with(None)) == run_scenario(run_with(1)) == "xy-l xy-r"
 
 
 def test_single_flight_within_one_run() -> None:
@@ -267,7 +269,7 @@ def test_single_flight_within_one_run() -> None:
         assert result.outputs["n1"]["out"].resolve() == "same"
         assert result.outputs["n2"]["out"].resolve() == "same"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_flight_across_concurrent_runs() -> None:
@@ -285,7 +287,7 @@ def test_single_flight_across_concurrent_runs() -> None:
             1,
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_non_idempotent_nodes_are_never_coalesced() -> None:
@@ -299,7 +301,7 @@ def test_non_idempotent_nodes_are_never_coalesced() -> None:
         assert r1.executed == ("e",)
         assert r2.executed == ("e",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failure_fails_the_run_with_the_node_error() -> None:
@@ -317,7 +319,7 @@ def test_failure_fails_the_run_with_the_node_error() -> None:
         assert excinfo.value.error.node_id == "bad"
         assert "boom" in excinfo.value.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_coalesced_runs_fail_identically() -> None:
@@ -333,7 +335,7 @@ def test_coalesced_runs_fail_identically() -> None:
             assert isinstance(outcome, ExecutionError)
             assert "boom" in outcome.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_computation_is_not_poisoned_for_later_runs() -> None:
@@ -347,7 +349,7 @@ def test_failed_computation_is_not_poisoned_for_later_runs() -> None:
             await engine.run(graph, ["bad"])
         assert worker.invocations == 2
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_waiter_takes_over_when_owning_run_is_cancelled() -> None:
@@ -376,7 +378,7 @@ def test_waiter_takes_over_when_owning_run_is_cancelled() -> None:
         assert r2.outputs["slow"]["out"].resolve() == "takeover"
         assert not engine._inflight  # no leaked inflight entries
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class GatedWorker:
@@ -455,7 +457,7 @@ def test_cancelling_owner_and_waiter_cancels_both_cleanly() -> None:
         assert not engine._inflight  # nothing leaked
         assert worker.invocations == 1  # no replacement computation started
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_waiter_survives_owner_only_cancellation() -> None:
@@ -480,7 +482,7 @@ def test_waiter_survives_owner_only_cancellation() -> None:
         with pytest.raises(asyncio.CancelledError):
             await owner
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_waiter_takes_over_after_cancelled_owner_body() -> None:
@@ -506,7 +508,7 @@ def test_lazy_waiter_takes_over_after_cancelled_owner_body() -> None:
         with pytest.raises(asyncio.CancelledError):
             await owner
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_max_concurrency_bounds_across_concurrent_runs() -> None:
@@ -519,7 +521,7 @@ def test_max_concurrency_bounds_across_concurrent_runs() -> None:
         )
         assert Sleeper.peak == 1  # the bound is engine-wide, not per-run
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_validation_failure_has_no_scheduling_side_effects() -> None:
@@ -531,4 +533,4 @@ def test_validation_failure_has_no_scheduling_side_effects() -> None:
         assert worker.invocations == 0
         assert not engine._inflight
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -32,6 +32,8 @@ from dinkster_assets import (
 from dinkster_server import create_app
 from test_server import SCHEMAS, make_engine
 
+from tests.async_scenarios import run_scenario
+
 MODEL_BYTES = b"pretend this is a 7 GB checkpoint" * 64
 MODEL_DIGEST = digest_bytes(MODEL_BYTES)
 
@@ -195,7 +197,7 @@ def test_fetch_verifies_and_falls_through_mirrors(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fetch_every_candidate_failing_is_none(tmp_path: Path) -> None:
@@ -240,7 +242,7 @@ def test_asset_endpoints_and_http_fetch(tmp_path: Path) -> None:
         # The peer is gone; B still resolves from its own vault.
         assert vault_b.resolve(MODEL_DIGEST) is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_endpoints_absent_without_export(tmp_path: Path) -> None:
@@ -254,7 +256,7 @@ def test_asset_endpoints_absent_without_export(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- the node-facing path: AssetRef.local_path() through the chain ------------
@@ -294,4 +296,4 @@ def test_asset_ref_materializes_through_chain_with_fetch(tmp_path: Path) -> None
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

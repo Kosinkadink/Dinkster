@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -27,6 +26,8 @@ from dinkster_server.app import create_app
 from dinkster_server.auth import Principal
 from dinkster_server.library import ServerLibrary
 from test_server import SCHEMAS, make_engine
+
+from tests.async_scenarios import run_scenario
 
 DIGEST_A = "blake3:" + "a" * 64
 DIGEST_B = "blake3:" + "b" * 64
@@ -307,7 +308,7 @@ def test_federated_routes_use_only_injected_paths_and_exact_auth_error_codecs(
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_federated_routes_refuse_scopes_absent_from_provider_policy(tmp_path: Path) -> None:
@@ -338,7 +339,7 @@ def test_federated_routes_refuse_scopes_absent_from_provider_policy(tmp_path: Pa
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_auth_off_federated_routes_serve_only_policy_scopes(tmp_path: Path) -> None:
@@ -371,7 +372,7 @@ def test_auth_off_federated_routes_serve_only_policy_scopes(tmp_path: Path) -> N
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_catalog_snapshot_folds_authorized_providers_filters_and_orders(
@@ -447,7 +448,7 @@ def test_catalog_snapshot_folds_authorized_providers_filters_and_orders(
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_catalog_composes_canonical_mounts_without_name_or_path_identity(
@@ -585,7 +586,7 @@ def test_catalog_composes_canonical_mounts_without_name_or_path_identity(
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_candidates_page_past_one_hundred_with_global_strict_order(
@@ -636,7 +637,7 @@ def test_mount_candidates_page_past_one_hundred_with_global_strict_order(
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_project_library_and_federated_models_coexist_without_promoting_upload_names(
@@ -763,7 +764,7 @@ def test_project_library_and_federated_models_coexist_without_promoting_upload_n
                 await client.close()
                 store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_candidates_selection_expected_context_and_hints_are_authoritative_only_where_frozen(
@@ -950,7 +951,7 @@ def test_candidates_selection_expected_context_and_hints_are_authoritative_only_
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_signed_cursor_binds_principal_scope_query_generation_and_expiry(tmp_path: Path) -> None:
@@ -1024,4 +1025,4 @@ def test_signed_cursor_binds_principal_scope_query_generation_and_expiry(tmp_pat
             await client.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

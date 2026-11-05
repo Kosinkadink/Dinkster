@@ -5,6 +5,8 @@ import pytest
 from dinkster_collab import SessionService
 from dinkster_collab.routes import _SUBSCRIBERS_KEY, _broadcast, _Subscriber
 
+from tests.async_scenarios import run_scenario
+
 
 def test_append_copies_nested_caller_data_and_returned_ops() -> None:
     service = SessionService()
@@ -61,4 +63,4 @@ def test_broadcast_does_not_wait_for_slow_or_failing_sockets() -> None:
         assert subscriber not in subscribers
         await asyncio.sleep(0)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 from dinkster_graph import GraphNode, Link, RegionNode
 from dinkster_nodes_dev.loop_corpus import Observations
 
+from tests.async_scenarios import run_scenario
 from tools.run_comfy_loop_corpus import compile_prompt, make_engine
 
 # Recorded issue408 prompts and observations; no sibling evidence checkout is required.
@@ -59,7 +59,7 @@ def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
                 "observed"
             ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_corpus_includes_the_runtime_expansion_prompt() -> None:

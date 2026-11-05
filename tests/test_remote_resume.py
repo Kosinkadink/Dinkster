@@ -12,6 +12,8 @@ from dinkster_workers.boundary import BoundaryError, ValueCodec
 from dinkster_workers.resume import InvocationKey, ResumableConversation
 from dinkster_workers.session import BoundarySession
 
+from tests.async_scenarios import run_scenario
+
 
 def _key(invocation_id: str = "invoke-1") -> InvocationKey:
     return InvocationKey("job-1", 2, invocation_id)
@@ -75,7 +77,7 @@ def test_rebind_reports_running_completed_missing_and_fences_epochs() -> None:
         with pytest.raises(BoundaryError, match="omitted"):
             conversation.plan_rebind({"ownerEpoch": 0, "invocations": [_entry(running)]})
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disconnected_events_keep_only_the_latest_data_snapshot() -> None:
@@ -99,7 +101,7 @@ def test_disconnected_events_keep_only_the_latest_data_snapshot() -> None:
         assert record.latest_event[0]["data"] == {"step": 3}
         assert record.latest_event[1] == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_event_snapshot_retention_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +119,7 @@ def test_event_snapshot_retention_is_bounded(monkeypatch: pytest.MonkeyPatch) ->
         assert conversation._records[key].latest_event is None
         assert conversation._retained_event_bytes == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_result_is_retained_until_exact_acknowledgement() -> None:
@@ -135,7 +137,7 @@ def test_result_is_retained_until_exact_acknowledgement() -> None:
         conversation.acknowledge_result(key.to_wire())
         assert not conversation.has_records
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_result_acknowledgement_cannot_overtake_memory_release() -> None:
@@ -156,7 +158,7 @@ def test_result_acknowledgement_cannot_overtake_memory_release() -> None:
         conversation.acknowledge_result(key.to_wire())
         assert not conversation.has_records
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_result_retention_exhaustion_closes_the_conversation(
@@ -172,7 +174,7 @@ def test_result_retention_exhaustion_closes_the_conversation(
             )
         assert await conversation.read() is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disconnected_conversation_expires_after_its_grace() -> None:
@@ -194,7 +196,7 @@ def test_disconnected_conversation_expires_after_its_grace() -> None:
         await asyncio.wait_for(closed.wait(), 1.0)
         assert await conversation.read() is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_replayed_memory_reserve_keeps_one_client_lease() -> None:
@@ -221,7 +223,7 @@ def test_replayed_memory_reserve_keeps_one_client_lease() -> None:
         await first[0]
         assert session._leases == {}  # noqa: SLF001
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_replayed_memory_reserve_resends_the_retained_decision(
@@ -261,7 +263,7 @@ def test_replayed_memory_reserve_resends_the_retained_decision(
         await asyncio.sleep(0)
         assert sent == [{"type": "memoryGrant", "requestId": "invoke-1"}]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_run_control_requests_are_retained_until_invocation_acknowledgement() -> None:
@@ -294,7 +296,7 @@ def test_run_control_requests_are_retained_until_invocation_acknowledgement() ->
         conversation.acknowledge_result(key.to_wire())
         assert key not in conversation._records  # noqa: SLF001
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_run_control_reply_remains_rebindable_until_the_invocation_acknowledges(
@@ -348,4 +350,4 @@ def test_run_control_reply_remains_rebindable_until_the_invocation_acknowledges(
         block.set()
         await pump
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

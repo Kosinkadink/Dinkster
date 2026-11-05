@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 import os
 from collections.abc import Mapping
@@ -22,6 +21,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.camera_angle import CameraAngle
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize(
@@ -148,4 +148,4 @@ def test_camera_angle_native_manifest_executes_twice(tmp_path: Path, in_process:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -44,6 +44,8 @@ from dinkster_values import (
     register_resource_handle_type,
 )
 
+from tests.async_scenarios import run_scenario
+
 VRAM0 = "vram:cuda:0"
 
 
@@ -148,7 +150,7 @@ def test_reserved_subscribers_observe_grant_and_release_outside_lock(
         assert second == [40, 0]
         assert caplog.text.count("broken_observer raised") == 2
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_parse_budget_size_uses_binary_suffixes() -> None:
@@ -276,7 +278,7 @@ def test_reserve_grants_within_budget_and_releases() -> None:
             assert governor.available(VRAM0) == 40
         assert governor.reserved(VRAM0) == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reserve_unbudgeted_device_tracks_but_never_blocks() -> None:
@@ -286,7 +288,7 @@ def test_reserve_unbudgeted_device_tracks_but_never_blocks() -> None:
             assert governor.reserved("vram:cuda:9") == 10**15
             assert governor.available("vram:cuda:9") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reserve_over_budget_raises_immediately() -> None:
@@ -296,7 +298,7 @@ def test_reserve_over_budget_raises_immediately() -> None:
             async with governor.reserve(VRAM0, 101):
                 pass
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_parallel_workflows_cannot_both_believe_memory_is_free() -> None:
@@ -327,7 +329,7 @@ def test_parallel_workflows_cannot_both_believe_memory_is_free() -> None:
         await asyncio.wait_for(asyncio.gather(first(), second()), 2)
         assert order == ["first-in", "first-out", "second-in"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reserve_timeout_when_holder_never_releases() -> None:
@@ -338,7 +340,7 @@ def test_reserve_timeout_when_holder_never_releases() -> None:
                 async with governor.reserve(VRAM0, 80, timeout=0.05):
                     pass
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- MemoryGovernor: shedding -------------------------------------------
@@ -383,7 +385,7 @@ def test_ram_pressure_sheds_shortfall_without_default_cap() -> None:
         assert pool.pressures == [PressureSignal("ram", 50)]
         assert pool.holding == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ram_pressure_reads_each_reservation() -> None:
@@ -406,7 +408,7 @@ def test_ram_pressure_reads_each_reservation() -> None:
         assert pool.pressures == [PressureSignal("ram", 30)]
         assert pool.holding == 70
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ram_admission_without_footprint_skips_snapshot() -> None:
@@ -418,7 +420,7 @@ def test_ram_admission_without_footprint_skips_snapshot() -> None:
         async with governor.reserve("ram", 10**15):
             assert governor.reserved("ram") == 10**15
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ram_snapshot_failure_keeps_unbudgeted_grant() -> None:
@@ -433,7 +435,7 @@ def test_ram_snapshot_failure_keeps_unbudgeted_grant() -> None:
             pass
         assert pool.pressures == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -460,7 +462,7 @@ def test_ram_pressure_combines_shortfalls(
             assert pool.pressures == [PressureSignal("ram", expected_shortfall)]
             assert pool.holding == 70 - expected_shortfall
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ram_over_budget_refuses_without_live_pressure() -> None:
@@ -477,7 +479,7 @@ def test_ram_over_budget_refuses_without_live_pressure() -> None:
                 pass
         assert pool.pressures == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("expire_before_shed", [False, True])
@@ -521,7 +523,7 @@ def test_ram_pressure_timeout_keeps_unbudgeted_grant(
         assert pool.pressures == ([] if expire_before_shed else [PressureSignal("ram", 50)])
         assert pool.cancelled is not expire_before_shed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shedders_are_protocol_instances() -> None:
@@ -540,7 +542,7 @@ def test_reservation_sheds_consumers_to_make_room() -> None:
             assert pool.pressures == [PressureSignal(VRAM0, 30)]
             assert pool.holding == 40
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shed_priority_order_caches_before_pools() -> None:
@@ -555,7 +557,7 @@ def test_shed_priority_order_caches_before_pools() -> None:
         assert cache.holding == 0  # lower priority shed first, fully
         assert pool.holding == 40  # then only the remainder
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class StubbornPool:
@@ -583,7 +585,7 @@ def test_reservation_fails_honestly_when_shedding_is_not_enough() -> None:
             async with governor.reserve(VRAM0, 50):
                 pass
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_status_reports_one_shape_for_endpoints() -> None:
@@ -604,7 +606,7 @@ def test_status_reports_one_shape_for_endpoints() -> None:
             }
             assert status["ram"]["reservedBytes"] == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- MemoryLRUCache as a governed consumer ------------------------------
@@ -636,7 +638,7 @@ def test_cache_excludes_owner_accounted_references_from_footprint() -> None:
         await cache.put("model", {"out": registry.wrap(RESOURCE_HANDLE_TYPE, handle)})  # type: ignore[arg-type]
         assert cache.footprint(VRAM0) == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_drops_entries_referencing_a_resource() -> None:
@@ -652,7 +654,7 @@ def test_cache_drops_entries_referencing_a_resource() -> None:
         assert await cache.get("blob") is not None  # bystander survives
         assert cache.drop_referencing("blake3:aa") == 0  # idempotent
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_footprint_reads_cost_metadata() -> None:
@@ -664,7 +666,7 @@ def test_cache_footprint_reads_cost_metadata() -> None:
         assert cache.footprint(VRAM0) == 50
         assert cache.footprint("vram:cuda:1") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_sheds_lru_first_and_skips_costless_entries() -> None:
@@ -683,7 +685,7 @@ def test_cache_sheds_lru_first_and_skips_costless_entries() -> None:
         assert await cache.get("old") is not None
         assert await cache.get("costless") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governor_drives_cache_eviction_end_to_end() -> None:
@@ -703,7 +705,7 @@ def test_governor_drives_cache_eviction_end_to_end() -> None:
             assert await cache.get("a") is None  # LRU went first
             assert await cache.get("b") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- consumer detail contract (DESIGN 3.10: memory observability) --------
@@ -788,7 +790,7 @@ def test_item_targeted_shed_requires_exactly_one_consumer() -> None:
         with pytest.raises(ValueError, match="exactly one consumer"):
             await governor.shed(VRAM0, 10, consumers=["models", "other"], items=["a"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_item_targeted_shed_unloads_named_items_only() -> None:
@@ -803,7 +805,7 @@ def test_item_targeted_shed_unloads_named_items_only() -> None:
         assert set(pool.models) == {"ckpt-b"}
         assert pool.pressures[-1].items == ("ckpt-a",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_item_pressure_never_reaches_a_consumer_that_cannot_resolve_it() -> None:
@@ -818,7 +820,7 @@ def test_item_pressure_never_reaches_a_consumer_that_cannot_resolve_it() -> None
         assert freed == 0
         assert plain.pressures == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- measured telemetry ---------------------------------------------------

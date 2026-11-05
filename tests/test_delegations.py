@@ -35,6 +35,8 @@ from test_token_authenticator import (
     _sign,
 )
 
+from tests.async_scenarios import run_scenario
+
 
 @pytest.mark.parametrize("jwt_auth", [False, True])
 def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
@@ -239,7 +241,7 @@ def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
             permissions.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("withdrawal", ["revoke", "read-toggle", "expiry"])
@@ -362,7 +364,7 @@ def test_job_event_stream_closes_when_delegate_authority_is_withdrawn(
             await client.close()
             await jwks.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("binary", [False, True], ids=["json", "binary"])
@@ -407,7 +409,7 @@ def test_job_event_stream_rechecks_authority_after_dequeue(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_delegation_expiry_and_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -546,7 +548,7 @@ def test_agent_run_attribution_and_local_mode(auth_enabled: bool, tmp_path: Path
             await client.close()
             await jwks.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_local_agents_keep_explicit_history_journal_and_training_scopes() -> None:

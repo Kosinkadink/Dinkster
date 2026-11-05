@@ -25,6 +25,8 @@ from dinkster_protocol import (
 )
 from dinkster_workers import ReplicaEndpoint, WorkGroupLaneCandidate, build_workgroup_configuration
 
+from tests.async_scenarios import run_scenario
+
 
 async def _send(message: WorkGroupMessage) -> None:
     del message
@@ -234,7 +236,7 @@ def test_parent_device_namespace_and_candidate_transports_are_preserved_exactly(
         replies.put_nowait(reply)
         assert await endpoint.receive() == reply
 
-    asyncio.run(exercise())
+    run_scenario(exercise())
     assert binding.device == DeviceResourceId("parent-node-7-device-2")
     assert sent == [command]
 
@@ -264,4 +266,4 @@ def test_returned_endpoint_refuses_foreign_attempt_binding_and_transport_message
         with pytest.raises(RuntimeError, match="no reply"):
             await endpoint.receive()
 
-    asyncio.run(exercise())
+    run_scenario(exercise())

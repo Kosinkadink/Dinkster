@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 import struct
@@ -30,6 +29,8 @@ from dinkster_values import (
 )
 from dinkster_values.storage import image_input
 from dinkster_video import assemble_video, concatenate_video, disassemble_video, save_video_stream
+
+from tests.async_scenarios import run_scenario
 
 
 def _source(*, depth: int = 8, b_frames: int = 0, container: str = "mp4", offset: int = 0) -> bytes:
@@ -853,7 +854,7 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -947,7 +948,7 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_concat_trim_to_second_source_never_exports_first_source() -> None:
@@ -1405,7 +1406,7 @@ def test_nested_video_source_preflight_and_remote_staging_fetch_once(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
@@ -1499,4 +1500,4 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

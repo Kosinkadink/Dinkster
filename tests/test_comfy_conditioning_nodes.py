@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +30,7 @@ from dinkster_nodes_comfy.conditioning import (
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def test_conditioning_metadata_append_preserves_sources_and_default_overwrite() -> None:
@@ -613,4 +613,4 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import ctypes
 import importlib
 import json
@@ -37,6 +36,7 @@ from dinkster_values import (
 from dinkster_values.latent_codec import _copy_address
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def test_empty_latent_is_a_present_value_without_loading_torch() -> None:
@@ -180,7 +180,7 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
             finally:
                 await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _tensor(*, fill: int, shape: tuple[int, ...]) -> EncodedLatentTensor:
@@ -441,7 +441,7 @@ def test_voxel_crosses_hosts_and_persistent_cache(tmp_path: Path, in_process: bo
             finally:
                 await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_tensor_buffer_copy_uses_pointer_sized_lengths() -> None:
@@ -795,7 +795,7 @@ def test_registered_layers_cross_hosts_and_persistent_cache(
             finally:
                 await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("corruption", ("buffer", "shape", "dtype"))

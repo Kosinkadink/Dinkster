@@ -18,6 +18,7 @@ from dinkster_schema.reporting import capture_value_diagnostics
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker
 
+from tests.async_scenarios import run_scenario
 from tests.test_media_contract import IMAGE, MASK, SemanticSource, register_semantic_types
 
 STRING = api.TypeExpr.concrete(api.CORE_STRING)
@@ -154,7 +155,7 @@ def test_diagnostics_without_observer_and_without_source_metadata_mutation(
         assert output is not wrapped[-1]
         assert output.fingerprint == source.fingerprint
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("termination", ["success", "failure", "cancel"])
@@ -217,7 +218,7 @@ def test_concurrent_failed_and_late_invocations_are_isolated(termination) -> Non
                     {"code": "entered", "value": "first"}
                 ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 FALLBACK = {
@@ -397,4 +398,4 @@ def test_persistent_diagnostics_transport_and_cache_replay(
             if proc is not None:
                 await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

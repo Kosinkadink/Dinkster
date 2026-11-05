@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import os
 from collections.abc import Mapping
@@ -36,6 +35,7 @@ from dinkster_values import video_from_source
 from dinkster_video import save_video_stream
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def test_native_video_registration_is_torch_free_and_preserves_first_authority() -> None:
@@ -215,7 +215,7 @@ def test_video_edit_literal_crosses_ordinary_hosts(tmp_path: Path, in_process: b
             await composer.close()
         assert native.read_bytes() == native_bytes
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _frames(count: int = 10, *, alpha: bool = False) -> np.ndarray:

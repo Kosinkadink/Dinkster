@@ -47,6 +47,7 @@ from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import BoundaryError, encode_invocation
 
 from dinkster.comfy_compose import register_comfy_host_types
+from tests.async_scenarios import run_scenario
 from tools.serverless_transport import (
     DiskObjectStore,
     Envelope,
@@ -175,7 +176,7 @@ def test_schema_transfer_uses_current_wire(harness: Harness) -> None:
         assert request["schemaVersion"] == SCHEMA_WIRE_VERSION == 1
         assert request["frame"]["effectiveSchema"]["schemaVersion"] == SCHEMA_WIRE_VERSION
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_prepare_and_catalog_do_not_dispatch(harness: Harness) -> None:
@@ -187,7 +188,7 @@ def test_prepare_and_catalog_do_not_dispatch(harness: Harness) -> None:
         assert harness.requests == []
         assert harness.store.cas.digests() == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dynamic_output_descriptors_are_not_dispatched(harness: Harness) -> None:
@@ -201,9 +202,9 @@ def test_dynamic_output_descriptors_are_not_dispatched(harness: Harness) -> None
     worker = OnDemandWorker(harness.client_transport, {schema.node_type: schema}, harness.dispatch)
     invocation = replace(harness.invocation(), node_type=schema.node_type, effective_schema=schema)
     with pytest.raises(UnsupportedCapability, match="dynamic interfaces"):
-        asyncio.run(worker.prepare([schema.node_type]))
+        run_scenario(worker.prepare([schema.node_type]))
     with pytest.raises(UnsupportedCapability, match="dynamic interfaces"):
-        asyncio.run(worker.invoke(invocation))
+        run_scenario(worker.invoke(invocation))
     assert not harness.requests
     assert not harness.store.cas.digests()
 
@@ -259,7 +260,7 @@ def test_real_engine_image_and_latent_graph(harness: Harness) -> None:
                 assert set(ref) == {"digest", "size"}
             assert "numpy" not in json.dumps(envelope)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("reuse_cache", [False, True])
@@ -291,7 +292,7 @@ def test_fresh_handlers_and_durable_cas(harness: Harness, reuse_cache: bool) -> 
         expected_meta.pop("cost")
         assert default_encode(actual_meta) == default_encode(expected_meta)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt", "oversize", "wrong-size"])
@@ -319,7 +320,7 @@ def test_blob_integrity_before_worker_execution(
         with pytest.raises((BoundaryError, FileNotFoundError)):
             await harness.handler(request)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -349,7 +350,7 @@ def test_mismatched_result_identity(harness: Harness, field: str) -> None:
             await harness.worker.invoke(harness.invocation())
         assert len(harness.requests) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -364,7 +365,7 @@ def test_mismatched_result_identity(harness: Harness, field: str) -> None:
 def test_send_limits_prevent_dispatch(harness: Harness, limits: Limits) -> None:
     harness.client_transport.limits = limits
     with pytest.raises(BoundaryError, match="limit|count"):
-        asyncio.run(harness.worker.invoke(harness.invocation()))
+        run_scenario(harness.worker.invoke(harness.invocation()))
     assert not harness.requests
     assert not harness.store.cas.digests()
 
@@ -386,7 +387,7 @@ def test_receive_limits_prevent_reads(harness: Harness, limits: Limits) -> None:
             await harness.handler(request)
         assert not harness.store.reads
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -405,7 +406,7 @@ def test_unsupported_invocation_is_not_dispatched(
     harness: Harness, changes: dict[str, Any]
 ) -> None:
     with pytest.raises(UnsupportedCapability):
-        asyncio.run(harness.worker.invoke(replace(harness.invocation(), **changes)))
+        run_scenario(harness.worker.invoke(replace(harness.invocation(), **changes)))
     assert not harness.requests
 
 
@@ -426,7 +427,7 @@ def test_resident_types_are_not_dispatched(harness: Harness, type_id: str) -> No
     invocation = harness.invocation()
     resident = replace(invocation.inputs["image"], type_id=type_id)
     with pytest.raises(UnsupportedCapability, match="resident"):
-        asyncio.run(harness.worker.invoke(replace(invocation, inputs={"image": resident})))
+        run_scenario(harness.worker.invoke(replace(invocation, inputs={"image": resident})))
     assert not harness.requests
 
 
@@ -434,7 +435,7 @@ def test_resident_metadata_is_not_dispatched(harness: Harness) -> None:
     invocation = harness.invocation()
     resident = replace(invocation.inputs["image"], meta=ValueMeta({"resourceOwner": "dead-worker"}))
     with pytest.raises(UnsupportedCapability, match="resident"):
-        asyncio.run(harness.worker.invoke(replace(invocation, inputs={"image": resident})))
+        run_scenario(harness.worker.invoke(replace(invocation, inputs={"image": resident})))
     assert not harness.requests
 
 
@@ -451,7 +452,7 @@ def test_preserves_node_errors_and_hints(harness: Harness, monkeypatch: pytest.M
         return InvocationResult(error=expected)
 
     monkeypatch.setattr(harness.handler.worker, "invoke", invoke)
-    result = asyncio.run(harness.worker.invoke(harness.invocation()))
+    result = run_scenario(harness.worker.invoke(harness.invocation()))
     assert result == InvocationResult(error=expected)
 
 
@@ -480,7 +481,7 @@ def test_unsupported_worker_results_are_explicit(
 
     monkeypatch.setattr(harness.handler.worker, "invoke", invoke)
     with pytest.raises(UnknownOutcome) as exc:
-        asyncio.run(harness.worker.invoke(harness.invocation()))
+        run_scenario(harness.worker.invoke(harness.invocation()))
     assert isinstance(exc.value.__cause__, UnsupportedCapability)
     assert len(harness.requests) == 1
 
@@ -497,7 +498,7 @@ def test_unknown_outcome_does_not_retry(harness: Harness) -> None:
         assert len(harness.responses) == 1
         assert len(harness.requests) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cancel_during", ["dispatch", "result_read"])
@@ -573,7 +574,7 @@ def test_cancelled_engine_owner_does_not_redispatch_coalesced_work(
             await asyncio.gather(*runs, return_exceptions=True)
         assert len(harness.requests) == len(harness.responses) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancellation_does_not_claim_remote_stop_or_retry(harness: Harness) -> None:
@@ -604,7 +605,7 @@ def test_cancellation_does_not_claim_remote_stop_or_retry(harness: Harness) -> N
         await tasks[0]
         assert len(tasks) == len(harness.requests) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("field", ["executor", "continuation", "arm", "mediaSources", "events"])
@@ -616,7 +617,7 @@ def test_raw_unsupported_invocation_fields_fail_before_reads(harness: Harness, f
             await harness.handler(request)
         assert not harness.store.reads
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("field", ["artifacts", "artifactCandidates", "continuation", "events"])
@@ -632,7 +633,7 @@ def test_raw_unsupported_result_fields_are_not_dropped(harness: Harness, field: 
             await harness.worker.invoke(harness.invocation())
         assert len(harness.requests) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("damage", ["source", "schema", "lazy", "shm", "index", "binary", "nan"])
@@ -660,7 +661,7 @@ def test_rejects_raw_request_tampering(harness: Harness, damage: str) -> None:
         with pytest.raises(BoundaryError):
             await harness.handler(request)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_revalidates_noncompliant_store_bytes(
@@ -676,7 +677,7 @@ def test_revalidates_noncompliant_store_bytes(
         with pytest.raises(BoundaryError, match="fetched blob digest/size mismatch"):
             await harness.handler(request)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("mode", ["error", "event"])
@@ -691,13 +692,13 @@ def test_real_inprocess_error_and_event_paths(
 
     monkeypatch.setattr(Transform, "execute", execute)
     if mode == "error":
-        result = asyncio.run(harness.worker.invoke(harness.invocation()))
+        result = run_scenario(harness.worker.invoke(harness.invocation()))
         assert result.error is not None
         assert result.error.message == "real node failure"
         assert "RuntimeError: real node failure" in result.error.traceback
     else:
         with pytest.raises(UnknownOutcome) as exc:
-            asyncio.run(harness.worker.invoke(harness.invocation()))
+            run_scenario(harness.worker.invoke(harness.invocation()))
         assert isinstance(exc.value.__cause__, UnsupportedCapability)
         assert "events" in str(exc.value.__cause__)
 
@@ -726,4 +727,4 @@ def test_recursive_list_values_and_resident_child(harness: Harness) -> None:
             await harness.worker.invoke(replace(invocation, inputs={"nested": nested}))
         assert not harness.requests
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
