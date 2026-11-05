@@ -270,9 +270,11 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                 published = Channel.parse(published_document)
                 if "tools" in published_document:
                     tools = tools_reference(published_document["tools"])
-                    validate_tools_manifest(
+                    tools_manifest = validate_tools_manifest(
                         read_metadata(tools["release"], "tools-manifest.json"), tools["sha256"]
                     )
+                    if tools["label"] != f"{tools_manifest['label']}-{tools['sha256'][:8]}":
+                        raise ValueError("published tools manifest identity differs from channel")
                     document = parse_metadata(path.read_bytes())
                     document["tools"] = tools
                     write_document(path, document)

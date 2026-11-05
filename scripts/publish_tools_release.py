@@ -129,6 +129,8 @@ def publish(release: Path) -> None:
             previous = tools_reference(channel["tools"])
             previous_data = read_metadata(previous["release"], "tools-manifest.json")
             previous_manifest = validate_tools_manifest(previous_data, previous["sha256"])
+            if previous["label"] != f"{previous_manifest['label']}-{previous['sha256'][:8]}":
+                raise ValueError("published tools manifest identity differs from channel")
             if previous == reference:
                 print(f"Verified main channel tools {label}: {digest}")
                 return

@@ -820,6 +820,7 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         "channel-recover",
         "collision",
         "partial",
+        "tools-identity",
     ],
 )
 @pytest.mark.parametrize("labelled", [False, True])
@@ -873,7 +874,7 @@ def test_channel_publication_exposes_only_verified_payloads(
         document["minimumDesktopVersion"] = "0.1.0"
         (public / "channels/main.json").write_bytes(_json(document))
     tools = None
-    if failure in {None, "identical"}:
+    if failure in {None, "identical", "tools-identity"}:
         from dinkster_supervisor.environment_state import write_document
 
         from scripts.build_tools_release import build as build_tools
@@ -885,6 +886,8 @@ def test_channel_publication_exposes_only_verified_payloads(
         tools_manifest = build_tools(Path(__file__).resolve().parents[1], tools_root)
         sha = hashlib.sha256((tools_root / "tools-manifest.json").read_bytes()).hexdigest()
         label = f"{tools_manifest['label']}-{sha[:8]}"
+        if failure == "tools-identity":
+            label = label.replace(str(tools_manifest["version"]), "99.0.0")
         tools_root = tools_root.rename(tools_root.with_name(label))
         tools = {
             "label": label,
@@ -1073,6 +1076,7 @@ def test_channel_publication_exposes_only_verified_payloads(
         "upload-forbidden",
         "upload-corrupt",
         "collision",
+        "tools-identity",
     }:
         from urllib.error import HTTPError
 

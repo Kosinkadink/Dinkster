@@ -216,7 +216,10 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
         validate_tools_manifest(incomplete, hashlib.sha256(incomplete).hexdigest())
 
 
-@pytest.mark.parametrize("corrupt", [None, "github", "mirror"])
+@pytest.mark.parametrize(
+    "corrupt",
+    [None, "github", "mirror", "behind", "diverged", "ahead", "identical", "replay", "identity"],
+)
 def test_tools_publication_exposes_channel_only_after_both_sources_verify(
     tmp_path: Path,
     tools_publication: tuple[Path, dict[str, bytes]],
@@ -254,6 +257,24 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
         "minimumDesktopVersion": "0.2.0",
         "signature": None,
     }
+    if corrupt in {"behind", "diverged", "ahead", "identical", "identity"}:
+        previous = {**manifest, "commit": "c" * 40, "version": "2.7.3"}
+        previous["label"] = str(manifest["label"]).removesuffix("2.7.4") + "2.7.3"
+        previous_data = json.dumps(previous).encode("ascii")
+        previous_sha = hashlib.sha256(previous_data).hexdigest()
+        previous_label = str(previous["label"]) + "-" + previous_sha[:8]
+        if corrupt == "identity":
+            previous_label = previous_label.replace("2.7.3", "2.7.2")
+        previous_mirror = tmp_path / "other-mirror" if corrupt == "identity" else public
+        previous_release = previous_mirror / "tools" / previous_label
+        previous_release.mkdir(parents=True)
+        (previous_release / "tools-manifest.json").write_bytes(previous_data)
+        channel["tools"] = {
+            "label": previous_label,
+            "sha256": previous_sha,
+            "release": str(previous_release),
+            "manifest": str(previous_release / "tools-manifest.json"),
+        }
     before = json.dumps(channel).encode("ascii")
     (public / "channels/main.json").write_bytes(before)
     (public / "channels/stable.json").write_bytes(b"stable stays unchanged")
@@ -262,6 +283,7 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
         "GITHUB_EVENT_NAME": "push",
         "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": manifest["commit"],
+        "GITHUB_TOKEN": "fixture",
         "R2_PUBLIC_BASE_URL": str(public),
         "R2_BUCKET": "fixture",
     }.items():
@@ -294,6 +316,15 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
 
     def release_command(command, **kwargs):
         if command[:3] == ["gh", "release", "view"]:
+            if github.exists():
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    json.dumps(
+                        {"tagName": "tools-" + label, "targetCommitish": manifest["commit"]}
+                    ),
+                    "",
+                )
             return subprocess.CompletedProcess(command, 1, "", "not found")
         assert command[:3] == ["gh", "release", "create"]
         assert command[3] == "tools-" + label
@@ -313,15 +344,34 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
     monkeypatch.setattr(publisher, "object_store", Bucket)
     monkeypatch.setattr(publisher.subprocess, "run", release_command)
     monkeypatch.setattr(publisher, "fetch_artifact", download)
-    if corrupt:
+
+    def compare(request, **kwargs):
+        assert request.full_url.endswith(f"/{'c' * 40}...{manifest['commit']}")
+        status = "ahead" if corrupt == "identity" else corrupt
+        return io.BytesIO(json.dumps({"status": status}).encode("ascii"))
+
+    monkeypatch.setattr(publisher, "urlopen", compare)
+    if corrupt in {"github", "mirror"}:
         with pytest.raises(DownloadError):
             publisher.publish(output)
         assert (public / "channels/main.json").read_bytes() == before
         return
+    if corrupt in {"identical", "identity"}:
+        with pytest.raises(ValueError, match="same source|identity differs"):
+            publisher.publish(output)
+        assert (public / "channels/main.json").read_bytes() == before
+        return
     publisher.publish(output)
+    if corrupt in {"behind", "diverged"}:
+        assert (public / "channels/main.json").read_bytes() == before
+        return
+    if corrupt == "replay":
+        first = (public / "channels/main.json").read_bytes()
+        publisher.publish(output)
+        assert (public / "channels/main.json").read_bytes() == first
     after = json.loads((public / "channels/main.json").read_bytes())
     reference = after.pop("tools")
-    assert after == channel
+    assert after == {key: value for key, value in channel.items() if key != "tools"}
     assert reference == {
         "label": label,
         "sha256": digest,
