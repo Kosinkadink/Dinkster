@@ -15,7 +15,7 @@ import tarfile
 import time
 import zipfile
 from http.client import HTTPMessage
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
@@ -442,15 +442,26 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
     assert index[0]["size"] == sum(path.stat().st_size for path in output.iterdir())
 
 
-@pytest.mark.parametrize("release", ["https://releases.dinkster.org", "/absolute/mirror"])
-def test_channel_tools_pin_binds_locations_to_immutable_publication(release: str) -> None:
+@pytest.mark.parametrize("release", ["https://releases.dinkster.org", "local", "windows"])
+def test_channel_tools_pin_binds_locations_to_immutable_publication(
+    release: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     label = "2026-11-05-2.7.4-12345678"
-    release += "/tools/" + label
+    if release == "windows":
+        monkeypatch.setattr("dinkster_supervisor.environment_tools.Path", PureWindowsPath)
+        directory = PureWindowsPath("C:/mirror") / "tools" / label
+        release, manifest = str(directory), str(directory / "tools-manifest.json")
+    elif release == "local":
+        directory = tmp_path / "tools" / label
+        release, manifest = str(directory), str(directory / "tools-manifest.json")
+    else:
+        release += "/tools/" + label
+        manifest = release + "/tools-manifest.json"
     pin = {
         "label": label,
         "sha256": "12345678" + "a" * 56,
         "release": release,
-        "manifest": release + "/tools-manifest.json",
+        "manifest": manifest,
     }
     assert tools_reference(pin) == pin
     with pytest.raises(EnvironmentError, match="dated version and hash8"):
