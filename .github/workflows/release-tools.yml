@@ -247,3 +247,18 @@ jobs:
           uv sync --locked --only-group release-publication
           uv run --locked --no-sync python .release/retention/retention.py \
             --command python -m scripts.publish_tools_release --release .release/tools
+      - name: Report tools retention after verified channel publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: uv run --locked --no-sync python .release/retention/retention.py --scope tools --dry-run --output tools-retention-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tools-release-retention
+          path: tools-retention-report.json
+          if-no-files-found: error
