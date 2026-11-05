@@ -58,9 +58,10 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
     data = (output / "tools-manifest.json").read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     assert validate_tools_manifest(data, digest) == manifest
-    assert manifest["commit"] == subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
-    ).strip()
+    assert (
+        manifest["commit"]
+        == subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    )
     assert manifest["version"] == "2.7.4"
     assert str(manifest["label"]).endswith("-2.7.4")
     assert manifest["artifacts"] == [
