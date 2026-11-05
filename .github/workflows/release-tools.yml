@@ -1,0 +1,264 @@
+name: Supervisor tools publication
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-tools.yml
+      - scripts/build_tools_release.py
+      - scripts/publish_tools_release.py
+      - scripts/build_native_tools.py
+      - scripts/build_environment_tools.py
+      - scripts/build_release.py
+      - scripts/publish_environment_channel.py
+      - packages/dinkster-supervisor/**
+      - pyproject.toml
+      - uv.lock
+  pull_request:
+    paths:
+      - .github/workflows/release-tools.yml
+      - scripts/build_tools_release.py
+      - scripts/publish_tools_release.py
+      - scripts/build_native_tools.py
+      - scripts/build_environment_tools.py
+      - scripts/build_release.py
+      - scripts/publish_environment_channel.py
+      - packages/dinkster-supervisor/**
+      - pyproject.toml
+      - uv.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supervisor-tools-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.inputs.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - name: Select only changed tools build inputs
+        id: inputs
+        env:
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          uv sync --locked --no-dev --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_tools_release --changed-from "$BEFORE" >> "$GITHUB_OUTPUT"
+
+  wheel:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - name: Build the supervisor at its own package version
+        run: uv build --package dinkster-supervisor --wheel --out-dir .release/supervisor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: independent-supervisor-wheel
+          path: .release/supervisor/*.whl
+          if-no-files-found: error
+
+  native:
+    needs: wheel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: windows
+            runner: windows-latest
+          - os: macos
+            runner: macos-latest
+    steps:
+      - name: Expose Git Bash on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+          if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+            throw 'Git Bash is required for the native tools build'
+          }
+          $bashDirectory >> $env:GITHUB_PATH
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/Dinkster-Environments
+          ref: aca248250946c10388898b0b987b7e48c6b7a451
+          path: .release/environments
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: independent-supervisor-wheel
+          path: .release/supervisor
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Build the native environment client
+        shell: bash
+        run: |
+          wheels=(.release/supervisor/*.whl)
+          test "${#wheels[@]}" = 1
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_native_tools \
+            --environments .release/environments \
+            --supervisor-wheel "${wheels[0]}" --output .release/tools
+      - name: Verify relocation without host tools
+        shell: bash
+        env:
+          TOOLS_OS: ${{ matrix.os }}
+        run: |
+          uv run --no-project --python 3.12 python - <<'PY'
+          import json, os, subprocess, tempfile, zipfile
+          from pathlib import Path
+          [artifact] = Path('.release/tools').glob('*.zip')
+          system = os.environ['TOOLS_OS']
+          arch = 'arm64' if system == 'macos' else 'x86_64'
+          assert artifact.name == f'dinkster-tools-{system}-{arch}.zip'
+          with tempfile.TemporaryDirectory(prefix='relocated tools with spaces ') as temporary:
+              root = Path(temporary)
+              with zipfile.ZipFile(artifact) as archive:
+                  archive.extractall(root)
+                  if os.name != 'nt':
+                      for member in archive.infolist():
+                          (root / member.filename).chmod((member.external_attr >> 16) & 0o777)
+              python = root / ('python/python.exe' if os.name == 'nt' else 'python/bin/python3')
+              scripts = python.parent / 'Scripts' if os.name == 'nt' else python.parent
+              env = {**os.environ, 'PATH': str(scripts), 'PYTHONPATH': '',
+                     'UV_PYTHON_DOWNLOADS': 'never', 'UV_INDEX_URL': 'http://127.0.0.1:1',
+                     'HTTP_PROXY': 'http://127.0.0.1:1', 'HTTPS_PROXY': 'http://127.0.0.1:1',
+                     'XDG_DATA_HOME': str(root / 'data'), 'LOCALAPPDATA': str(root / 'data')}
+              result = subprocess.run(
+                  [str(python), '-I', '-m', 'dinkster_supervisor.environment',
+                   '--root', str(root / 'absent project'), 'status', '--json'],
+                  cwd=root, env=env, check=True, capture_output=True, text=True)
+              document = json.loads(result.stdout)
+              assert document['current'] is None and document['engines'] == []
+              assert not (root / 'absent project').exists()
+              subprocess.run([str(scripts / ('uv.exe' if os.name == 'nt' else 'uv')), '--version'],
+                             cwd=root, env=env, check=True)
+              if system == 'macos':
+                  subprocess.run([str(python), '-I', '-c',
+                                  "import platform,sys; assert sys.platform == 'darwin' and platform.machine() == 'arm64'"],
+                                 cwd=root, env=env, check=True)
+              subprocess.run([str(python), '-I', '-c',
+                              "import importlib.util; assert all(importlib.util.find_spec(n) is None for n in ('dinkster', 'torch'))"],
+                             cwd=root, env=env, check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: independent-tools-${{ matrix.os }}
+          path: .release/tools/*.zip
+          if-no-files-found: error
+
+  finalize:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: independent-tools-*
+          merge-multiple: true
+          path: .release/tools
+      - name: Finalize the independent tools manifest and checksums
+        run: |
+          uv sync --locked --no-dev --package dinkster-supervisor
+          uv run --locked --no-sync python -m scripts.build_tools_release --output .release/tools
+          (cd .release/tools && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-tools-release
+          path: .release/tools/
+          if-no-files-found: error
+
+  publish:
+    needs: finalize
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: environment-channel-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/Dinkster-Environments
+          ref: 022b8234976065d0d3344a9717dd150ec6347bfa
+          path: .release/retention
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: supervisor-tools-release
+          path: .release/tools
+      - name: Publish tools and update the verified channel under the publication lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: |
+          uv sync --locked --only-group release-publication
+          uv run --locked --no-sync python .release/retention/retention.py \
+            --command python -m scripts.publish_tools_release --release .release/tools
+      - name: Report tools retention after verified channel publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: uv run --locked --no-sync python .release/retention/retention.py --scope tools --dry-run --output tools-retention-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tools-release-retention
+          path: tools-retention-report.json
+          if-no-files-found: error

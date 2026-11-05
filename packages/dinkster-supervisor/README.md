@@ -208,8 +208,9 @@ uv run --locked python -m scripts.build_environment_tools \
 `--interpreter` also accepts an HTTPS download URL; the complete size and hash
 are checked before extraction or execution. Obtain those values from the
 selected standalone interpreter's verified producer input, not a latest alias.
-The supervisor wheel is the same wheel passed to the engine release builder,
-not a separately resolved PyPI version. The command downloads only compatible
+The independent tools workflow builds the supervisor wheel at this package's
+own version, not an engine release version or a separately resolved PyPI version.
+The command downloads only compatible
 wheels whose filenames, versions, sizes and hashes occur in `uv.lock` and its
 supervisor/tools export. uv is pinned by the supervisor's `environment-tools`
 dependency group. Installation into the owned standalone tree is offline,
@@ -218,16 +219,28 @@ confirm that the supplied supervisor wheel and every installed dependency
 have a satisfied closure before packaging. No engine or torch is installed.
 
 The output is `dinkster-tools-<os>-<arch>.zip`, where os is `linux`, `windows`
-or `macos`, and arch is `x86_64` or `arm64`. stdout is its existing engine
+or `macos`, and arch is `x86_64` or `arm64`. stdout is the
 artifact row `{name,size,sha256}`; `SHA256SUMS` records the same archive hash.
-The release builder accepts the archive using its existing `--artifact` flag,
-which includes that row in `dinkster.engine/1`. Release publication owns calling
-the native builder and attaching all platform archives. There is no separate
-tools manifest or extra PyPI distribution. An unpublished local output is not
-a production download pin.
+`scripts/build_tools_release.py` finalizes all three native ZIPs into the
+hash-verified `dinkster.tools/1` manifest and complete `SHA256SUMS`.
+The `Supervisor tools publication` workflow runs when supervisor sources,
+native build/publication scripts or tools build inputs change. It publishes
+`tools/<date>-<public-supervisor-version>-<manifest-hash8>/`, `tools/index.json`
+and the corresponding `tools-<label>` GitHub prerelease, verifies both sources,
+then moves the main channel's `tools` pointer without changing its engine/base
+selection. An unpublished local output is not a production download pin.
 
-Desktop selects that exact basename from the hash-verified engine manifest,
-downloads it from the same release directory, verifies its full size/SHA256,
+`dinkster-env --root /absolute/tools-cache tools --channel main --mirror
+https://releases.dinkster.org --yes --json` acquires the channel's native ZIP
+using its tools manifest hash and archive size/hash, without acquiring engine
+or base payloads. Omit `--yes` to inspect the selection without creating a cache.
+During the consumer migration, channels without `tools` retain the engine
+manifest source; engine releases still admit those ZIPs with `--artifact`.
+An invalid independent tools pointer never falls back to engine assets.
+
+Desktop selects that exact basename from its pinned tools manifest or the
+channel's tools publication, downloads it from the selected release directory,
+verifies its full size/SHA256,
 and safely extracts it into a new owned directory. ZIP is only the bootstrap
 container: it needs no Python/zstandard decoder before the tools exist and
 does not change the producer's tar+zstd base contract. Internal interpreter
