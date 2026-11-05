@@ -10,7 +10,6 @@ executing - with no sleeps anywhere (tests drive poll_once directly).
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -18,6 +17,7 @@ from test_reload import run_echo, worker_env, write_pack
 
 from dinkster.compose import ServingComposer
 from dinkster.watch import PackWatcher, snapshot_tree
+from tests.async_scenarios import run_scenario
 
 
 def bump_mtime(path: Path, ns: int = 1_000_000_000) -> None:
@@ -84,7 +84,7 @@ def test_settle_cycle_fires_once(tmp_path: Path) -> None:
         assert reload_fn.calls == ["p"]
         assert await watcher.poll_once() == []  # once, not again
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_churn_stays_pending_until_quiet(tmp_path: Path) -> None:
@@ -107,7 +107,7 @@ def test_churn_stays_pending_until_quiet(tmp_path: Path) -> None:
         assert await watcher.poll_once() == ["p"]  # quiet at last
         assert reload_fn.calls == ["p"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_deletion_is_a_change(tmp_path: Path) -> None:
@@ -122,7 +122,7 @@ def test_deletion_is_a_change(tmp_path: Path) -> None:
         assert await watcher.poll_once() == []
         assert await watcher.poll_once() == ["p"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ignored_churn_never_fires(tmp_path: Path) -> None:
@@ -142,7 +142,7 @@ def test_ignored_churn_never_fires(tmp_path: Path) -> None:
         assert await watcher.poll_once() == []
         assert reload_fn.calls == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_targets_are_live(tmp_path: Path) -> None:
@@ -173,7 +173,7 @@ def test_targets_are_live(tmp_path: Path) -> None:
         assert await watcher.poll_once() == []
         assert reload_fn.calls == ["second"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_reload_does_not_refire(tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ def test_failed_reload_does_not_refire(tmp_path: Path) -> None:
         await watcher.poll_once()
         assert reload_fn.calls == ["p", "p"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- end to end ----------------------------------------------------------------
@@ -237,4 +237,4 @@ def test_watcher_reloads_composed_pack_end_to_end(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

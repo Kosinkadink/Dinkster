@@ -39,6 +39,7 @@ from dinkster_workers.session import (
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer, _lazy_choice_fetcher
 from dinkster.reload_api import apply_reload, apply_remove
+from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
 WORKER_ENV = {"PYTHONPATH": str(TESTS_DIR)}
@@ -194,7 +195,7 @@ def test_in_process_worker_serves_lazy_choices() -> None:
         with pytest.raises(ValueError, match="non-string"):
             await worker.fetch_choices("cp.bad")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -440,7 +441,7 @@ def test_compose_surfaces_choices(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_surfaces_lazy_choices(tmp_path: Path) -> None:
@@ -522,7 +523,7 @@ def test_compose_surfaces_lazy_choices(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -589,7 +590,7 @@ def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.Mo
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_choice_dead_owner_serves_503(tmp_path: Path) -> None:
@@ -643,7 +644,7 @@ def test_lazy_choice_dead_owner_serves_503(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_fetcher_maps_worker_death_to_owner_gone() -> None:
@@ -663,7 +664,7 @@ def test_lazy_fetcher_maps_worker_death_to_owner_gone() -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("adopted", [False, True])
@@ -742,7 +743,7 @@ def test_lazy_choices_wait_for_full_free_before_activating_worker(
             if staged is not composer and staged._private_staging:
                 await staged.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_uncovered_choice_id(tmp_path: Path) -> None:
@@ -764,7 +765,7 @@ def test_compose_rejects_uncovered_choice_id(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_choice_collision(tmp_path: Path) -> None:
@@ -825,7 +826,7 @@ def test_compose_rejects_choice_collision(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_rejects_collisions_against_lazy_owner(tmp_path: Path) -> None:
@@ -873,7 +874,7 @@ def test_compose_rejects_collisions_against_lazy_owner(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -895,7 +896,7 @@ def test_compose_requires_same_pack_authority_for_every_remote_route(
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_swaps_choices(tmp_path: Path) -> None:
@@ -949,7 +950,7 @@ def test_reload_swaps_choices(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_swaps_lazy_choices(tmp_path: Path) -> None:
@@ -1015,7 +1016,7 @@ def test_reload_swaps_lazy_choices(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compat_skips_compose_serve_and_reload(tmp_path: Path) -> None:
@@ -1075,7 +1076,7 @@ def test_compat_skips_compose_serve_and_reload(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_legacy_compat_skips_use_derived_pack_id(tmp_path: Path) -> None:
@@ -1104,7 +1105,7 @@ def test_legacy_compat_skips_use_derived_pack_id(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- server state --------------------------------------------------------------
@@ -1162,7 +1163,7 @@ def test_state_announce_and_replace_choices(tmp_path: Path) -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_state_announce_and_replace_lazy_choices() -> None:
@@ -1214,7 +1215,7 @@ def test_state_announce_and_replace_lazy_choices() -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_server_publication_revalidates_remote_authority_and_choice_bounds() -> None:
@@ -1251,7 +1252,7 @@ def test_server_publication_revalidates_remote_authority_and_choice_bounds() -> 
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_replacement_retains_only_same_owner_remote_choice_authority() -> None:
@@ -1312,7 +1313,7 @@ def test_replacement_retains_only_same_owner_remote_choice_authority() -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_choice_endpoint_is_compact_bounded_and_no_store() -> None:
@@ -1349,4 +1350,4 @@ def test_choice_endpoint_is_compact_bounded_and_no_store() -> None:
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

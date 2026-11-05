@@ -60,6 +60,8 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 INT = TypeExpr.concrete("INT")
 BOOL = TypeExpr.concrete("BOOLEAN")
 COMBO = TypeExpr.concrete("COMBO")
@@ -1008,7 +1010,7 @@ def test_output_only_map_executes_declared_sink(items: list[int], nested: bool) 
         expected = [5, 19] * len(items) if nested else items
         assert sorted(seen) == sorted(expected)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_outputless_sinkless_region_is_rejected() -> None:
@@ -1057,7 +1059,7 @@ def test_map_region_executes_per_element() -> None:
         finished = next(e for e in events if e.kind == "region_finished")
         assert finished.detail["iterations"] == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1112,7 +1114,7 @@ def test_map_gather_preserves_generic_payload_type_and_exact_values(
         assert [child.type_id for child in children] == [type_id, type_id]
         assert [child.resolve() for child in children] == payloads
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fold_state_preserves_heterogeneous_list_backed_value() -> None:
@@ -1147,7 +1149,7 @@ def test_fold_state_preserves_heterogeneous_list_backed_value() -> None:
         ]
         assert [value.resolve() for value in observed] == [[7, "7"], [7, "7"]]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_map_region_selects_lazy_branch_per_iteration() -> None:
@@ -1184,7 +1186,7 @@ def test_map_region_selects_lazy_branch_per_iteration() -> None:
         assert "m[1]/false" not in result.executed
         assert "m[2]/true" not in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_region_selector_can_demand_direct_body_port() -> None:
@@ -1218,7 +1220,7 @@ def test_region_selector_can_demand_direct_body_port() -> None:
 
         assert result.outputs["m"]["results"].resolve() == [1, 20, 3]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_map_region_lazy_worker_replays_distinct_iteration_demands() -> None:
@@ -1272,7 +1274,7 @@ def test_map_region_lazy_worker_replays_distinct_iteration_demands() -> None:
             "m[1]/true",
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_named_route_selects_stable_member_ids_per_iteration() -> None:
@@ -1316,7 +1318,7 @@ def test_named_route_selects_stable_member_ids_per_iteration() -> None:
         ]
         assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_gate_preserves_gather_absence_and_explicit_compaction() -> None:
@@ -1354,7 +1356,7 @@ def test_lazy_gate_preserves_gather_absence_and_explicit_compaction() -> None:
         assert "m[1]/add" not in gathered_result.executed
         assert "m[1]/add" not in compact_result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fold_region_selects_lazy_branch_from_prior_state() -> None:
@@ -1388,7 +1390,7 @@ def test_fold_region_selects_lazy_branch_from_prior_state() -> None:
         assert "f[2]/multiply" not in result.executed
         assert "f[3]/add" not in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_while_region_selects_lazy_continuation_branch() -> None:
@@ -1427,7 +1429,7 @@ def test_while_region_selects_lazy_continuation_branch() -> None:
         assert "w[1]/short" not in result.executed
         assert "w[2]/long" not in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unselected_lazy_branch_does_not_prepare_nested_region() -> None:
@@ -1485,7 +1487,7 @@ def test_unselected_lazy_branch_does_not_prepare_nested_region() -> None:
         assert worker.prepared.count("test.list_identity") == 1
         assert all("/inner" not in node_id for node_id in result.executed)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_map_failure_cancels_selected_sibling_iteration() -> None:
@@ -1548,7 +1550,7 @@ def test_lazy_map_failure_cancels_selected_sibling_iteration() -> None:
         assert CoordinatedBranch.started.is_set()
         assert CoordinatedBranch.cancelled.is_set()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_demanded_region_prepares_its_body_types() -> None:
@@ -1607,7 +1609,7 @@ def test_lazy_demanded_region_prepares_its_body_types() -> None:
         assert result.outputs["consumer"]["value"].resolve() == 10
         assert ("test.add_pair",) in worker.prepared
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_route_does_not_execute_an_unselected_region() -> None:
@@ -1647,7 +1649,7 @@ def test_lazy_route_does_not_execute_an_unselected_region() -> None:
         assert "route" in result.executed
         assert all(not node_id.startswith("unselected") for node_id in result.executed)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_map_region_accepts_typed_literal_input() -> None:
@@ -1665,7 +1667,7 @@ def test_map_region_accepts_typed_literal_input() -> None:
         assert children is not None
         assert [c.resolve() for c in children] == [11, 21, 31]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_map_region_zero_items_yields_typed_empty_list() -> None:
@@ -1678,7 +1680,7 @@ def test_map_region_zero_items_yields_typed_empty_list() -> None:
         assert list_children(out) == ()
         assert AddOne.ran == []  # the body never ran
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_region_index_counts_map_fold_and_while_iterations() -> None:
@@ -1707,7 +1709,7 @@ def test_region_index_counts_map_fold_and_while_iterations() -> None:
         assert result.outputs["fold"]["indexes"].resolve() == [0, 1, 2, 3]
         assert result.outputs["while"]["indexes"].resolve() == [0, 1, 2, 3, 4]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nested_region_index_belongs_to_the_immediate_region() -> None:
@@ -1733,7 +1735,7 @@ def test_nested_region_index_belongs_to_the_immediate_region() -> None:
 
         assert result.outputs["outer"]["indexes"].resolve() == [[0, 1], [0, 1, 2]]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_declared_index_state_shadows_the_implicit_region_index() -> None:
@@ -1760,7 +1762,7 @@ def test_declared_index_state_shadows_the_implicit_region_index() -> None:
 
         assert result.outputs["while"]["index"].resolve() == 13
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_declared_index_port_preserves_its_type_and_value() -> None:
@@ -1777,7 +1779,7 @@ def test_declared_index_port_preserves_its_type_and_value() -> None:
         result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
         assert result.outputs["m"]["indexes"].resolve() == ["declared", "declared"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1804,7 +1806,7 @@ def test_flatten_concatenates_in_iteration_order_under_zip_and_broadcast(
         assert output.type_id == "list<INT>"
         assert output.resolve() == expected
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_flatten_zero_iterations_yields_typed_empty_list() -> None:
@@ -1815,7 +1817,7 @@ def test_flatten_zero_iterations_yields_typed_empty_list() -> None:
         assert output.type_id == "list<INT>"
         assert list_children(output) == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_map_iterations_run_concurrently() -> None:
@@ -1831,7 +1833,7 @@ def test_map_iterations_run_concurrently() -> None:
         await engine.run(Graph(nodes={"m": region}), ["m"])
         assert Sleeper.peak >= 2  # independent iterations overlapped
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_zip_binding_requires_equal_lengths() -> None:
@@ -1850,7 +1852,7 @@ def test_zip_binding_requires_equal_lengths() -> None:
         with pytest.raises(ExecutionError, match="equal-length"):
             await engine.run(Graph(nodes={"m": region}), ["m"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broadcast_binding_repeats_final_elements_to_longest_list() -> None:
@@ -1861,7 +1863,7 @@ def test_broadcast_binding_repeats_final_elements_to_longest_list() -> None:
         assert children is not None
         assert [child.resolve() for child in children] == [11, 22, 32, 42, 52]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broadcast_binding_promotes_singleton_across_all_iterations() -> None:
@@ -1873,7 +1875,7 @@ def test_broadcast_binding_promotes_singleton_across_all_iterations() -> None:
         assert children is not None
         assert [child.resolve() for child in children] == [11, 21, 31]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broadcast_equal_lengths_match_zip_result() -> None:
@@ -1889,7 +1891,7 @@ def test_broadcast_equal_lengths_match_zip_result() -> None:
             == zip_result.outputs["m"]["results"].fingerprint
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broadcast_mixed_empty_lists_fail_naming_empty_ports() -> None:
@@ -1901,7 +1903,7 @@ def test_broadcast_mixed_empty_lists_fail_naming_empty_ports() -> None:
             await engine.run(Graph(nodes={"m": region}), ["m"])
         assert AddPair.calls == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broadcast_all_empty_lists_produce_zero_iterations() -> None:
@@ -1915,7 +1917,7 @@ def test_broadcast_all_empty_lists_produce_zero_iterations() -> None:
         assert AddPair.calls == []
         assert result.executed == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cross_binding_is_deterministic_cartesian_product() -> None:
@@ -1938,7 +1940,7 @@ def test_cross_binding_is_deterministic_cartesian_product() -> None:
         assert values[:4] == [10, 100, 1000, 10000]
         assert values[4:8] == [20, 200, 2000, 20000]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_map_binding_count_respects_max_iterations() -> None:
@@ -1948,7 +1950,7 @@ def test_map_binding_count_respects_max_iterations() -> None:
         with pytest.raises(ExecutionError, match="max_iterations"):
             await engine.run(Graph(nodes={"m": region}), ["m"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- engine: fold and while --------------------------------------------------
@@ -1960,7 +1962,7 @@ def test_fold_region_chains_state() -> None:
         result = await engine.run(Graph(nodes={"f": fold_region()}), ["f"])
         assert result.outputs["f"]["total"].resolve() == 10  # 0+1+2+3+4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fold_with_zero_elements_returns_initial_state() -> None:
@@ -1970,7 +1972,7 @@ def test_fold_with_zero_elements_returns_initial_state() -> None:
         result = await engine.run(Graph(nodes={"f": region}), ["f"])
         assert result.outputs["f"]["total"].resolve() == 42
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_while_region_iterates_until_continue_false() -> None:
@@ -1996,7 +1998,7 @@ def test_while_region_iterates_until_continue_false() -> None:
         finished = next(e for e in events if e.kind == "region_finished")
         assert finished.detail["iterations"] == 5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_while_region_cap_with_continue_true_is_loud() -> None:
@@ -2006,7 +2008,7 @@ def test_while_region_cap_with_continue_true_is_loud() -> None:
         with pytest.raises(ExecutionError, match="max_iterations=3"):
             await engine.run(Graph(nodes={"w": region}), ["w"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_conditional_is_zero_or_one_expansion() -> None:
@@ -2022,7 +2024,7 @@ def test_conditional_is_zero_or_one_expansion() -> None:
         await engine.run(Graph(nodes={"m": map_region(inputs={"item": []})}), ["m"])
         assert AddOne.ran == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- engine: caching and coalescing ------------------------------------------
@@ -2043,7 +2045,7 @@ def test_per_item_caching_reexecutes_only_changed_iterations() -> None:
         assert result.executed == ("m[1]/add",)
         assert sorted(result.cached) == ["m[0]/add", "m[2]/add"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_duplicate_items_execute_as_separate_iteration_occurrences() -> None:
@@ -2058,7 +2060,7 @@ def test_duplicate_items_execute_as_separate_iteration_occurrences() -> None:
         assert len(result.executed) == 3
         assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_region_index_participates_in_cache_identity_when_consumed() -> None:
@@ -2089,7 +2091,7 @@ def test_region_index_participates_in_cache_identity_when_consumed() -> None:
         assert second.executed == ()
         assert sorted(second.cached) == ["m[0]/add", "m[1]/add", "m[2]/add"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_stateless_fold_executes_in_iteration_order() -> None:
@@ -2114,7 +2116,7 @@ def test_stateless_fold_executes_in_iteration_order() -> None:
         assert AddPair.calls == [(30, 0), (10, 1), (20, 2)]
         assert result.outputs["f"]["results"].resolve() == [30, 11, 22]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("items", [[4, 8, 15], []])
@@ -2134,7 +2136,7 @@ def test_last_output_returns_final_value_or_typed_absence(items: list[int]) -> N
             assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "m/result"
             assert output.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(("cache_policy", "calls_per_run"), [("reuse", 3), ("rerun", 3)])
@@ -2160,7 +2162,7 @@ def test_region_cache_policy_applies_to_each_occurrence_across_runs(
             assert second.cached == ()
             assert len(second.executed) == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_execution_no_cache_overrides_nested_region_reuse() -> None:
@@ -2178,7 +2180,7 @@ def test_execution_no_cache_overrides_nested_region_reuse() -> None:
         assert len(result.executed) == 3
         assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_inner_reuse_overrides_outer_rerun() -> None:
@@ -2223,7 +2225,7 @@ def test_inner_reuse_overrides_outer_rerun() -> None:
         assert first.cached == ()
         assert len(second.cached) == 4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_nested_reuse_scopes_identical_inputs_by_iteration_occurrence() -> None:
@@ -2253,7 +2255,7 @@ def test_native_nested_reuse_scopes_identical_inputs_by_iteration_occurrence() -
         assert second.executed == ()
         assert len(second.cached) == 4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nested_reuse_matches_comfyui_iteration_inputs() -> None:
@@ -2283,7 +2285,7 @@ def test_nested_reuse_matches_comfyui_iteration_inputs() -> None:
         assert second.executed == ()
         assert len(second.cached) == 4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- engine: absence ---------------------------------------------------------
@@ -2309,7 +2311,7 @@ def test_absent_region_input_skips_the_whole_region() -> None:
         skip_event = next(e for e in events if e.kind == "node_skipped")
         assert skip_event.node_id == "m"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_absent_body_output_makes_whole_gather_absent() -> None:
@@ -2329,7 +2331,7 @@ def test_absent_body_output_makes_whole_gather_absent() -> None:
         origin = out.meta.get(ABSENT_ORIGIN_META_KEY)
         assert origin == "m[1]/maybe/out"  # names the iteration that decided
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compact_gather_omits_absent_iterations_in_order() -> None:
@@ -2347,7 +2349,7 @@ def test_compact_gather_omits_absent_iterations_in_order() -> None:
         assert out.type_id == "list<INT>"
         assert out.resolve() == [12, 4, 8]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compact_gather_does_not_turn_failed_iterations_into_absence() -> None:
@@ -2374,7 +2376,7 @@ def test_compact_gather_does_not_turn_failed_iterations_into_absence() -> None:
         assert failed_iteration_started
         assert not failed_iteration_finished
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("items", [[1, 3, 5], []])
@@ -2393,7 +2395,7 @@ def test_compact_gather_all_absent_or_zero_iterations_is_typed_empty(items: list
         assert out.type_id == "list<INT>"
         assert list_children(out) == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compact_gather_is_legal_for_fold_and_while() -> None:
@@ -2432,7 +2434,7 @@ def test_compact_gather_is_legal_for_fold_and_while() -> None:
         while_result = await make_engine().run(Graph(nodes={"w": while_loop}), ["w"])
         assert while_result.outputs["w"]["present"].resolve() == [4, 8]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nested_compact_gathers_preserve_region_boundaries() -> None:
@@ -2456,7 +2458,7 @@ def test_nested_compact_gathers_preserve_region_boundaries() -> None:
         result = await make_engine().run(Graph(nodes={"o": outer}), ["o"])
         assert result.outputs["o"]["rows"].resolve() == [[4, 12], [], [16]]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_absent_body_output_makes_whole_flatten_absent() -> None:
@@ -2482,7 +2484,7 @@ def test_absent_body_output_makes_whole_flatten_absent() -> None:
         assert is_absent(out)
         assert out.meta.get(ABSENT_ORIGIN_META_KEY) == "o[1]/inner[0]/maybe/out"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- engine: composition -----------------------------------------------------
@@ -2500,7 +2502,7 @@ def test_region_output_feeds_sibling_nodes() -> None:
         result = await engine.run(graph, ["after"])
         assert result.outputs["after"]["out"].resolve() == 11
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broadcast_ports_pass_unchanged_into_every_iteration() -> None:
@@ -2521,7 +2523,7 @@ def test_broadcast_ports_pass_unchanged_into_every_iteration() -> None:
         assert children is not None
         assert [c.resolve() for c in children] == [101, 102, 103]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_nested_regions_execute() -> None:
@@ -2544,7 +2546,7 @@ def test_nested_regions_execute() -> None:
             [4, 5, 6],
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_occurrence_ids_compose_and_terminate_exactly_once() -> None:
@@ -2595,7 +2597,7 @@ def test_occurrence_ids_compose_and_terminate_exactly_once() -> None:
         for node_id in result.executed:
             assert terminated.get(node_id) == 1, f"{node_id} never terminated"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_gather_of_a_port_is_the_identity_region() -> None:
@@ -2617,4 +2619,4 @@ def test_gather_of_a_port_is_the_identity_region() -> None:
         assert children is not None
         assert [c.resolve() for c in children] == [4, 5]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

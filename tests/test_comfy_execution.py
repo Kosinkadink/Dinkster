@@ -30,6 +30,8 @@ from dinkster_server import create_app
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 SCHEMAS = build_schemas(EXECUTION_NODES)
 
 
@@ -100,7 +102,7 @@ def test_lazy_input(cache_enabled: bool) -> None:
         assert "left" not in result.executed
         assert "right" in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -138,7 +140,7 @@ def test_mixed_lazy_results(cache_enabled: bool) -> None:
         assert "mixed[2]/black" not in result.executed
         assert {"mixed[1]/black", "mixed[1]/white"}.issubset(result.executed)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -154,7 +156,7 @@ def test_full_cache(cache_enabled: bool) -> None:
         assert ("value" in second.cached) is cache_enabled
         assert ("value" in second.executed) is not cache_enabled
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -185,7 +187,7 @@ def test_partial_cache(cache_enabled: bool) -> None:
         assert ("source" in result.cached) is cache_enabled
         assert "add" in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -202,7 +204,7 @@ def test_cycle_error(cache_enabled: bool) -> None:
         with pytest.raises(GraphValidationError, match="cycle"):
             await make_engine().run(graph, ["left"], cache_enabled=cache_enabled)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -214,7 +216,7 @@ def test_missing_node_error(cache_enabled: bool) -> None:
         with pytest.raises(GraphValidationError, match="unknown node type"):
             await make_engine().run(graph, ["missing"], cache_enabled=cache_enabled)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -226,7 +228,7 @@ def test_undeclared_inputs(cache_enabled: bool) -> None:
         with pytest.raises(GraphValidationError, match="unknown-input"):
             await make_engine().run(graph, ["value"], cache_enabled=cache_enabled)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -250,7 +252,7 @@ def test_validation_error_literal(cache_enabled: bool, value: object, error: boo
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_admission_receives_plain_typed_literal_and_region_link_types() -> None:
@@ -293,7 +295,7 @@ def test_admission_receives_plain_typed_literal_and_region_link_types() -> None:
         )
         assert result.outputs["check"]["value"].resolve() == 3.5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_admission_rejects_inside_region_before_any_producer() -> None:
@@ -327,7 +329,7 @@ def test_admission_rejects_inside_region_before_any_producer() -> None:
         assert failure.value.diagnostics[0].node_id == "region/check"
         assert not ExecutionAdmissionSource.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -348,7 +350,7 @@ def test_validation_error_edge_rejects_before_producer(cache_enabled: bool) -> N
             await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
         assert not ExecutionAdmissionSource.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -372,7 +374,7 @@ def test_validation_error_edge1(cache_enabled: bool, node_type: str, value: int 
         with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
             await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -406,7 +408,7 @@ def test_validation_error_edge2(
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -436,7 +438,7 @@ def test_validation_error_edge3(
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -470,7 +472,7 @@ def test_validation_error_edge4(
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -500,7 +502,7 @@ def test_validation_error_kwargs(
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == input1 * input2
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -528,7 +530,7 @@ def test_mixed_expansion_returns(cache_enabled: bool) -> None:
             if index and cache_enabled:
                 assert "parent" in result.cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -543,7 +545,7 @@ def test_dynamic_cycle_error(cache_enabled: bool) -> None:
                 cache_enabled=cache_enabled,
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -558,7 +560,7 @@ def test_error(cache_enabled: bool) -> None:
                 cache_enabled=cache_enabled,
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -578,7 +580,7 @@ def test_output_reuse(cache_enabled: bool) -> None:
         assert result.outputs["right"]["value"].resolve() == 41
         assert result.executed.count("source") == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -595,7 +597,7 @@ def test_custom_is_changed(cache_enabled: bool) -> None:
         assert second.cached == ()
         assert second.executed == ("value",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -632,7 +634,7 @@ def test_is_changed_with_outputs(cache_enabled: bool) -> None:
         assert ("consumer" in changed.cached) is False
         assert "consumer" in changed.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -658,7 +660,7 @@ def test_blocked_output_reports_once(cache_enabled: bool) -> None:
         assert len(notices) == 1
         assert notices[0].detail["message"] == "Blocked Execution"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -681,7 +683,7 @@ def test_partial_execution_included_outputs(cache_enabled: bool) -> None:
         assert "right" not in result.outputs
         assert "right_source" not in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -702,7 +704,7 @@ def test_partial_execution_excluded_outputs(cache_enabled: bool) -> None:
         assert "second" not in result.outputs
         assert "second" not in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -723,7 +725,7 @@ def test_partial_execution_dependencies(cache_enabled: bool) -> None:
         assert result.outputs["final"]["value"].resolve() == 5
         assert {"source", "output", "final"}.issubset(result.executed)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -744,7 +746,7 @@ def test_partial_execution_multiple_output_nodes(cache_enabled: bool) -> None:
         assert "first" in result.executed
         assert "other" not in result.outputs
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -761,7 +763,7 @@ def test_partial_execution_empty_list(cache_enabled: bool) -> None:
         assert result.executed == ()
         assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -794,7 +796,7 @@ def test_partial_execution_with_lazy_nodes(cache_enabled: bool) -> None:
         assert "other" not in result.executed
         assert "other_output" not in result.outputs
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -814,7 +816,7 @@ def test_for_loop(cache_enabled: bool) -> None:
             expanded = [event for event in events if event.kind == "node_expanded"]
             assert len(expanded) == 5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -849,7 +851,7 @@ def test_parallel_sleep_nodes(cache_enabled: bool, monkeypatch: pytest.MonkeyPat
         assert result.outputs["left"]["value"].resolve() == 3
         assert result.outputs["right"]["value"].resolve() == 5
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -888,7 +890,7 @@ def test_parallel_sleep_expansion(cache_enabled: bool, monkeypatch: pytest.Monke
         assert result.outputs["parallel"]["value"].resolve() == 15
         assert any(event.kind == "node_expanded" for event in events)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
@@ -920,4 +922,4 @@ def test_cached_outputs_in_job_without_client_id(cache_enabled: bool) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -28,6 +28,8 @@ from dinkster_values import (
 )
 from dinkster_workers import DeviceMap, IsolatedWorker
 
+from tests.async_scenarios import run_scenario
+
 TESTS_DIR = Path(__file__).parent
 
 CUDA1_MAP = DeviceMap({"cuda:0": "cuda:1"})
@@ -168,7 +170,7 @@ def test_isolated_output_meta_lands_in_parent_namespace(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_residency_is_mapped_before_the_governor(
@@ -217,7 +219,7 @@ def test_isolated_lease_residency_is_mapped_before_the_governor(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_denial_respects_mapped_budget(tmp_path: Path) -> None:
@@ -251,4 +253,4 @@ def test_isolated_lease_denial_respects_mapped_budget(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

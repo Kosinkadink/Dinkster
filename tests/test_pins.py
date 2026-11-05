@@ -9,7 +9,6 @@ failure, or cancellation.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 
 from dinkster_caches import MemoryLRUCache
@@ -38,6 +37,8 @@ from dinkster_values import (
     register_core_types,
 )
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 # --- ResourcePins semantics ----------------------------------------------
 
@@ -181,7 +182,7 @@ def test_run_pins_references_and_unpins_at_run_end() -> None:
         assert observed == [True]
         assert not pins.pinned(resource_id_of(pool))  # unwound at run end
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_condemned_cache_hit_is_a_miss_and_recomputes() -> None:
@@ -205,4 +206,4 @@ def test_condemned_cache_hit_is_a_miss_and_recomputes() -> None:
         # served; the loader reruns and produces a fresh resident.
         assert "load" in second.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

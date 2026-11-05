@@ -57,6 +57,7 @@ from dinkster_workers import (
 )
 from dinkster_workers.staging import declared_assets_from_wire
 
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 MODEL_BYTES = b"aux model bytes for pack asset tests" * 32
@@ -685,7 +686,7 @@ def test_node_declared_asset_gates_submit_then_consent_runs(tmp_path: Path) -> N
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_checkpoint_manifest_is_exposed_in_missing_asset_plan(tmp_path: Path) -> None:
@@ -720,7 +721,7 @@ def test_checkpoint_manifest_is_exposed_in_missing_asset_plan(tmp_path: Path) ->
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_provider_selection_preflights_only_its_artifacts(tmp_path: Path) -> None:
@@ -752,7 +753,7 @@ def test_provider_selection_preflights_only_its_artifacts(tmp_path: Path) -> Non
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unused_declaration_never_gates(tmp_path: Path) -> None:
@@ -772,7 +773,7 @@ def test_unused_declaration_never_gates(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_wrong_packaged_bytes_fail_and_land_nothing(tmp_path: Path) -> None:
@@ -798,7 +799,7 @@ def test_wrong_packaged_bytes_fail_and_land_nothing(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_region_bodies_reach_node_declared_assets(tmp_path: Path) -> None:
@@ -825,7 +826,7 @@ def test_region_bodies_reach_node_declared_assets(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_declared_leads_merge_with_submission_hints(tmp_path: Path) -> None:
@@ -877,7 +878,7 @@ def test_declared_leads_merge_with_submission_hints(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_sources_endpoint_merges_declared_leads(tmp_path: Path) -> None:
@@ -932,4 +933,4 @@ def test_sources_endpoint_merges_declared_leads(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

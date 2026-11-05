@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -39,6 +38,7 @@ from dinkster_nodes_comfy.flux_conditioning import (
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 class TextEncoder:
@@ -351,4 +351,4 @@ def test_ordinary_pack_encodes_original_and_selected_layers(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -26,6 +26,8 @@ from dinkster_schema import (
 from dinkster_values import TypeRegistry, Value, is_absent, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 INT = TypeExpr.concrete("INT")
 
 
@@ -159,7 +161,7 @@ def test_run_value_wait_releases_execution_and_memory_admission(governed: bool) 
             with pytest.raises(RuntimeError, match="no longer active"):
                 await Waiter.saved.publish_run_value("waiter", {})
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_inhibit_pending_region_produces_typed_absence() -> None:
@@ -200,7 +202,7 @@ def test_inhibit_pending_region_produces_typed_absence() -> None:
             ),
         }
     )
-    result = asyncio.run(asyncio.wait_for(engine.run(graph, ["region"]), 3))
+    result = run_scenario(asyncio.wait_for(engine.run(graph, ["region"]), 3))
     assert is_absent(result.outputs["region"]["values"])
     assert result.outputs["region"]["values"].meta.get("absent.standsFor") == "list<INT>"
     assert result.skipped == ("region",)
@@ -225,7 +227,7 @@ def test_control_graph_edits_are_validated_immutable_and_run_local() -> None:
             assert "muted" in result.skipped
             assert graph.nodes["victim"].inputs["value"] == Link("controller", "value")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancelling_waiter_releases_admission_for_the_next_run() -> None:
@@ -246,7 +248,7 @@ def test_cancelling_waiter_releases_admission_for_the_next_run() -> None:
         finally:
             Waiter.started = None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_execution_context_schema_is_explicit_and_not_a_socket() -> None:
@@ -315,4 +317,4 @@ def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document()
             assert result.outputs["end"]["value"].resolve() == 91
             assert graph.nodes["end"].inputs["value"] == Link("body", "value")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

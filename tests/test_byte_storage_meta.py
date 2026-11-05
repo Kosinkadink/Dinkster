@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from copy import deepcopy
 from pathlib import Path
 from typing import cast
@@ -24,6 +23,8 @@ from dinkster_values import (
 from dinkster_values.model import PyObjPayload
 from dinkster_values.storage import encoded_storage_meta
 from dinkster_workers import ValueCodec
+
+from tests.async_scenarios import run_scenario
 
 CANONICAL_JSON = (
     b'{"assets":[{"bytes":1000000000,"id":"asset"}],'
@@ -170,7 +171,7 @@ def test_declared_byte_codec_replay_preserves_identity_and_normalizes_metadata(
         assert cache.footprint("ram") == len(data)
         assert cache.footprint("vram:producer/cuda:0") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert fingerprint_calls == [data]
     assert producer.meta.entries == before
     assert producer.payload is wrapped.payload

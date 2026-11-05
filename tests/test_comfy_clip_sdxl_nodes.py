@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.clip_sdxl import CLIPTextEncodeSDXL, CLIPTextEncodeSDXLRefiner
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 class SDXLEncoder:
@@ -199,4 +199,4 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

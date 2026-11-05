@@ -11,7 +11,6 @@ every ledger move appending its durable journal fact atomically.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
@@ -41,6 +40,8 @@ from dinkster_server import (
 )
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 SID = "a" * 32
 OTHER_SID = "b" * 32
@@ -738,7 +739,7 @@ def test_training_routes(tmp_path: Path) -> None:
         finally:
             await client.close()  # on_cleanup closes the store (and journal)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_training_routes_scope_tokens(tmp_path: Path) -> None:
@@ -775,4 +776,4 @@ def test_training_routes_scope_tokens(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

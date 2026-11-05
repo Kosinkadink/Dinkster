@@ -57,6 +57,8 @@ from dinkster_workers import (
 from dinkster_workers.boundary import ValueCodec
 from dinkster_workers.session import BoundarySession, WorkerDied
 
+from tests.async_scenarios import run_scenario
+
 TESTS_DIR = Path(__file__).parent
 
 DIGEST = "blake3:" + "ab" * 32
@@ -91,7 +93,7 @@ def test_service_merges_classes_and_releases_on_exit() -> None:
         assert governor.reserved("ram") == 0
         assert governor.reserved("disk") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_service_unwinds_partial_acquisition_on_denial() -> None:
@@ -110,7 +112,7 @@ def test_service_unwinds_partial_acquisition_on_denial() -> None:
         assert governor.reserved("ram") == 0
         assert governor.reserved("disk") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- GovernedWorker -------------------------------------------------------
@@ -205,7 +207,7 @@ def test_governed_worker_holds_reservation_across_execute() -> None:
         assert fake.reserved_during == [60]  # held while executing
         assert governor.reserved("ram") == 0  # released after
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governed_worker_skips_reservation_for_empty_plan() -> None:
@@ -216,7 +218,7 @@ def test_governed_worker_skips_reservation_for_empty_plan() -> None:
         assert result.error is None
         assert fake.reserved_during == [0]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governed_worker_denial_is_a_node_error_and_skips_execute() -> None:
@@ -230,7 +232,7 @@ def test_governed_worker_denial_is_a_node_error_and_skips_execute() -> None:
         assert fake.reserved_during == []  # execute never ran
         assert governor.reserved("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governed_worker_planner_failure_is_a_node_error() -> None:
@@ -252,7 +254,7 @@ def test_governed_worker_planner_failure_is_a_node_error() -> None:
         assert "no size declared" in result.error.message
         assert fake.reserved_during == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governed_worker_releases_when_inner_raises() -> None:
@@ -265,7 +267,7 @@ def test_governed_worker_releases_when_inner_raises() -> None:
             await worker.invoke(make_invocation(60))
         assert governor.reserved("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governed_worker_releases_on_cancellation() -> None:
@@ -282,7 +284,7 @@ def test_governed_worker_releases_on_cancellation() -> None:
             await task
         assert governor.reserved("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_governed_worker_serializes_over_a_constrained_budget(
@@ -309,7 +311,7 @@ def test_governed_worker_serializes_over_a_constrained_budget(
         assert all(r.error is None for r in results)
         assert governor.reserved("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- manifest entry -------------------------------------------------------
@@ -492,7 +494,7 @@ def test_result_waits_for_lease_cleanup_when_peer_dies(
             await asyncio.gather(pending, return_exceptions=True)
             await session.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_grant_hold_release(tmp_path: Path) -> None:
@@ -519,7 +521,7 @@ def test_isolated_lease_grant_hold_release(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_denial_is_a_node_error(tmp_path: Path) -> None:
@@ -539,7 +541,7 @@ def test_isolated_lease_denial_is_a_node_error(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_released_when_node_errors(tmp_path: Path) -> None:
@@ -565,7 +567,7 @@ def test_isolated_lease_released_when_node_errors(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_leases_serialize_over_a_constrained_budget(tmp_path: Path) -> None:
@@ -594,7 +596,7 @@ def test_isolated_leases_serialize_over_a_constrained_budget(tmp_path: Path) -> 
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_survives_cancellation_while_blocked(
@@ -626,7 +628,7 @@ def test_isolated_lease_survives_cancellation_while_blocked(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_lease_without_service_grants_unaccounted(tmp_path: Path) -> None:
@@ -642,7 +644,7 @@ def test_isolated_lease_without_service_grants_unaccounted(tmp_path: Path) -> No
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_close_unwinds_held_leases(tmp_path: Path) -> None:
@@ -663,7 +665,7 @@ def test_isolated_close_unwinds_held_leases(tmp_path: Path) -> None:
         await worker.close()  # must not hang; leases die with the worker
         assert governor.reserved("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- compat checkpoint policy ----------------------------------------------
@@ -757,7 +759,7 @@ def test_compat_planner_reserves_unloaded_and_unknown_residents(
 ) -> None:
     pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"vram:cuda:0": 100, "ram": 50}})
     rid = pool.rid_for(object())
-    asyncio.run(pool.shed(PressureSignal(device="vram:cuda:0", bytes_needed=100)))
+    run_scenario(pool.shed(PressureSignal(device="vram:cuda:0", bytes_needed=100)))
     monkeypatch.setattr("dinkster_compat_comfy.memory.default_pool", lambda: pool)
     invocation = invocation_with_inputs(
         known=resident_input(f"resident:{rid}", {"vram:cuda:0": 100, "ram": 50}),

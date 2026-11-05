@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import hashlib
 import json
@@ -51,6 +50,7 @@ from dinkster.workflow_requirements import (
     project_requirements,
 )
 from dinkster.workflow_requirements_api import add_workflow_requirement_routes
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 
@@ -558,7 +558,7 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
                 )
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
         assert (tmp_path / "snapshot.json").read_bytes() == snapshot
         assert provenance.sources(first_digest) == (url,)
     finally:

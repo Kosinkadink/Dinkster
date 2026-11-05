@@ -24,6 +24,7 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_server import ServerLibrary, create_app
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -244,6 +245,6 @@ def test_save_text_executes_through_the_ordinary_manifest(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert (roots["default"] / "manifest" / "1x1_00001.txt").read_bytes() == b"manifest\n"
     assert (roots["default"] / "manifest" / "1x1_00002.txt").read_bytes() == b"manifest\n"

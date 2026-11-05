@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from importlib.metadata import distribution
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +14,7 @@ from dinkster_server.settings import RuntimeSettings, normalize_features
 from test_server import SCHEMAS, make_engine
 
 from dinkster.resolver_api import RESOLVER_INDEXES_KEY, add_resolver_index_routes
+from tests.async_scenarios import run_scenario
 
 
 def _settings(*, resolver_enabled: bool) -> RuntimeSettings:
@@ -105,7 +105,7 @@ def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("resolver_enabled", [False, True])
@@ -130,7 +130,7 @@ def test_resolver_index_routes_require_explicit_opt_in(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disabled_resolver_routes_do_not_bootstrap_or_refresh(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ def test_disabled_resolver_routes_do_not_bootstrap_or_refresh(tmp_path: Path) ->
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_installed_entry_points_match_the_shipped_commands() -> None:

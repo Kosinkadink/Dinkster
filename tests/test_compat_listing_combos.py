@@ -10,7 +10,6 @@ exercised against a fake ``folder_paths`` module in sys.modules.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import importlib
 import json
@@ -49,6 +48,7 @@ from dinkster_workers.host import load_choices
 from dinkster_workers.manifest import load_manifest
 
 from dinkster.compose import ServingComposer
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 # --- helpers ------------------------------------------------------------
@@ -1166,7 +1166,7 @@ def test_prompt_inventory_choices_compose_without_matching_schemas(
         finally:
             await composer.composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(

@@ -33,6 +33,8 @@ from dinkster_server.execution_journal import execution_run_stream
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete("STRING")
 
 
@@ -99,7 +101,7 @@ def store(tmp_path: Path) -> JournalStore:
 
 
 def flush(journal: ExecutionJournal) -> None:
-    asyncio.run(journal.flush())
+    run_scenario(journal.flush())
 
 
 # -- classification and batching ---------------------------------------------
@@ -279,11 +281,11 @@ def test_close_wakes_the_flush_loop_and_lands_the_buffer(tmp_path: Path) -> None
         async with asyncio.timeout(5):
             await journal.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     reopened = ExecutionJournal(JournalStore(path))
     names = [record.name for record in reopened.read("run-1").records]
     assert names == ["node_started", "job_state"]
-    asyncio.run(reopened.close())
+    run_scenario(reopened.close())
 
 
 def test_close_waits_for_an_in_flight_write(
@@ -322,15 +324,15 @@ def test_close_waits_for_an_in_flight_write(
         async with asyncio.timeout(5):
             await closer
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     reopened = ExecutionJournal(JournalStore(path))
     assert reopened.scope_of("run-1") == "local"
-    asyncio.run(reopened.close())
+    run_scenario(reopened.close())
 
 
 def test_crash_abandoned_runs_become_retention_eligible(tmp_path: Path) -> None:
     path = tmp_path / "execution.sqlite"
-    asyncio.run(ExecutionJournal(JournalStore(path)).close())  # create tables
+    run_scenario(ExecutionJournal(JournalStore(path)).close())  # create tables
 
     def crashed(txn: Any, run_id: str, ts: float) -> None:
         txn.execute(
@@ -357,7 +359,7 @@ def test_crash_abandoned_runs_become_retention_eligible(tmp_path: Path) -> None:
     assert journal.scope_of("run-old") is None
     assert journal.read("run-old").latest_seq == 0
     assert journal.scope_of("run-recent") == "local"
-    asyncio.run(journal.close())
+    run_scenario(journal.close())
 
     raw = JournalStore(path)
     row = raw.transact(
@@ -375,18 +377,18 @@ def test_journal_survives_reopen(tmp_path: Path) -> None:
     journal = ExecutionJournal(JournalStore(path))
     journal.observe(lifecycle("run-1", "node_started", 1), scope="local")
     journal.observe(job_state("run-1", 2, "completed"), scope="local")
-    asyncio.run(journal.close())
+    run_scenario(journal.close())
 
     reopened = ExecutionJournal(JournalStore(path))
     assert reopened.scope_of("run-1") == "local"
     page = reopened.read("run-1")
     assert [record.name for record in page.records] == ["node_started", "job_state"]
-    asyncio.run(reopened.close())
+    run_scenario(reopened.close())
 
 
 def test_observe_after_close_is_a_noop(tmp_path: Path) -> None:
     journal = ExecutionJournal(JournalStore(tmp_path / "execution.sqlite"))
-    asyncio.run(journal.close())
+    run_scenario(journal.close())
     journal.observe(lifecycle("run-1", "node_started", 1), scope="local")  # no crash
 
 
@@ -524,4 +526,4 @@ def test_run_journal_endpoint_serves_replay_page(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

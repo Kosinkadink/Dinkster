@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import os
 import subprocess
@@ -35,6 +34,7 @@ from dinkster_values import (
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 SVG_STREAMS = (b"<svg>one</svg>", b"", b"<svg>two</svg>", b"<svg>one</svg>", b"\xff")
 
@@ -245,4 +245,4 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 from collections.abc import Mapping
@@ -42,6 +41,8 @@ from dinkster_workers import (
 )
 from dinkster_workers.host import load_pack
 from test_remote import TOKEN, start_service, stop_service
+
+from tests.async_scenarios import run_scenario
 
 MEDIA_MANIFEST = (
     Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
@@ -369,7 +370,7 @@ def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(
         assert actual[0] == expected[0]
         np.testing.assert_array_equal(actual[1], expected[1])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isolated() -> None:
@@ -445,4 +446,4 @@ def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isola
             disassemble_video(local_video)["images"], disassemble_video(isolated_video)["images"]
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

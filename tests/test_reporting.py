@@ -35,6 +35,8 @@ from dinkster_schema import (
 from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker
 
+from tests.async_scenarios import run_scenario
+
 STRING = TypeExpr.concrete(CORE_STRING)
 TESTS_DIR = Path(__file__).parent
 
@@ -217,7 +219,7 @@ def test_engine_surfaces_node_events_with_provenance_and_order() -> None:
         assert kinds[-1] == "node_finished"
         assert kinds[1:-1] == ["node_event"] * 4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_runtime_previews_and_preview_marked_final_are_distinct() -> None:
@@ -242,7 +244,7 @@ def test_runtime_previews_and_preview_marked_final_are_distinct() -> None:
         kinds = [event.kind for event in events if event.node_id == "p"]
         assert kinds == ["node_started", "node_event", "node_event", "node_finished"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_thread_emission_reaches_the_listener() -> None:
@@ -254,7 +256,7 @@ def test_thread_emission_reaches_the_listener() -> None:
         reports = node_events(events, "t")
         assert [e.detail["name"] for e in reports] == ["progress"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_invoke_waits_for_accepted_cross_thread_report(
@@ -322,7 +324,7 @@ def test_in_process_invoke_waits_for_accepted_cross_thread_report(
                 "node_finished",
             ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_report_schedule_failure_is_suppressed(
@@ -351,7 +353,7 @@ def test_in_process_report_schedule_failure_is_suppressed(
             "node_finished",
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_broken_listener_does_not_fail_the_node() -> None:
@@ -377,7 +379,7 @@ def test_broken_listener_does_not_fail_the_node() -> None:
         assert result.outputs["c"]["value"].resolve() == "OK"
         assert node_events(events, "c")  # events were still delivered
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_silent_node_pays_nothing() -> None:
@@ -388,7 +390,7 @@ def test_silent_node_pays_nothing() -> None:
         await engine.run(graph, ["s"])
         assert not [e for e in events if e.kind == "node_event"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- across the process boundary ---
@@ -445,7 +447,7 @@ def test_events_stream_across_the_process_boundary(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_concurrent_invocations_route_events_to_their_own_nodes(
@@ -496,4 +498,4 @@ def test_concurrent_invocations_route_events_to_their_own_nodes(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

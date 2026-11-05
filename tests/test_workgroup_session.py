@@ -43,6 +43,8 @@ from dinkster_workers.workgroup_session import (
     workgroup_message_from_frame,
 )
 
+from tests.async_scenarios import run_scenario
+
 
 def registry() -> TypeRegistry:
     value = TypeRegistry()
@@ -210,7 +212,7 @@ def test_handler_capability_is_authenticated_present_or_absent() -> None:
         reserved_server.close()
         await reserved_server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_parent_endpoint_round_trip_preserves_reply_order() -> None:
@@ -262,7 +264,7 @@ def test_parent_endpoint_round_trip_preserves_reply_order() -> None:
         finally:
             await close_host(session, server, host_task)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_endpoint_owns_direction_and_correlation_refusal() -> None:
@@ -309,7 +311,7 @@ def test_endpoint_owns_direction_and_correlation_refusal() -> None:
         finally:
             await close_host(session, server, host_task)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancel_command_reaches_handler_while_run_is_pending() -> None:
@@ -353,7 +355,7 @@ def test_cancel_command_reaches_handler_while_run_is_pending() -> None:
         finally:
             await close_host(session, server, host_task)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_multiple_bound_endpoints_route_replies_by_exact_correlation() -> None:
@@ -383,7 +385,7 @@ def test_multiple_bound_endpoints_route_replies_by_exact_correlation() -> None:
         assert await receive_a == reply_a
         assert await receive_b == reply_b
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_released_attempts_retire_only_after_consumption_and_stay_bounded() -> None:
@@ -447,7 +449,7 @@ def test_released_attempts_retire_only_after_consumption_and_stay_bounded() -> N
 
         assert sent == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_release_consumption_wakes_every_concurrent_receiver() -> None:
@@ -471,7 +473,7 @@ def test_release_consumption_wakes_every_concurrent_receiver() -> None:
         assert len(failures) == 1
         assert type(failures[0]) is WorkGroupTransportClosed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_release_retires_after_all_earlier_accepted_replies_drain() -> None:
@@ -497,7 +499,7 @@ def test_release_retires_after_all_earlier_accepted_replies_drain() -> None:
         with pytest.raises(WorkGroupTransportClosed):
             await endpoint.send(ReleaseWorkGroup(**child_fields("worker-a")))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_queued_release_rejects_late_and_duplicate_replies_before_consumption() -> None:
@@ -521,7 +523,7 @@ def test_queued_release_rejects_late_and_duplicate_replies_before_consumption() 
         with pytest.raises(WorkGroupTransportClosed):
             await endpoint.receive()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_future_attempt_reply_refuses_without_settling_current_attempt() -> None:
@@ -548,7 +550,7 @@ def test_future_attempt_reply_refuses_without_settling_current_attempt() -> None
         transport.accept(workgroup_frame(ready), ())
         assert await endpoint.receive() == ready
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_transport_loss_close_and_cancellation_wake_without_retained_tasks() -> None:
@@ -594,7 +596,7 @@ def test_transport_loss_close_and_cancellation_wake_without_retained_tasks() -> 
         )
         assert sent == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_accepted_reply_drains_before_transport_failure() -> None:
@@ -619,7 +621,7 @@ def test_accepted_reply_drains_before_transport_failure() -> None:
         with pytest.raises(WorkGroupTransportClosed):
             await endpoint.receive()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pristine_unbind_allows_same_attempt_rebind_and_works_after_failure() -> None:
@@ -637,7 +639,7 @@ def test_pristine_unbind_allows_same_attempt_rebind_and_works_after_failure() ->
         with pytest.raises(WorkGroupTransportClosed):
             await old.receive()
 
-    asyncio.run(old_endpoint_is_closed())
+    run_scenario(old_endpoint_is_closed())
     transport.fail(ConnectionError("lost"))
     transport.unbind(current, ReplicaId("replica-a"))
     assert rebound.binding == current.members[0]
@@ -717,7 +719,7 @@ def test_unbind_refuses_active_channels_and_releases_settled_channels() -> None:
         )
         assert rebound.binding == terminal_definition.members[0]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None:
@@ -772,4 +774,4 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -35,6 +35,8 @@ from dinkster_values import (
     register_core_types,
 )
 
+from tests.async_scenarios import run_scenario
+
 INT = TypeExpr.concrete("INT")
 SCHEMAS = {
     "step": NodeSchema(
@@ -163,7 +165,7 @@ def test_branch_consumers_and_targets_release_after_completion(retain_source, ca
         assert (worker.refs["source"]() is not None) == retain_source
         assert events  # Retained events and miss explanations must not retain envelopes.
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("demand", [False, True])
@@ -209,7 +211,7 @@ def test_lazy_possible_consumers_keep_shared_ancestor_until_decision(demand, cac
         assert ("source" in result.cached) == cache_hit
         assert worker.calls.count("source") == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_repeated_input_links_count_one_consumer() -> None:
@@ -235,7 +237,7 @@ def test_repeated_input_links_count_one_consumer() -> None:
         )
         assert result.outputs["tail"]["out"].resolve() == 24
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("kind", ["map", "fold"])
@@ -286,7 +288,7 @@ def test_regions_release_intermediates_but_keep_exports_and_state(kind) -> None:
             assert result.outputs["region"]["items"].resolve() == [4, 5, 6]
             assert result.outputs["region"]["middles"].resolve() == [3, 4, 5]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("lazy", [False, True])
@@ -333,7 +335,7 @@ def test_failure_cancels_consumers_without_dropping_live_inputs(lazy) -> None:
             await engine.run(graph, ["choose", "fail"] if lazy else ["slow", "fail"])
         assert cancelled.is_set()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -370,7 +372,7 @@ def test_produced_release_does_not_shorten_resource_pin_lifetime(fail) -> None:
         assert not pins.pinned("resident")
         assert pins.condemn("resident")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("outcome", ["complete", "error", "cancel"])
@@ -453,7 +455,7 @@ def test_expansion_retains_external_resource_until_run_cleanup(outcome: str) -> 
         assert not pins.pinned("resident")
         assert pins.condemn("resident")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_while_releases_previous_iteration_ports_and_keeps_continue_export() -> None:
@@ -484,7 +486,7 @@ def test_while_releases_previous_iteration_ports_and_keeps_continue_export() -> 
         result = await engine.run(Graph(nodes={"region": region}), ["region"])
         assert result.outputs["region"]["count"].resolve() == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_region_does_not_retain_other_exports_in_scheduler_tracebacks() -> None:
@@ -521,7 +523,7 @@ def test_failed_region_does_not_retain_other_exports_in_scheduler_tracebacks() -
         assert error.value.__traceback__ is not None
         assert worker.refs["region[0]/source"]() is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ["absent", "non-boolean", "limit", "worker"])
@@ -563,4 +565,4 @@ def test_while_errors_release_iteration_exports_and_prior_state(failure: str) ->
         assert "region[1]/step" in worker.refs
         assert all(ref() is None for ref in worker.refs.values())
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

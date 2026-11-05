@@ -4,7 +4,6 @@ and records carry identities and costs - never values."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import cast
 
@@ -25,6 +24,7 @@ from dinkster.benchmark import (
     record_to_json,
     write_record,
 )
+from tests.async_scenarios import run_scenario
 
 
 class FakeClock:
@@ -412,4 +412,4 @@ def test_end_to_end_records_through_real_engine() -> None:
         # The whole artifact is JSON-serializable, deterministically.
         assert record_to_json(first) == record_to_json(json.loads(record_to_json(first)))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

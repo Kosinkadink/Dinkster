@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import importlib.metadata
 import os
 import subprocess
@@ -11,6 +10,7 @@ import pytest
 
 from dinkster import comfy_compose
 from dinkster.compose import compose_serving, default_pack_spec
+from tests.async_scenarios import run_scenario
 
 torch = pytest.importorskip("torch")
 
@@ -137,4 +137,4 @@ def test_generation_and_comfy_compat_compose_with_cpu_torch(
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

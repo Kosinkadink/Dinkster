@@ -38,6 +38,7 @@ from dinkster_workers import GroupIsolatedWorker, InProcessWorker, IsolatedWorke
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer, UnknownPackError
 from dinkster.reload_api import add_reload_routes, apply_reload, apply_remove
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete("STRING")
 
@@ -226,7 +227,7 @@ def test_reload_swaps_code_types_and_table(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_reload_keeps_old_worker_serving(
@@ -281,7 +282,7 @@ def test_failed_reload_keeps_old_worker_serving(
             await composer.close()
         assert set(closed) == set(started)  # close() reaps the survivor too
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_member_reload_swaps_every_route_transactionally(
@@ -344,7 +345,7 @@ def test_group_member_reload_swaps_every_route_transactionally(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_reload_preserves_unrouted_schema_only_members(tmp_path: Path) -> None:
@@ -373,7 +374,7 @@ def test_group_reload_preserves_unrouted_schema_only_members(tmp_path: Path) -> 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_process_death_fails_every_member_with_group_attribution(
@@ -409,7 +410,7 @@ def test_group_process_death_fails_every_member_with_group_attribution(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_worker_start_is_all_or_nothing(
@@ -437,7 +438,7 @@ def test_group_worker_start_is_all_or_nothing(
         assert owner._proc is not None and owner._proc.returncode is not None
         assert not any(member.alive for member in owner.members.values())
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_worker_authenticates_every_tcp_endpoint(tmp_path: Path) -> None:
@@ -461,7 +462,7 @@ def test_group_worker_authenticates_every_tcp_endpoint(tmp_path: Path) -> None:
         finally:
             await owner.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_grouped_placement_preserves_surface_and_invocation_identity(
@@ -514,7 +515,7 @@ def test_grouped_placement_preserves_surface_and_invocation_identity(
         finally:
             await grouped.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pack_spec_aimdo_reaches_add_and_reload_workers(
@@ -540,7 +541,7 @@ def test_pack_spec_aimdo_reaches_add_and_reload_workers(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert modes == ["on", "on"]
 
 
@@ -587,7 +588,7 @@ def test_reload_preserves_multi_gpu_worker_topology(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_refreshes_restart_scoped_runtime_settings(
@@ -650,7 +651,7 @@ def test_reload_refreshes_restart_scoped_runtime_settings(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert launches == [
         ("auto", 256 * 1024**2, {"vram:cuda:0": 20_000}, ()),
         (
@@ -680,7 +681,7 @@ def test_reload_refuses_rename_and_unknown_pack(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- engine level --------------------------------------------------------------
@@ -783,7 +784,7 @@ def test_in_flight_run_finishes_against_pinned_schemas() -> None:
         assert result.outputs["t"]["out"].resolve() == "HI"
         assert engine._run_schemas == {}  # pins released
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_routing_swap_routes() -> None:
@@ -884,7 +885,7 @@ def test_concurrent_reload_and_removal_publish_in_composer_order(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_cancellation_finishes_committed_publication(
@@ -938,7 +939,7 @@ def test_reload_cancellation_finishes_committed_publication(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_endpoint_swaps_live_surface(
@@ -1020,7 +1021,7 @@ def test_reload_endpoint_swaps_live_surface(
             await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_endpoint_publishes_only_routable_schema_owner_nodes(tmp_path: Path) -> None:
@@ -1061,7 +1062,7 @@ def test_reload_endpoint_publishes_only_routable_schema_owner_nodes(tmp_path: Pa
             await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_endpoint_failure_is_409_and_surface_intact(tmp_path: Path) -> None:
@@ -1109,7 +1110,7 @@ def test_reload_endpoint_failure_is_409_and_surface_intact(tmp_path: Path) -> No
             await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- removal (the other half of the seam) --------------------------------------
@@ -1153,7 +1154,7 @@ def test_remove_pack_retracts_and_allows_readd(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_remove_endpoint_retracts_live_surface(
@@ -1233,4 +1234,4 @@ def test_remove_endpoint_retracts_live_surface(
             await client.close()
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

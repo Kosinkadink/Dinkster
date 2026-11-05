@@ -22,7 +22,6 @@ The contract under test (issue #368, slice 1):
 
 from __future__ import annotations
 
-import asyncio
 import contextvars
 import io
 import logging
@@ -55,6 +54,8 @@ from dinkster_schema.capture import MAX_CAPTURED_MESSAGE_CHARS, MAX_CAPTURED_REC
 from dinkster_schema.log import ROOT_LOGGER_NAME
 from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker
+
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete(CORE_STRING)
 TESTS_DIR = Path(__file__).parent
@@ -437,7 +438,7 @@ def test_engine_surfaces_log_events_with_provenance() -> None:
         assert kinds[0] == "node_started"
         assert kinds[-1] == "node_finished"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- across the process boundary --------------------------------------------------
@@ -492,4 +493,4 @@ def test_log_events_stream_across_the_process_boundary(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

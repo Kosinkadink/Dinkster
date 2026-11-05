@@ -31,6 +31,8 @@ from dinkster_values import (
 )
 from dinkster_workers import BoundaryDiagnostic, IsolatedWorker, RoutingWorker
 
+from tests.async_scenarios import run_scenario
+
 TESTS_DIR = Path(__file__).parent
 IMAGE = "IMAGE"
 MASK = "MASK"
@@ -403,4 +405,4 @@ def test_exact_image_and_mask_atoms_cross_isolated_workers(
         finally:
             await asyncio.gather(compat.close(), native.close())
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
