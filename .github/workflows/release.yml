@@ -399,7 +399,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Kosinkadink/Dinkster-Environments
-          ref: 2b5549e2f2b4b8788d223e0a704b6f3e19b3d3d9
+          ref: a31a0078a65f20e2a2af4ec335155496e1904789
           path: .release/retention
           persist-credentials: false
       - uses: actions/download-artifact@v4
@@ -440,7 +440,7 @@ jobs:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
-        run: uv run --locked --no-sync python .release/retention/retention.py --scope engine --output retention-report.json
+        run: uv run --locked --no-sync python .release/retention/retention.py --scope engine --old-naming --output retention-report.json
       - uses: actions/upload-artifact@v4
         if: always() && github.ref == 'refs/heads/main'
         with:
