@@ -1,5 +1,9 @@
 ## Image operations
 
+- `WebcamCapture` decodes a granted browser-captured PNG into a single image
+  batch. Its `WEBCAM` input retains the uploaded asset identity across worker
+  transport; filesystem path literals are not accepted. Width, height and
+  capture-on-queue configure browser capture, not resizing of the saved frame.
 - Native `ImageCompare` previews each nonempty image batch independently without
   adding graph outputs. The existing two-output image comparison remains available.
 - Native `GLSLShader` renders four ordered image outputs with bounded image and

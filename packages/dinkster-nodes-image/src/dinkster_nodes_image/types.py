@@ -18,6 +18,7 @@ from dinkster_api.v1 import (
     REGION_TYPE,
     SEGMENTATION_TYPE,
     VECTOR_TYPE,
+    WEBCAM_TYPE,
     Detection,
     Region,
     TypeRegistry,
@@ -331,6 +332,8 @@ def register_image_types(registry: TypeRegistry) -> None:
 
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if WEBCAM_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env(), type_id=WEBCAM_TYPE)
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
     if IMAGECOMPARE_TYPE not in registry:
