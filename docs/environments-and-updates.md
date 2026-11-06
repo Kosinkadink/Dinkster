@@ -70,9 +70,9 @@ the three native `artifacts` rows (`name`, `size`, `sha256`). Publication uses
 `SHA256SUMS` covers all ZIPs and `tools-manifest.json`.
 The `Supervisor tools publication` workflow runs only when supervisor sources,
 native build scripts, publication scripts or their build inputs change.
-Its native jobs run the same extraction/relocation checks as the engine tools
-jobs. Engine releases retain tools during the consumer migration; channels
-without `tools` still resolve the engine's hash-verified native tools row.
+Its native jobs verify extraction and relocation without host tools. Engine
+releases do not contain native tools ZIPs; tools acquisition requires the
+channel's independent `tools` pointer.
 
 `dinkster-env --root /absolute/tools-cache tools --channel main --mirror
 https://releases.dinkster.org --yes --json` downloads the native ZIP selected by
@@ -90,7 +90,7 @@ are materialized, requiring no Windows symlink privilege. It invokes
 that child's PATH for bundled uv. Desktop performs no package installation,
 resolution or fallback to a host Python/package manager.
 
-Desktop installers bundle their platform's tools ZIP and its hash-pinned engine
+Desktop installers bundle their platform's tools ZIP and its hash-pinned tools
 manifest. The tools pin is independent of the engine being installed: the
 supervisor is engine-independent, and a newer engine alone does not require new
 tools. Desktop extracts into its own user-data directory keyed by the tools
@@ -820,12 +820,11 @@ directory is the build artifact used by installation checks and publication:
 
 | Asset | Contract |
 |---|---|
-| `*.whl` | Three workspace distributions: `dinkster`, `dinkster-api`, `dinkster-supervisor`; their workspace dependencies require the exact same release version |
+| `*.whl` | `dinkster` and `dinkster-api` use the engine release version; the independently versioned `dinkster-supervisor` wheel supports the engine CLI's install commands |
 | `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the three built workspace wheels |
 | `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `label`, UTC ISO 8601 `builtAt`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size`; older manifests carry `tag` instead of label/build date |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
-| `dinkster-tools-<os>-<arch>.zip` | Extraction-only environment client for Linux/Windows x86_64 and macOS arm64; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
 
 The workflow also builds the official pack source ZIPs and `official-packs.lock`
 with `scripts/build_official_packs.py` and admits them through repeated
@@ -836,14 +835,12 @@ release assets but are not `workspaceWheels` and are never uploaded to PyPI.
 The engine wheel also carries these ZIPs and their catalog as package data,
 so a pip-installed engine can stage its defaults without a selected generation.
 
-Native tools jobs use the interpreter definitions pinned from
+The separate tools workflow uses interpreter definitions pinned from
 `Dinkster-Environments`, including its verified SQLite override and functional
-probe on Windows. Each job uses the same supervisor wheel as the engine release
-and checks the extracted client from a relocated path without host tools.
-Finalization verifies the original release, admits the tools ZIPs using the same
-artifact rows, and regenerates the manifest and checksums. Installation checks,
-GitHub release upload and PyPI selection consume this finalized directory.
-The tools ZIPs are not workspace wheels and are never uploaded to PyPI.
+probe on Windows. Native ZIPs are published only with the tools manifest, never
+with the engine release or on PyPI. Engine finalization rejects native tools
+ZIPs. Installation checks, GitHub release upload and PyPI selection consume
+the engine-only directory.
 Finalization also requires one dependency lock for every official catalog pack
 and selected base variant. It uses the registry and worker lock parsers to
 verify identities and refuses local wheel or index URLs before copying payloads
@@ -912,8 +909,7 @@ no index access. Repair, rollback and move remain offline.
 
 Finalization checks the complete release directory, rejecting third-party
 wheel entries and unlisted payloads. `release.yml` enforces 100,000,000 bytes
-including manifest/checksums and unchanged official pack artifacts/locks,
-excluding only native tools ZIPs, whose interpreters dominate their size.
+including manifest/checksums and every engine payload.
 An over-budget release fails before upload.
 
 `python -m scripts.acquire_engine_bases --tag base-<variant>-<label>`
@@ -958,14 +954,17 @@ These requirements do not embed an index URL. A torch/torchvision bump must have
 for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.
 
-Tag releases use `vX.Y.Z` and require every workspace project's source
-version to equal `X.Y.Z`. A main commit uses GitHub release tag
+Tag releases use `vX.Y.Z` and require engine workspace source versions to
+equal `X.Y.Z`; the supervisor retains its own package version. A main commit uses GitHub release tag
 `main-<YYYY-MM-DD>-<version>-<hash8>` and wheel version
 `<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
 prereleases, never PyPI publications. The frontend bundle stays embedded even
 when its pinned frontend commit is unchanged. A temporary source tree gives
-the three published workspace wheels that version and pins
-workspace dependencies to it without rewriting the checkout or its lock.
+the engine and API wheels that version and pins workspace dependencies to
+their selected versions without rewriting the checkout or its lock. The
+supervisor wheel and dependencies on it retain its committed package version.
+Supervisor-only source/version changes, including their lock entry, skip engine
+build and publication; changes to other lock entries still build an engine.
 
 Pull requests changing release machinery run the build and clean-install
 checks without creating a GitHub release or invoking PyPI. Tag publication

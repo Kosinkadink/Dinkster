@@ -16,7 +16,6 @@ from packaging.version import InvalidVersion, Version
 
 from .environment_artifacts import (
     artifact_rows,
-    discover_manifest,
     parse_metadata,
     trusted_metadata,
 )
@@ -127,20 +126,13 @@ def acquire_tools(
             continue
     if channel is None:
         raise EnvironmentError("no mirror supplied a valid trusted channel")
-    if "tools" in document:
-        reference = tools_reference(document["tools"])
-        data = read_metadata(reference["release"], "tools-manifest.json")
-        manifest = validate_tools_manifest(data, reference["sha256"])
-        label = f"{manifest['label']}-{reference['sha256'][:8]}"
-        if label != reference["label"]:
-            raise EnvironmentError("tools manifest identity differs from channel")
-        sources = (reference["release"],)
-    else:
-        # Old channels retain their engine source until both consumers switch.
-        manifest, sources, _ = discover_manifest(
-            channel.engine_locations, mirrors, channel.engine_release
-        )
-        label = channel.engine_release[7:]
+    reference = tools_reference(document.get("tools"))
+    data = read_metadata(reference["release"], "tools-manifest.json")
+    manifest = validate_tools_manifest(data, reference["sha256"])
+    label = f"{manifest['label']}-{reference['sha256'][:8]}"
+    if label != reference["label"]:
+        raise EnvironmentError("tools manifest identity differs from channel")
+    sources = (reference["release"],)
     architecture = machine().lower()
     architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
     system = {"win32": "windows", "darwin": "macos", "linux": "linux"}.get(sys.platform)
