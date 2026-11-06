@@ -3294,6 +3294,7 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-text",
         "dinkster-vision-birefnet",
         "dinkster-vision-depth-anything-v2",
         "dinkster-vision-depth-anything-v3",
