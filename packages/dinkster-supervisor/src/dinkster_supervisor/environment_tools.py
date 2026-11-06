@@ -114,6 +114,12 @@ def acquire_tools(
     """Resolve native tools independently of engine/base payloads, then verify transport."""
     if channel_name not in {"main", "stable"}:
         raise EnvironmentError("channel must be stable or main")
+    architecture = machine().lower()
+    architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
+    system = {"win32": "windows", "darwin": "macos", "linux": "linux"}.get(sys.platform)
+    name = f"dinkster-tools-{system}-{architecture}.zip"
+    if name not in TOOLS_ARCHIVES:
+        raise EnvironmentError(f"unsupported native tools host: {sys.platform}/{architecture}")
     channel = None
     document: dict[str, object] = {}
     for mirror in mirrors:
@@ -133,10 +139,6 @@ def acquire_tools(
     if label != reference["label"]:
         raise EnvironmentError("tools manifest identity differs from channel")
     sources = (reference["release"],)
-    architecture = machine().lower()
-    architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
-    system = {"win32": "windows", "darwin": "macos", "linux": "linux"}.get(sys.platform)
-    name = f"dinkster-tools-{system}-{architecture}.zip"
     row = next(
         (row for row in artifact_rows(manifest.get("artifacts"), "name") if row["name"] == name),
         None,
