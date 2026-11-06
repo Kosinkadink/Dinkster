@@ -407,6 +407,109 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
     return alternatives
 
 
+def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    if snapshot.get("source") != "published":
+        return []
+    metadata = _metadata(snapshot)
+    source_lock = parse_metadata(metadata.get("dinkster.lock", '{"packs":[]}').encode("utf-8"))
+    if source_lock.get("packs") or any(name.startswith("packs/") for name in metadata):
+        return []
+    provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
+    recorded_base = cast("dict[str, str]", snapshot["base"])
+    variant = recorded_base["variant"]
+    original = validate_manifest(
+        metadata["base-manifest.json"].encode("utf-8"), recorded_base["id"], variant
+    )
+    engine_record = cast("dict[str, str]", snapshot["engine"])
+    engine = validate_manifest(
+        metadata["engine-manifest.json"].encode("utf-8"), engine_record["release"], None
+    )
+    publications: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
+    for mirror in _sources(provenance, "mirrors"):
+        trusted_metadata(mirror)
+        try:
+            index: object = json.loads(read_metadata(mirror, f"base/{variant}/index.json"))
+            if not isinstance(index, list):
+                raise EnvironmentError("base index must be an array")
+        except (OSError, ValueError):
+            index = []
+        for item in cast("list[object]", index):
+            if not isinstance(item, dict):
+                continue
+            row = cast("dict[str, object]", item)
+            path, identity = row.get("path"), row.get("id")
+            if not isinstance(path, str) or not isinstance(identity, str):
+                continue
+            try:
+                relative_file(path)
+                if len(path.split("/")) != 3 or not path.startswith(f"base/{variant}/"):
+                    continue
+                data = read_metadata(mirror, path + "/manifest.json")
+                base = validate_manifest(data, identity, variant)
+                name = path.rsplit("/", 1)[-1]
+                if name != identity[7:] and base.get("label") != name:
+                    continue
+                publications[identity] = (base, (mirror.rstrip("/") + "/" + path,))
+            except (OSError, ValueError):
+                continue
+        for channel in ("main", "stable"):
+            try:
+                catalog = discover((mirror,), channel)
+                base = catalog.bases[variant]
+                identity = cast("str", base["id"])
+                publications[identity] = (base, catalog.base_sources[variant])
+            except (OSError, ValueError, KeyError):
+                continue
+    alternatives: list[dict[str, object]] = []
+    for identity, (base, roots) in sorted(publications.items()):
+        if (
+            identity == recorded_base["id"]
+            or base.get("platform") != original.get("platform")
+            or base.get("python") != original.get("python")
+            or base.get("workerProtocol") != snapshot.get("workerProtocol")
+        ):
+            continue
+        try:
+            if "dependencies" in engine:
+                selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
+                validate_dependency_base(selection, base)
+                requirements = engine_constraints(engine, variant)
+            else:
+                requirements = metadata["constraints.txt"]
+            constraints = effective_constraints(requirements, base, strict="dependencies" in engine)
+            candidate = copy.deepcopy(snapshot)
+            candidate_metadata = dict(metadata)
+            candidate_provenance = copy.deepcopy(provenance)
+            channel = cast("dict[str, object]", candidate_provenance["channel"])
+            bases = cast("dict[str, object]", channel["base"])
+            bases[variant] = {
+                "id": identity,
+                "locations": [
+                    {"type": "mirror", "path": f"base/{variant}/{identity[7:]}/manifest.json"}
+                ],
+            }
+            Channel.parse(channel)
+            candidate_provenance.update(
+                base=list(roots), dependencyBase=base, dependencyVariant=variant
+            )
+            candidate_metadata["artifact-sources.json"] = (
+                json.dumps(candidate_provenance, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+            )
+            candidate_metadata["base-manifest.json"] = (
+                json.dumps(base, sort_keys=True, ensure_ascii=True) + "\n"
+            )
+            candidate_metadata["constraints.txt"] = constraints
+            candidate["base"] = {"id": identity, "variant": variant}
+            candidate["constraints"] = (
+                "sha256:" + hashlib.sha256(constraints.encode("utf-8")).hexdigest()
+            )
+            candidate["metadata"] = candidate_metadata
+            alternatives.append(candidate)
+        except (OSError, ValueError):
+            continue
+    return alternatives
+
+
 def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
     entries = history(root)
     selected = next((entry for entry in entries if entry["id"] == entry_id), None)
@@ -429,6 +532,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         else [
             *[cast("dict[str, object]", entry["snapshot"]) for entry in entries],
             *_engine_alternatives(snapshot),
+            *_base_alternatives(snapshot),
         ]
     )
     viable: dict[str, dict[str, object]] = {}

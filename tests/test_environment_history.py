@@ -19,7 +19,104 @@ from test_environment_cli import _run
 from test_environment_runtime import free_port
 from test_environment_state import _generation
 
-from tests.fixtures.environments.build import executable_release
+from tests.fixtures.environments.build import canonical_json, executable_release
+
+
+def test_missing_base_offers_only_compatible_substitution_without_upgrading_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                str(Path(__file__).parent / "fixtures/environments/build.py"),
+                "--output",
+                str(tmp_path / "fixture"),
+            ],
+            text=True,
+            timeout=120,
+        )
+    )
+    root, store, mirror = Path(fixture["root"]), Path(fixture["store"]), Path(fixture["mirror"])
+    setup = fixture["commands"]["setup"]
+    code, result = _run(root, *setup[setup.index("setup") : -1])
+    assert code == 0, result
+    try:
+        first = history(root)[0]
+        snapshot = cast("dict", first["snapshot"])
+        base_record = snapshot["base"]
+        original = json.loads(snapshot["metadata"]["base-manifest.json"])
+        published = mirror / "base" / base_record["variant"] / base_record["id"][7:]
+        index = [{"id": "sha256:" + "f" * 64, "path": f"base/{base_record['variant']}/missing"}]
+        replacement_id = None
+        for compatible in (False, True):
+            base = json.loads(json.dumps(original))
+            base["interpreter"]["release"] = "replacement" if compatible else "incompatible"
+            if not compatible:
+                base["python"] = "3.99.1"
+            identity_fields = {
+                key: value for key, value in base.items() if key not in {"id", "signature"}
+            }
+            identity_fields["archive"] = {"format": "tar+zstd"}
+            identity = hashlib.sha256(canonical_json(identity_fields)).hexdigest()
+            base["id"] = "sha256:" + identity
+            destination = published.parent / identity
+            shutil.copytree(published, destination)
+            (destination / "manifest.json").write_bytes(canonical_json(base))
+            index.append({"id": base["id"], "path": f"base/{base_record['variant']}/{identity}"})
+            if compatible:
+                replacement_id = base["id"]
+        (published.parent / "index.json").write_text(json.dumps(index))
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        code, result = _run(root, "update", "--yes")
+        assert code == 0 and result["current"] == 2, result
+        preserved = {path.name: path.read_bytes() for path in (root / "history").glob("*.json")}
+        shutil.rmtree(published)
+        shutil.rmtree(store / "bases" / base_record["id"][7:])
+        shutil.rmtree(store / "downloads" / base_record["id"][7:])
+        before = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.name != ".lock"
+            and "runtime" not in path.relative_to(root).parts
+        }
+        code, result = _run(root, "restore", "1", "--yes")
+        assert code == 0 and result["status"] == "approval-required", result
+        alternatives = result["restorePlan"]["alternatives"]
+        assert len(alternatives) == 1
+        chosen = alternatives[0]
+        assert chosen["snapshot"]["engine"] == snapshot["engine"]
+        assert chosen["snapshot"]["base"]["id"] == replacement_id
+        assert chosen["substitutions"] == [
+            {
+                "field": "base",
+                "before": base_record,
+                "after": {"id": replacement_id, "variant": base_record["variant"]},
+            }
+        ]
+        assert {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.name != ".lock"
+            and "runtime" not in path.relative_to(root).parts
+        } == before
+        code, result = _run(root, "restore", "1", "--approve", chosen["approval"])
+        assert code == 0 and result["current"] == 3 and result["exact"] is False, result
+        restored = history(root)[-1]
+        assert cast("dict", restored["snapshot"])["engine"] == snapshot["engine"]
+        assert cast("dict", restored["snapshot"])["base"]["id"] == replacement_id
+        assert restored["substitutions"] == chosen["substitutions"]
+        assert {
+            path.name: path.read_bytes()
+            for path in (root / "history").glob("*.json")
+            if path.name in preserved
+        } == preserved
+    finally:
+        _run(root, "stop", "--yes")
 
 
 def test_local_restore_reuses_retained_inputs_without_checkout_resolution(

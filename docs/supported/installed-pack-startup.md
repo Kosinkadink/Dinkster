@@ -10,6 +10,10 @@
 - Local-development software snapshots rebuild from their recorded manifests,
   retained interpreter and hash-pinned wheels, without resolving a checkout again.
   Missing local interpreter files or wheels are disclosed before activation.
+- For snapshots without packs, a missing base can be replaced by an indexed base
+  with the same native platform, Python and worker protocol when its locked engine
+  requirements agree. The proposal preserves the engine and requires explicit
+  substitution approval rather than silently upgrading it.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.
