@@ -110,24 +110,14 @@ def first_party_schema(schema: NodeSchema) -> NodeSchema:
         schema.input_families or schema.output_families or schema.combos or schema.slots
     ):
         raise ValueError(f"{source}: backendPureRename disagrees with the schema")
-    if any(rule.from_type == source and rule.migration is None for rule in schema.replacements):
-        raise ValueError(f"{source}: existing replacement conflicts with the identity rule")
     renamed = replace(
         schema,
         node_type=target,
         aliases=(),
         search_terms=tuple(dict.fromkeys((*schema.search_terms, source))),
-        replacements=tuple(
-            replace(
-                rule,
-                cases=tuple(
-                    replace(case, to=target) if case.to == source else case for case in rule.cases
-                ),
-            )
-            for rule in schema.replacements
-        ),
+        replacements=(),
     )
-    return replace(renamed, replacements=(*renamed.replacements, _identity_rule(source, renamed)))
+    return replace(renamed, replacements=(_identity_rule(source, renamed),))
 
 
 def collect_comfy_translations(

@@ -20,10 +20,9 @@
   order to target naming positions instead of preserving suffix IDs. The option
   composes with historical-template metadata; omitted options retain their wire
   shape. This is a declaration contract, not a claim of frontend migration support.
-- Historical replacement declarations may also rename the node type. First-party
-  schema renames retain historical family rules before a modern identity fallback;
-  dynamic native documents still require the frontend planner, not backend pure
-  graph renaming. The ComfyUI translation index includes only the identity fallback.
+- First-party pack schemas declare one ordinary ComfyUI-class conversion rule.
+  They do not retain migration rules for pre-split Dinkster documents or draft
+  pack identities. Existing Dinkster fixtures must use the new node IDs.
 - Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
   Expression publish same-type rules for historical family member identities.
   Rules preserve the math expression and output identities, and identify the

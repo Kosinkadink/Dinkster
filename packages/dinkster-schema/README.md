@@ -161,10 +161,10 @@ and slot choices. `ReplacementCase.slot_variants` maps materialized construct
 paths to literal declared option or variant keys. Source-dependent selections
 use guarded cases; ordinary input mappings carry slot connections. The planner
 resolves choices before elaborating and validating the target.
-Rules can attach `ReplacementMigration` with retired input IDs so stored nodes
-migrate into the selected dynamic shape, optionally renaming the node type.
-First-party schema renames retain these historical rules ahead of the ordinary
-identity fallback; only the identity rule enters the ComfyUI translation index.
+Same-type rules can attach `ReplacementMigration` with retired flat input IDs
+so stored nodes migrate once into the selected dynamic shape.
+First-party pack identities declare only their ComfyUI-class conversion rule.
+They do not retain predecessor Dinkster-pack rules or historical family migrations.
 `ReplacementCase.input_families` additionally supports copying a top-level
 dynamic family while preserving suffixes and authored order, or creating an
 explicit ordered member list from static source inputs.

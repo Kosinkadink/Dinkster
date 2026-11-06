@@ -18,9 +18,9 @@ Ordinary mappings reference schema interface ids, including paths materialized
 by literal target ``slotVariants`` selections. The additive ``inputFamilies`` and
 ``outputFamilies`` vocabularies map top-level families without spelling member
 paths; input families may address helpers, and the planner preserves source
-suffixes and authored order. A historical ``migration`` rule declares source input
+suffixes and authored order. A same-type ``migration`` rule declares source input
 or dynamic-choice paths retired from the current schema so stored nodes can
-migrate into a new shape, optionally with a new node type. Cross-schema reference
+migrate once into a new shape. Cross-schema reference
 checks belong to tooling that can see both schemas (``dinkster doctor``); this
 module enforces the closed vocabulary itself.
 
@@ -665,6 +665,10 @@ class ReplacementRule:
                 f"rule for {self.from_type}: the last case must be unconditional "
                 "(the required fallback)"
             )
+        if self.migration is not None and any(case.to != self.from_type for case in self.cases):
+            raise ValueError(
+                f"migration rule for {self.from_type}: every case must preserve the node type"
+            )
 
 
 # -- wire encoding (exact field names of replace/model.ts) --------------------
@@ -1186,7 +1190,7 @@ def validate_replacement_references(
     that is not in the mapping is simply unchecked (rules legitimately
     migrate nodes from never-installed packs). Source input references name
     static ids, materializable paths or combo selectors declared in any branch,
-    plus a migration's declared historical inputs. Active source
+    plus a same-type migration's declared historical inputs. Active source
     branches and values are the importer's responsibility. Source output
     references name static ids.
     ``inputFamilies`` additionally checks top-level family ids and static
@@ -1301,7 +1305,7 @@ def validate_replacement_references(
                     for _, family_mapping in case.input_families:
                         if family_mapping.kind != "copy":
                             continue
-                        # A migration describes a retired shape, not the current schema.
+                        # A same-type rule describes a retired shape, not the current schema.
                         if rule.migration is not None and family_mapping.source_template:
                             continue
                         family = source_families.get(family_mapping.source_family)
