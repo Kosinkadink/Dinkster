@@ -45,7 +45,12 @@ def test_webcam_decodes_uploaded_frame_without_applying_browser_dimensions(
     assert asset is not None
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
     registry = TypeRegistry()
-    register_image_types(registry)
+    with registry.registering_pack(
+        "dinkster-nodes-image",
+        ("dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"),
+        allow_bare=True,
+    ):
+        register_image_types(registry)
     value = registry.wrap(WEBCAM_TYPE, asset.to_wire())
     spec = registry.spec(WEBCAM_TYPE)
     transported = spec.decode(spec.encode(value.resolve()))

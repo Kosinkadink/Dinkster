@@ -216,6 +216,7 @@ __all__ = [
     "VIDEO_TYPE",
     "VOXEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
+    "WEBCAM_TYPE",
 ]
 
 # Image documents remain owned by the image pack, not foundation.
