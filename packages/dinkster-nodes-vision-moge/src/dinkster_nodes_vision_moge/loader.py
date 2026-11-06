@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
+from dataclasses import replace
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
@@ -12,9 +13,12 @@ from dinkster_api.v1 import (
     AssetWidget,
     InputSpec,
     LocalAssetRef,
+    MappingSource,
     Node,
     NodeSchema,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     initialize_inference_process,
 )
@@ -23,7 +27,7 @@ from dinkster_api.v1 import (
 class LoadMoGeModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="dinkster.vision.moge.load_mo_ge_model",
             display_name="Load MoGe Model",
             category="model/loaders",
@@ -38,6 +42,21 @@ class LoadMoGeModel(Node):
                 ),
             ),
             outputs=(OutputSpec("MOGE_MODEL", TypeExpr.concrete(MOGE_MODEL_TYPE)),),
+        )
+        return replace(
+            schema,
+            replacements=(
+                ReplacementRule(
+                    from_type="LoadMoGeModel",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={spec.id: MappingSource.copy(spec.id) for spec in schema.inputs},
+                            outputs={spec.id: spec.id for spec in schema.outputs},
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod

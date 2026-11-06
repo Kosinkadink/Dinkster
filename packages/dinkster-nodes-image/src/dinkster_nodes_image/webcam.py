@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 import numpy as np
 from dinkster_api.v1 import (
@@ -15,10 +16,13 @@ from dinkster_api.v1 import (
     CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
+    MappingSource,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     open_image_components,
 )
@@ -27,7 +31,7 @@ from dinkster_api.v1 import (
 class WebcamCapture(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="dinkster.image.webcam_capture",
             display_name="Webcam Capture",
             category="image",
@@ -54,6 +58,21 @@ class WebcamCapture(Node):
                 InputSpec("capture_on_queue", TypeExpr.concrete(CORE_BOOLEAN), default=True),
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+        return replace(
+            schema,
+            replacements=(
+                ReplacementRule(
+                    from_type="WebcamCapture",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={spec.id: MappingSource.copy(spec.id) for spec in schema.inputs},
+                            outputs={spec.id: spec.id for spec in schema.outputs},
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod

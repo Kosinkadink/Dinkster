@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, cast
 
 from dinkster_api.v1 import (
@@ -16,10 +17,13 @@ from dinkster_api.v1 import (
     LAYERS_TYPE,
     MASK_TYPE,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
 )
 
@@ -70,7 +74,7 @@ def _boxes(value: Any, width: int, height: int) -> list[dict[str, Any]]:
 class LayersFromBoundingBoxes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="dinkster.image.layers_from_bounding_boxes",
             display_name="Layers From Bounding Boxes",
             category="image",
@@ -148,6 +152,21 @@ class LayersFromBoundingBoxes(Node):
                     "LAYERS",
                     TypeExpr.concrete(LAYERS_TYPE),
                     doc="The layer stack, ready for Create Layered Image.",
+                ),
+            ),
+        )
+        return replace(
+            schema,
+            replacements=(
+                ReplacementRule(
+                    from_type="LayersFromBoundingBoxes",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={spec.id: MappingSource.copy(spec.id) for spec in schema.inputs},
+                            outputs={spec.id: spec.id for spec in schema.outputs},
+                        ),
+                    ),
                 ),
             ),
         )

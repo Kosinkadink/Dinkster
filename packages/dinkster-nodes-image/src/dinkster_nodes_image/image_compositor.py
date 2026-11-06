@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from dinkster_api.v1 import (
     COMPOSITOR_TYPE,
@@ -11,9 +12,12 @@ from dinkster_api.v1 import (
     MASK_TYPE,
     CompositorWidget,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     flatten,
     report_event,
@@ -26,7 +30,7 @@ from .layer_recipe import prepare_compositor
 class ImageCompositor(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="dinkster.image.image_compositor",
             display_name="Create Layered Image",
             category="image",
@@ -57,6 +61,21 @@ class ImageCompositor(Node):
             output_node=True,
             emits_previews=True,
             idempotent=False,
+        )
+        return replace(
+            schema,
+            replacements=(
+                ReplacementRule(
+                    from_type="ImageCompositor",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={spec.id: MappingSource.copy(spec.id) for spec in schema.inputs},
+                            outputs={spec.id: spec.id for spec in schema.outputs},
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, cast
 
 import numpy as np
@@ -15,10 +16,13 @@ from dinkster_api.v1 import (
     CORE_STRING,
     IMAGE_TYPE,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
 )
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
@@ -314,7 +318,7 @@ def build_elements(regions: list[Any]) -> list[dict[str, Any]]:
 class CreateBoundingBoxes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="dinkster.image.create_bounding_boxes",
             display_name="Create Bounding Boxes",
             category="utilities",
@@ -381,6 +385,21 @@ class CreateBoundingBoxes(Node):
                 OutputSpec("preview", TypeExpr.concrete(IMAGE_TYPE), display_name="preview"),
                 OutputSpec("bboxes", TypeExpr.concrete(BOUNDING_BOX_TYPE), display_name="bboxes"),
                 OutputSpec("elements", TypeExpr.concrete(ARRAY_TYPE), display_name="elements"),
+            ),
+        )
+        return replace(
+            schema,
+            replacements=(
+                ReplacementRule(
+                    from_type="CreateBoundingBoxes",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={spec.id: MappingSource.copy(spec.id) for spec in schema.inputs},
+                            outputs={spec.id: spec.id for spec in schema.outputs},
+                        ),
+                    ),
+                ),
             ),
         )
 

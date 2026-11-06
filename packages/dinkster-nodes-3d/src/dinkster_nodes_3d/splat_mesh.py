@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
+from dataclasses import replace
 
 from dinkster_api.v1 import (
     CORE_FLOAT,
@@ -11,10 +12,13 @@ from dinkster_api.v1 import (
     MESH_TYPE,
     SPLAT_TYPE,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     initialize_inference_process,
     materialize_splat,
@@ -25,7 +29,7 @@ from dinkster_api.v1 import (
 class SplatToMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="dinkster.3d.splat_to_mesh",
             display_name="Extract Mesh from Splat",
             category="3d/splat",
@@ -86,6 +90,21 @@ class SplatToMesh(Node):
                 ),
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE), display_name="mesh"),),
+        )
+        return replace(
+            schema,
+            replacements=(
+                ReplacementRule(
+                    from_type="SplatToMesh",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={spec.id: MappingSource.copy(spec.id) for spec in schema.inputs},
+                            outputs={spec.id: spec.id for spec in schema.outputs},
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod
