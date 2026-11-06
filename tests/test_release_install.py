@@ -485,7 +485,7 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
         if step.get("name") == "Install and launch from wheels"
     )
     assert 'uv venv --seed --python "$RELEASE_PYTHON"' in command
-    assert '"$python" -m pip install' in command
+    assert 'uv pip install --python "$python"' in command
     assert '"$python" -m pip check' in command
     assert "--require-hashes" in command
     assert "--find-links" in command

@@ -224,7 +224,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             python="$RUNNER_TEMP/dinkster-release-venv/Scripts/python.exe"
           fi
-          "$python" -m pip install \
+          uv pip install --python "$python" \
             --require-hashes \
             --find-links "$RUNNER_TEMP/dinkster-release" \
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
