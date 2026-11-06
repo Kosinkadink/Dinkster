@@ -20,6 +20,11 @@
   either component alone cannot work. Proposals prefer fewer changed identities,
   preserve an obtainable compatible engine, and disclose every substitution for
   explicit approval rather than silently upgrading it.
+- Standalone pack-only roots can be adopted with `setup --adopt-from` into a
+  new, separate supervisor root using explicitly chosen published engine/base
+  identities and target dependency locks. The plan displays exact pack sources,
+  locks and in-process placement; the old root, shared store and user data stay
+  untouched. Shared-venv groups currently refuse rather than change topology.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.

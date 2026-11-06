@@ -162,6 +162,19 @@ generation retention. Capture admits only sealed software manifests, constraints
 source locks and pack dependency locks, plus hosting and host facts; workflows,
 models, outputs, libraries and mounts are not captured.
 
+`setup --adopt-from OLD_ROOT --engine-release SHA --base-id SHA --variant NAME`
+creates a new supervisor root from a standalone pack-only installation. Both
+digests must match the explicitly selected channel; `catalog` exposes them.
+Each installed pack requires an explicit target-variant `--pack-lock PATH`.
+Planning shows the complete source lock, target dependency locks and in-process
+placement. It never records the ambient interpreter as an engine/base release.
+Shared-venv groups refuse rather than being silently split. The destination must
+not exist and neither it nor the selected store may overlap the old root or its
+shared content store. Confirmation copies verified software archives into owned
+scratch and uses ordinary setup construction, health checks and history
+publication. Source metadata and archive digests are rechecked before activation.
+The old installation, its history, settings and user data are not copied or changed.
+
 `restore ID [--plan | --yes]` rebuilds an exact published snapshot as a fresh
 generation through normal health-checked activation, even if its old directory
 was collected. Recorded manifests, locations, constraints and locks drive

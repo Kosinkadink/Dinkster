@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import tempfile
 from contextlib import ExitStack
@@ -13,6 +14,7 @@ from pathlib import Path
 from platform import machine
 from typing import cast
 
+from .environment_adoption import standalone_inputs
 from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
     cleanup_collection,
@@ -268,6 +270,23 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
+    adopting = getattr(args, "adopt_from", None)
+    if adopting is not None and (root.exists() or args.root.is_symlink()):
+        raise EnvironmentError("adoption requires a new, nonexistent --root")
+    if adopting is not None and (
+        args.from_scratch or args.catalog_lock is not None or args.artifacts is not None
+    ):
+        raise EnvironmentError(
+            "adoption uses recorded standalone sources and a published engine/base"
+        )
+    if adopting is not None and (not args.engine_release or not args.base_id or not args.variant):
+        raise EnvironmentError(
+            "adoption requires explicit --engine-release, --base-id and --variant"
+        )
+    if adopting is None and (
+        getattr(args, "engine_release", None) or getattr(args, "base_id", None)
+    ):
+        raise EnvironmentError("--engine-release and --base-id require --adopt-from")
     if args.yes and root.is_dir():
         _recover_pending(root)
     settings = _settings(root)
@@ -347,6 +366,34 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             raise EnvironmentError("project store differs from requested --data")
         requested = configured
     store = select_store(root, requested)
+    adoption = standalone_inputs(adopting, root, store) if adopting is not None else None
+    adoption_locks = (
+        {str(path): content_digest(path) for path in args.pack_lock} if adoption else {}
+    )
+    if adoption is not None:
+        if adoption["venvGroups"]:
+            raise EnvironmentError("adoption does not support standalone shared-venv groups")
+        recorded_placement = tuple(cast("list[str]", adoption["inProcessPacks"]))
+        if args.in_process_pack is not None and set(in_process) != set(recorded_placement):
+            raise EnvironmentError("adoption must preserve recorded in-process placement")
+        in_process = recorded_placement
+        pack_names = {row["pack"] for row in cast("list[dict[str, object]]", adoption["packs"])}
+        supplied_names: set[str] = set()
+        for path in args.pack_lock:
+            document = read_document(path)
+            name = document.get("pack")
+            if (
+                path.is_symlink()
+                or document.get("format") != "dinkster.pack-lock/1"
+                or document.get("variant") != variant
+                or not isinstance(name, str)
+            ):
+                raise EnvironmentError("adoption requires intact target-variant dependency locks")
+            supplied_names.add(name)
+        if supplied_names != pack_names or len(args.pack_lock) != len(pack_names):
+            raise EnvironmentError(
+                "adoption requires one explicit --pack-lock for each recorded pack"
+            )
     local = None
     catalog = None
     custom = None
@@ -373,6 +420,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         ]
     else:
         catalog = discover(mirrors, channel)
+        if adoption is not None and (
+            catalog.channel.engine_release != args.engine_release
+            or catalog.channel.base_for(variant) != args.base_id
+        ):
+            raise EnvironmentError(
+                "selected channel does not match the approved engine release/base"
+            )
         retained = previous_root / "base-manifest.json" if previous_root is not None else None
         if (
             retained is not None
@@ -396,6 +450,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             if definitions is not None:
                 template = native_template(catalog.bases)
                 selection = custom_selection(definitions, variant, template)
+        if adoption is not None and selection is not None:
+            raise EnvironmentError(
+                "adoption requires an exact published base, not a custom definition"
+            )
         if custom is not None or selection is not None:
             template = template or native_template(catalog.bases)
             dependency_variant = cast("str", template["variant"])
@@ -434,6 +492,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     result.update(
         current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
     )
+    if adoption is not None:
+        result["adoption"] = adoption
+        result["dependencyLocks"] = {str(path): read_document(path) for path in args.pack_lock}
+        plan.extend(
+            [
+                f"adopt standalone generation {adoption['generation']} from {adopting} into {root}",
+                f"preserve source lock: {adoption['sourceLock']}",
+                f"preserve in-process placement: {', '.join(in_process) or 'none'}",
+                "old engine/base and dependency closure are not recorded; "
+                "use the explicitly selected published identities and dependency locks",
+                f"target dependency locks: {json.dumps(result['dependencyLocks'], sort_keys=True)}",
+                "leave the old installation, shared store and all user data untouched",
+            ]
+        )
     workflow = None
     workflow_catalog = None
     workflow_catalog_digest = None
@@ -510,6 +582,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
+        if adoption is not None and (
+            standalone_inputs(cast("Path", adopting), root, store) != adoption
+            or any(content_digest(Path(path)) != value for path, value in adoption_locks.items())
+        ):
+            raise EnvironmentError("standalone inputs changed after planning; request a new plan")
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
@@ -542,7 +619,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
 
     registry = registry_path().parent
     registry.mkdir(parents=True, exist_ok=True)
-    root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=adoption is None)
     with writer_lock(registry):
         if select_store(root, requested) != store:
             raise EnvironmentError("store changed after planning; request a new plan")
@@ -553,6 +630,18 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             published_constraints = None
             catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
             pack_locks = tuple(args.pack_lock)
+            if adoption is not None:
+                scratch = Path(preparation.enter_context(tempfile.TemporaryDirectory(dir=store)))
+                catalog_lock, source_artifacts = scratch / "dinkster.lock", scratch / "artifacts"
+                atomic_write(catalog_lock, cast("str", adoption["sourceLock"]))
+                source_artifacts.mkdir()
+                for filename, expected in cast(
+                    "dict[str, str]", adoption["archiveDigests"]
+                ).items():
+                    copied = source_artifacts / filename
+                    shutil.copyfile(Path(cast("str", adoption["artifacts"])) / filename, copied)
+                    if content_digest(copied) != expected:
+                        raise EnvironmentError("standalone archive changed during adoption")
             if local is None:
                 assert catalog is not None
                 if selection is not None:
@@ -626,7 +715,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
                     if workflow is not None:
                         preflight_workflow(scratch, catalog_lock, source_artifacts)
-                    if not pack_locks:
+                    if not pack_locks and adoption is None:
                         pack_locks = (
                             custom_locks(
                                 scratch, catalog_lock, source_artifacts, scratch.parent / "locks"
@@ -1087,6 +1176,11 @@ def main() -> None:
         "--source", type=Path, default=Path.cwd(), help="Dinkster checkout with uv.lock"
     )
     setup.add_argument("--python", type=Path, help="explicit host interpreter override")
+    setup.add_argument(
+        "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
+    )
+    setup.add_argument("--engine-release", help="explicit published engine digest for adoption")
+    setup.add_argument("--base-id", help="explicit published base digest for adoption")
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
         command.add_argument("--mirror", action="append", default=[])
@@ -1150,6 +1244,14 @@ def main() -> None:
         "status": "clean",
     }
     try:
+        current = read_current(args.root)
+        if current is not None and (args.root / "generations" / f"{current}.json").is_file():
+            raise EnvironmentError(
+                "standalone pack-only root has no recorded engine release/base; "
+                "choose a new --root and run setup --adopt-from with explicit "
+                "--engine-release, --base-id, --variant and target --pack-lock inputs; "
+                "the old root and user data will stay untouched"
+            )
         destination = moved_to(args.root)
         if destination is not None:
             if getattr(args, "yes", False):

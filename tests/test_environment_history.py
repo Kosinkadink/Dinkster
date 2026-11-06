@@ -22,6 +22,215 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
 
 
+def test_standalone_adoption_builds_separate_history_without_touching_old_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_registry import Lockfile
+
+    from tests.fixtures.environments.build import build
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    source = tmp_path / "standalone"
+    (source / "generations").mkdir(parents=True)
+    (source / "current").write_text("7\n")
+    (source / "generations/7.json").write_text(Lockfile().record_json())
+    for folder in ("workflows", "models", "outputs", "mounts"):
+        (source / folder).mkdir()
+        (source / folder / "keep.bin").write_bytes(b"never adopt or modify user data")
+    before = {
+        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
+    }
+    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
+    channel = json.loads(Path(fixture["initialChannel"]).read_bytes())
+    release, base = channel["engine"]["release"], channel["base"]["fixture-cpu"]["id"]
+    arguments = (
+        "setup",
+        "--adopt-from",
+        str(source),
+        "--variant",
+        "fixture-cpu",
+        "--mirror",
+        str(mirror),
+        "--channel",
+        "main",
+        "--data",
+        str(store),
+        "--engine-release",
+        release,
+        "--base-id",
+        base,
+        "--port",
+        str(fixture["port"]),
+    )
+    for flags in ((), ("--plan",)):
+        code, planned = _run(root, *arguments, *flags)
+        assert code == 0 and planned["status"] == "planned", planned
+        assert planned["adoption"]["generation"] == 7
+        assert planned["adoption"]["previousEngine"] == "not recorded by standalone installer"
+        assert not root.exists() and not store.exists()
+        assert not (tmp_path / "user-data").exists()
+    code, mismatch = _run(root, *arguments, "--base-id", "sha256:" + "f" * 64, "--yes")
+    assert code == 1 and "does not match" in mismatch["error"], mismatch
+    assert not root.exists() and not store.exists()
+    code, diagnostic = _run(source, "history")
+    assert code == 1 and "--adopt-from" in diagnostic["error"]
+    code, applied = _run(root, *arguments, "--yes")
+    assert code == 0 and applied["status"] == "applied", applied
+    try:
+        entries = history(root)
+        assert len(entries) == 1
+        snapshot = cast("dict", entries[0]["snapshot"])
+        assert snapshot["engine"]["release"] == release
+        assert snapshot["base"]["id"] == base
+        assert json.loads(snapshot["metadata"]["dinkster.lock"])["packs"] == []
+        assert {
+            path.relative_to(source): path.read_bytes()
+            for path in source.rglob("*")
+            if path.is_file()
+        } == before
+        assert all(
+            not (root / name).exists() for name in ("workflows", "models", "outputs", "mounts")
+        )
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+@pytest.mark.parametrize("shared_store", [False, True], ids=["private-store", "shared-store"])
+def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared_store: bool
+):
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.pack_lock import PackLock
+    from test_environment_artifacts import _mirror
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, source, target, store = (tmp_path / name for name in ("mirror", "old", "new", "store"))
+    base, _, channel = _mirror(mirror)
+    (source / "generations").mkdir(parents=True)
+    (source / "artifacts").mkdir()
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="example"\nnamespaces=[]\n')
+    archive = tmp_path / "pack.zip"
+    identity = build_artifact(pack, archive)
+    retained = source / "artifacts" / f"{identity[7:]}.zip"
+    shutil.copyfile(archive, retained)
+    if shared_store:
+        shared = tmp_path / "standalone-content"
+        shared.mkdir()
+        (source / "artifacts").rename(shared / "artifacts")
+        (source / "shared-store").write_text(str(shared) + "\n")
+        retained = shared / "artifacts" / retained.name
+    locked = LockedPack("example", "1.2.3", identity, "local", (), "local:/unused")
+    (source / "current").write_text("3\n")
+    (source / "generations/3.json").write_text(Lockfile.of([locked]).record_json())
+    hosting = source / "generations/3.hosting.json"
+    hosting.write_text(json.dumps({"format": "dinkster.hosting/1", "inProcess": ["example"]}))
+    dependency = tmp_path / "example.pack-lock.json"
+    PackLock("example", "fixture-cpu", ">=3.12", (), (), ()).write(dependency)
+    args = (
+        "setup",
+        "--adopt-from",
+        str(source),
+        "--variant",
+        "fixture-cpu",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--data",
+        str(store),
+        "--pack-lock",
+        str(dependency),
+        "--engine-release",
+        channel["engine"]["release"],
+        "--base-id",
+        base["id"],
+    )
+    before = {
+        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
+    }
+    code, plan = _run(target, *args, "--plan")
+    assert code == 0, plan
+    assert plan["adoption"]["packs"][0]["artifactDigest"] == identity
+    assert plan["adoption"]["inProcessPacks"] == ["example"]
+    assert plan["dependencyLocks"][str(dependency)]["pack"] == "example"
+    assert {
+        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
+    } == before
+    assert not target.exists() and not store.exists()
+    for destination in (source, source / "child", tmp_path):
+        code, refused = _run(destination, *args, "--yes")
+        assert code == 1, refused
+    code, refused = _run(target, *args, "--in-process-pack", "different", "--yes")
+    assert code == 1 and "preserve" in refused["error"], refused
+    code, refused = _run(target, *args, "--data", str(source / "new-store"), "--yes")
+    assert code == 1 and "disjoint" in refused["error"], refused
+    retained.write_bytes(b"changed archive")
+    code, corrupt = _run(target, *args, "--yes")
+    assert code == 1 and "digest differs" in corrupt["error"], corrupt
+    assert not target.exists() and not store.exists()
+
+
+def test_adoption_refuses_source_changed_after_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    from dinkster_registry import Lockfile
+    from dinkster_supervisor import environment
+    from test_environment_artifacts import _mirror
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    source, target, store, mirror = (tmp_path / name for name in ("old", "new", "store", "mirror"))
+    (source / "generations").mkdir(parents=True)
+    (source / "generations/1.json").write_text(Lockfile().record_json())
+    (source / "generations/2.json").write_text(Lockfile().record_json())
+    (source / "current").write_text("1\n")
+    base, _, channel = _mirror(mirror)
+
+    def confirmed(*_args):
+        (source / "current").write_text("2\n")
+        return True
+
+    monkeypatch.setattr(environment, "_confirmed", confirmed)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-env",
+            "--root",
+            str(target),
+            "setup",
+            "--adopt-from",
+            str(source),
+            "--variant",
+            "fixture-cpu",
+            "--channel",
+            "main",
+            "--mirror",
+            str(mirror),
+            "--data",
+            str(store),
+            "--engine-release",
+            channel["engine"]["release"],
+            "--base-id",
+            base["id"],
+            "--json",
+        ],
+    )
+    with pytest.raises(SystemExit) as stopped:
+        environment.main()
+    assert stopped.value.code == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "standalone inputs changed" in result["error"]
+    assert not (target / "current").exists()
+    assert history(target) == []
+    assert not (store / "bases").exists()
+
+
 @pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "shared-in-process"])
 def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
