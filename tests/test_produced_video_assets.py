@@ -15,6 +15,7 @@ from contextlib import closing
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
+from multiprocessing.synchronize import Barrier
 from pathlib import Path
 from typing import Any, cast
 
@@ -75,6 +76,47 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
+
+
+def _open_new_journals(channel: Connection, root: Path, barrier: Barrier) -> None:
+    results = []
+    try:
+        for index in range(32):
+            barrier.wait(timeout=60)
+            try:
+                with closing(connect_journal(root / f"journal-{index}.sqlite")) as db:
+                    results.append(db.execute("PRAGMA journal_mode").fetchone())
+            except sqlite3.Error as exc:
+                results.append(repr(exc))
+        channel.send(results)
+    finally:
+        channel.close()
+
+
+def test_produced_journal_concurrent_first_open(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(8)
+    channels = [context.Pipe() for _ in range(8)]
+    processes = [
+        context.Process(target=_open_new_journals, args=(child, tmp_path, barrier))
+        for _, child in channels
+    ]
+    assert not list(tmp_path.iterdir())
+    for process in processes:
+        process.start()
+    for _, child in channels:
+        child.close()
+    try:
+        for parent, _ in channels:
+            assert parent.poll(120), "concurrent journal creator did not finish"
+            assert parent.recv() == [("wal",)] * 32
+    finally:
+        barrier.abort()
+        for process in processes:
+            process.join(60)
+        for parent, _ in channels:
+            parent.close()
+    assert [process.exitcode for process in processes] == [0] * 8
 
 
 def _publish_with_database_lock(channel: Connection, root: Path, hold: bool) -> None:
