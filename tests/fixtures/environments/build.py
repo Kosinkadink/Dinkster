@@ -27,7 +27,15 @@ def artifact(name: str, data: bytes, *, key: str = "name") -> dict:
     return {key: name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool = False) -> Path:
+def wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    value: int,
+    *,
+    engine: bool = False,
+    pack_tools: bool = False,
+) -> Path:
     path = directory / f"{name}-{version}-py3-none-any.whl"
     metadata = f"{name}-{version}.dist-info"
     with zipfile.ZipFile(path, "w") as archive:
@@ -42,8 +50,15 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
         )
         archive.writestr(f"{metadata}/RECORD", "")
         if engine:
-            archive.writestr("dinkster/__init__.py", "")
             archive.writestr("dinkster/serve.py", Path(__file__).with_name("serve.py").read_bytes())
+            if pack_tools:
+                source = Path(__file__).resolve().parents[3] / "src/dinkster"
+                for module in sorted(source.rglob("*.py")):
+                    relative = module.relative_to(source)
+                    if relative != Path("serve.py"):
+                        archive.writestr(f"dinkster/{relative.as_posix()}", module.read_bytes())
+                return path
+            archive.writestr("dinkster/__init__.py", "")
             archive.writestr(
                 "dinkster/manager.py", Path(__file__).with_name("manager.py").read_bytes()
             )

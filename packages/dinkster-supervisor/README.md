@@ -195,6 +195,8 @@ Repeated recovery never duplicates an attempt. Source archives are retained in
 the engine cache after admission. Restore uses the target engine's exact-pin pack
 restore in a disposable install root to reacquire missing sources; it does not
 resolve newer pack versions or mutate the project's standalone pack install.
+Pack provisioning uses the staged snapshot locks as its complete source set,
+not the current generation's locks, so later-added packs are not inherited.
 
 Activation journals retain a prepared `historyEntry` before starting the target.
 Only a completed activation publishes that entry. Recovery republishes an

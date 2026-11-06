@@ -97,6 +97,167 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_supervisor.environment_state import interpreter
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_environment import venv_python
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+    from test_environment_generations import _wheel, _workspace_tree
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+
+    def published_wheel(*args, **kwargs):
+        return original_wheel(*args, **kwargs, pack_tools=True)
+
+    def canonical_json(document: dict) -> bytes:
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "wheel", published_wheel)
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
+    source = tmp_path / "standalone"
+    archives = source / "artifacts"
+    archives.mkdir(parents=True)
+    (source / "generations").mkdir()
+    dependencies = tmp_path / "dependencies"
+    dependencies.mkdir()
+    updated_artifacts = tmp_path / "updated-artifacts"
+    updated_artifacts.mkdir()
+    payload, digest = _wheel(dependencies, "fixture_adopt", "1.0", 87)
+    entries, locks = [], []
+    for name in ("healthy", "other", "extra"):
+        pack = tmp_path / name
+        pack.mkdir()
+        (pack / "dinkster-pack.toml").write_text(
+            HEALTHY_MANIFEST.replace("healthy", name).replace("numpy>=1.26", "fixture-adopt==1.0")
+        )
+        (pack / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
+        staging = updated_artifacts / "staging.zip"
+        identity = build_artifact(pack, staging)
+        retained = updated_artifacts / f"{identity[7:]}.zip"
+        staging.rename(retained)
+        if name != "extra":
+            shutil.copyfile(retained, archives / retained.name)
+        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,)))
+        path = dependencies / f"{name}.pack-lock.json"
+        PackLock(
+            name,
+            "fixture-cpu",
+            ">=3.12",
+            ("fixture-adopt==1.0",),
+            (),
+            (
+                LockedDistribution(
+                    "fixture-adopt",
+                    "1.0",
+                    (LockedWheel(payload.name, payload.stat().st_size, digest, payload.as_uri()),),
+                ),
+            ),
+        ).write(path)
+        locks.extend(("--pack-lock", str(path)))
+    (source / "current").write_text("3\n")
+    source_lock = Lockfile.of(entries[:2]).record_json()
+    (source / "generations/3.json").write_text(source_lock)
+    updated_lock = tmp_path / "updated.lock"
+    updated_lock.write_text(Lockfile.of(entries).record_json())
+    (source / "generations/3.hosting.json").write_text(
+        json.dumps({"format": "dinkster.hosting/1", "inProcess": ["healthy"]})
+    )
+    for name in ("workflows", "models", "outputs", "mounts"):
+        (source / name).mkdir()
+        (source / name / "keep.bin").write_bytes(b"standalone user data")
+    before = {
+        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
+    }
+    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
+    channel = json.loads(Path(fixture["initialChannel"]).read_bytes())
+    code, result = _run(
+        root,
+        "setup",
+        "--adopt-from",
+        str(source),
+        "--engine-release",
+        channel["engine"]["release"],
+        "--base-id",
+        channel["base"]["fixture-cpu"]["id"],
+        "--variant",
+        "fixture-cpu",
+        "--mirror",
+        str(mirror),
+        "--data",
+        str(store),
+        "--channel",
+        "main",
+        "--port",
+        str(fixture["port"]),
+        *locks[:4],
+        "--yes",
+    )
+    try:
+        assert code == 0 and result["current"] == 1, result.get("error", result)
+        first = history(root)[0]
+        for number in (1, 3):
+            generation = root / "generations" / str(number)
+            assert json.loads((generation / "dinkster.lock").read_text()) == json.loads(source_lock)
+            assert Generation.read(generation / "generation.json").in_process_packs == ("healthy",)
+            assert not (generation / "packs/extra").exists()
+            for python in (interpreter(generation), venv_python(generation / "packs/other")):
+                assert (
+                    subprocess.check_output(
+                        [
+                            str(python),
+                            "-I",
+                            "-B",
+                            "-c",
+                            "import fixture_adopt; print(fixture_adopt.VALUE)",
+                        ],
+                        text=True,
+                    ).strip()
+                    == "87"
+                )
+            if number == 1:
+                assert _run(root, "stop", "--yes")[0] == 0
+                code, updated = _run(
+                    root,
+                    "update",
+                    "--catalog-lock",
+                    str(updated_lock),
+                    "--artifacts",
+                    str(updated_artifacts),
+                    *locks,
+                    "--yes",
+                )
+                assert code == 0 and updated["current"] == 2, updated.get("error", updated)
+                assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
+                assert _run(root, "stop", "--yes")[0] == 0
+                shutil.rmtree(root / "generations/1")
+                code, restored = _run(root, "restore", "1", "--yes")
+                assert code == 0 and restored["current"] == 3, restored.get("error", restored)
+        records = history(root)
+        assert len(records) == 3 and records[0] == first
+        assert records[1]["reason"] == "update"
+        assert records[2]["restoredFrom"] == 1
+        assert all(entry["exact"] is True for entry in records)
+        assert {
+            path.relative_to(source): path.read_bytes()
+            for path in source.rglob("*")
+            if path.is_file()
+        } == before
+    finally:
+        _run(root, "stop", "--yes")
+
+
 @pytest.mark.parametrize("shared_store", [False, True], ids=["private-store", "shared-store"])
 def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared_store: bool

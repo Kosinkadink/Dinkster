@@ -262,6 +262,7 @@ def restore_entry(
                     variant=variant,
                     worker_protocol=protocol,
                     in_process_packs=tuple(cast("list[str]", in_process)),
+                    source_generation=inputs if (inputs / "packs").is_dir() else None,
                     pack_locks=tuple(sorted((inputs / "packs").glob("*/pack-lock.json"))),
                     own_environment_size=sum(
                         path.stat().st_size
