@@ -255,3 +255,35 @@ def test_nested_rename_rules_map_only_the_selected_branch_inputs() -> None:
     )
     assert "format.units" not in mappings
     assert len(rule.cases) == 12  # 2 bone modes * 4 shaders, 3 other GLB styles, BVH.
+
+
+@pytest.mark.parametrize(
+    "injected",
+    [
+        "import dinkster_inference.utils",
+        "from dinkster_inference import utils",
+        "from dinkster_inference.utils import common_upscale",
+        "import importlib as loader; loader.import_module('dinkster_inference.utils')",
+        "from importlib import import_module as load; load('dinkster_inference.utils')",
+        "__import__('dinkster_inference.utils')",
+    ],
+)
+def test_pack_inference_declaration_rejects_undeclared_import(
+    tmp_path: Path, injected: str
+) -> None:
+    from scripts.check_pack_inference_imports import check_pack
+
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text('[pack.inference]\nimports = []\ntested-version = "0.1.1"\n')
+    source = tmp_path / "src"
+    source.mkdir()
+    code = source / "node.py"
+    code.write_text("from .utils import local_helper\n")
+    check_pack(tmp_path, "0.1.1")
+    code.write_text(injected + "\n")
+    with pytest.raises(ValueError, match="inference imports must be.*utils"):
+        check_pack(tmp_path, "0.1.1")
+    manifest.write_text('[pack.inference]\nimports = ["utils"]\ntested-version = "0.1.1"\n')
+    check_pack(tmp_path, "0.1.1")
+    with pytest.raises(ValueError, match="tested-version must be 0.1.2"):
+        check_pack(tmp_path, "0.1.2")

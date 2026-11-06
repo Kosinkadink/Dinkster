@@ -1443,3 +1443,60 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     else:
         with pytest.raises(subprocess.CalledProcessError):
             run_selected_tests(engine, catalog, artifacts)
+
+
+@pytest.mark.parametrize("selected_value", [17, 29])
+def test_selected_pack_runtime_id_uses_distribution_layout(
+    tmp_path: Path, selected_value: int
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    engine = tmp_path / "engine"
+    tests = engine / "tests"
+    tests.mkdir(parents=True)
+    (engine / "pyproject.toml").write_text("")
+    shutil.copytree(
+        Path(__file__).resolve().parents[1] / "src/dinkster",
+        engine / "src/dinkster",
+        ignore=shutil.ignore_patterns("__pycache__", "official_packs"),
+    )
+    checkout_module = engine / "packages/dinkster-nodes-text/src/dinkster_nodes_text"
+    checkout_module.mkdir(parents=True)
+    (checkout_module / "__init__.py").write_text("VALUE = 17\n")
+    (tests / "test_comfy_text_nodes.py").write_text(
+        "from pathlib import Path\nimport dinkster_nodes_text as pack\n"
+        "def test_selected_archive():\n"
+        "    assert pack.VALUE == 17\n"
+        "    root = Path(__file__).parents[1] / 'packages/dinkster-nodes-text'\n"
+        "    assert Path(pack.__file__).resolve().is_relative_to(root / 'src')\n"
+        "    from dinkster.compose import default_pack_spec\n"
+        "    info = default_pack_spec('dinkster-text').packs['dinkster-text']\n"
+        "    assert info.source == f'local:{root}'\n"
+    )
+    subprocess.run(["git", "init", "-q", str(engine)], check=True)
+    subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+    source = tmp_path / "selected"
+    module = source / "dinkster_nodes_text"
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text(f"VALUE = {selected_value}\nNODES = []\n")
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        'namespaces = ["dinkster.text"]\n'
+        '[pack.entry]\nnodes = "dinkster_nodes_text:NODES"\n'
+    )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "pack.zip"
+    digest = build_artifact(source, archive)
+    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of(
+        [LockedPack("dinkster-text", "1.2.3", digest, "dinkster", ("dinkster-text",))]
+    )
+    if selected_value == 17:
+        run_selected_tests(engine, catalog, artifacts)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            run_selected_tests(engine, catalog, artifacts)
