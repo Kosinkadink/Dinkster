@@ -104,10 +104,7 @@ def begin_activation(
     if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
         raise EnvironmentError("incomplete environment operation requires recovery first")
     target_root = root / "generations" / str(target)
-    if operation == "rollback":
-        if Generation.read(target_root / "generation.json").number != target:
-            raise EnvironmentError("generation directory and recorded number disagree")
-    elif target_root.exists():
+    if target_root.exists():
         raise EnvironmentError("new generation target already exists")
     require_idle(root)
     bindings = engine_assignments(root, previous)
@@ -240,11 +237,13 @@ def recover_activation(root: Path, path: Path) -> None:
                 tuple(cast("list[str]", binding["gpus"])),
             )
     target_root = root / "generations" / str(journal.target)
-    if journal.operation != "rollback" and target_root.exists():
+    if target_root.exists() and (
+        journal.operation != "rollback" or journal.restored_from is not None
+    ):
         shutil.rmtree(target_root)
     if journal.setup_registration is not None:
         restore_setup_registration(root, journal.setup_registration)
-    if journal.operation == "restore" and journal.restored_from is not None:
+    if journal.restored_from is not None:
         record_failed_restore(
             root,
             path.stem,

@@ -74,7 +74,6 @@ from .environment_transactions import (
     begin_activation,
     begin_setup,
     next_generation,
-    previous_activation,
     recover_activation,
 )
 
@@ -891,39 +890,45 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
 def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     current = read_current(root)
-    settings = _settings(root)
-    if current is None or settings is None:
+    if current is None:
         raise EnvironmentError("project has no active generation")
-    snapshot = (root / "project.json").read_bytes()
-    journal = previous_activation(root, current)
-    target = journal.previous if journal is not None else None
-    project_settings = None
-    if journal is not None and journal.project_settings is not None:
-        if snapshot.decode("utf-8") != journal.project_settings["target"]:
-            raise EnvironmentError(
-                "project settings changed since selection; cannot restore prior settings"
+    entries = history(root)
+    if len(entries) < 2:
+        raise EnvironmentError("project has no previous successful history entry")
+    if entries[-1]["generation"] != current:
+        raise EnvironmentError("current generation does not match installation history")
+    return _restore(args, result, cast("int", entries[-2]["id"]), reason="rollback")
+
+
+def _restore(
+    args: argparse.Namespace,
+    result: dict[str, object],
+    entry_id: int,
+    *,
+    reason: str = "restore",
+) -> int:
+    result.update(restore_entry(args.root, entry_id, apply=False, approval=args.approve))
+    can_apply = result["status"] != "approval-required" or args.approve is not None
+    if can_apply and (
+        (args.approve is not None and not args.plan)
+        or _confirmed(args, cast("list[str]", result["plan"]))
+    ):
+        _recover_pending(args.root)
+        result.update(
+            restore_entry(
+                args.root,
+                entry_id,
+                apply=True,
+                approval=args.approve,
+                expected_plan=cast("dict[str, object]", result["restorePlan"]),
+                reason=reason,
             )
-        project_settings = {
-            "previous": journal.project_settings["target"],
-            "target": journal.project_settings["previous"],
-        }
-    if target is None:
-        raise EnvironmentError("project has no previous successful generation")
-    plan = [f"reactivate retained generation {target} without rebuilding generation {current}"]
-    result.update(current=current, plan=plan, status="planned")
-    if not _confirmed(args, plan):
-        return 0
-
-    def revalidate() -> None:
-        if read_current(root) != current or (root / "project.json").read_bytes() != snapshot:
-            raise EnvironmentError("project changed after planning; request a new plan")
-
-    _recover_pending(root)
-    with writer_lock(root):
-        revalidate()
-        path = begin_activation(root, target, "rollback", project_settings=project_settings)
-        activate(root, path, revalidate=revalidate)
-        result.update(current=target, status="applied", engines=list(engine_status(root)))
+        )
+        engines = list(engine_status(args.root))
+        result["engines"] = engines
+        ready = next((row for row in engines if row["state"] == "ready"), None)
+        if ready is not None:
+            result["url"] = ready["url"]
     return 0
 
 
@@ -1103,10 +1108,11 @@ def main() -> None:
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
-    rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
+    rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
-    restore.add_argument("--approve", help="approve one complete restore proposal digest")
+    for command in (rollback, restore):
+        command.add_argument("--approve", help="approve one complete restore proposal digest")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
@@ -1164,23 +1170,7 @@ def main() -> None:
         elif args.operation == "rollback":
             code = _rollback(args, result)
         elif args.operation == "restore":
-            result.update(restore_entry(args.root, args.entry, apply=False, approval=args.approve))
-            can_apply = result["status"] != "approval-required" or args.approve is not None
-            if can_apply and (
-                (args.approve is not None and not args.plan)
-                or _confirmed(args, cast("list[str]", result["plan"]))
-            ):
-                _recover_pending(args.root)
-                result.update(
-                    restore_entry(
-                        args.root,
-                        args.entry,
-                        apply=True,
-                        approval=args.approve,
-                        expected_plan=cast("dict[str, object]", result["restorePlan"]),
-                    )
-                )
-            code = 0
+            code = _restore(args, result, args.entry)
         elif args.operation == "gc":
             code = _gc(args, result)
         elif args.operation == "move":

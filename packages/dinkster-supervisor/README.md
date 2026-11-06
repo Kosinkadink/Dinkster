@@ -612,20 +612,23 @@ token. An unreachable or ambiguous supervisor cannot establish an idle engine;
 queue checks refuse mutation unless every observed engine is safely idle.
 Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
 
-`rollback [--plan | --yes] --json` selects the previous generation from the
-latest successful activation journal, starts its retained interpreter on new
-ports, waits for health, replaces `current`, then stops the newer processes.
-It does not sync or rebuild either tree. Apply revalidates project bytes and
-current under the writer lock; unconfirmed rollback does not write anything.
+`rollback [--plan | --yes] --json` selects the preceding successful history entry
+and rebuilds it as a fresh generation through the same path as `restore ID`.
+The old generation directory is not required. The new entry has reason `rollback`
+and names its source in `restoredFrom`. Missing inputs require the same complete
+proposal approval with `rollback --approve DIGEST`; `--yes` never substitutes
+software identities. Project settings and data stay unchanged, including edits
+made after the recorded activation. Apply revalidates the plan and current state
+under the writer locks; unconfirmed rollback does not write anything.
 
 Channel/variant selection journals also carry optional `projectSettings`, an
 object containing `previous` and `target` project.json text strings. Activation
 writes target settings during `switching`, immediately before `current`.
 Interrupted switching restores the previous exact text along with the pointer;
 earlier stages never changed settings. Unexpected settings during recovery refuse
-rather than overwrite an external edit. Rollback reverses the successful pair
-without rebuilding; settings edited since selection refuse rollback rather than
-discard user changes. Journals without this field leave project settings alone.
+rather than overwrite an external edit. Software rollback never reverses this
+settings pair: only software identities are restored. Journals without this field
+leave project settings alone.
 
 Activation journals retain `bindings`: objects containing `name`, `port`,
 `gpus` (device-id strings), `running` (boolean), and `targetPort`. The prior
@@ -633,7 +636,8 @@ assignments and new ports are durable before construction or process launch.
 Stopped bindings remain stopped across activation. Recovery stops authenticated
 target processes, restores the previous pointer and running assignments, removes
 only a newly constructed failed target, and marks the journal `rolled-back`.
-A rollback target is retained even if its activation fails. Ambiguous process
+Failed rebuilt rollback targets are removed, just like failed restore targets.
+Ambiguous process
 identity leaves the journal incomplete rather than killing an unrelated process.
 
 Initial activation uses the same journal with operation `setup` and previous

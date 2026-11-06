@@ -41,6 +41,7 @@ def restore_entry(
     apply: bool,
     approval: str | None = None,
     expected_plan: dict[str, object] | None = None,
+    reason: str = "restore",
 ) -> dict[str, object]:
     """Rebuild recorded software only after exact or proposal-bound approval."""
     entries = history(root)
@@ -57,6 +58,12 @@ def restore_entry(
     current = read_current(root)
     if current is None:
         raise EnvironmentError("project has no active generation")
+    if reason == "rollback" and (
+        len(entries) < 2
+        or entries[-1]["generation"] != current
+        or entries[-2]["id"] != entry_id
+    ):
+        raise EnvironmentError("rollback selection changed; inspect a new plan")
     pointer = root / "store"
     pointer_bytes = pointer.read_bytes()
     store = Path(pointer_bytes.decode("utf-8").strip())
@@ -118,7 +125,7 @@ def restore_entry(
     with writer_lock(store), writer_lock(root):
         revalidate()
         target = next_generation(root)
-        journal = begin_activation(root, target, "restore", restored_from=entry_id)
+        journal = begin_activation(root, target, reason, restored_from=entry_id)
         try:
             replace(Journal.read(journal), stage="building").write(journal)
             with tempfile.TemporaryDirectory(prefix="dinkster-restore-") as temporary:
@@ -245,7 +252,7 @@ def restore_entry(
                 root,
                 root / "generations" / str(target),
                 operation=journal.stem,
-                reason="restore",
+                reason=reason,
                 restored_from=entry_id,
                 substitutions=substitutions,
             )

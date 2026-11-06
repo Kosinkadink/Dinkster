@@ -347,8 +347,8 @@
   diagnostic journal. First setup with requirements still needs an existing
   generation interpreter. Channel/variant selection replans requirements for the
   selected target; workflow records and other project fields are preserved.
-  Rollback restores the retained selection without rebuilding, refusing when
-  settings were edited after selection rather than discarding user changes.
+  Rollback rebuilds the preceding software snapshot as a new generation, preserving
+  current project settings and any edits made after the recorded activation.
 - Unconfirmed `dinkster-env update` and `update --plan` report saved workflow
   requirements without acquiring target payloads or claiming source feasibility.
   Confirmed updates check those requirements against the same registry-selected
@@ -380,3 +380,7 @@
   inputs refuse activation. Tools versions are displayed but tools are never
   replaced. Failed attempts remain separate from successful history. Restore
   preserves existing history, project settings, workflows, models and outputs.
+- `dinkster-env rollback` rebuilds the preceding successful history entry, even
+  after its generation directory was pruned. It uses restore's missing-input and
+  proposal-approval contract, appends a source-linked entry with reason `rollback`,
+  and leaves project settings and user data unchanged.

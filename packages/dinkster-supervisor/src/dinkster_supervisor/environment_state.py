@@ -580,8 +580,8 @@ class Journal:
             generation_number(entry.get("id"))
         restored_from = value.get("restoredFrom")
         if restored_from is not None:
-            if operation != "restore":
-                raise EnvironmentError("restoredFrom requires a restore journal")
+            if operation not in {"restore", "rollback"}:
+                raise EnvironmentError("restoredFrom requires a restore or rollback journal")
             restored_from = generation_number(restored_from)
         return cls(
             operation,

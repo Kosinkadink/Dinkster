@@ -12,8 +12,10 @@ from typing import cast
 
 import pytest
 from dinkster_supervisor.environment_history import history, prepare_entry, publish_entry
+from dinkster_supervisor.environment_runtime import engine_status
 from dinkster_supervisor.environment_state import EnvironmentError, Generation
 from test_environment_cli import _run
+from test_environment_runtime import free_port
 from test_environment_state import _generation
 
 from tests.fixtures.environments.build import executable_release
@@ -80,8 +82,9 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     assert (target / "private").read_text() == "not software"
 
 
+@pytest.mark.parametrize("operation", ["restore", "rollback"])
 def test_restore_rebuilds_pruned_software_without_changing_user_data(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
 ):
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
@@ -113,28 +116,45 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
         code, result = _run(root, "update", "--yes")
         assert code == 0 and result["current"] == 2, result
         second = (root / "history/00000000000000000002.json").read_bytes()
+        parked_port = free_port()
+        assert (
+            _run(root, "start", "--engine", "parked", "--port", str(parked_port), "--yes")[0] == 0
+        )
+        assert _run(root, "stop", "--engine", "parked", "--yes")[0] == 0
         shutil.rmtree(root / "generations/1")
+        project = json.loads((root / "project.json").read_bytes())
+        project.update(channel="stable", custom={"preserve": "edited after engine update"})
+        (root / "project.json").write_text(json.dumps(project))
         settings = (root / "project.json").read_bytes()
-        code, result = _run(root, "restore", "1", "--plan")
+        command = ("restore", "1") if operation == "restore" else ("rollback",)
+        code, result = _run(root, *command, "--plan")
         assert code == 0 and result["status"] == "planned", result
         assert len(history(root)) == 2 and not (root / "generations/3").exists()
-        code, result = _run(root, "restore", "1", "--yes")
+        code, result = _run(root, *command, "--yes")
         assert code == 0 and result["current"] == 3 and result["exact"] is True, result
         entries = history(root)
         assert len(entries) == 3 and entries[-1]["restoredFrom"] == 1
+        assert entries[-1]["reason"] == operation
         assert entries[-1]["snapshot"] == first["snapshot"]
         assert entries[-1]["recordedTools"] == cast("dict", first["snapshot"])["tools"]
+        assert engine_status(root)[1] == {
+            "name": "parked",
+            "generation": 3,
+            "state": "stopped",
+            "url": f"http://127.0.0.1:{parked_port}",
+        }
         assert (root / "history/00000000000000000001.json").read_bytes() == preserved
         assert (root / "history/00000000000000000002.json").read_bytes() == second
         assert (root / "project.json").read_bytes() == settings
         monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "refuse")
-        code, failed = _run(root, "restore", "1", "--yes")
+        code, failed = _run(root, *command, "--yes")
         assert code == 1 and "recorded by tools" in failed["error"], failed
         assert (root / "current").read_text() == "3\n"
         assert history(root) == entries and not (root / "generations/4").exists()
         code, queried = _run(root, "history")
         assert code == 0 and len(queried["attempts"]) == 1
-        assert queried["attempts"][0]["restoredFrom"] == 1
+        failed_source = 1 if operation == "restore" else 2
+        assert queried["attempts"][0]["restoredFrom"] == failed_source
         assert queried["attempts"][0]["error"] == failed["error"]
         monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
         interrupt_restore = """
@@ -148,12 +168,13 @@ def interrupt(**kwargs):
         original(**kwargs)
     os._exit(73)
 environment_restore.build_generation = interrupt
-sys.argv = ['dinkster-env', '--root', sys.argv[1], 'restore', '1', '--yes', '--json']
+command = ['restore', '1'] if sys.argv[3] == 'restore' else ['rollback']
+sys.argv = ['dinkster-env', '--root', sys.argv[1], *command, '--yes', '--json']
 environment.main()
 """
         for count, stage in enumerate(("building", "built"), 2):
             interrupted = subprocess.run(
-                [sys.executable, "-c", interrupt_restore, str(root), stage], timeout=120
+                [sys.executable, "-c", interrupt_restore, str(root), stage, operation], timeout=120
             )
             assert interrupted.returncode == 73
             assert (root / "current").read_text() == "3\n" and history(root) == entries
@@ -179,7 +200,7 @@ environment.main()
             assert not (root / "generations/4").exists()
             code, recovered = _run(root, "history")
             assert code == 0 and len(recovered["attempts"]) == count
-            assert recovered["attempts"][-1]["restoredFrom"] == 1
+            assert recovered["attempts"][-1]["restoredFrom"] == failed_source
             assert "interrupted" in recovered["attempts"][-1]["error"]
             assert history(root) == entries
             assert _run(root, "stop", "--yes")[0] == 0
