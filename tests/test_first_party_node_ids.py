@@ -13,6 +13,7 @@ from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_text import NODES as TEXT_NODES
 from dinkster_nodes_text.text import StringConcatenate, StringFormat
+from dinkster_nodes_upscale import NODES as UPSCALE_NODES
 from dinkster_schema import claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
@@ -67,7 +68,12 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "vision-sdpose": 3,
     }
     schemas = {node.schema().node_type: node.schema() for node in COMFY_NODES}
-    schemas.update({node.schema().replacements[-1].from_type: node.schema() for node in TEXT_NODES})
+    schemas.update(
+        {
+            node.schema().replacements[-1].from_type: node.schema()
+            for node in (*TEXT_NODES, *UPSCALE_NODES)
+        }
+    )
     assert {row["from"] for row in rows[:636]} == schemas.keys()
     assert {row["from"]: row["nodeType"] for row in rows[636:]} == {
         "CreateBoundingBoxes": "dinkster.image.create_bounding_boxes",

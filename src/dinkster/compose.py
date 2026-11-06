@@ -302,6 +302,7 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-comfy": "dinkster_nodes_comfy",
         "dinkster-text": "dinkster_nodes_text",
+        "dinkster-upscale": "dinkster_nodes_upscale",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -316,6 +317,7 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
 _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
     {
         "dinkster-text": "dinkster-nodes-text",
+        "dinkster-upscale": "dinkster-nodes-upscale",
         **{
             pack_id: "dinkster-nodes-vision"
             for pack_id in _FIRST_PARTY_PACK_MODULES
@@ -324,7 +326,9 @@ _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
     }
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
-    pack_id for pack_id in _FIRST_PARTY_PACK_MODULES if pack_id.startswith("dinkster-vision-")
+    pack_id
+    for pack_id in _FIRST_PARTY_PACK_MODULES
+    if pack_id.startswith("dinkster-vision-") or pack_id == "dinkster-upscale"
 )
 _ENGINE_CARRIED_PACKS = frozenset(
     {"dinkster-native", "dinkster-compat-comfy", "dinkster-nodes-generation"}

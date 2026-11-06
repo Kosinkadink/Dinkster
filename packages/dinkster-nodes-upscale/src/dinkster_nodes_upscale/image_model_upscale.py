@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    first_party_schema,
     initialize_inference_process,
     materialize_image,
 )
@@ -25,7 +26,7 @@ _UPSCALE_MODEL = TypeExpr.concrete(UPSCALE_MODEL_TYPE)
 class ImageUpscaleWithModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="ImageUpscaleWithModel",
             display_name="Upscale Image (using Model)",
             category="image/upscaling",
@@ -42,6 +43,7 @@ class ImageUpscaleWithModel(Node):
             inputs=(InputSpec("upscale_model", _UPSCALE_MODEL), InputSpec("image", _IMAGE)),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, upscale_model: Any, image: Any) -> Mapping[str, object]:

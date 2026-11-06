@@ -95,7 +95,6 @@ from .image_file_tools import (
 from .image_filters import IMAGE_FILTER_NODES
 from .image_histogram import ImageHistogram
 from .image_layers import AddLayer
-from .image_model_upscale import ImageUpscaleWithModel
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -245,7 +244,6 @@ from .triposplat import (
     TripoSplatSamplingPreview,
     VAEDecodeTripoSplat,
 )
-from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .uv_atlas import RenderUVAtlas
 from .vae import VAE_NODES
@@ -521,7 +519,6 @@ COMFY_NODES: tuple[type[Node], ...] = (
     WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
     MoGeGeometryToFOV,
-    UpscaleModelLoader,
     ImageOnlyCheckpointSave,
     VOIDSampler,
     VOIDQuadmaskPreprocess,
@@ -598,7 +595,6 @@ COMFY_NODES: tuple[type[Node], ...] = (
     PreviewPointCloud,
     SplatToFile3D,
     File3DToSplat,
-    ImageUpscaleWithModel,
     ImageHistogram,
     TextOverlay,
     SAM3DBody_Render,

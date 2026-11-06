@@ -1926,6 +1926,7 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
         "dinkster-text",
+        "dinkster-upscale",
         "dinkster-vision-birefnet",
         "dinkster-vision-depth-anything-v2",
         "dinkster-vision-depth-anything-v3",

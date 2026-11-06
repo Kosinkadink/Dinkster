@@ -34,6 +34,7 @@ members = [
     "dinkster-nodes-media-io",
     "dinkster-nodes-remote",
     "dinkster-nodes-text",
+    "dinkster-nodes-upscale",
     "dinkster-nodes-vision",
     "dinkster-protocol",
     "dinkster-registry",
@@ -1345,6 +1346,17 @@ requires-dist = [
 name = "dinkster-nodes-text"
 version = "0.0.2"
 source = { editable = "packages/dinkster-nodes-text" }
+dependencies = [
+    { name = "dinkster-api" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
+
+[[package]]
+name = "dinkster-nodes-upscale"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-upscale" }
 dependencies = [
     { name = "dinkster-api" },
 ]

@@ -262,6 +262,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
         "dinkster-text",
+        "dinkster-upscale",
         "dinkster-vision-birefnet",
         "dinkster-vision-depth-anything-v2",
         "dinkster-vision-depth-anything-v3",
@@ -326,8 +327,13 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         relative = Path(*module.split(".")) / "__init__.py"
         if pack.pack.startswith("dinkster-vision-"):
             original = Path("packages/dinkster-nodes-vision/src") / relative
-        elif pack.pack == "dinkster-text":
-            original = Path("packages/dinkster-nodes-text/src") / relative
+        elif pack.pack in {"dinkster-text", "dinkster-upscale"}:
+            original = (
+                Path("packages")
+                / pack.pack.replace("dinkster-", "dinkster-nodes-", 1)
+                / "src"
+                / relative
+            )
         else:
             original = Path("packages") / pack.pack / "src" / relative
         expected_source = subprocess.check_output(
@@ -388,6 +394,7 @@ def test_official_publication_uses_selected_manifest_versions(
         "dinkster-nodes-media-io": "3.0.0rc1",
         "dinkster-nodes-remote": "1.2.4",
         "dinkster-text": "0.1.0",
+        "dinkster-upscale": "0.2.1",
     }
     tracked = io.BytesIO()
     with tarfile.open(fileobj=tracked, mode="w") as archive:
@@ -408,7 +415,11 @@ def test_official_publication_uses_selected_manifest_versions(
             }
             for name, text in files.items():
                 data = text.encode()
-                directory = "dinkster-nodes-text" if pack == "dinkster-text" else pack
+                directory = (
+                    pack.replace("dinkster-", "dinkster-nodes-", 1)
+                    if pack in {"dinkster-text", "dinkster-upscale"}
+                    else pack
+                )
                 entry = tarfile.TarInfo(f"packages/{directory}/{name}")
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
@@ -919,7 +930,7 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         path.name: path.read_bytes() for path in second
     }
     catalog = Lockfile.from_record_json(first[-1].read_text())
-    assert len(catalog.packs) == 15
+    assert len(catalog.packs) == 16
     for pack in catalog.packs:
         archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
         data = archive.read_bytes()

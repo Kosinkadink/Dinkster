@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "legacyPack": "dinkster-nodes-comfy",
-  "migratedPacks": ["dinkster-text"],
+  "migratedPacks": ["dinkster-text", "dinkster-upscale"],
   "extraOwners": {
     "ImageCompare": "dinkster-nodes-image",
     "GLSLShader": "dinkster-nodes-image"

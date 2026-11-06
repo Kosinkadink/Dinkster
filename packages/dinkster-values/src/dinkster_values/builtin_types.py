@@ -217,7 +217,8 @@ __all__ = [
     "WAN_CAMERA_EMBEDDING_TYPE",
 ]
 
-# Image documents remain owned by the image pack, not foundation.
+# Pack-owned values do not inherit foundation ownership.
 BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__) - {
     IMAGE_DOCUMENT_TYPE,
+    UPSCALE_MODEL_TYPE,
 }

@@ -168,6 +168,7 @@ extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 exclude = [
     "packages/dinkster-native/src/dinkster_native/model3d",
     "packages/dinkster-nodes-comfy/tests",
+    "packages/dinkster-nodes-upscale/tests",
     "packages/dinkster-nodes-vision",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo

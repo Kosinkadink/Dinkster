@@ -49,7 +49,6 @@ from dinkster_values import (
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
-    UPSCALE_MODEL_TYPE,
     VAE_TYPE,
     VIDEO_EDIT_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
@@ -127,7 +126,6 @@ _RESIDENT_TYPE_IDS = (
     PHOTOMAKER_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
-    UPSCALE_MODEL_TYPE,
     HOOKS_TYPE,
     HOOK_KEYFRAMES_TYPE,
 )
@@ -272,4 +270,5 @@ __all__ = [
     "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
+    "register_media_types",
 ]

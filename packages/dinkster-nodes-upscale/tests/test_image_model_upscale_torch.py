@@ -21,7 +21,8 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.image_model_upscale import ImageUpscaleWithModel
+from dinkster_nodes_upscale.image_model_upscale import ImageUpscaleWithModel
+from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -160,15 +161,22 @@ def test_upscale_executes_and_caches_in_ordinary_hosts(tmp_path: Path, in_proces
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "upscale_fixture.py").write_text(
             "from test_image_model_upscale_torch import UpscaleSource, UpscaleConsumer\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "from dinkster_nodes_upscale import register_types as register_upscale\n"
+            "def register_types(registry):\n"
+            "    register_inference_types(registry)\n"
+            "    with registry.registering_pack('dinkster-upscale', "
+            "('UPSCALE_MODEL',), allow_bare=True):\n"
+            "        register_upscale(registry)\n"
             "NODES = (UpscaleSource, UpscaleConsumer)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "dinkster-pack.toml"
         fixture.write_text(
             '[pack]\nname = "upscale-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["upscale-fixture"]\n[pack.entry]\n'
-            'nodes = "upscale_fixture:NODES"\ntypes = "upscale_fixture:register_inference_types"\n',
+            'namespaces = ["upscale-fixture"]\n'
+            '[pack.dependencies]\ndinkster-upscale = ">=0.0.1"\n[pack.entry]\n'
+            'nodes = "upscale_fixture:NODES"\ntypes = "upscale_fixture:register_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
@@ -182,18 +190,29 @@ def test_upscale_executes_and_caches_in_ordinary_hosts(tmp_path: Path, in_proces
         )
         try:
             for manifest in (native, fixture):
+                packs = (
+                    {"dinkster-upscale": PackInfo(display_name="Upscale", version="0.0.1")}
+                    if manifest == native
+                    else None
+                )
                 await composer.add_pack(
-                    PackSpec(manifest, in_process=True)
+                    PackSpec(manifest, in_process=True, trust_reserved=True, packs=packs)
                     if in_process
                     else PackSpec(
-                        manifest, worker_group="upscale", group_manifests=(native, fixture)
+                        manifest,
+                        worker_group="upscale",
+                        packs=packs,
+                        group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
+            assert composer.composition._registry.owner_of(UPSCALE_MODEL_TYPE) == "dinkster-upscale"
+            assert "ImageUpscaleWithModel" not in composer.composition.schemas
             graph = Graph(
                 nodes={
                     "source": GraphNode("upscale-fixture.source"),
                     "upscale": GraphNode(
-                        "ImageUpscaleWithModel",
+                        "dinkster.upscale.image_upscale_with_model",
                         {
                             "upscale_model": Link("source", "model"),
                             "image": Link("source", "image"),

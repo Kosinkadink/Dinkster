@@ -17,6 +17,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    first_party_schema,
     initialize_inference_process,
 )
 
@@ -24,7 +25,7 @@ from dinkster_api.v1 import (
 class UpscaleModelLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="UpscaleModelLoader",
             display_name="Load Upscale Model",
             category="model/loaders",
@@ -37,6 +38,7 @@ class UpscaleModelLoader(Node):
             ),
             outputs=(OutputSpec("UPSCALE_MODEL", TypeExpr.concrete(UPSCALE_MODEL_TYPE)),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, model_name: object) -> Mapping[str, object]:

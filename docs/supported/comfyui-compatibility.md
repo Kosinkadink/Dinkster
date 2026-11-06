@@ -110,6 +110,10 @@
   Save Text preserves its core text, filename prefix, and format inputs while
   writing UTF-8 output through the configured mounted output target. Filename
   variables use 1-by-1 dimensions and local time; unknown variables stay literal.
+- The independent `dinkster-upscale` pack loads single-image upscale checkpoints
+  and applies them with tiled execution under `dinkster.upscale` IDs. The pack
+  owns the resident UPSCALE_MODEL value; old flat graph names migrate through
+  schema replacement rules.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type

@@ -28,7 +28,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.upscale_model_loader import UpscaleModelLoader
+from dinkster_nodes_upscale.upscale_model_loader import UpscaleModelLoader
+from dinkster_server import PackInfo
 from safetensors.torch import save_file
 from spandrel import (
     ArchRegistry,
@@ -241,16 +242,23 @@ def test_loader_resident_output_executes_and_caches_in_ordinary_hosts(
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "upscale_loader_fixture.py").write_text(
             "from test_upscale_model_loader_torch import UpscaleLoaderConsumer\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "from dinkster_nodes_upscale import register_types as register_upscale\n"
+            "def register_types(registry):\n"
+            "    register_inference_types(registry)\n"
+            "    with registry.registering_pack('dinkster-upscale', "
+            "('UPSCALE_MODEL',), allow_bare=True):\n"
+            "        register_upscale(registry)\n"
             "NODES = (UpscaleLoaderConsumer,)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "dinkster-pack.toml"
         fixture.write_text(
             '[pack]\nname="upscale-loader-fixture"\npublisher="dinkster"\n'
-            'namespaces=["upscale-loader-fixture"]\n[pack.entry]\n'
+            'namespaces=["upscale-loader-fixture"]\n'
+            '[pack.dependencies]\ndinkster-upscale = ">=0.0.1"\n[pack.entry]\n'
             'nodes="upscale_loader_fixture:NODES"\n'
-            'types="upscale_loader_fixture:register_inference_types"\n',
+            'types="upscale_loader_fixture:register_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
@@ -265,16 +273,27 @@ def test_loader_resident_output_executes_and_caches_in_ordinary_hosts(
         )
         try:
             for manifest in (native, fixture):
+                packs = (
+                    {"dinkster-upscale": PackInfo(display_name="Upscale", version="0.0.1")}
+                    if manifest == native
+                    else None
+                )
                 await composer.add_pack(
-                    PackSpec(manifest, in_process=True)
+                    PackSpec(manifest, in_process=True, trust_reserved=True, packs=packs)
                     if in_process
                     else PackSpec(
-                        manifest, worker_group="upscale-loader", group_manifests=(native, fixture)
+                        manifest,
+                        worker_group="upscale-loader",
+                        packs=packs,
+                        group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
                 nodes={
-                    "load": GraphNode("UpscaleModelLoader", {"model_name": asset.to_wire()}),
+                    "load": GraphNode(
+                        "dinkster.upscale.upscale_model_loader", {"model_name": asset.to_wire()}
+                    ),
                     "consume": GraphNode(
                         "upscale-loader-fixture.consumer", {"model": Link("load", "UPSCALE_MODEL")}
                     ),

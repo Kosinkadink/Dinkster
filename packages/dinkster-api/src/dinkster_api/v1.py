@@ -99,7 +99,7 @@ from dinkster_memory import (
     ReservationRequest,
     Shedder,
 )
-from dinkster_memory.resident import obtain_resident
+from dinkster_memory.resident import default_pool, obtain_resident
 from dinkster_protocol import (
     EXTENSION_CAPABILITIES,
     EXTENSION_SCOPES,
@@ -400,6 +400,7 @@ from dinkster_values import (
     register_box_types,
     register_curve_type,
     register_model3d_type,
+    register_resident_type,
     register_resource_handle_type,
     register_splat_type,
     register_video_edit_type,
@@ -434,6 +435,7 @@ from dinkster_values.audio_codec import (
     effective_audio_facts,
 )
 from dinkster_values.audio_lazy import channel_layout as audio_channel_layout
+from dinkster_values.resident import comfy_resident_meta
 from dinkster_video import (
     DITHERS,
     FRAME_FORMATS,
@@ -493,6 +495,7 @@ def __getattr__(name: str) -> object:
         value = TriangleMeshBatch
     elif name in {
         "register_inference_types",
+        "register_media_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
@@ -526,6 +529,7 @@ def __dir__() -> list[str]:
             "MultiStreamLatent",
             "TriangleMeshBatch",
             "register_inference_types",
+            "register_media_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
@@ -577,6 +581,7 @@ if TYPE_CHECKING:
         materialize_vision_packet,
         materialize_voxel,
         register_inference_types,
+        register_media_types,
     )
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
@@ -610,6 +615,9 @@ __all__ = [
     "srgb_to_linear",
     "RunExecutionContext",
     "obtain_resident",
+    "default_pool",
+    "comfy_resident_meta",
+    "register_resident_type",
     "Expansion",
     "ExpansionBuilder",
     "ExpansionNode",
@@ -628,6 +636,7 @@ __all__ = [
     "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
+    "register_media_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
