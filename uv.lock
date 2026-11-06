@@ -34,6 +34,7 @@ members = [
     "dinkster-nodes-media-io",
     "dinkster-nodes-remote",
     "dinkster-nodes-vision",
+    "dinkster-nodes-vision-moge",
     "dinkster-protocol",
     "dinkster-registry",
     "dinkster-schema",
@@ -1358,6 +1359,17 @@ requires-dist = [
     { name = "opencv-contrib-python-headless", specifier = ">=5.0,<5.1" },
     { name = "pillow", specifier = ">=10" },
 ]
+
+[[package]]
+name = "dinkster-nodes-vision-moge"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-moge" }
+dependencies = [
+    { name = "dinkster-api" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
 name = "dinkster-opentimelineio"
