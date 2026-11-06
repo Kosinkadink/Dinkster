@@ -87,6 +87,6 @@ def test_canvas_empty_input_keeps_saved_state_and_background_preview():
         ([{"bbox": [0, 0, "bad", 1]}], "bboxes element 'bbox' must contain four numbers"),
     ],
 )
-def test_canvas_reports_reference_input_errors(value, message):
+def test_canvas_reports_reference_input_errors(value: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         CreateBoundingBoxes.execute(width=400, height=200, bboxes=value)
