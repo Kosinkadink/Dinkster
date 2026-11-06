@@ -3429,6 +3429,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
         stop_logged_serve(process, log, pending_error)
 
 
+@pytest.mark.timeout(360)
 def test_default_catalog_publishes_only_owned_translation_carriers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3462,7 +3463,8 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
             finally:
                 await client.close()
 
-        run_scenario(inspect())
+        # Hosted coverage exceeded 120 s; preserve the 300 s composition bound plus cleanup.
+        run_scenario(inspect(), timeout=330)
 
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", ""])
