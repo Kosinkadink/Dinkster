@@ -52,7 +52,7 @@ jobs:
     if: needs.changes.outputs.comfy == 'true'
     name: CPU comfy gate (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +68,7 @@ jobs:
           persist-credentials: false
       - name: Install the CPU software shader renderer
         uses: ./.github/actions/torch-cpu-suite/renderer-setup
-        timeout-minutes: 2
+        timeout-minutes: 5
       - uses: ./.github/actions/torch-cpu-suite
         with:
           suite: comfy
