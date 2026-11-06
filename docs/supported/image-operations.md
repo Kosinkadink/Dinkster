@@ -151,6 +151,9 @@
   gaussian splat previews during sampling without replacing the sampler callback.
 - Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
   with density selection and seeded point sampling.
+- First-party `dinkster.3d.splat_to_mesh` constructs density and color grids on
+  CPU when those buffers exceed reported accelerator headroom. Otherwise it
+  retains accelerator construction and the separate extraction-headroom fallback.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored

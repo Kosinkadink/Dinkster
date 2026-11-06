@@ -47,9 +47,18 @@ def _splat_density(xyz, opacity, scale, quat, rgb, res, kernel, device, color_sh
     lo, hi = xyz.amin(0) - pad, xyz.amax(0) + pad
     voxel = ((hi - lo).max() / res).clamp_min(1e-8)
     dx, dy, dz = (torch.ceil((hi - lo) / voxel).long() + 1).tolist()
+    sharp = color_sharpen != 1.0
+    volume_bytes = dx * dy * dz * (4 + 3 * 2 + (2 if sharp else 0))
+    if (
+        not model_management.is_device_cpu(device)
+        and cast(float, model_management.get_free_memory(device)) < volume_bytes
+    ):
+        device = torch.device("cpu")
+        xyz, opacity, scale, quat, rgb, lo, voxel = (
+            value.cpu() for value in (xyz, opacity, scale, quat, rgb, lo, voxel)
+        )
     sinv = _inverse_covariance(scale, quat)
     kreq = torch.ceil(3.0 * scale.amax(-1) / voxel).long().clamp(1, int(kernel))
-    sharp = color_sharpen != 1.0
     vol = torch.zeros(dx * dy * dz, device=device)
     colvol = torch.zeros(dx * dy * dz, 3, device=device, dtype=torch.float16)
     wcol = torch.zeros(dx * dy * dz, device=device, dtype=torch.float16) if sharp else None
@@ -408,6 +417,7 @@ def _gaussian_to_mesh(
         color_sharpen,
         lambda value: progress(0.25 * value),
     )
+    device = vol.device
     colour_gpu = (
         not model_management.is_device_cpu(device)
         and cast(float, model_management.get_free_memory(device)) > 6 * vol.numel() * 4

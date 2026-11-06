@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 from dinkster_api.v1 import initialize_inference_process, schema_to_wire
 
 from tools.compare_nodes import compare
@@ -29,9 +30,43 @@ def test_splat_mesh_schema_matches_reference_except_frozen_id() -> None:
     assert compare(row, wire) == []
 
 
-def test_splat_mesh_counts_filter_padding_and_preserve_linear_color() -> None:
+@pytest.mark.parametrize(
+    ("accelerator_budget", "color_sharpen"),
+    [(None, 1.0), (None, 2.0), (0, 1.0), (0, 2.0), (2_900_000, 2.0)],
+)
+def test_splat_mesh_counts_filter_padding_and_preserve_linear_color(
+    monkeypatch: pytest.MonkeyPatch, accelerator_budget: int | None, color_sharpen: float
+) -> None:
     initialize_inference_process()
     torch = importlib.import_module("torch")
+    management = importlib.import_module("dinkster_inference.model_management")
+    # CPU:0 simulates an accelerator whose allocator enforces the reported budget.
+    # The 65^3 grid fits 2.9 MB without, but not with, the sharpened-color normalizer.
+    device = torch.device("cpu" if accelerator_budget is None else "cpu:0")
+    monkeypatch.setattr(management, "get_torch_device", lambda: device)
+    if accelerator_budget is not None:
+
+        def is_cpu(dev: Any) -> bool:
+            return dev == torch.device("cpu")
+
+        def free_memory(dev: Any) -> int:
+            return accelerator_budget
+
+        monkeypatch.setattr(management, "is_device_cpu", is_cpu)
+        monkeypatch.setattr(management, "get_free_memory", free_memory)
+        zeros = torch.zeros
+        allocated = 0
+
+        def budgeted_zeros(*size: Any, **kwargs: Any) -> Any:
+            nonlocal allocated
+            value = zeros(*size, **kwargs)
+            if kwargs.get("device") == device:
+                allocated += value.numel() * value.element_size()
+                if allocated > accelerator_budget:
+                    raise torch.OutOfMemoryError("simulated accelerator budget exceeded")
+            return value
+
+        monkeypatch.setattr(torch, "zeros", budgeted_zeros)
     positions = torch.tensor([[[0.3, 0.5, -0.7], [20, 20, 20]]] * 2)
     splat = {
         "positions": positions,
@@ -49,7 +84,7 @@ def test_splat_mesh_counts_filter_padding_and_preserve_linear_color() -> None:
         kernel=8,
         min_component=0,
         min_opacity=0.02,
-        color_sharpen=1.0,
+        color_sharpen=color_sharpen,
         smooth=1,
     )["mesh"]
     assert mesh.unlit is True
