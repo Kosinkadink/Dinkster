@@ -59,9 +59,7 @@ def restore_entry(
     if current is None:
         raise EnvironmentError("project has no active generation")
     if reason == "rollback" and (
-        len(entries) < 2
-        or entries[-1]["generation"] != current
-        or entries[-2]["id"] != entry_id
+        len(entries) < 2 or entries[-1]["generation"] != current or entries[-2]["id"] != entry_id
     ):
         raise EnvironmentError("rollback selection changed; inspect a new plan")
     pointer = root / "store"
