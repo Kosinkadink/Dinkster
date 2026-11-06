@@ -1424,7 +1424,9 @@ def test_moved_pack_census_requires_frozen_ids_and_preserves_interface_drift() -
         "dinkster-nodes-comfy": {"identical": 1},
     }
     assert result["rows"][0]["node_type"] == "dinkster.text.string_concatenate"
-    assert not compare_registry(reference, {"nodes": served})["passed"]
+    assert not compare_registry(reference, {"nodes": served}, scope={**scope, "migratedPacks": []})[
+        "passed"
+    ]
 
     for owner in ("dinkster-upscale", None):
         moved["pack"] = owner

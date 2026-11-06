@@ -104,7 +104,10 @@
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
   Empty image and Mochi latents honor CPU-only process policy without requiring
   attention discovery or command-line initialization first.
-- Save Text preserves its core text, filename prefix, and format inputs while
+- The independent `dinkster-text` pack exposes sixteen text nodes under
+  `dinkster.text` IDs. Schema replacement rules preserve old flat graph names;
+  dynamic String Format inputs require the frontend replacement planner.
+  Save Text preserves its core text, filename prefix, and format inputs while
   writing UTF-8 output through the configured mounted output target. Filename
   variables use 1-by-1 dimensions and local time; unknown variables stay literal.
 - The native core pack exposes eleven latent creation, batch, transform, resize,

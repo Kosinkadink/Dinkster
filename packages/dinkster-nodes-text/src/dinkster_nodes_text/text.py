@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    first_party_schema,
 )
 
 STRING = TypeExpr.concrete(CORE_STRING)
@@ -58,7 +59,7 @@ def _regex_flags(case_insensitive: bool, multiline: bool, dotall: bool) -> int:
 class StringFormat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringFormat",
             display_name="Format Text",
             category="text",
@@ -74,6 +75,7 @@ class StringFormat(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, values: Mapping[str, object], f_string: str) -> Mapping[str, object]:
@@ -83,7 +85,7 @@ class StringFormat(Node):
 class StringConcatenate(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringConcatenate",
             display_name="Concatenate Text",
             category="text",
@@ -94,6 +96,7 @@ class StringConcatenate(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string_a: str, string_b: str, delimiter: str) -> Mapping[str, object]:
@@ -103,13 +106,14 @@ class StringConcatenate(Node):
 class StringSubstring(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringSubstring",
             display_name="Substring",
             category="text",
             inputs=(_text("string"), InputSpec("start", INT), InputSpec("end", INT)),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string: str, start: int, end: int) -> Mapping[str, object]:
@@ -119,13 +123,14 @@ class StringSubstring(Node):
 class StringLength(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringLength",
             display_name="Text Length",
             category="text",
             inputs=(_text("string"),),
             outputs=(OutputSpec("length", INT),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string: str) -> Mapping[str, object]:
@@ -135,7 +140,7 @@ class StringLength(Node):
 class CaseConverter(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="CaseConverter",
             display_name="Convert Text Case",
             category="text",
@@ -145,6 +150,7 @@ class CaseConverter(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string: str, mode: str) -> Mapping[str, object]:
@@ -164,13 +170,14 @@ class CaseConverter(Node):
 class StringTrim(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringTrim",
             display_name="Trim Text",
             category="text",
             inputs=(_text("string"), _combo("mode", ("Both", "Left", "Right"))),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string: str, mode: str) -> Mapping[str, object]:
@@ -188,13 +195,14 @@ class StringTrim(Node):
 class StringReplace(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringReplace",
             display_name="Replace Text",
             category="text",
             inputs=(_text("string"), _text("find"), _text("replace")),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string: str, find: str, replace: str) -> Mapping[str, object]:
@@ -204,7 +212,7 @@ class StringReplace(Node):
 class StringContains(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringContains",
             display_name="Contains Text",
             category="text",
@@ -215,6 +223,7 @@ class StringContains(Node):
             ),
             outputs=(OutputSpec("contains", BOOLEAN),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, string: str, substring: str, case_sensitive: bool) -> Mapping[str, object]:
@@ -226,7 +235,7 @@ class StringContains(Node):
 class StringCompare(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="StringCompare",
             display_name="Compare Text",
             category="text",
@@ -238,6 +247,7 @@ class StringCompare(Node):
             ),
             outputs=(OutputSpec("BOOLEAN", BOOLEAN),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(
@@ -263,13 +273,14 @@ class StringCompare(Node):
 class RegexMatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="RegexMatch",
             display_name="Match Text",
             category="text",
             inputs=(_text("string"), _text("regex_pattern"), *_regex_inputs()),
             outputs=(OutputSpec("matches", BOOLEAN),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(
@@ -298,7 +309,7 @@ class RegexMatch(Node):
 class RegexExtract(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="RegexExtract",
             display_name="Extract Text",
             category="text",
@@ -317,6 +328,7 @@ class RegexExtract(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(
@@ -359,7 +371,7 @@ class RegexExtract(Node):
 class RegexReplace(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="RegexReplace",
             display_name="Replace Text (Regex)",
             category="text",
@@ -379,6 +391,7 @@ class RegexReplace(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(
@@ -406,13 +419,14 @@ class RegexReplace(Node):
 class JsonExtractString(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="JsonExtractString",
             display_name="Extract Text from JSON",
             category="text",
             inputs=(_text("json_string"), _text("key", multiline=False)),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, json_string: str, key: str) -> Mapping[str, object]:
@@ -430,7 +444,7 @@ class JsonExtractString(Node):
 class ConvertDictionaryToString(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="ConvertDictionaryToString",
             display_name="Convert Dictionary to String",
             category="text",
@@ -440,6 +454,7 @@ class ConvertDictionaryToString(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, dictionary: dict[str, object], indent: int = 2) -> Mapping[str, object]:
@@ -449,7 +464,7 @@ class ConvertDictionaryToString(Node):
 class ConvertArrayToString(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="ConvertArrayToString",
             display_name="Convert Array to String",
             category="text",
@@ -459,6 +474,7 @@ class ConvertArrayToString(Node):
             ),
             outputs=(OutputSpec("STRING", STRING),),
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(cls, *, array: list[object], indent: int = 2) -> Mapping[str, object]:

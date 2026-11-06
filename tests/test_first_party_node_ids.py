@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
 from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.text import StringConcatenate, StringFormat
+from dinkster_nodes_text import NODES as TEXT_NODES
+from dinkster_nodes_text.text import StringConcatenate, StringFormat
 from dinkster_schema import claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
@@ -66,6 +67,7 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "vision-sdpose": 3,
     }
     schemas = {node.schema().node_type: node.schema() for node in COMFY_NODES}
+    schemas.update({node.schema().replacements[-1].from_type: node.schema() for node in TEXT_NODES})
     assert {row["from"] for row in rows[:636]} == schemas.keys()
     assert {row["from"]: row["nodeType"] for row in rows[636:]} == {
         "CreateBoundingBoxes": "dinkster.image.create_bounding_boxes",
@@ -75,6 +77,15 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "LoadMoGeModel": "dinkster.vision.moge.load_mo_ge_model",
         "SplatToMesh": "dinkster.3d.splat_to_mesh",
     }
+    assert {row["from"] for row in rows if row.get("bodyNotFromUpstream") is True} == {
+        "CreateBoundingBoxes",
+        "LayersFromBoundingBoxes",
+        "ImageCompositor",
+        "WebcamCapture",
+        "LoadMoGeModel",
+        "SplatToMesh",
+    }
+    assert all("bodyNotFromUpstream" not in row for row in rows[:636])
     reference = {
         row["class_name"]: row
         for row in json.loads(Path("tools/data/comfy_core_reference.json").read_text())["nodes"]
@@ -124,9 +135,9 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
 
 
 def test_first_party_rules_preserve_flat_graphs_and_leave_families_frontend_owned() -> None:
-    original = StringConcatenate.schema()
-    schema = first_party_schema(original)
-    family = first_party_schema(StringFormat.schema())
+    schema = StringConcatenate.schema()
+    original = replace(schema, node_type="StringConcatenate", replacements=(), search_terms=())
+    family = StringFormat.schema()
     graph = Graph(
         {
             "flat": GraphNode(
@@ -165,7 +176,7 @@ def test_first_party_rules_preserve_flat_graphs_and_leave_families_frontend_owne
 
 
 def test_translation_index_collects_schema_rules_and_refuses_wrong_claims() -> None:
-    schema = first_party_schema(StringConcatenate.schema())
+    schema = StringConcatenate.schema()
     pack = ("dinkster", "dinkster-text", "0.0.1", (schema,))
     assert collect_comfy_translations([pack]) == {
         "schemaVersion": 1,

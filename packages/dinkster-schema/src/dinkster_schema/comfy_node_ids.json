@@ -3820,36 +3820,42 @@
     },
     {
       "from": "CreateBoundingBoxes",
+      "bodyNotFromUpstream": true,
       "pack": "dinkster-image",
       "nodeType": "dinkster.image.create_bounding_boxes",
       "backendPureRename": true
     },
     {
       "from": "LayersFromBoundingBoxes",
+      "bodyNotFromUpstream": true,
       "pack": "dinkster-image",
       "nodeType": "dinkster.image.layers_from_bounding_boxes",
       "backendPureRename": true
     },
     {
       "from": "ImageCompositor",
+      "bodyNotFromUpstream": true,
       "pack": "dinkster-image",
       "nodeType": "dinkster.image.image_compositor",
       "backendPureRename": true
     },
     {
       "from": "WebcamCapture",
+      "bodyNotFromUpstream": true,
       "pack": "dinkster-image",
       "nodeType": "dinkster.image.webcam_capture",
       "backendPureRename": true
     },
     {
       "from": "LoadMoGeModel",
+      "bodyNotFromUpstream": true,
       "pack": "dinkster-vision-moge",
       "nodeType": "dinkster.vision.moge.load_mo_ge_model",
       "backendPureRename": true
     },
     {
       "from": "SplatToMesh",
+      "bodyNotFromUpstream": true,
       "pack": "dinkster-3d",
       "nodeType": "dinkster.3d.splat_to_mesh",
       "backendPureRename": true

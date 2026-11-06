@@ -1423,7 +1423,7 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         pack_root = Path("packages") / distribution_id
         sidecar_root = (
             pack_root / f"{pack_id.replace('-', '_')}_pack"
-            if distribution_id != pack_id
+            if not (repo_root / pack_root / "dinkster-pack.toml").is_file()
             else pack_root
         )
         manifest_path = sidecar_root / "dinkster-pack.toml"
@@ -1925,6 +1925,7 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-text",
         "dinkster-vision-birefnet",
         "dinkster-vision-depth-anything-v2",
         "dinkster-vision-depth-anything-v3",
@@ -2257,10 +2258,10 @@ def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.Monk
             }
             assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
             result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(nodes={"length": GraphNode("StringLength", {"string": "native core"})}),
-                ["length"],
+                Graph(nodes={"text": GraphNode("PrimitiveString", {"value": "native core"})}),
+                ["text"],
             )
-            assert result.outputs["length"]["length"].resolve() == 11
+            assert result.outputs["text"]["STRING"].resolve() == "native core"
         finally:
             await composer.close()
 
@@ -2315,11 +2316,11 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
         '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
-        'namespaces = ["StringLength"]\n'
+        'namespaces = ["PrimitiveString"]\n'
         '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
     )
     (tmp_path / "other_owner_fixture.py").write_text(
-        "from dinkster_nodes_comfy.text import StringLength\nNODES = (StringLength,)\n"
+        "from dinkster_nodes_comfy.primitive import PrimitiveString\nNODES = (PrimitiveString,)\n"
     )
 
     async def scenario() -> None:
@@ -2335,11 +2336,21 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
             else:
                 await composer.reload_pack("dinkster-nodes-comfy")
             assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+            await composer.add_pack(
+                PackSpec(
+                    manifest=TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml",
+                    in_process=in_process,
+                    trust_reserved=True,
+                )
+            )
+            combined_claims = set(composer.composition.schemas)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
                     "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
-                    "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                    "length": GraphNode(
+                        "dinkster.text.string_length", {"string": Link("text", "STRING")}
+                    ),
                     "false": GraphNode("PrimitiveBoolean", {"value": False}),
                     "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
                     "and": GraphNode(
@@ -2394,7 +2405,7 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
             assert "combo" in changed_result.executed
             with pytest.raises(CompositionError, match="overlaps"):
                 await composer.add_pack(PackSpec(manifest=other_manifest))
-            assert set(composer.composition.schemas) == set(claims)
+            assert set(composer.composition.schemas) == combined_claims
         finally:
             await composer.close()
 
@@ -2604,17 +2615,20 @@ def test_native_comfy_pack_registers_container_literals(in_process: bool) -> Non
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
         try:
-            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml"
+            await composer.add_pack(
+                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
+            )
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
                         "dictionary": GraphNode(
-                            "ConvertDictionaryToString",
+                            "dinkster.text.convert_dictionary_to_string",
                             {"dictionary": {"key": [3, True]}, "indent": 0},
                         ),
                         "array": GraphNode(
-                            "ConvertArrayToString", {"array": [3, {"key": False}], "indent": 0}
+                            "dinkster.text.convert_array_to_string",
+                            {"array": [3, {"key": False}], "indent": 0},
                         ),
                     }
                 ),

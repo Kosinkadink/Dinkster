@@ -22,7 +22,7 @@ from dinkster_workers import load_manifest
 from dinkster_workers.doctor import DoctorReport, diagnose_static
 from dinkster_workers.pack_lock import resolve_pack_lock
 
-OFFICIAL_PACK_FAMILIES = ("comfy", "foundation", "image", "media-io", "remote")
+OFFICIAL_PACK_FAMILIES = ("comfy", "foundation", "image", "media-io", "remote", "text")
 
 
 def build(

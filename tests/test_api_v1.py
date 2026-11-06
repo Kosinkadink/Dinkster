@@ -176,6 +176,7 @@ GOLDEN_V1_SURFACE = (
     "schema_from_wire",
     "schema_signature",
     "schema_to_wire",
+    "first_party_schema",
     # -- reporting and logging (dinkster-schema)
     "LOG_EVENT",
     "PREVIEW_EVENT",

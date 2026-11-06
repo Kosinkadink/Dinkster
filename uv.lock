@@ -33,6 +33,7 @@ members = [
     "dinkster-nodes-image",
     "dinkster-nodes-media-io",
     "dinkster-nodes-remote",
+    "dinkster-nodes-text",
     "dinkster-nodes-vision",
     "dinkster-protocol",
     "dinkster-registry",
@@ -1339,6 +1340,17 @@ requires-dist = [
     { name = "dinkster-nodes-media-io", editable = "packages/dinkster-nodes-media-io" },
     { name = "httpx", specifier = ">=0.28,<1" },
 ]
+
+[[package]]
+name = "dinkster-nodes-text"
+version = "0.0.1"
+source = { editable = "packages/dinkster-nodes-text" }
+dependencies = [
+    { name = "dinkster-api" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
 name = "dinkster-nodes-vision"

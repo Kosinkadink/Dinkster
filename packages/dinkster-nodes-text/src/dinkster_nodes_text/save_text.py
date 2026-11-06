@@ -20,6 +20,7 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     attach_saved_artifact,
+    first_party_schema,
 )
 
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -48,7 +49,7 @@ def _render(text: str, format: str) -> bytes:
 class SaveText(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="SaveText",
             display_name="Save Text",
             category="text",
@@ -80,6 +81,7 @@ class SaveText(Node):
             idempotent=False,
             output_node=True,
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(

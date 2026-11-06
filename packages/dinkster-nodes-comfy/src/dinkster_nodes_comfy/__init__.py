@@ -210,7 +210,6 @@ from .sam3d_render import SAM3DBody_Render
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .save_image_advanced import SaveImageAdvanced
-from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .sdpose import SDPoseDrawKeypoints, SDPoseFaceBBoxes
@@ -233,7 +232,6 @@ from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
 from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
-from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .text_overlay import TextOverlay
 from .trellis import Trellis2TextureStage, VaeDecodeTextureTrellis
@@ -291,8 +289,6 @@ from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES: tuple[type[Node], ...] = (
     *AUDIO_ENCODER_NODES,
-    *TEXT_NODES,
-    SaveText,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,

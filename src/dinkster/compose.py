@@ -301,6 +301,7 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-comfy": "dinkster_nodes_comfy",
+        "dinkster-text": "dinkster_nodes_text",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -314,9 +315,12 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
 )
 _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
     {
-        pack_id: "dinkster-nodes-vision"
-        for pack_id in _FIRST_PARTY_PACK_MODULES
-        if pack_id.startswith("dinkster-vision-")
+        "dinkster-text": "dinkster-nodes-text",
+        **{
+            pack_id: "dinkster-nodes-vision"
+            for pack_id in _FIRST_PARTY_PACK_MODULES
+            if pack_id.startswith("dinkster-vision-")
+        },
     }
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
