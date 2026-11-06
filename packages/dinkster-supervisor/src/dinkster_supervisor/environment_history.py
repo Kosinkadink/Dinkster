@@ -16,8 +16,23 @@ from .environment_state import (
     Generation,
     content_digest,
     generation_number,
+    read_current,
     read_document,
+    relative_file,
 )
+
+
+def is_software_metadata(name: str) -> bool:
+    """Allow only portable sealed software inputs, never project settings or data."""
+    relative_file(name)
+    parts = Path(name).parts
+    return name in {
+        "constraints.txt",
+        "base-manifest.json",
+        "engine-manifest.json",
+        "artifact-sources.json",
+        "dinkster.lock",
+    } or (len(parts) == 3 and parts[0] == "packs" and parts[2] == "pack-lock.json")
 
 
 def capture_software(generation: Path) -> dict[str, object]:
@@ -25,16 +40,7 @@ def capture_software(generation: Path) -> dict[str, object]:
     record = Generation.read(generation / "generation.json")
     expected = dict(record.files)
     names = {"constraints.txt"}
-    names.update(
-        name
-        for name in expected
-        if name in {"base-manifest.json", "engine-manifest.json", "dinkster.lock"}
-        or (
-            len(Path(name).parts) == 3
-            and Path(name).parts[0] == "packs"
-            and Path(name).parts[2] == "pack-lock.json"
-        )
-    )
+    names.update(name for name in expected if is_software_metadata(name))
     metadata: dict[str, str] = {}
     for name in sorted(names):
         path = generation / name
@@ -79,7 +85,16 @@ def _changes(previous: object, current: object, field: str = "") -> list[dict[st
 
 def history(root: Path) -> list[dict[str, object]]:
     """Return successful entries without consulting materialized generations."""
-    directory = root / "history"
+    return _records(root, "history")
+
+
+def attempts(root: Path) -> list[dict[str, object]]:
+    """Return failed restores separately from successful installation history."""
+    return _records(root, "attempts")
+
+
+def _records(root: Path, kind: str) -> list[dict[str, object]]:
+    directory = root / kind
     if directory.is_symlink():
         raise EnvironmentError("history must not be a symlink")
     entries: list[dict[str, object]] = []
@@ -91,8 +106,8 @@ def history(root: Path) -> list[dict[str, object]]:
         if (
             path.name != f"{number:020d}.json"
             or number != len(entries) + 1
-            or entry.get("format") != "dinkster.install-history/1"
-            or not isinstance(entry.get("snapshot"), dict)
+            or entry.get("format") != f"dinkster.install-{kind}/1"
+            or (kind == "history" and not isinstance(entry.get("snapshot"), dict))
         ):
             raise EnvironmentError("invalid installation history entry")
         entries.append(entry)
@@ -131,8 +146,32 @@ def prepare_entry(
 
 def publish_entry(root: Path, entry: dict[str, object]) -> None:
     """Publish once; an activation retry cannot replace an existing entry."""
+    _publish_record(root, entry, "history")
+
+
+def record_failed_restore(root: Path, operation: str, entry_id: int, error: str) -> None:
+    """Append one immutable failure receipt under the project writer lock."""
+    entries = attempts(root)
+    if any(entry.get("operation") == operation for entry in entries):
+        return
+    _publish_record(
+        root,
+        {
+            "format": "dinkster.install-attempts/1",
+            "id": len(entries) + 1,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "operation": operation,
+            "restoredFrom": entry_id,
+            "current": read_current(root),
+            "error": error,
+        },
+        "attempts",
+    )
+
+
+def _publish_record(root: Path, entry: dict[str, object], kind: str) -> None:
     number = generation_number(entry.get("id"))
-    directory = root / "history"
+    directory = root / kind
     if directory.is_symlink():
         raise EnvironmentError("history must not be a symlink")
     directory.mkdir(exist_ok=True)
@@ -143,7 +182,7 @@ def publish_entry(root: Path, entry: dict[str, object]) -> None:
         if read_document(destination) != entry:
             raise EnvironmentError("cannot replace an installation history entry")
         return
-    entries = history(root)
+    entries = _records(root, kind)
     if number != len(entries) + 1:
         raise EnvironmentError("history entries must append consecutively")
     fd, temporary = tempfile.mkstemp(prefix=".entry-", dir=directory)

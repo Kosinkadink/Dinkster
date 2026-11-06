@@ -22,6 +22,7 @@ from .environment_state import (
     digest,
     generation_number,
     interpreter,
+    write_document,
 )
 
 
@@ -613,6 +614,7 @@ def build_generation(
     refresh_cache: bool = False,
     uv: str = "uv",
     source_kind: str = "published",
+    artifact_sources: dict[str, object] | None = None,
 ) -> Generation:
     """Build a target without activating it or touching another generation.
 
@@ -708,6 +710,8 @@ def build_generation(
             prepare_pack_catalogs(destination, in_process_packs)
         if prepare_packs is not None:
             prepare_packs(destination)
+        if artifact_sources is not None:
+            write_document(destination / "artifact-sources.json", artifact_sources)
         files = tuple(
             (path.relative_to(destination).as_posix(), content_digest(path))
             for path in sorted(destination.rglob("*"))

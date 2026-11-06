@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -74,3 +76,69 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     with pytest.raises(EnvironmentError, match="intact software metadata: packs/private"):
         prepare_entry(tmp_path, generation, operation="install", reason="setup")
     assert (target / "private").read_text() == "not software"
+
+
+def test_restore_rebuilds_pruned_software_without_changing_user_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    fixture = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                str(Path(__file__).parent / "fixtures/environments/build.py"),
+                "--output",
+                str(tmp_path / "fixture"),
+            ],
+            text=True,
+            timeout=120,
+        )
+    )
+    root = Path(fixture["root"])
+    setup = fixture["commands"]["setup"]
+    code, result = _run(root, *setup[setup.index("setup") : -1])
+    assert code == 0, result
+    try:
+        first = history(root)[0]
+        preserved = (root / "history/00000000000000000001.json").read_bytes()
+        for name in ("workflows", "models", "outputs"):
+            directory = root / name
+            directory.mkdir(exist_ok=True)
+            (directory / "sentinel").write_bytes(name.encode("ascii") + b" private data")
+        shutil.copyfile(fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/main.json")
+        code, result = _run(root, "update", "--yes")
+        assert code == 0 and result["current"] == 2, result
+        second = (root / "history/00000000000000000002.json").read_bytes()
+        shutil.rmtree(root / "generations/1")
+        settings = (root / "project.json").read_bytes()
+        code, result = _run(root, "restore", "1", "--plan")
+        assert code == 0 and result["status"] == "planned", result
+        assert len(history(root)) == 2 and not (root / "generations/3").exists()
+        code, result = _run(root, "restore", "1", "--yes")
+        assert code == 0 and result["current"] == 3 and result["exact"] is True, result
+        entries = history(root)
+        assert len(entries) == 3 and entries[-1]["restoredFrom"] == 1
+        assert entries[-1]["snapshot"] == first["snapshot"]
+        assert entries[-1]["recordedTools"] == cast("dict", first["snapshot"])["tools"]
+        assert (root / "history/00000000000000000001.json").read_bytes() == preserved
+        assert (root / "history/00000000000000000002.json").read_bytes() == second
+        assert (root / "project.json").read_bytes() == settings
+        monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "refuse")
+        code, failed = _run(root, "restore", "1", "--yes")
+        assert code == 1 and "recorded by tools" in failed["error"], failed
+        assert (root / "current").read_text() == "3\n"
+        assert history(root) == entries and not (root / "generations/4").exists()
+        code, queried = _run(root, "history")
+        assert code == 0 and len(queried["attempts"]) == 1
+        assert queried["attempts"][0]["restoredFrom"] == 1
+        assert queried["attempts"][0]["error"] == failed["error"]
+        monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
+        for name in ("workflows", "models", "outputs"):
+            assert (root / name / "sentinel").read_bytes() == name.encode(
+                "ascii"
+            ) + b" private data"
+        assert _run(root, "doctor")[1]["status"] == "clean"
+    finally:
+        _run(root, "stop", "--yes")

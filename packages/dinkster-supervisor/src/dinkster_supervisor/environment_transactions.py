@@ -46,7 +46,7 @@ def previous_activation(root: Path, current: int) -> Journal | None:
     for path in sorted((root / "journal").glob("*.json"), reverse=True):
         journal = Journal.read(path)
         if (
-            journal.operation in {"update", "rollback", "repair"}
+            journal.operation in {"update", "rollback", "repair", "restore"}
             and journal.stage == "complete"
             and journal.target == current
             and journal.previous is not None
@@ -95,8 +95,8 @@ def begin_activation(
     project_settings: dict[str, str] | None = None,
 ) -> Path:
     """Persist prior bindings before building; caller holds the project writer lock."""
-    if operation not in {"update", "rollback", "repair"}:
-        raise EnvironmentError("activation requires update, rollback or repair")
+    if operation not in {"update", "rollback", "repair", "restore"}:
+        raise EnvironmentError("activation requires update, rollback, repair or restore")
     previous = read_current(root)
     if previous is None or previous == target:
         raise EnvironmentError("activation requires distinct previous and target generations")
@@ -143,7 +143,13 @@ def begin_activation(
 def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
     """Health-check every candidate before switching; preserve the old tree on failure."""
     journal = Journal.read(path)
-    if not journal.incomplete or journal.operation not in {"setup", "update", "rollback", "repair"}:
+    if not journal.incomplete or journal.operation not in {
+        "setup",
+        "update",
+        "rollback",
+        "repair",
+        "restore",
+    }:
         raise EnvironmentError("journal does not describe a pending generation activation")
     if read_current(root) != journal.previous:
         raise EnvironmentError("current changed after activation was planned")
@@ -204,7 +210,7 @@ def recover_activation(root: Path, path: Path) -> None:
         if journal.stage == "complete" and journal.history_entry is not None:
             publish_entry(root, journal.history_entry)
         return
-    if journal.operation not in {"setup", "update", "rollback", "repair"}:
+    if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
         raise EnvironmentError("journal operation does not support activation recovery")
     if (journal.previous is None) != (journal.operation == "setup"):
         raise EnvironmentError("journal previous generation does not match its operation")

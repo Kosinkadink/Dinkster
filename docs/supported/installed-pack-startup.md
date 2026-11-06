@@ -368,3 +368,8 @@
   generation-directory collection. Snapshots exclude workflows, models, outputs,
   libraries and mounts. Interrupted activation does not become a successful entry;
   completed activation history publication is recoverable without duplication.
+- `dinkster-env restore ID` rebuilds a published software snapshot in a new
+  generation after confirmation. Recorded identities are preserved; unavailable
+  inputs refuse activation. Tools versions are displayed but tools are never
+  replaced. Failed attempts remain separate from successful history. Restore
+  preserves existing history, project settings, workflows, models and outputs.

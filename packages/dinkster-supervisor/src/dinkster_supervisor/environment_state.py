@@ -410,6 +410,7 @@ class Journal:
             "setup",
             "update",
             "rollback",
+            "restore",
             "move",
             "repair",
             "gc",
@@ -466,7 +467,12 @@ class Journal:
             ports.add(target_port)
             checked.append(binding)
         previous = value.get("previous")
-        if previous == value.get("target") and operation in {"update", "rollback", "repair"}:
+        if previous == value.get("target") and operation in {
+            "update",
+            "rollback",
+            "repair",
+            "restore",
+        }:
             raise EnvironmentError("activation journal must name distinct generations")
         collected = value.get("collectedGenerations", [])
         if not isinstance(collected, list):
@@ -567,7 +573,7 @@ class Journal:
             if (
                 entry.get("format") != "dinkster.install-history/1"
                 or entry.get("generation") != value.get("target")
-                or operation not in {"setup", "update", "rollback", "repair"}
+                or operation not in {"setup", "update", "rollback", "repair", "restore"}
             ):
                 raise EnvironmentError("journal history entry must describe its activation")
             generation_number(entry.get("id"))

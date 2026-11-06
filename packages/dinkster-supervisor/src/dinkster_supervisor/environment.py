@@ -39,8 +39,9 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
-from .environment_history import history
+from .environment_history import attempts, history
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
+from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
     engine_status,
@@ -116,6 +117,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             result["entry"] = selected
         else:
             result["history"] = entries
+            result["attempts"] = attempts(root)
         return 0
     settings = _settings(root)
     if current is not None and args.operation in {"status", "doctor"}:
@@ -726,6 +728,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     source_kind="local" if local is not None else "published",
                     prepare_packs=prepare_packs,
                     acquire_pack_wheels=local is None,
+                    artifact_sources={
+                        "channel": catalog.document,
+                        "engine": list(catalog.engine_sources),
+                        "base": [str(store / "downloads" / base_id[7:])]
+                        if custom is not None
+                        else list(catalog.base_sources[dependency_variant]),
+                        "dependencyVariant": dependency_variant,
+                        "dependencyBase": catalog.bases[dependency_variant],
+                        "packageIndex": package_index,
+                        "mirrors": list(mirrors),
+                    }
+                    if catalog is not None
+                    else None,
                 )
                 if workflow is not None and previous_root is not None:
                     workflow_target = root / "generations" / str(target)
@@ -844,6 +859,9 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 artifacts=release / "artifacts" if catalog is not None else None,
                 refresh_cache=True,
                 source_kind=generation.source,
+                artifact_sources=read_document(previous / "artifact-sources.json")
+                if "artifact-sources.json" in expected
+                else None,
             )
             added_locks = {
                 name
@@ -1086,17 +1104,32 @@ def main() -> None:
     start.add_argument("--gpu", action="append", default=[])
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
+    restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
+    restore.add_argument("entry", type=int)
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (tools, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (tools, doctor, setup, update, start, stop, rollback, restore, gc, move):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (tools, catalog, status, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (
+        tools,
+        catalog,
+        status,
+        doctor,
+        setup,
+        update,
+        start,
+        stop,
+        rollback,
+        restore,
+        gc,
+        move,
+    ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -1129,6 +1162,12 @@ def main() -> None:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
+        elif args.operation == "restore":
+            result.update(restore_entry(args.root, args.entry, apply=False))
+            if _confirmed(args, cast("list[str]", result["plan"])):
+                _recover_pending(args.root)
+                result.update(restore_entry(args.root, args.entry, apply=True))
+            code = 0
         elif args.operation == "gc":
             code = _gc(args, result)
         elif args.operation == "move":

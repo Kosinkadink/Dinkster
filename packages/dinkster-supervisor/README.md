@@ -148,7 +148,7 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   finalized only after their dependencies are staged into a fresh generation.
 - `<root>/journal/<timestamp>.json`: `format: dinkster.journal/1`, `operation`,
   `previous` integer or null, `target` integer, `stage`, and optional `error`.
-  Operations are setup/update/rollback/move/repair/gc. Stages are planned,
+  Operations are setup/update/rollback/restore/move/repair/gc. Stages are planned,
   building, starting, switching, complete and rolled-back; the last two are
   terminal. Interrupted records must be recovered before another operation.
 
@@ -161,6 +161,15 @@ and differences from the preceding entry. These files are independent of
 generation retention. Capture admits only sealed software manifests, constraints,
 source locks and pack dependency locks, plus hosting and host facts; workflows,
 models, outputs, libraries and mounts are not captured.
+
+`restore ID [--plan | --yes]` rebuilds an exact published snapshot as a fresh
+generation through normal health-checked activation, even if its old directory
+was collected. Recorded manifests, locations, constraints and locks drive
+acquisition; current channels do not select replacement versions. The new entry
+names `restoredFrom` and both recorded and executing tools versions. Tools are
+advisory and are never installed, replaced or downgraded by restore. Unavailable
+inputs fail closed. Failed restores append separate immutable receipts under
+`<root>/attempts/`, exposed as `attempts` in the history JSON result.
 
 Activation journals retain a prepared `historyEntry` before starting the target.
 Only a completed activation publishes that entry. Recovery republishes an
