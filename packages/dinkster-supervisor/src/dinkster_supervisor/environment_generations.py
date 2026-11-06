@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import shutil
@@ -23,6 +24,7 @@ from .environment_state import (
     digest,
     generation_number,
     interpreter,
+    read_document,
     write_document,
 )
 
@@ -719,7 +721,15 @@ def build_generation(
         else:
             retained = destination / "engine-manifest.json"
             shutil.copyfile(engine_manifest, retained)
-            if content_digest(retained) != engine_release:
+            manifest_identity = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(read_document(retained), sort_keys=True).encode()
+                ).hexdigest()
+                if source_kind == "local"
+                else content_digest(retained)
+            )
+            if manifest_identity != engine_release:
                 raise EnvironmentError("retained engine manifest does not match engine release")
         provisioned: set[str] = set()
         if (

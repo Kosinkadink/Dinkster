@@ -12,8 +12,10 @@ from .environment_artifacts import (
     EnvironmentCatalog,
     acquire,
     acquire_sources,
+    artifact_rows,
     validate_manifest,
 )
+from .environment_downloads import fetch_artifact
 from .environment_generations import build_generation
 from .environment_history import history, is_software_metadata, prepare_entry, record_failed_restore
 from .environment_restore_plan import plan_restore
@@ -24,6 +26,7 @@ from .environment_state import (
     content_digest,
     read_current,
     read_document,
+    write_document,
     writer_lock,
 )
 from .environment_transactions import (
@@ -138,8 +141,6 @@ def restore_entry(
                     path = inputs / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(value.encode("utf-8"))
-                if snapshot.get("source") != "published":
-                    raise EnvironmentError("exact restore requires published software inputs")
                 raw_engine, raw_base = snapshot.get("engine"), snapshot.get("base")
                 if not isinstance(raw_engine, dict) or not isinstance(raw_base, dict):
                     raise EnvironmentError("snapshot requires engine and base identities")
@@ -154,26 +155,46 @@ def restore_entry(
                     "tuple[str, str, str]", (engine_id, base_id, variant)
                 )
                 engine_bytes = (inputs / "engine-manifest.json").read_bytes()
-                engine = validate_manifest(engine_bytes, engine_id, None)
-                base = validate_manifest(
-                    (inputs / "base-manifest.json").read_bytes(), base_id, variant
-                )
-                provenance = read_document(inputs / "artifact-sources.json")
+                local = snapshot.get("source") == "local"
+                if local:
+                    engine = read_document(inputs / "engine-manifest.json")
+                    base = read_document(inputs / "base-manifest.json")
+                    for document in (base, engine):
+                        for row in artifact_rows(document.get("wheels"), "filename"):
+                            filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+                            cached = store / "wheels" / sha / filename
+                            url = row.get("url")
+                            roots = (
+                                (url.rsplit("/", 1)[0],)
+                                if isinstance(url, str) and url.startswith("https://")
+                                else (str(cached.parent),)
+                            )
+                            fetch_artifact(roots, filename, cached, sha, cast("int", row["size"]))
+                    write_document(store / "bases" / base_id[7:] / "manifest.json", base)
+                    write_document(
+                        store / "engines" / engine_id[7:] / "release-manifest.json", engine
+                    )
+                else:
+                    engine = validate_manifest(engine_bytes, engine_id, None)
+                    base = validate_manifest(
+                        (inputs / "base-manifest.json").read_bytes(), base_id, variant
+                    )
+                provenance = read_document(inputs / "artifact-sources.json") if not local else {}
                 channel_document = provenance.get("channel")
-                if not isinstance(channel_document, dict):
+                if not local and not isinstance(channel_document, dict):
                     raise EnvironmentError("snapshot has no recorded acquisition channel")
                 channel_document = cast("dict[str, object]", channel_document)
-                channel = Channel.parse(channel_document)
-                if channel.engine_release != engine_id or engine["version"] != recorded_engine.get(
+                channel = Channel.parse(channel_document) if not local else None
+                if (channel is not None and channel.engine_release != engine_id) or engine[
                     "version"
-                ):
+                ] != recorded_engine.get("version"):
                     raise EnvironmentError("snapshot engine identities disagree")
                 dependency_variant = provenance.get("dependencyVariant", variant)
                 dependency_base = provenance.get("dependencyBase", base)
                 if not isinstance(dependency_variant, str) or not isinstance(dependency_base, dict):
                     raise EnvironmentError("snapshot has no dependency base identity")
                 sources: dict[str, tuple[str, ...]] = {}
-                for key in ("engine", "base"):
+                for key in () if local else ("engine", "base"):
                     values = provenance.get(key)
                     if not isinstance(values, list) or any(
                         not isinstance(value, str) or not value
@@ -181,34 +202,43 @@ def restore_entry(
                     ):
                         raise EnvironmentError("snapshot has no recorded artifact locations")
                     sources[key] = tuple(cast("list[str]", values))
-                catalog = EnvironmentCatalog(
-                    "recorded",
-                    channel_document,
-                    channel,
-                    engine,
-                    sources["engine"],
-                    {dependency_variant: cast("dict[str, object]", dependency_base)},
-                    {dependency_variant: sources["base"]},
-                    engine_bytes,
+                catalog = (
+                    EnvironmentCatalog(
+                        "recorded",
+                        channel_document,
+                        cast("Channel", channel),
+                        engine,
+                        sources["engine"],
+                        {dependency_variant: cast("dict[str, object]", dependency_base)},
+                        {dependency_variant: sources["base"]},
+                        engine_bytes,
+                    )
+                    if not local
+                    else None
                 )
                 custom = base.get("source") == "user-defined"
                 package_index = provenance.get("packageIndex")
                 if package_index is not None and not isinstance(package_index, str):
                     raise EnvironmentError("snapshot package index must be a string or null")
-                constraints = acquire(
-                    catalog,
-                    dependency_variant,
-                    store,
-                    package_index=package_index,
-                    base=base if custom else None,
-                    base_sources=sources["base"] if custom else None,
+                constraints = (
+                    acquire(
+                        cast("EnvironmentCatalog", catalog),
+                        dependency_variant,
+                        store,
+                        package_index=package_index,
+                        base=base if custom else None,
+                        base_sources=sources["base"] if custom else None,
+                    )
+                    if not local
+                    else inputs / "constraints.txt"
                 )
                 if (
                     content_digest(constraints) != snapshot.get("constraints")
                     or constraints.read_bytes() != (inputs / "constraints.txt").read_bytes()
                 ):
                     raise EnvironmentError("reacquired constraints differ from the snapshot")
-                acquire_sources(catalog, store)
+                if catalog is not None:
+                    acquire_sources(catalog, store)
                 in_process = snapshot.get("inProcessPacks")
                 if not isinstance(in_process, list) or any(
                     not isinstance(pack, str) for pack in cast("list[object]", in_process)
@@ -244,7 +274,8 @@ def restore_entry(
                     else None,
                     acquire_pack_wheels=True,
                     acquire_pack_sources=True,
-                    artifact_sources=provenance,
+                    source_kind="local" if local else "published",
+                    artifact_sources=provenance if not local else None,
                 )
             entry = prepare_entry(
                 root,

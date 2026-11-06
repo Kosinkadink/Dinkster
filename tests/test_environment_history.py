@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -19,6 +20,113 @@ from test_environment_runtime import free_port
 from test_environment_state import _generation
 
 from tests.fixtures.environments.build import executable_release
+
+
+def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor.environment_generations import build_generation
+    from dinkster_supervisor.environment_state import content_digest, write_document
+    from dinkster_supervisor.environment_transactions import activate, begin_activation
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    fixture = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                str(Path(__file__).parent / "fixtures/environments/build.py"),
+                "--output",
+                str(tmp_path / "fixture"),
+            ],
+            text=True,
+            timeout=120,
+        )
+    )
+    root, store = Path(fixture["root"]), Path(fixture["store"])
+    setup = fixture["commands"]["setup"]
+    code, result = _run(root, *setup[setup.index("setup") : -1])
+    assert code == 0, result
+    try:
+        first = Generation.read(root / "generations/1/generation.json")
+        old_base = store / "bases" / first.base[7:]
+        staging = tmp_path / "local-base"
+        shutil.copytree(old_base / "python", staging / "python", symlinks=False)
+        base = json.loads((old_base / "manifest.json").read_bytes())
+        base.pop("id")
+        base.pop("archive")
+        base.update(source="local")
+        base["interpreter"]["files"] = {
+            path.relative_to(staging).as_posix(): content_digest(path)
+            for path in (staging / "python").rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        }
+        base_id = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
+        base["id"] = base_id
+        write_document(staging / "manifest.json", base)
+        shutil.move(str(staging), store / "bases" / base_id[7:])
+        published = json.loads((root / "generations/1/engine-manifest.json").read_bytes())
+        engine = {
+            "format": "dinkster.engine/1",
+            "source": "local",
+            "version": first.engine_version,
+            "workerProtocol": first.worker_protocol,
+            "wheels": [
+                {**row, "filename": row["name"], "url": "local"}
+                for row in published["artifacts"]
+                if row["name"].endswith(".whl")
+            ],
+        }
+        engine_id = (
+            "sha256:" + hashlib.sha256(json.dumps(engine, sort_keys=True).encode()).hexdigest()
+        )
+        write_document(store / "engines" / engine_id[7:] / "release-manifest.json", engine)
+        journal = begin_activation(root, 2, "update")
+        build_generation(
+            root=root,
+            number=2,
+            store=store,
+            base=base_id,
+            engine_version=first.engine_version,
+            engine_release=engine_id,
+            constraints=root / "generations/1/constraints.txt",
+            variant=first.variant,
+            worker_protocol=first.worker_protocol,
+            source_kind="local",
+        )
+        activate(root, journal, revalidate=lambda: None)
+        before = history(root)
+        assert cast("dict[str, object]", before[-1]["snapshot"])["source"] == "local"
+        code, result = _run(root, "restore", "1", "--yes")
+        assert code == 0 and result["current"] == 3, result
+        shutil.rmtree(root / "generations/2")
+        code, planned = _run(root, "restore", "2", "--plan")
+        assert code == 0 and planned["restorePlan"]["exact"] is True, planned
+        code, restored = _run(root, "restore", "2", "--yes")
+        assert code == 0 and restored["current"] == 4 and restored["exact"] is True, restored
+        assert history(root)[-1]["snapshot"] == before[-1]["snapshot"]
+        assert history(root)[:2] == before
+        for path, kind in (
+            (
+                store / "bases" / base_id[7:] / next(iter(base["interpreter"]["files"])),
+                "local base",
+            ),
+            (
+                store / "wheels" / engine["wheels"][0]["sha256"] / engine["wheels"][0]["filename"],
+                "local wheel",
+            ),
+        ):
+            payload = path.read_bytes()
+            path.unlink()
+            code, unavailable = _run(root, "restore", "2", "--yes")
+            assert code == 0 and unavailable["status"] == "approval-required", unavailable
+            assert any(item["kind"] == kind for item in unavailable["restorePlan"]["missing"])
+            assert (root / "current").read_text() == "4\n"
+            assert len(history(root)) == 4
+            path.write_bytes(payload)
+    finally:
+        _run(root, "stop", "--yes")
 
 
 def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_path: Path):

@@ -23,11 +23,13 @@ from .environment_artifacts import (
 )
 from .environment_constraints import effective_constraints
 from .environment_downloads import artifact_available, read_metadata
+from .environment_generations import verify_base_inputs
 from .environment_history import history
 from .environment_state import (
     Channel,
     EnvironmentError,
     content_digest,
+    digest,
     read_current,
     relative_file,
 )
@@ -66,6 +68,8 @@ def _sources(provenance: dict[str, object], key: str) -> tuple[str, ...]:
 
 def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
     """Prefer verified retained payloads; remote probes never populate the store."""
+    if snapshot.get("source") == "local":
+        return _local_missing_inputs(snapshot, store)
     if snapshot.get("source") != "published":
         raise EnvironmentError("restore planning requires published software inputs")
     metadata = _metadata(snapshot)
@@ -202,6 +206,100 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
     return missing
 
 
+def _local_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
+    metadata = _metadata(snapshot)
+    if not {"engine-manifest.json", "base-manifest.json", "constraints.txt"} <= metadata.keys():
+        raise EnvironmentError("local snapshot is missing recorded software metadata")
+    engine = parse_metadata(metadata["engine-manifest.json"].encode("utf-8"))
+    base = parse_metadata(metadata["base-manifest.json"].encode("utf-8"))
+    engine_record = cast("dict[str, object]", snapshot["engine"])
+    base_record = cast("dict[str, object]", snapshot["base"])
+    engine_id, base_id = digest(engine_record["release"]), digest(base_record["id"])
+    for path in (
+        store / "bases",
+        store / "bases" / base_id[7:],
+        store / "engines",
+        store / "engines" / engine_id[7:],
+        store / "wheels",
+    ):
+        if path.is_symlink():
+            raise EnvironmentError("restore refuses linked local input directories")
+    base_identity = dict(base)
+    base_identity.pop("id", None)
+    for document, expected in (
+        (engine, engine_record["release"]),
+        (base_identity, base_record["id"]),
+    ):
+        identity = (
+            "sha256:" + hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
+        )
+        if document.get("source") != "local" or identity != expected:
+            raise EnvironmentError("local snapshot manifest identity mismatch")
+    if (
+        engine.get("version") != engine_record["version"]
+        or base.get("id") != base_record["id"]
+        or base.get("variant") != base_record["variant"]
+        or engine.get("workerProtocol") != snapshot.get("workerProtocol")
+        or base.get("workerProtocol") != snapshot.get("workerProtocol")
+    ):
+        raise EnvironmentError("local snapshot software identities disagree")
+    missing: list[dict[str, object]] = []
+    interpreter = base.get("interpreter")
+    files = (
+        cast("dict[str, object]", interpreter).get("files")
+        if isinstance(interpreter, dict)
+        else None
+    )
+    if not isinstance(files, dict) or not files:
+        raise EnvironmentError("local snapshot requires recorded interpreter file hashes")
+    expected_files: dict[str, str] = {}
+    for name, value in cast("dict[str, object]", files).items():
+        if not name.startswith("python/"):
+            raise EnvironmentError("local snapshot has invalid interpreter paths")
+        relative_file(name)
+        expected_files[name] = digest(value)
+    base_root = store / "bases" / cast("str", base_record["id"])[7:]
+    try:
+        verify_base_inputs(base_root / "python", expected_files, operation="restore")
+        for name, expected in expected_files.items():
+            if content_digest(base_root / name) != expected:
+                raise EnvironmentError(f"restore requires intact local base input: {name}")
+    except (OSError, ValueError) as exc:
+        missing.append(
+            {
+                "kind": "local base",
+                "identity": base_record["id"],
+                "artifact": "python",
+                "locations": [],
+                "error": str(exc),
+            }
+        )
+    for document, identity in ((base, base_record["id"]), (engine, engine_record["release"])):
+        for row in artifact_rows(document.get("wheels"), "filename"):
+            filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+            if (store / "wheels" / sha).is_symlink():
+                raise EnvironmentError("restore refuses linked local wheel directories")
+            url = row.get("url")
+            roots = (
+                (url.rsplit("/", 1)[0],)
+                if isinstance(url, str) and url.startswith("https://")
+                else (str(store / "wheels" / sha),)
+            )
+            if not artifact_available(
+                roots, filename, store / "wheels" / sha / filename, sha, cast("int", row["size"])
+            ):
+                missing.append(
+                    {
+                        "kind": "local wheel",
+                        "identity": identity,
+                        "artifact": filename,
+                        "sha256": sha,
+                        "locations": list(roots),
+                    }
+                )
+    return missing
+
+
 def _substitutions(before: dict[str, object], after: dict[str, object]) -> list[dict[str, object]]:
     fields = ["engine", "base", "constraints", "inProcessPacks", "source"]
     changes = [
@@ -220,6 +318,8 @@ def _substitutions(before: dict[str, object], after: dict[str, object]) -> list[
 
 
 def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    if snapshot.get("source") != "published":
+        return []
     metadata = _metadata(snapshot)
     provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
     mirrors = _sources(provenance, "mirrors")
@@ -333,7 +433,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
     )
     viable: dict[str, dict[str, object]] = {}
     for candidate in candidates:
-        if candidate.get("source") != "published":
+        if candidate.get("source") not in {"published", "local"}:
             continue
         try:
             unavailable = missing_inputs(candidate, store)
