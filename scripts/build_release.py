@@ -51,6 +51,40 @@ def workspace_projects(root: Path) -> dict[str, Path]:
     return result
 
 
+def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
+    """Supervisor-only changes do not publish another engine."""
+    changed = subprocess.check_output(
+        ["git", "diff", "--name-only", before, after], cwd=root, text=True
+    ).splitlines()
+    tools_inputs = {
+        ".github/workflows/release-tools.yml",
+        "scripts/build_environment_tools.py",
+        "scripts/build_native_tools.py",
+        "scripts/build_tools_release.py",
+        "scripts/publish_tools_release.py",
+    }
+    if any(
+        name != "uv.lock"
+        and name not in tools_inputs
+        and not name.startswith("packages/dinkster-supervisor/")
+        for name in changed
+    ):
+        return True
+    if "uv.lock" not in changed:
+        return False
+
+    def engine_lock(revision: str) -> dict:
+        lock = tomllib.loads(
+            subprocess.check_output(["git", "show", f"{revision}:uv.lock"], cwd=root, text=True)
+        )
+        lock["package"] = [
+            package for package in lock["package"] if package["name"] != "dinkster-supervisor"
+        ]
+        return lock
+
+    return engine_lock(before) != engine_lock(after)
+
+
 def release_version(root: Path, tag: str) -> str:
     match = TAG_PATTERN.fullmatch(tag)
     if match is None:
@@ -59,7 +93,7 @@ def release_version(root: Path, tag: str) -> str:
     mismatches = [
         f"{name}={project_metadata(path)[1]}"
         for name, path in workspace_projects(root).items()
-        if project_metadata(path)[1] != version
+        if name != "dinkster-supervisor" and project_metadata(path)[1] != version
     ]
     if mismatches:
         raise ValueError(
@@ -104,9 +138,15 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
         with tarfile.open(fileobj=io.BytesIO(archive)) as source:
             source.extractall(staged, filter="data")
         projects = workspace_projects(staged)
-        for path in projects.values():
+        versions = {
+            name: project_metadata(path)[1] if name == "dinkster-supervisor" else version
+            for name, path in projects.items()
+        }
+        for name, path in projects.items():
             text = path.read_text(encoding="utf-8")
-            text = re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', text, count=1)
+            text = re.sub(
+                r'(?m)^version = "[^"]+"$', f'version = "{versions[name]}"', text, count=1
+            )
             project = tomllib.loads(text)["project"]
             dependencies = list(project.get("dependencies", []))
             for optional in project.get("optional-dependencies", {}).values():
@@ -114,7 +154,7 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
             for dependency in dependencies:
                 match = re.fullmatch(r"([A-Za-z0-9_-]+)(\[[^]]+\])?[^;]*(;.*)?", dependency)
                 if match is not None and match[1] in projects:
-                    pinned = f"{match[1]}{match[2] or ''}=={version}{match[3] or ''}"
+                    pinned = f"{match[1]}{match[2] or ''}=={versions[match[1]]}{match[3] or ''}"
                     text = text.replace(json.dumps(dependency), json.dumps(pinned))
             if path == staged / "pyproject.toml":
                 module = staged / "src/dinkster/__init__.py"
@@ -535,7 +575,7 @@ def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
 
 
 def check_release(output: Path, maximum_bytes: int) -> int:
-    """Check the finalized payload allowlist and count all bytes except native tools ZIPs."""
+    """Check the engine payload allowlist and its complete byte budget."""
     from packaging.utils import parse_wheel_filename
 
     manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
@@ -551,21 +591,13 @@ def check_release(output: Path, maximum_bytes: int) -> int:
         raise ValueError("release contains unlisted artifacts")
     allowed = wheels | {"constraints.txt"}
     for name in names - allowed:
-        if (
-            re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", name)
-            or name == f"dinkster-source-{manifest.get('version')}.zip"
-        ):
+        if name == f"dinkster-source-{manifest.get('version')}.zip":
             continue
         raise ValueError(f"unexpected release payload: {name}")
-    total = sum(
-        path.stat().st_size
-        for path in output.iterdir()
-        if re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", path.name)
-        is None
-    )
+    total = sum(path.stat().st_size for path in output.iterdir())
     if total > maximum_bytes:
         raise ValueError(f"release size {total} bytes exceeds budget {maximum_bytes} bytes")
-    print(f"Release size excluding tools ZIPs: {total} / {maximum_bytes} bytes")
+    print(f"Release size: {total} / {maximum_bytes} bytes")
     return total
 
 

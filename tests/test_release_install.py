@@ -25,6 +25,7 @@ from scripts.build_release import (
     check_release,
     development_version,
     extend_release,
+    inputs_changed,
     read_base_manifest,
     release_version,
     select_dependency_wheels,
@@ -155,9 +156,9 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert ".github/workflows/release.yml" in workflow[True]["pull_request"]["paths"]
     assert "src/dinkster/frontend.py" in workflow[True]["pull_request"]["paths"]
     assert set(workflow["jobs"]) == {
+        "changes",
         "validation",
         "build",
-        "tools",
         "finalize",
         "install",
         "release",
@@ -167,17 +168,13 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "publish-supervisor",
     }
     assert workflow["jobs"]["validation"] == {
+        "needs": "changes",
+        "if": "needs.changes.outputs.engine == 'true'",
         "uses": "./.github/workflows/ci.yml",
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
-    assert workflow["jobs"]["tools"]["needs"] == "build"
-    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools"]
+    assert workflow["jobs"]["finalize"]["needs"] == "build"
     assert workflow["jobs"]["install"]["needs"] == "finalize"
-    assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
-        {"os": "linux", "runner": "ubuntu-latest"},
-        {"os": "windows", "runner": "windows-latest"},
-        {"os": "macos", "runner": "macos-latest"},
-    ]
     commands = "\n".join(
         step.get("run", "") for job in workflow["jobs"].values() for step in job.get("steps", [])
     )
@@ -188,9 +185,8 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert "lock-matrix" not in workflow["jobs"]["build"].get("outputs", {})
     admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
     assert "uv sync --locked --no-dev --package dinkster-supervisor" in admission
-    assert "for artifact in .release/tools/*.zip" in admission
-    assert 'arguments+=(--artifact "$artifact")' in admission
-    assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
+    assert "build_native_tools" not in commands
+    assert ".release/tools" not in commands
     for job in ("install", "release", "publish", "publish-api", "publish-supervisor"):
         downloads = [
             step["with"]["name"]
@@ -489,7 +485,7 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
         if step.get("name") == "Install and launch from wheels"
     )
     assert 'uv venv --seed --python "$RELEASE_PYTHON"' in command
-    assert '"$python" -m pip install' in command
+    assert 'uv pip install --python "$python"' in command
     assert '"$python" -m pip check' in command
     assert "--require-hashes" in command
     assert "--find-links" in command
@@ -679,6 +675,9 @@ def test_release_version_rejects_non_version_tags(tag: str) -> None:
 
 def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None:
     (tmp_path / "packages/one").mkdir(parents=True)
+    supervisor = tmp_path / "packages/supervisor/pyproject.toml"
+    supervisor.parent.mkdir()
+    supervisor.write_text('[project]\nname = "dinkster-supervisor"\nversion = "7.8.9"\n')
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "root"\nversion = "1.2.3"\n', encoding="utf-8"
     )
@@ -688,6 +687,53 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     package.write_text('[project]\nname = "one"\nversion = "1.2.4"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="one=1.2.4"):
         release_version(tmp_path, "v1.2.3")
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ("supervisor", False),
+        ("supervisor-lock", False),
+        ("engine-lock", True),
+        ("engine", True),
+        ("scripts/build_native_tools.py", False),
+        ("scripts/build_environment_tools.py", False),
+        ("scripts/build_tools_release.py", False),
+        ("scripts/publish_tools_release.py", False),
+        (".github/workflows/release-tools.yml", False),
+    ],
+)
+def test_engine_publication_ignores_only_supervisor_changes(
+    tmp_path: Path, changed: str, expected: bool
+) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    lock = (
+        '[[package]]\nname = "dinkster-supervisor"\nversion = "1.0"\n'
+        '[[package]]\nname = "aiohttp"\nversion = "2.0"\n'
+    )
+    (tmp_path / "uv.lock").write_text(lock)
+
+    def snapshot() -> str:
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        return subprocess.check_output(["git", "write-tree"], cwd=tmp_path, text=True).strip()
+
+    before = snapshot()
+    supervisor = tmp_path / "packages/dinkster-supervisor/client.py"
+    supervisor.parent.mkdir(parents=True)
+    supervisor.write_text("new_behavior = True\n")
+    if changed.endswith("lock"):
+        (tmp_path / "uv.lock").write_text(
+            lock.replace('version = "1.0"', 'version = "1.1"')
+            if changed == "supervisor-lock"
+            else lock.replace('version = "2.0"', 'version = "2.1"')
+        )
+    elif changed == "engine":
+        (tmp_path / "engine.py").write_text("new_engine = True\n")
+    elif "/" in changed:
+        source = tmp_path / changed
+        source.parent.mkdir(parents=True)
+        source.write_text("tools input\n")
+    assert inputs_changed(tmp_path, before, snapshot()) is expected
 
 
 def test_repository_versions_match_first_release_tag() -> None:
@@ -752,7 +798,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
-        for project in ("dinkster", "dinkster-api"):
+        for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
                 cwd=staged,
@@ -762,6 +808,10 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
+        supervisor_version = tomllib.loads(
+            (ROOT / "packages/dinkster-supervisor/pyproject.toml").read_text()
+        )["project"]["version"]
+        assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
             name
             for name in archive.namelist()
@@ -783,6 +833,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
                 for name in archive.namelist()
                 if name.startswith(namespace + "/") and name.endswith(".py")
             } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+    [supervisor_wheel] = output.glob("dinkster_supervisor-*.whl")
+    assert supervisor_wheel.name == f"dinkster_supervisor-{supervisor_version}-py3-none-any.whl"
     [api_wheel] = output.glob("dinkster_api-*.whl")
     with zipfile.ZipFile(api_wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
@@ -1343,7 +1395,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     assert set(manifest["workspaceWheels"]) == {
         f"dinkster-{version}-py2.py3-none-any.whl",
         f"dinkster_api-{version}-py2.py3-none-any.whl",
-        f"dinkster_supervisor-{version}-py2.py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
     with zipfile.ZipFile(output / f"dinkster-{version}-py2.py3-none-any.whl") as wheel:
         assert not any(name.startswith("dinkster/official_packs/") for name in wheel.namelist())
@@ -1396,7 +1448,6 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
         "dinkster_api-1.0-py3-none-any.whl",
         "dinkster_supervisor-1.0-py3-none-any.whl",
         "constraints.txt",
-        "dinkster-tools-windows-x86_64.zip",
     ]
     for size, name in enumerate(names, 1):
         (tmp_path / name).write_bytes(b"x" * size)
@@ -1409,9 +1460,8 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
     assert check_release(tmp_path, expected) == expected
     with pytest.raises(ValueError, match="exceeds budget"):
         check_release(tmp_path, expected - 1)
-    (tmp_path / names[-1]).write_bytes(b"large interpreter" * 1000)
-    assert check_release(tmp_path, expected) == expected
     for name in (
+        "dinkster-tools-windows-x86_64.zip",
         "official-packs.lock",
         "dinkster-nodes-foundation-1.0.zip",
         "dinkster-nodes-foundation-1.0-linux-cpu.pack-lock.json",

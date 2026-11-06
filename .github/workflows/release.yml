@@ -33,7 +33,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.inputs.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Select engine publication inputs
+        id: inputs
+        env:
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VERSION_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          uv run --no-project --python 3.12 python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from pathlib import Path
+          from scripts.build_release import inputs_changed
+          changed = os.environ['VERSION_TAG'] == 'true' or inputs_changed(Path.cwd(), os.environ['BEFORE'])
+          print(f'engine={str(changed).lower()}')
+          PY
+
   validation:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     uses: ./.github/workflows/ci.yml
 
   build:
@@ -94,115 +123,12 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: tools-supervisor-wheel
-          path: dist/dinkster_supervisor-*.whl
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
           name: selected-base-manifests
           path: .release/base-manifests/
           if-no-files-found: error
 
-  tools:
-    needs: build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            runner: ubuntu-latest
-          - os: windows
-            runner: windows-latest
-          - os: macos
-            runner: macos-latest
-    steps:
-      - name: Expose Git Bash on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
-          if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
-            throw 'Git Bash is required for the native tools build'
-          }
-          $bashDirectory >> $env:GITHUB_PATH
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: Kosinkadink/Dinkster-Environments
-          ref: aca248250946c10388898b0b987b7e48c6b7a451
-          path: .release/environments
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: tools-supervisor-wheel
-          path: .release/supervisor
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: Build the native environment client
-        shell: bash
-        run: |
-          wheels=(.release/supervisor/*.whl)
-          test "${#wheels[@]}" = 1
-          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_native_tools \
-            --environments .release/environments \
-            --supervisor-wheel "${wheels[0]}" --output .release/tools
-      - name: Verify relocation without host tools
-        shell: bash
-        env:
-          TOOLS_OS: ${{ matrix.os }}
-        run: |
-          uv run --no-project --python 3.12 python - <<'PY'
-          import json, os, subprocess, tempfile, zipfile
-          from pathlib import Path
-          [artifact] = Path('.release/tools').glob('*.zip')
-          system = os.environ['TOOLS_OS']
-          arch = 'arm64' if system == 'macos' else 'x86_64'
-          assert artifact.name == f'dinkster-tools-{system}-{arch}.zip'
-          with tempfile.TemporaryDirectory(prefix='relocated tools with spaces ') as temporary:
-              root = Path(temporary)
-              with zipfile.ZipFile(artifact) as archive:
-                  archive.extractall(root)
-                  if os.name != 'nt':
-                      for member in archive.infolist():
-                          (root / member.filename).chmod((member.external_attr >> 16) & 0o777)
-              python = root / ('python/python.exe' if os.name == 'nt' else 'python/bin/python3')
-              scripts = python.parent / 'Scripts' if os.name == 'nt' else python.parent
-              env = {**os.environ, 'PATH': str(scripts), 'PYTHONPATH': '',
-                     'UV_PYTHON_DOWNLOADS': 'never', 'UV_INDEX_URL': 'http://127.0.0.1:1',
-                     'HTTP_PROXY': 'http://127.0.0.1:1', 'HTTPS_PROXY': 'http://127.0.0.1:1',
-                     'XDG_DATA_HOME': str(root / 'data'), 'LOCALAPPDATA': str(root / 'data')}
-              command = [str(python), '-I', '-m', 'dinkster_supervisor.environment',
-                         '--root', str(root / 'absent project'), 'status', '--json']
-              result = subprocess.run(command, cwd=root, env=env, check=True, capture_output=True, text=True)
-              document = json.loads(result.stdout)
-              assert document['current'] is None and document['engines'] == []
-              assert not (root / 'absent project').exists()
-              subprocess.run([str(scripts / ('uv.exe' if os.name == 'nt' else 'uv')), '--version'],
-                             cwd=root, env=env, check=True)
-              if system == 'macos':
-                  subprocess.run([str(python), '-I', '-c',
-                                  "import platform,sys; assert sys.platform == 'darwin' and platform.machine() == 'arm64'"],
-                                 cwd=root, env=env, check=True)
-              subprocess.run([str(python), '-I', '-c',
-                              "import importlib.util; assert all(importlib.util.find_spec(n) is None for n in ('dinkster', 'torch'))"],
-                             cwd=root, env=env, check=True)
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-tools-${{ matrix.os }}
-          path: .release/tools/*.zip
-          if-no-files-found: error
-
   finalize:
-    needs: [build, tools]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -218,24 +144,13 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          pattern: native-tools-*
-          merge-multiple: true
-          path: .release/tools
-      - uses: actions/download-artifact@v4
-        with:
           name: selected-base-manifests
           path: .release/bases
-      - name: Admit native tools into the engine release
-        run: |
-          uv sync --locked --no-dev --package dinkster-supervisor
-          arguments=()
-          for artifact in .release/tools/*.zip; do arguments+=(--artifact "$artifact"); done
-          uv run --locked --no-sync python -m scripts.build_release --extend "${arguments[@]}"
-          (cd dist && sha256sum -c SHA256SUMS)
       - name: Enforce finalized release contents and size
         run: |
-          # Engine code and embedded frontend fit below 100 MB; tools carry interpreters.
+          uv sync --locked --no-dev --package dinkster-supervisor
           uv run --locked --no-sync python -m scripts.build_release --check --max-bytes 100000000
+          (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: engine-release
@@ -309,7 +224,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             python="$RUNNER_TEMP/dinkster-release-venv/Scripts/python.exe"
           fi
-          "$python" -m pip install \
+          uv pip install --python "$python" \
             --require-hashes \
             --find-links "$RUNNER_TEMP/dinkster-release" \
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"

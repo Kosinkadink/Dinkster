@@ -89,7 +89,7 @@ version = "6.0"
     assert build_tools_release.inputs_changed(tmp_path, before, snapshot()) is expected
 
 
-@pytest.mark.parametrize("damage", [None, "manifest", "archive"])
+@pytest.mark.parametrize("damage", [None, "manifest", "archive", "missing-pointer"])
 def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     tools_publication: tuple[Path, dict[str, bytes]],
     tmp_path: Path,
@@ -135,7 +135,10 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     assert json.loads(capsys.readouterr().out)["status"] == "planned"
     assert not destination.exists()
     name = "dinkster-tools-linux-x86_64.zip"
-    if damage:
+    if damage == "missing-pointer":
+        del channel["tools"]
+        (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
+    elif damage:
         (release / ("tools-manifest.json" if damage == "manifest" else name)).write_bytes(b"wrong")
     monkeypatch.setattr(sys, "argv", [*arguments, "--yes"])
     with pytest.raises(SystemExit) as applied:
@@ -146,6 +149,8 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         assert applied.value.code == 1
         assert result["status"] == "error"
         assert not archive.exists()
+        if damage == "missing-pointer":
+            assert "channel tools must be an object" in json.dumps(result)
     else:
         assert applied.value.code == 0
         assert result["tools"]["release"] == str(release)
