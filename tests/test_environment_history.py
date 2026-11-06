@@ -19,7 +19,103 @@ from test_environment_cli import _run
 from test_environment_runtime import free_port
 from test_environment_state import _generation
 
-from tests.fixtures.environments.build import build_base, canonical_json, executable_release
+from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
+
+
+@pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "shared-in-process"])
+def test_restore_plan_reports_only_required_pack_wheels_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+):
+    from dinkster_supervisor.environment_state import content_digest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                str(Path(__file__).parent / "fixtures/environments/build.py"),
+                "--output",
+                str(tmp_path / "fixture"),
+            ],
+            text=True,
+            timeout=120,
+        )
+    )
+    root, store = Path(fixture["root"]), Path(fixture["store"])
+    setup = fixture["commands"]["setup"]
+    code, result = _run(root, *setup[setup.index("setup") : -1])
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    source = wheel(tmp_path, "required_extra", "1.0", 73)
+    payload = source.read_bytes()
+    sha = hashlib.sha256(payload).hexdigest()
+    required = LockedWheel(source.name, len(payload), sha, source.as_uri())
+    incompatible = replace(
+        required,
+        filename="required_extra-1.0-cp999-cp999-any.whl",
+        url=(tmp_path / "required_extra-1.0-cp999-cp999-any.whl").as_uri(),
+    )
+    generation = root / "generations/1"
+    path = generation / "packs/example/pack-lock.json"
+    path.parent.mkdir(parents=True)
+    PackLock(
+        "example",
+        Generation.read(generation / "generation.json").variant,
+        ">=3.12",
+        (),
+        (),
+        (
+            LockedDistribution("fixture-base", "1.0", ()),
+            LockedDistribution("required-extra", "1.0", (incompatible, required)),
+        ),
+    ).write(path)
+    record = Generation.read(generation / "generation.json")
+    files = [*record.files, ("packs/example/pack-lock.json", content_digest(path))]
+    if in_process:
+        shared = generation / "packs/zzz/pack-lock.json"
+        shared.parent.mkdir()
+        replace(PackLock.read(path), pack="zzz").write(shared)
+        files.append(("packs/zzz/pack-lock.json", content_digest(shared)))
+    replace(record, files=tuple(files), in_process_packs=("zzz",) if in_process else ()).write(
+        generation / "generation.json"
+    )
+    entry = prepare_entry(root, generation, operation="pack-fixture", reason="pack-install")
+    publish_entry(root, entry)
+    assert "py3-none-any" in cast("dict", entry["snapshot"])["host"]["wheelTags"]
+    preserved = (root / "history/00000000000000000002.json").read_bytes()
+    source.unlink()
+    before = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != ".lock" and "runtime" not in path.relative_to(root).parts
+    }
+    code, unavailable = _run(root, "restore", "2", "--yes")
+    assert code == 0 and unavailable["status"] == "approval-required", unavailable
+    assert unavailable["restorePlan"]["missing"] == [
+        {
+            "kind": "pack dependency",
+            "identity": "zzz" if in_process else "example",
+            "artifact": source.name,
+            "sha256": sha,
+            "locations": [source.as_uri()],
+        }
+    ]
+    assert {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != ".lock" and "runtime" not in path.relative_to(root).parts
+    } == before
+    cached = store / "wheels" / sha / source.name
+    cached.parent.mkdir()
+    for content, exact in ((b"x" * len(payload), False), (payload, True)):
+        cached.write_bytes(content)
+        code, planned = _run(root, "restore", "2", "--plan")
+        assert code == 0, planned
+        assert planned["restorePlan"]["exact"] is exact
+        assert (root / "current").read_text() == "1\n"
+        assert (root / "history/00000000000000000002.json").read_bytes() == preserved
 
 
 @pytest.mark.parametrize("combined", [False, True], ids=["base-only", "engine-and-base"])

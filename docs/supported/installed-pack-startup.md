@@ -7,6 +7,10 @@
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
   not newer releases. Interrupted software restores retain a failed-attempt receipt
   while leaving successful history unchanged.
+- Software history records the generation interpreter's wheel compatibility tags.
+  Restore planning reports missing pack dependency wheels before activation,
+  honors inherited base/engine and in-process dependencies, and verifies retained
+  wheel bytes without creating project or cache files.
 - Local-development software snapshots rebuild from their recorded manifests,
   retained interpreter and hash-pinned wheels, without resolving a checkout again.
   Missing local interpreter files or wheels are disclosed before activation.

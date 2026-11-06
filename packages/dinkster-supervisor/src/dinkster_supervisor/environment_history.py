@@ -5,17 +5,21 @@ from __future__ import annotations
 import json
 import os
 import platform
+import subprocess
 import tempfile
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
+import packaging
+
 from .environment_state import (
     EnvironmentError,
     Generation,
     content_digest,
     generation_number,
+    interpreter,
     read_current,
     read_document,
     relative_file,
@@ -52,6 +56,40 @@ def capture_software(generation: Path) -> dict[str, object]:
         ):
             raise EnvironmentError(f"snapshot requires intact software metadata: {name}")
         metadata[name] = path.read_bytes().decode("utf-8")
+    host: dict[str, object] = {
+        "system": platform.system(),
+        "machine": platform.machine(),
+        "python": platform.python_version(),
+    }
+    if any(name.startswith("packs/") for name in metadata):
+        try:
+            result = subprocess.run(
+                [
+                    str(interpreter(generation)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import json, sys; sys.path.insert(0, sys.argv[1]); "
+                    "from packaging.tags import sys_tags; "
+                    "print(json.dumps([str(tag) for tag in sys_tags()]))",
+                    str(Path(packaging.__file__).parent.parent),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise EnvironmentError("snapshot wheel compatibility inspection timed out") from exc
+        if result.returncode:
+            raise EnvironmentError("snapshot cannot inspect the generation's wheel compatibility")
+        tags: object = json.loads(result.stdout)
+        if (
+            not isinstance(tags, list)
+            or not tags
+            or any(not isinstance(tag, str) for tag in cast("list[object]", tags))
+        ):
+            raise EnvironmentError("snapshot requires the generation's wheel compatibility tags")
+        host["wheelTags"] = tags
     return {
         "format": "dinkster.install-snapshot/1",
         "engine": {"version": record.engine_version, "release": record.engine_release},
@@ -61,11 +99,7 @@ def capture_software(generation: Path) -> dict[str, object]:
         "source": record.source,
         "inProcessPacks": list(record.in_process_packs),
         "tools": {"version": version("dinkster-supervisor")},
-        "host": {
-            "system": platform.system(),
-            "machine": platform.machine(),
-            "python": platform.python_version(),
-        },
+        "host": host,
         "metadata": metadata,
     }
 

@@ -5,10 +5,15 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import cast
+from urllib.parse import unquote, urlparse
 
+from packaging.specifiers import SpecifierSet
+from packaging.tags import parse_tag
 from packaging.utils import parse_wheel_filename
+from packaging.version import Version
 
 from .environment_artifacts import (
     artifact_rows,
@@ -69,7 +74,7 @@ def _sources(provenance: dict[str, object], key: str) -> tuple[str, ...]:
 def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
     """Prefer verified retained payloads; remote probes never populate the store."""
     if snapshot.get("source") == "local":
-        return _local_missing_inputs(snapshot, store)
+        return [*_local_missing_inputs(snapshot, store), *_pack_missing_inputs(snapshot, store)]
     if snapshot.get("source") != "published":
         raise EnvironmentError("restore planning requires published software inputs")
     metadata = _metadata(snapshot)
@@ -202,6 +207,138 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
                 "filename",
                 (source,),
                 store / "wheels" / cast("str", row["sha256"]) / cast("str", row["filename"]),
+            )
+    return [*missing, *_pack_missing_inputs(snapshot, store)]
+
+
+def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
+    metadata = _metadata(snapshot)
+    locks = [
+        parse_metadata(text.encode("utf-8"))
+        for name, text in sorted(metadata.items())
+        if name.startswith("packs/") and name.endswith("/pack-lock.json")
+    ]
+    if not locks:
+        return []
+    host = snapshot.get("host")
+    tags = cast("dict[str, object]", host).get("wheelTags") if isinstance(host, dict) else None
+    if (
+        not isinstance(tags, list)
+        or not tags
+        or any(not isinstance(tag, str) for tag in cast("list[object]", tags))
+    ):
+        raise EnvironmentError("snapshot requires recorded generation wheel compatibility tags")
+    supported = {tag for text in cast("list[str]", tags) for tag in parse_tag(text)}
+    base = parse_metadata(metadata["base-manifest.json"].encode("utf-8"))
+    engine = parse_metadata(metadata["engine-manifest.json"].encode("utf-8"))
+    versions: dict[str, str] = {}
+    for document in (base, engine):
+        key = "wheels" if "wheels" in document else "artifacts"
+        filename_key = "filename" if key == "wheels" else "name"
+        for row in artifact_rows(document[key], filename_key):
+            filename = cast("str", row[filename_key])
+            if filename.endswith(".whl"):
+                name, version, _, _ = parse_wheel_filename(filename)
+                if document is base or name not in cast("list[str]", base["replaces"]):
+                    versions[name] = str(version)
+    if "dependencies" in engine:
+        provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
+        variant = cast("str", provenance.get("dependencyVariant", base["variant"]))
+        selected = dependency_wheels(cast("dict[str, object]", engine["dependencies"]).get(variant))
+        for row in selected:
+            if row["name"] not in cast("list[str]", base["replaces"]):
+                versions[cast("str", row["name"])] = cast("str", row["version"])
+    missing: list[dict[str, object]] = []
+    in_process = cast("list[str]", snapshot["inProcessPacks"])
+    for lock in sorted(locks, key=lambda lock: lock["pack"] not in in_process):
+        pack = lock.get("pack")
+        if not isinstance(pack, str) or lock.get("format") != "dinkster.pack-lock/1":
+            raise EnvironmentError("snapshot requires named pack dependency locks")
+        if lock.get("variant") != base["variant"] or not SpecifierSet(
+            cast("str", lock["requiresPython"])
+        ).contains(cast("str", base["python"])):
+            raise EnvironmentError("pack dependency lock does not match the recorded base")
+        packages = lock.get("packages")
+        if not isinstance(packages, list):
+            raise EnvironmentError("pack dependency packages must be an array")
+        for item in cast("list[object]", packages):
+            if not isinstance(item, dict):
+                raise EnvironmentError("pack dependency must be an object")
+            package = cast("dict[str, object]", item)
+            name, version = package.get("name"), package.get("version")
+            if not isinstance(name, str) or not isinstance(version, str):
+                raise EnvironmentError("pack dependency requires a name and version")
+            inherited = versions.get(name)
+            if inherited is not None and Version(inherited) == Version(version):
+                continue
+            wheels = artifact_rows(package.get("wheels"), "filename")
+            selected_wheel = next(
+                (
+                    row
+                    for row in wheels
+                    if parse_wheel_filename(cast("str", row["filename"]))[3] & supported
+                ),
+                None,
+            )
+            if inherited is not None or selected_wheel is None:
+                missing.append(
+                    {
+                        "kind": "pack dependency",
+                        "identity": pack,
+                        "artifact": f"{name}=={version}",
+                        "locations": [],
+                        "error": "recorded pack dependency is incompatible with the generation",
+                    }
+                )
+                continue
+            row = selected_wheel
+            filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+            wheel_name, wheel_version, _, _ = parse_wheel_filename(filename)
+            if wheel_name != name or wheel_version != Version(version):
+                raise EnvironmentError("pack dependency wheel identity differs from its lock")
+            url = row.get("url")
+            if (
+                not isinstance(url, str)
+                or unquote(urlparse(url).path.rsplit("/", 1)[-1]) != filename
+            ):
+                raise EnvironmentError("pack wheel URL differs from its locked filename")
+            parsed = urlparse(url)
+            if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}:
+                source_path = unquote(parsed.path)
+                if os.name == "nt":
+                    source_path = source_path.removeprefix("/")
+                roots = (str(Path(source_path).parent),)
+            else:
+                roots = (url.rsplit("/", 1)[0],)
+            wheel_store = store / "wheels"
+            if wheel_store.is_symlink() or (wheel_store / sha).is_symlink():
+                raise EnvironmentError("restore refuses linked pack wheel directories")
+            if not any(
+                artifact_available(
+                    roots,
+                    filename,
+                    cached,
+                    sha,
+                    cast("int", row["size"]),
+                    source_url=url if parsed.scheme != "file" else None,
+                )
+                for cached in (wheel_store / sha / filename, wheel_store / filename)
+            ):
+                missing.append(
+                    {
+                        "kind": "pack dependency",
+                        "identity": pack,
+                        "artifact": filename,
+                        "sha256": sha,
+                        "locations": [url],
+                    }
+                )
+        if pack in in_process:
+            versions.update(
+                {
+                    cast("str", row["name"]): cast("str", row["version"])
+                    for row in cast("list[dict[str, object]]", packages)
+                }
             )
     return missing
 

@@ -89,7 +89,13 @@ def read_metadata(mirror: str, relative_path: str) -> bytes:
 
 
 def artifact_available(
-    mirrors: tuple[str, ...], relative_path: str, cached: Path, sha256: str, size: int
+    mirrors: tuple[str, ...],
+    relative_path: str,
+    cached: Path,
+    sha256: str,
+    size: int,
+    *,
+    source_url: str | None = None,
 ) -> bool:
     """Probe without writing; acquisition must still verify remote bytes before use."""
     _validate_request(mirrors, relative_path, sha256, size)
@@ -104,8 +110,8 @@ def artifact_available(
                 if source.is_relative_to(root) and _matches(source, sha256, size):
                     return True
                 continue
-            _validate_remote_url(mirror)
-            url = mirror.rstrip("/") + "/" + quote(relative_path, safe="/")
+            url = source_url or mirror.rstrip("/") + "/" + quote(relative_path, safe="/")
+            _validate_remote_url(url, allow_query=source_url is not None)
             request = Request(url, method="HEAD", headers={"User-Agent": _USER_AGENT})
             with build_opener(_SafeRedirects()).open(
                 request, timeout=_SOCKET_TIMEOUT_SECONDS
