@@ -9,11 +9,13 @@ import sys
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from urllib.request import urlopen
 
 import pytest
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_supervisor.environment_history import history
 from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
@@ -177,6 +179,13 @@ else:
             with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
                 assert json.loads(response.read()) == {"cuda": "GPU-aB12"}
             assert Journal.read(path).stage == "complete"
+            entries = history(tmp_path)
+            assert len(entries) == 1
+            assert entries[0]["reason"] == "setup"
+            assert entries[0]["generation"] == 1
+            software = cast("dict[str, object]", entries[0]["snapshot"])
+            metadata = cast("dict[str, object]", software["metadata"])
+            assert metadata["constraints.txt"] == "test\n"
             with pytest.raises(EnvironmentError, match="already has an active"):
                 begin_setup(tmp_path, 2, free_port())
         else:
@@ -200,12 +209,51 @@ else:
             )
             assert not (tmp_path / "generations/1").exists()
             assert Journal.read(path).stage == "rolled-back"
+            assert history(tmp_path) == []
             recover_activation(tmp_path, path)
             next_path = begin_setup(tmp_path, 1, port)
             assert Journal.read(next_path).incomplete
             recover_activation(tmp_path, next_path)
     finally:
         stop_engine(tmp_path, "compute", generation=1)
+
+
+def test_completed_activation_recovers_history_publication_once_after_process_exit(tmp_path: Path):
+    from dinkster_supervisor.environment import _recover_pending
+
+    path = begin_setup(tmp_path, 1, free_port())
+    _target(tmp_path, 1)
+    (tmp_path / "current").unlink()
+    script = """
+import os, sys
+from pathlib import Path
+from dinkster_supervisor import environment_transactions as transactions
+def interrupt(*args):
+    os._exit(74)
+transactions.publish_entry = interrupt
+transactions.activate(Path(sys.argv[1]), Path(sys.argv[2]), revalidate=lambda: None)
+"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path), str(path)],
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+        assert completed.returncode == 74, completed.stderr
+        assert Journal.read(path).stage == "complete"
+        assert read_current(tmp_path) == 1
+        assert history(tmp_path) == []
+        _recover_pending(tmp_path)
+        first = (tmp_path / "history/00000000000000000001.json").read_bytes()
+        _recover_pending(tmp_path)
+        assert (tmp_path / "history/00000000000000000001.json").read_bytes() == first
+        assert len(history(tmp_path)) == 1
+        assert history(tmp_path)[0]["operation"] == path.stem
+        assert read_current(tmp_path) == 1
+        assert engine_status(tmp_path)[0]["state"] == "ready"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
 
 
 @pytest.mark.parametrize("migration", [False, True])

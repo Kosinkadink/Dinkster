@@ -39,6 +39,7 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
+from .environment_history import history
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_runtime import (
     engine_assignments,
@@ -104,9 +105,19 @@ def _settings(root: Path) -> dict[str, object] | None:
 
 def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
-    settings = _settings(root)
     current = read_current(root)
     result["current"] = current
+    if args.operation == "history":
+        entries = history(root)
+        if args.history_action == "show":
+            selected = next((entry for entry in entries if entry["id"] == args.entry), None)
+            if selected is None:
+                raise EnvironmentError(f"installation history has no entry {args.entry}")
+            result["entry"] = selected
+        else:
+            result["history"] = entries
+        return 0
+    settings = _settings(root)
     if current is not None and args.operation in {"status", "doctor"}:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
@@ -217,6 +228,12 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
         if journal.operation == "move":
             if journal.incomplete:
                 raise EnvironmentError("move requires recovery before acquiring project locks")
+            continue
+        if journal.stage == "complete" and journal.history_entry is not None:
+            with ExitStack() as locks:
+                if locked_store is None:
+                    locks.enter_context(writer_lock(root))
+                recover_activation(root, path)
             continue
         if not journal.incomplete and not (
             journal.operation == "gc" and journal.stage == "complete"
@@ -1028,6 +1045,12 @@ def main() -> None:
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
+    history_command = commands.add_parser("history", help="list durable software history")
+    history_actions = history_command.add_subparsers(dest="history_action")
+    history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
+    history_show.add_argument("entry", type=int)
+    history_command.add_argument("--json", action="store_true", help="emit one result object")
+    history_show.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     doctor = commands.add_parser("doctor", help="report active generation and pack drift")
     doctor.add_argument(
         "--repair", action="store_true", help="rebuild offline from the local store"
@@ -1139,6 +1162,10 @@ def main() -> None:
             print(change)
         if "error" in result:
             print(result["error"], file=sys.stderr)
+        if args.operation == "history" and code == 0:
+            print(
+                json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
+            )
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     raise SystemExit(code)

@@ -398,6 +398,7 @@ class Journal:
     collection_store: str | None = None
     collected_store_paths: tuple[str, ...] = ()
     relocation: dict[str, object] | None = None
+    history_entry: dict[str, object] | None = None
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -558,6 +559,18 @@ class Journal:
                 relative_file(name)
                 if not isinstance(identity, str):
                     raise EnvironmentError("relocation source identities must be strings")
+        entry = value.get("historyEntry")
+        if entry is not None:
+            if not isinstance(entry, dict):
+                raise EnvironmentError("journal historyEntry must be an object")
+            entry = cast("dict[str, object]", entry)
+            if (
+                entry.get("format") != "dinkster.install-history/1"
+                or entry.get("generation") != value.get("target")
+                or operation not in {"setup", "update", "rollback", "repair"}
+            ):
+                raise EnvironmentError("journal history entry must describe its activation")
+            generation_number(entry.get("id"))
         return cls(
             operation,
             None if previous is None else generation_number(previous),
@@ -571,6 +584,7 @@ class Journal:
             store,
             store_paths,
             relocation,
+            entry,
         )
 
     @property
@@ -600,6 +614,8 @@ class Journal:
             value["collectedStorePaths"] = list(self.collected_store_paths)
         if self.relocation is not None:
             value["relocation"] = self.relocation
+        if self.history_entry is not None:
+            value["historyEntry"] = self.history_entry
         write_document(path, value)
 
 

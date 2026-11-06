@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+from .environment_history import prepare_entry, publish_entry
 from .environment_runtime import (
     engine_assignments,
     preserve_stopped_engine,
@@ -151,6 +152,13 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         generation = Generation.read(target_root / "generation.json")
         if generation.number != journal.target or generation.drift(target_root):
             raise EnvironmentError("target generation is incomplete or has drift")
+        if journal.history_entry is None:
+            journal = replace(
+                journal,
+                history_entry=prepare_entry(
+                    root, target_root, operation=path.stem, reason=journal.operation
+                ),
+            )
         journal = replace(journal, stage="starting")
         journal.write(path)
         for binding in journal.bindings:
@@ -185,12 +193,16 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         replace(Journal.read(path), error=str(exc)).write(path)
         recover_activation(root, path)
         raise
+    assert journal.history_entry is not None
+    publish_entry(root, journal.history_entry)
 
 
 def recover_activation(root: Path, path: Path) -> None:
     """Restore state; caller holds project and any recorded registry/store locks."""
     journal = Journal.read(path)
     if not journal.incomplete:
+        if journal.stage == "complete" and journal.history_entry is not None:
+            publish_entry(root, journal.history_entry)
         return
     if journal.operation not in {"setup", "update", "rollback", "repair"}:
         raise EnvironmentError("journal operation does not support activation recovery")

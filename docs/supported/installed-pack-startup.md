@@ -363,3 +363,8 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+- `dinkster-env history` lists successful software activations in order, and
+  `history show ID` displays the recorded software and changes. History survives
+  generation-directory collection. Snapshots exclude workflows, models, outputs,
+  libraries and mounts. Interrupted activation does not become a successful entry;
+  completed activation history publication is recoverable without duplication.

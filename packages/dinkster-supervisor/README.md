@@ -152,6 +152,20 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   building, starting, switching, complete and rolled-back; the last two are
   terminal. Interrupted records must be recovered before another operation.
 
+`dinkster-env --root ROOT history` lists successful software activations;
+`history show ID` includes the snapshot and structured differences. Both accept
+`--json` and return the usual `dinkster.environment-result/1` envelope.
+`<root>/history/<id>.json` stores `dinkster.install-history/1` entries with a
+`dinkster.install-snapshot/1` software description, timestamp, reason, generation,
+and differences from the preceding entry. These files are independent of
+generation retention. Capture admits only sealed software manifests, constraints,
+source locks and pack dependency locks, plus hosting and host facts; workflows,
+models, outputs, libraries and mounts are not captured.
+
+Activation journals retain a prepared `historyEntry` before starting the target.
+Only a completed activation publishes that entry. Recovery republishes an
+interrupted publication idempotently; existing history bytes are never replaced.
+
 `dinkster-env --root SOURCE move DESTINATION [--data STORE]` prints its plan
 before confirmation. Move keeps source data until destination doctor and engine
 health succeed, preserves named ports/devices and refuses an existing destination.
