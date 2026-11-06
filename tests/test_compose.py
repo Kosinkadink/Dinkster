@@ -2884,6 +2884,7 @@ def test_pack_type_owners_are_discovered_without_activation_and_retracted(
             await client.start_server()
             data = await (await client.get("/api/nodes")).json()
             assert data["typeOwners"]["mypack.thing"] == "mypack"
+            assert data["typeOwners"]["INT"] == "core"
             if cold:
                 assert composer._records["mypack"].worker.cold
             if not in_process:
@@ -2909,6 +2910,7 @@ def test_pack_type_owners_are_discovered_without_activation_and_retracted(
             data = await (await client.get("/api/nodes")).json()
             assert "mypack.thing" not in data["typeOwners"]
             assert "mypack.replacement" not in data["typeOwners"]
+            assert data["typeOwners"]["INT"] == "core"
             assert registry.owner_of("mypack.thing") is None
             assert "mypack.thing" not in registry
         finally:

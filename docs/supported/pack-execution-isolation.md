@@ -10,7 +10,7 @@
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
-  Built-in identities remain owned by foundation independently of the
+  Built-in identities remain owned by the engine (`core`) independently of the
   official pack that provides their codec and survive pack removal.
 - Typed asset references can target a type declared by an isolated pack without
   loading its codec in the engine. Envelope-aware nodes can forward values

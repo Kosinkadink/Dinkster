@@ -57,7 +57,7 @@ def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -
     with registry.registering_pack("mypack", ("mypack",)):
         registry.register("mypack.thing")
     assert registry.owner_of("mypack.thing") == "mypack"
-    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    assert registry.owner_of(CORE_INT) == "core"
     for claim in ("mypack", "mypack.child", "mypack-child"):
         with pytest.raises(ValueError, match="overlaps"):
             registry.claim_types("other", (claim,))
@@ -121,7 +121,7 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert "mypack.thing" not in registry
     assert registry.asset_decoder_for("list<mypack.thing>") is None
     assert registry.batch_merge_for("mypack.thing") is None
-    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    assert registry.owner_of(CORE_INT) == "core"
     assert registry.wrap(CORE_INT, 17).payload.load() == 17
     with registry.registering_pack("mypack", ("mypack",)):
         registry.register("mypack.thing")
@@ -150,14 +150,19 @@ def test_declared_asset_targets_survive_staging_without_granting_local_codecs() 
 
 
 def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
-    registry = make_registry()
-    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    registry = TypeRegistry()
+    assert registry.owner_of(CURVE_TYPE) == "core"
+    with registry.registering_pack("official-provider", (), allow_bare=True):
+        register_core_types(registry)
+    registry.declare_types("official-provider", (), (CURVE_TYPE,), allow_bare=True)
+    assert registry.owner_of(CURVE_TYPE) == "core"
     assert CURVE_TYPE in registry
-    with pytest.raises(ValueError, match="overlaps"):
-        registry.claim_types("another-official", (CURVE_TYPE,))
+    for pack in ("another-official", "dinkster-nodes-foundation"):
+        with pytest.raises(ValueError, match="overlaps"):
+            registry.claim_types(pack, (CURVE_TYPE,))
     registry.remove_pack_types("official-provider")
     registry.remove_pack_types("dinkster-nodes-foundation")
-    assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
+    assert registry.type_owners()[CURVE_TYPE] == "core"
     assert registry.wrap(CURVE_TYPE, {"points": [[2, 7]]}).resolve() == Curve(((2, 7),))
     assert registry.wrap(CORE_INT, 17).resolve() == 17
 
