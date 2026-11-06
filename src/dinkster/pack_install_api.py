@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import secrets
 import sys
@@ -13,6 +14,7 @@ from typing import cast
 
 from aiohttp import web
 from dinkster_registry import InstallError, PlanRecord
+from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, PathRedactor, principal_for
 
 from .activation import apply_activation
@@ -21,6 +23,7 @@ from .installer import Installer
 from .registries import parse_registry_spec
 
 _CONFIRMATION_SECONDS = 900
+_log = core_logger("pack_install")
 
 
 def add_pack_install_routes(
@@ -44,7 +47,13 @@ def add_pack_install_routes(
 
     async def body_for(request: web.Request, field: str) -> tuple[str, object]:
         principal = principal_for(request)
-        if not principal.local or principal.kind != "human" or principal.delegation_id is not None:
+        peer = request.transport.get_extra_info("peername") if request.transport else None
+        try:
+            address = ipaddress.ip_address(peer[0]) if isinstance(peer, tuple) and peer else None
+            loopback = address is not None and address.is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback or not principal.is_operator:
             raise web.HTTPForbidden(
                 text='{"error":"local-operator-required"}',
                 content_type="application/json",
@@ -163,31 +172,45 @@ def add_pack_install_routes(
             record = PlanRecord.from_record_json(stored[2])
             if not record.matches_base(installer.current_lockfile()):
                 return failure(409, "plan-stale", "installation changed; re-plan and review again")
-            try:
-                with tempfile.TemporaryDirectory(prefix="dinkster-pack-apply-") as directory:
-                    path = Path(directory) / "plan.json"
-                    path.write_text(stored[2])
-                    await manager("apply", str(path))
-            except (InstallError, OSError, ValueError) as exc:
-                code = "plan-stale" if "plan is stale:" in str(exc) else "apply-failed"
-                return failure(409 if code == "plan-stale" else 422, code, str(exc))
-            generation = installer.current_number()
-            try:
-                activation = await apply_activation(state, composer, installer)
-            except Exception as exc:
-                return failure(409, "activation-failed", str(exc), generation=generation)
-            if activation.get("failed"):
-                return failure(
-                    409,
-                    "activation-failed",
-                    "installed generation could not be activated; previous live surface retained",
-                    generation=generation,
-                    activation=activation,
+
+            async def install_and_activate() -> web.Response:
+                try:
+                    with tempfile.TemporaryDirectory(prefix="dinkster-pack-apply-") as directory:
+                        path = Path(directory) / "plan.json"
+                        path.write_text(stored[2])
+                        await manager("apply", str(path))
+                except (InstallError, OSError, ValueError) as exc:
+                    code = "plan-stale" if "plan is stale:" in str(exc) else "apply-failed"
+                    return failure(409 if code == "plan-stale" else 422, code, str(exc))
+                generation = installer.current_number()
+                try:
+                    activation = await apply_activation(state, composer, installer)
+                except Exception as exc:
+                    return failure(409, "activation-failed", str(exc), generation=generation)
+                if activation.get("failed"):
+                    return failure(
+                        409,
+                        "activation-failed",
+                        "installed generation could not be activated; "
+                        "previous live surface retained",
+                        generation=generation,
+                        activation=activation,
+                    )
+                return web.json_response(
+                    {"generation": generation, "activation": activation},
+                    headers={"Cache-Control": "no-store"},
                 )
-            return web.json_response(
-                {"generation": generation, "activation": activation},
-                headers={"Cache-Control": "no-store"},
-            )
+
+            operation = asyncio.create_task(install_and_activate())
+            try:
+                return await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                # Keep the writer lock through live activation, not only disk publication.
+                result = await operation
+                _log.info(
+                    "pack installation finished after request cancellation: HTTP %s", result.status
+                )
+                raise
 
     app.router.add_post("/api/packs/install/plan", handle_plan)
     app.router.add_post("/api/packs/install/apply", handle_apply)

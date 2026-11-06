@@ -8,9 +8,11 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from aiohttp import ServerDisconnectedError, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_registry import InstallError, Lockfile, PlanRecord
 from dinkster_server import STATE_KEY, PathRedactor, create_app
+from dinkster_server.auth import Principal, StaticBearerAuthenticator
 
 import dinkster.pack_install_api as routes
 from dinkster.compose import ServingComposer
@@ -19,8 +21,10 @@ from tests.async_scenarios import run_scenario
 from tests.test_installer import write_pack
 
 
+@pytest.mark.parametrize("authenticated", [False, True])
+@pytest.mark.parametrize("cancel_apply", [False, True])
 def test_pack_install_confirmations_and_live_activation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authenticated: bool, cancel_apply: bool
 ) -> None:
     async def scenario() -> None:
         installer = Installer(tmp_path / "root", accelerator="cpu")
@@ -28,6 +32,9 @@ def test_pack_install_confirmations_and_live_activation(
         entry, _ = lock_local_pack(source, installer.artifacts_dir)
         target = Lockfile.of([entry])
         spawn = asyncio.create_subprocess_exec
+        published = asyncio.Event()
+        finish_manager = asyncio.Event()
+        request_task: asyncio.Task[Any] | None = None
 
         # Substitute only manager I/O and venv provisioning. Real Installer
         # publication and whole-generation activation still run below.
@@ -48,24 +55,52 @@ def test_pack_install_confirmations_and_live_activation(
             else:
                 record = PlanRecord.from_record_json(path.read_text())
                 installer.apply(record.target, expected_base=record.base, venvs=False)
+
+            async def communicate() -> tuple[bytes, bytes]:
+                if action == "apply" and cancel_apply:
+                    published.set()
+                    await finish_manager.wait()
+                return b"add: demo 0.0.0 digest [registry] venv: new\n", b""
+
             return type(
                 "Process",
                 (),
                 {
                     "returncode": 0,
-                    "communicate": AsyncMock(
-                        return_value=(b"add: demo 0.0.0 digest [registry] venv: new\n", b"")
-                    ),
+                    "communicate": AsyncMock(side_effect=communicate),
                 },
             )()
 
         monkeypatch.setattr(routes.asyncio, "create_subprocess_exec", command)
         composer = ServingComposer(worker_env={"PYTHONPATH": str(source)})
         composition = composer.composition
-        app = create_app(composition.make_engine, composition.schemas)
+        auth = (
+            StaticBearerAuthenticator(
+                {
+                    "test-operator": Principal(
+                        "operator", grants={"local": frozenset({"settings:write"})}
+                    )
+                }
+            )
+            if authenticated
+            else None
+        )
+        app = create_app(composition.make_engine, composition.schemas, authenticator=auth)
+
+        @web.middleware
+        async def capture_request(request: web.Request, handler: Any) -> web.StreamResponse:
+            nonlocal request_task
+            if request.path == "/api/packs/install/apply":
+                request_task = asyncio.current_task()
+            return await handler(request)
+
+        app.middlewares.append(capture_request)
         busy = asyncio.Lock()
         routes.add_pack_install_routes(app, composer, installer, busy=busy, redactor=PathRedactor())
-        client = TestClient(TestServer(app))
+        client = TestClient(
+            TestServer(app),
+            headers={"Authorization": "Bearer test-operator"} if authenticated else {},
+        )
         await client.start_server()
         try:
             selection = {"packs": [{"pack": "demo", "version": "1.0.0"}]}
@@ -101,6 +136,24 @@ def test_pack_install_confirmations_and_live_activation(
             )
             assert (await response.json())["error"] == "install-in-progress"
             busy.release()
+            if cancel_apply:
+                applying = asyncio.ensure_future(
+                    client.post(
+                        "/api/packs/install/apply", json={"confirmation": second["confirmation"]}
+                    )
+                )
+                await asyncio.wait_for(published.wait(), timeout=10)
+                assert request_task is not None
+                request_task.cancel()
+                assert busy.locked()
+                finish_manager.set()
+                with pytest.raises(ServerDisconnectedError):
+                    await applying
+                assert installer.current_number() == 1
+                assert "demo" in composer.pack_specs()
+                assert app[STATE_KEY].schema_epoch > 0
+                assert not busy.locked()
+                return
             response = await client.post(
                 "/api/packs/install/apply", json={"confirmation": second["confirmation"]}
             )
