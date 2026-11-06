@@ -2,16 +2,91 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import tomllib
+import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 from typing import cast
 
 from blake3 import blake3
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from .environment_artifacts import parse_metadata
 from .environment_state import EnvironmentError, content_digest
 from .environment_stores import registry_path
 from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
+
+
+def _installed_dependencies(venv: Path, content: Path) -> dict[str, object]:
+    """Inspect distribution headers only, without executing Python or .pth files."""
+    for path in (venv, *venv.parents):
+        if path == content:
+            break
+        if path.is_symlink() or path.is_junction():
+            raise EnvironmentError(f"adoption refuses linked dependency metadata: {path}")
+    if not venv.is_dir():
+        return {"status": "not-recorded", "pins": [], "metadataDigests": {}}
+    sites: list[Path] = []
+    for library in (venv / "Lib", venv / "lib", venv / "lib64"):
+        if library.name == "lib64" and library.is_symlink() and library.resolve() == venv / "lib":
+            continue
+        if library.is_symlink() or library.is_junction():
+            raise EnvironmentError(f"adoption refuses linked dependency metadata: {library}")
+        if not library.is_dir():
+            continue
+        if library.name == "Lib":
+            sites.append(library / "site-packages")
+        else:
+            for python in sorted(library.iterdir()):
+                if re.fullmatch(r"python[0-9]+\.[0-9]+", python.name):
+                    if python.is_symlink() or python.is_junction():
+                        raise EnvironmentError(
+                            f"adoption refuses linked dependency metadata: {python}"
+                        )
+                    sites.append(python / "site-packages")
+    versions: dict[str, str] = {}
+    digests: dict[str, str] = {}
+    inspected = False
+    for site in sites:
+        if site.is_symlink() or site.is_junction():
+            raise EnvironmentError(f"adoption refuses linked dependency metadata: {site}")
+        if not site.is_dir():
+            continue
+        inspected = True
+        for distribution in sorted(site.glob("*.dist-info")):
+            if distribution.is_symlink() or distribution.is_junction():
+                raise EnvironmentError(
+                    f"adoption refuses linked dependency metadata: {distribution}"
+                )
+            metadata = distribution / "METADATA"
+            if metadata.is_symlink() or not metadata.is_file():
+                raise EnvironmentError(
+                    f"adoption requires intact distribution metadata: {metadata}"
+                )
+            raw = metadata.read_bytes()
+            digests[str(metadata.relative_to(content))] = (
+                "sha256:" + hashlib.sha256(raw).hexdigest()
+            )
+            headers = BytesParser().parsebytes(raw, headersonly=True)
+            name, version = headers.get("Name"), headers.get("Version")
+            if not isinstance(name, str) or not isinstance(version, str):
+                raise EnvironmentError(f"adoption requires distribution name/version: {metadata}")
+            name, version = canonicalize_name(name), str(Version(version))
+            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None:
+                raise EnvironmentError(
+                    f"adoption requires a canonical distribution name: {metadata}"
+                )
+            if name in versions and versions[name] != version:
+                raise EnvironmentError(f"adoption found conflicting installed versions: {name}")
+            versions[name] = version
+    return {
+        "status": "local-metadata" if inspected else "not-recorded",
+        "pins": [f"{name}=={value}" for name, value in sorted(versions.items())],
+        "metadataDigests": digests,
+    }
 
 
 def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, object]:
@@ -90,6 +165,7 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
     if archives.is_symlink():
         raise EnvironmentError("standalone archives must not be linked")
     payloads: dict[str, str] = {}
+    dependencies: dict[str, object] = {}
     for row in packs:
         identity = cast("str", row["artifactDigest"])
         path = archives / f"{identity[7:]}.zip"
@@ -104,6 +180,43 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
         if "blake3:" + actual.hexdigest() != identity:
             raise EnvironmentError(f"standalone pack archive digest differs: {row['pack']}")
         payloads[path.name] = content_digest(path)
+        if row["pack"] in in_process:
+            dependencies[cast("str", row["pack"])] = {
+                "status": "ambient-not-recorded",
+                "scopes": {},
+                "runtimePins": hosting.get("runtimePins", {}),
+            }
+            continue
+        try:
+            with zipfile.ZipFile(path) as archive:
+                manifest = tomllib.loads(archive.read("dinkster-pack.toml").decode("utf-8"))
+        except (zipfile.BadZipFile, KeyError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise EnvironmentError("standalone archive requires an intact pack manifest") from exc
+        pack = manifest.get("pack")
+        manifest_name = (
+            cast("dict[str, object]", pack).get("name") if isinstance(pack, dict) else None
+        )
+        if (
+            not isinstance(manifest_name, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", manifest_name) is None
+            or canonicalize_name(manifest_name) != row["pack"]
+        ):
+            raise EnvironmentError("standalone archive manifest differs from its pack identity")
+        venvs = content / "venvs"
+        if venvs.is_symlink() or venvs.is_junction():
+            raise EnvironmentError("adoption refuses linked standalone venv storage")
+        scopes = [venvs]
+        if pointer_text is not None:
+            scopes = sorted(venvs.iterdir()) if venvs.is_dir() else []
+        dependencies[cast("str", row["pack"])] = {
+            "scopes": {
+                scope.name if pointer_text is not None else "private": _installed_dependencies(
+                    scope / identity[7:] / manifest_name, content
+                )
+                for scope in scopes
+            },
+            "status": "inspect-scopes" if scopes else "not-recorded",
+        }
     return {
         "source": str(source),
         "generation": int(current),
@@ -115,6 +228,50 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
         "storePointer": pointer_text,
         "artifacts": str(archives),
         "archiveDigests": payloads,
+        "installedDependencies": dependencies,
         "previousEngine": "not recorded by standalone installer",
         "previousBase": "not recorded by standalone installer",
     }
+
+
+def dependency_comparison(
+    adoption: dict[str, object], locks: tuple[Path, ...]
+) -> list[dict[str, object]]:
+    """Compare observed versions to lock declarations, not an ambient base guess."""
+    comparisons: list[dict[str, object]] = []
+    installed = cast("dict[str, dict[str, object]]", adoption["installedDependencies"])
+    for path in locks:
+        lock = parse_metadata(path.read_bytes())
+        name = cast("str", lock["pack"])
+        packages = lock.get("packages")
+        if not isinstance(packages, list):
+            raise EnvironmentError("adoption dependency lock requires package records")
+        target: dict[str, str] = {}
+        for raw in cast("list[object]", packages):
+            if not isinstance(raw, dict):
+                raise EnvironmentError("adoption dependency lock requires package objects")
+            package = cast("dict[str, object]", raw)
+            distribution, version = package.get("name"), package.get("version")
+            if not isinstance(distribution, str) or not isinstance(version, str):
+                raise EnvironmentError("adoption dependency lock requires package name/version")
+            target[canonicalize_name(distribution)] = str(Version(version))
+        scopes = cast("dict[str, dict[str, object]]", installed[name]["scopes"])
+        for scope, observed in (scopes or {"unrecorded": installed[name]}).items():
+            source = {
+                pin.split("==", 1)[0]: pin.split("==", 1)[1]
+                for pin in cast("list[str]", observed.get("pins", []))
+            }
+            comparisons.append(
+                {
+                    "pack": name,
+                    "scope": scope,
+                    "sourceStatus": observed["status"],
+                    "targetLock": str(path),
+                    "changes": [
+                        {"name": name, "source": source.get(name), "targetLock": target.get(name)}
+                        for name in sorted(source.keys() | target.keys())
+                        if source.get(name) != target.get(name)
+                    ],
+                }
+            )
+    return comparisons

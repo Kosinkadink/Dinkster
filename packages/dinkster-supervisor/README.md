@@ -168,6 +168,12 @@ digests must match the explicitly selected channel; `catalog` exposes them.
 Each installed pack requires an explicit target-variant `--pack-lock PATH`.
 Planning shows the complete source lock, target dependency locks and in-process
 placement. It never records the ambient interpreter as an engine/base release.
+The plan compares local installed distribution metadata to target pack locks,
+showing shared-store accelerator scopes separately without guessing which one
+the old root used. It never runs old interpreters, pack code or .pth files.
+Ambient/inherited dependencies are explicitly unrecorded, not an exact freeze;
+a distribution absent from a target pack lock may still belong to the target base.
+Changes to inspected distribution metadata invalidate the approved plan.
 Shared-venv groups refuse rather than being silently split. The destination must
 not exist and neither it nor the selected store may overlap the old root or its
 shared content store. Confirmation copies verified software archives into owned

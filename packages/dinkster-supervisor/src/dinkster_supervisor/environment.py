@@ -14,7 +14,7 @@ from pathlib import Path
 from platform import machine
 from typing import cast
 
-from .environment_adoption import standalone_inputs
+from .environment_adoption import dependency_comparison, standalone_inputs
 from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
     cleanup_collection,
@@ -495,13 +495,22 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if adoption is not None:
         result["adoption"] = adoption
         result["dependencyLocks"] = {str(path): read_document(path) for path in args.pack_lock}
+        result["dependencyComparison"] = dependency_comparison(adoption, tuple(args.pack_lock))
         plan.extend(
             [
                 f"adopt standalone generation {adoption['generation']} from {adopting} into {root}",
                 f"preserve source lock: {adoption['sourceLock']}",
                 f"preserve in-process placement: {', '.join(in_process) or 'none'}",
-                "old engine/base and dependency closure are not recorded; "
-                "use the explicitly selected published identities and dependency locks",
+                "old engine/base are not recorded; use the explicitly selected identities",
+                "source dependency inspection reads local distribution metadata only; "
+                "ambient, inherited and .pth-provided packages are not captured",
+                "shared-store scopes are displayed independently; no source accelerator is guessed",
+                "comparison is against pack locks, not the total target engine/base closure; "
+                "a null targetLock means not declared in that pack lock, not necessarily removed",
+                "source dependencies: "
+                f"{json.dumps(adoption['installedDependencies'], sort_keys=True)}",
+                "dependency comparison: "
+                f"{json.dumps(result['dependencyComparison'], sort_keys=True)}",
                 f"target dependency locks: {json.dumps(result['dependencyLocks'], sort_keys=True)}",
                 "leave the old installation, shared store and all user data untouched",
             ]

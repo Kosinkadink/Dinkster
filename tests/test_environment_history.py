@@ -259,11 +259,17 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
 
 
 @pytest.mark.parametrize("shared_store", [False, True], ids=["private-store", "shared-store"])
+@pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "in-process"])
 def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared_store: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    shared_store: bool,
+    in_process: bool,
 ):
     from dinkster_registry import LockedPack, Lockfile, build_artifact
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_supervisor import environment
+    from dinkster_workers.pack_lock import LockedDistribution, PackLock
     from test_environment_artifacts import _mirror
 
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
@@ -279,19 +285,62 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
     identity = build_artifact(pack, archive)
     retained = source / "artifacts" / f"{identity[7:]}.zip"
     shutil.copyfile(archive, retained)
+    content = source
     if shared_store:
         shared = tmp_path / "standalone-content"
         shared.mkdir()
         (source / "artifacts").rename(shared / "artifacts")
         (source / "shared-store").write_text(str(shared) + "\n")
         retained = shared / "artifacts" / retained.name
+        content = shared
     locked = LockedPack("example", "1.2.3", identity, "local", (), "local:/unused")
     (source / "current").write_text("3\n")
     (source / "generations/3.json").write_text(Lockfile.of([locked]).record_json())
     hosting = source / "generations/3.hosting.json"
-    hosting.write_text(json.dumps({"format": "dinkster.hosting/1", "inProcess": ["example"]}))
+    hosting.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.hosting/1",
+                "inProcess": ["example"] if in_process else [],
+                "runtimePins": {"torch": "2.0"},
+            }
+        )
+    )
+    sites = [content / "venvs" / identity[7:] / "example/lib/python3.12/site-packages"]
+    if shared_store:
+        sites = [
+            content / "venvs" / scope / identity[7:] / "example/Lib/site-packages"
+            for scope in ("cpu", "cuda")
+        ]
+    for index, site in enumerate(sites):
+        site.mkdir(parents=True)
+        for name, version in (
+            ("Retained_Package", "2.0"),
+            ("changed-package", f"1.{index}"),
+            ("removed", "9.0"),
+        ):
+            info = site / f"{name}-{version}.dist-info"
+            info.mkdir()
+            (info / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n\n")
+        (site / "do-not-execute.pth").write_text(
+            f"import pathlib; pathlib.Path({str(tmp_path / 'executed')!r}).touch()\n"
+        )
     dependency = tmp_path / "example.pack-lock.json"
-    PackLock("example", "fixture-cpu", ">=3.12", (), (), ()).write(dependency)
+    PackLock(
+        "example",
+        "fixture-cpu",
+        ">=3.12",
+        (),
+        (),
+        tuple(
+            LockedDistribution(name, version, ())
+            for name, version in (
+                ("retained-package", "2.0"),
+                ("changed-package", "2.4"),
+                ("added", "4.1"),
+            )
+        ),
+    ).write(dependency)
     args = (
         "setup",
         "--adopt-from",
@@ -317,12 +366,56 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
     code, plan = _run(target, *args, "--plan")
     assert code == 0, plan
     assert plan["adoption"]["packs"][0]["artifactDigest"] == identity
-    assert plan["adoption"]["inProcessPacks"] == ["example"]
+    assert plan["adoption"]["inProcessPacks"] == (["example"] if in_process else [])
     assert plan["dependencyLocks"][str(dependency)]["pack"] == "example"
+    observed = plan["adoption"]["installedDependencies"]["example"]
+    if in_process:
+        assert observed == {
+            "status": "ambient-not-recorded",
+            "scopes": {},
+            "runtimePins": {"torch": "2.0"},
+        }
+        assert plan["dependencyComparison"][0]["sourceStatus"] == "ambient-not-recorded"
+    else:
+        scopes = ["cpu", "cuda"] if shared_store else ["private"]
+        assert set(observed["scopes"]) == set(scopes)
+        for index, scope in enumerate(scopes):
+            assert observed["scopes"][scope]["pins"] == [
+                f"changed-package==1.{index}",
+                "removed==9.0",
+                "retained-package==2.0",
+            ]
+            comparison = next(row for row in plan["dependencyComparison"] if row["scope"] == scope)
+            assert comparison["changes"] == [
+                {"name": "added", "source": None, "targetLock": "4.1"},
+                {"name": "changed-package", "source": f"1.{index}", "targetLock": "2.4"},
+                {"name": "removed", "source": "9.0", "targetLock": None},
+            ]
+    assert not (tmp_path / "executed").exists()
     assert {
         path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
     } == before
     assert not target.exists() and not store.exists()
+    if not in_process:
+        distribution = sites[0] / "removed-9.0.dist-info"
+        saved = tmp_path / "saved-distribution"
+        distribution.rename(saved)
+        if sys.platform == "win32":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(distribution), str(saved)],
+                capture_output=True,
+                check=True,
+            )
+        else:
+            distribution.symlink_to(saved, target_is_directory=True)
+        code, refused = _run(target, *args, "--plan")
+        assert code == 1 and "linked dependency metadata" in refused["error"], refused
+        if sys.platform == "win32":
+            distribution.rmdir()
+        else:
+            distribution.unlink()
+        saved.rename(distribution)
+        assert not target.exists() and not store.exists()
     for destination in (source, source / "child", tmp_path):
         code, refused = _run(destination, *args, "--yes")
         assert code == 1, refused
@@ -334,6 +427,23 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
     code, corrupt = _run(target, *args, "--yes")
     assert code == 1 and "digest differs" in corrupt["error"], corrupt
     assert not target.exists() and not store.exists()
+    if not in_process:
+        shutil.copyfile(archive, retained)
+
+        def confirmed(*_args):
+            metadata = sites[0] / "removed-9.0.dist-info/METADATA"
+            metadata.write_text("Name: removed\nVersion: 8.0\n\n")
+            return True
+
+        monkeypatch.setattr(environment, "_confirmed", confirmed)
+        monkeypatch.setattr(sys, "argv", ["dinkster-env", "--root", str(target), *args, "--json"])
+        with pytest.raises(SystemExit) as stopped:
+            environment.main()
+        assert stopped.value.code == 1
+        refused = json.loads(capsys.readouterr().out)
+        assert "standalone inputs changed" in refused["error"]
+        assert not (target / "current").exists() and history(target) == []
+        assert not (store / "bases").exists()
 
 
 def test_adoption_refuses_source_changed_after_confirmation(
