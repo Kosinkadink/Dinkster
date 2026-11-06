@@ -2181,7 +2181,16 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
 
 @pytest.mark.parametrize(
     "event",
-    ["initial", "engine-only", "tag", "lockstep", "main-success", "main-failure", "main-workflow"],
+    [
+        "initial",
+        "engine-only",
+        "tag",
+        "lockstep",
+        "main-success",
+        "main-failure",
+        "main-skipped",
+        "main-workflow",
+    ],
 )
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, event: str
@@ -2214,7 +2223,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
     (tmp_path / ".git/HEAD").write_text(tree + "\n")
     after = tree
-    if event in {"lockstep", "main-success", "main-failure", "main-workflow"}:
+    if event in {"lockstep", "main-success", "main-failure", "main-skipped", "main-workflow"}:
         changed = tmp_path / (
             ".github/workflows/official-packs.yml" if event == "main-workflow" else "uv.lock"
         )
@@ -2246,6 +2255,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         else "pull_request",
     )
     monkeypatch.setenv("CONCLUSION", "failure" if event == "main-failure" else "success")
+    monkeypatch.setenv("ENGINE_PUBLISHED", "false" if event == "main-skipped" else "true")
     monkeypatch.setenv("BEFORE", "0" * 40 if event == "initial" else tree)
     monkeypatch.setenv(
         "PACK_TAG", "pack/dinkster-nodes-foundation/v2.7rc1" if event == "tag" else ""
@@ -2253,12 +2263,16 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     exec(compile(script, "official-packs.yml", "exec"), {})
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert json.loads(outputs["packs"]) == (
-        [] if event in {"engine-only", "main-failure"} else ["dinkster-nodes-foundation"]
+        []
+        if event in {"engine-only", "main-failure", "main-skipped"}
+        else ["dinkster-nodes-foundation"]
     )
-    assert outputs["applicable"] == ("false" if event == "main-failure" else "true")
+    assert outputs["applicable"] == (
+        "false" if event in {"main-failure", "main-skipped"} else "true"
+    )
     if event in {"tag", "lockstep"}:
         assert "candidate-head engine dependency pins" in capsys.readouterr().out
-    if event == "main-failure":
+    if event in {"main-failure", "main-skipped"}:
         assert "same-commit engine release did not succeed" in capsys.readouterr().out
     if event in {"main-success", "main-workflow"}:
         assert outputs["engine"] == after
