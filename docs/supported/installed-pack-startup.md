@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Published software history can rebuild a pruned generation without restoring
+  workflows, models or outputs. Missing engine inputs expose read-only alternatives
+  and all substitutions before a proposal-specific approval; `--yes` alone cannot
+  approve an approximate restore. Shared tools are recorded, never replaced.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.

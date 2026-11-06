@@ -168,7 +168,13 @@ was collected. Recorded manifests, locations, constraints and locks drive
 acquisition; current channels do not select replacement versions. The new entry
 names `restoredFrom` and both recorded and executing tools versions. Tools are
 advisory and are never installed, replaced or downgraded by restore. Unavailable
-inputs fail closed. Failed restores append separate immutable receipts under
+inputs produce a read-only `restorePlan` with missing payloads, candidate snapshots
+and every proposed substitution. Candidates minimize changed software identity
+fields; equal-cost alternatives remain explicit rather than selecting the newest.
+`restore ID --approve DIGEST` approves one complete proposal. `--yes` alone never
+approves substitutions. A changed project, current pointer or history invalidates
+the approval. Without an obtainable candidate, restore makes no changes.
+Failed restores append separate immutable receipts under
 `<root>/attempts/`, exposed as `attempts` in the history JSON result.
 
 Activation journals retain a prepared `historyEntry` before starting the target.

@@ -16,6 +16,7 @@ from .environment_artifacts import (
 )
 from .environment_generations import build_generation
 from .environment_history import history, is_software_metadata, prepare_entry, record_failed_restore
+from .environment_restore_plan import plan_restore
 from .environment_state import (
     Channel,
     EnvironmentError,
@@ -33,8 +34,15 @@ from .environment_transactions import (
 )
 
 
-def restore_entry(root: Path, entry_id: int, *, apply: bool) -> dict[str, object]:
-    """Rebuild an exact published snapshot using its sealed acquisition inputs."""
+def restore_entry(
+    root: Path,
+    entry_id: int,
+    *,
+    apply: bool,
+    approval: str | None = None,
+    expected_plan: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Rebuild recorded software only after exact or proposal-bound approval."""
     entries = history(root)
     selected = next((entry for entry in entries if entry["id"] == entry_id), None)
     if selected is None:
@@ -55,19 +63,48 @@ def restore_entry(root: Path, entry_id: int, *, apply: bool) -> dict[str, object
     if pointer.is_symlink() or not store.is_absolute() or store.is_symlink():
         raise EnvironmentError("restore requires an absolute unlinked store")
     settings = (root / "project.json").read_bytes()
+    try:
+        selected_plan = plan_restore(root, entry_id)
+    except (OSError, ValueError) as exc:
+        raise EnvironmentError(f"snapshot recorded by tools {recorded_tools}: {exc}") from exc
+    if expected_plan is not None and expected_plan != selected_plan:
+        raise EnvironmentError("restore proposal changed; inspect and approve a new plan")
+    alternatives = cast("list[dict[str, object]]", selected_plan["alternatives"])
+    approximate = not selected_plan["exact"]
+    chosen = next(
+        (candidate for candidate in alternatives if candidate["approval"] == approval), None
+    )
+    if approval is not None and chosen is None:
+        raise EnvironmentError("restore approval is stale or does not name a proposed alternative")
+    if not approximate and alternatives:
+        chosen = alternatives[0]
     result: dict[str, object] = {
         "current": current,
-        "status": "planned",
+        "status": "approval-required" if approximate else "planned",
         "restoredFrom": entry_id,
         "recordedTools": recorded_tools,
         "currentTools": version("dinkster-supervisor"),
+        "restorePlan": selected_plan,
         "plan": [
             f"rebuild software from history entry {entry_id} as a new generation",
             "preserve project data, mounts, settings and the current shared tools",
         ],
     }
-    if not apply:
+    steps = cast("list[str]", result["plan"])
+    for missing in cast("list[dict[str, object]]", selected_plan["missing"]):
+        steps.append(f"unavailable {missing['kind']} {missing['identity']}: {missing['artifact']}")
+    if approximate:
+        steps.append("nothing changes without --approve followed by one complete proposal digest")
+        for alternative in alternatives:
+            steps.append(f"alternative {alternative['approval']}")
+            for change in cast("list[dict[str, object]]", alternative["substitutions"]):
+                steps.append(
+                    f"substitute {change['field']}: {change['before']} -> {change['after']}"
+                )
+    if not apply or chosen is None:
         return result
+    snapshot = cast("dict[str, object]", chosen["snapshot"])
+    substitutions = tuple(cast("list[dict[str, object]]", chosen["substitutions"]))
 
     def revalidate() -> None:
         if (
@@ -209,6 +246,7 @@ def restore_entry(root: Path, entry_id: int, *, apply: bool) -> dict[str, object
                 operation=journal.stem,
                 reason="restore",
                 restored_from=entry_id,
+                substitutions=substitutions,
             )
             entry["recordedTools"] = tools
             rebuilt = cast("dict[str, object]", entry["snapshot"])
@@ -237,5 +275,5 @@ def restore_entry(root: Path, entry_id: int, *, apply: bool) -> dict[str, object
             record_failed_restore(root, journal.stem, entry_id, message)
             recover_activation(root, journal)
             raise EnvironmentError(message) from exc
-        result.update(current=target, status="applied", exact=True)
+        result.update(current=target, status="applied", exact=not substitutions)
     return result

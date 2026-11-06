@@ -1106,6 +1106,7 @@ def main() -> None:
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
+    restore.add_argument("--approve", help="approve one complete restore proposal digest")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
@@ -1163,10 +1164,22 @@ def main() -> None:
         elif args.operation == "rollback":
             code = _rollback(args, result)
         elif args.operation == "restore":
-            result.update(restore_entry(args.root, args.entry, apply=False))
-            if _confirmed(args, cast("list[str]", result["plan"])):
+            result.update(restore_entry(args.root, args.entry, apply=False, approval=args.approve))
+            can_apply = result["status"] != "approval-required" or args.approve is not None
+            if can_apply and (
+                (args.approve is not None and not args.plan)
+                or _confirmed(args, cast("list[str]", result["plan"]))
+            ):
                 _recover_pending(args.root)
-                result.update(restore_entry(args.root, args.entry, apply=True))
+                result.update(
+                    restore_entry(
+                        args.root,
+                        args.entry,
+                        apply=True,
+                        approval=args.approve,
+                        expected_plan=cast("dict[str, object]", result["restorePlan"]),
+                    )
+                )
             code = 0
         elif args.operation == "gc":
             code = _gc(args, result)

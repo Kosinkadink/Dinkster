@@ -16,6 +16,8 @@ from dinkster_supervisor.environment_state import EnvironmentError, Generation
 from test_environment_cli import _run
 from test_environment_state import _generation
 
+from tests.fixtures.environments.build import executable_release
+
 
 def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_path: Path):
     first_generation = _generation(tmp_path, 1).parent
@@ -135,6 +137,81 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
         assert queried["attempts"][0]["restoredFrom"] == 1
         assert queried["attempts"][0]["error"] == failed["error"]
         monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
+        old_snapshot = cast("dict[str, object]", first["snapshot"])
+        old_engine = cast("dict[str, str]", old_snapshot["engine"])
+        old_metadata = cast("dict[str, str]", old_snapshot["metadata"])
+        old_manifest = json.loads(old_metadata["engine-manifest.json"])
+        store = Path(fixture["store"])
+        mirror = Path(fixture["mirror"])
+        executable_release(
+            mirror, json.loads(Path(fixture["baseManifest"]).read_bytes()), "3.0", 73
+        )
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        shutil.rmtree(mirror / "engine" / old_engine["release"][7:])
+        (mirror / "engine/index.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "path": f"engine/{old_engine['release'][7:]}",
+                        "sha256": old_engine["release"][7:],
+                    },
+                    *[
+                        {"path": f"engine/{path.parent.name}", "sha256": path.parent.name}
+                        for path in sorted((mirror / "engine").glob("*/release-manifest.json"))
+                    ],
+                ]
+            )
+        )
+        for artifact in old_manifest["artifacts"]:
+            if artifact["name"].endswith(".whl"):
+                cached = store / "wheels" / artifact["sha256"]
+                if cached.exists():
+                    shutil.rmtree(cached)
+        prior_files = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.parts[-1] != ".lock"
+            and "runtime" not in path.relative_to(root).parts
+        }
+        for flags in (("--plan",), (), ("--yes",)):
+            code, proposed = _run(root, "restore", "1", *flags)
+            assert code == 0 and proposed["status"] == "approval-required", proposed
+            assert any(
+                item["identity"] == old_engine["release"]
+                for item in proposed["restorePlan"]["missing"]
+            )
+            assert {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+                and path.parts[-1] != ".lock"
+                and "runtime" not in path.relative_to(root).parts
+            } == prior_files
+        alternatives = proposed["restorePlan"]["alternatives"]
+        assert len(alternatives) == 2
+        assert {item["snapshot"]["engine"]["version"] for item in alternatives} == {"2.0", "3.0"}
+        for item in alternatives:
+            assert {change["field"] for change in item["substitutions"]} == {
+                "engine",
+                "constraints",
+            }
+        chosen = next(
+            item for item in alternatives if item["snapshot"]["engine"]["version"] == "2.0"
+        )
+        approval = chosen["approval"]
+        (root / "project.json").write_bytes(settings + b"\n")
+        code, stale = _run(root, "restore", "1", "--approve", approval)
+        assert code == 1 and "stale" in stale["error"], stale
+        assert (root / "current").read_text() == "3\n"
+        (root / "project.json").write_bytes(settings)
+        code, restored = _run(root, "restore", "1", "--approve", approval)
+        assert code == 0 and restored["current"] == 4 and restored["exact"] is False, restored
+        assert len(history(root)) == 4
+        approximate = history(root)[-1]
+        assert approximate["exact"] is False and approximate["restoredFrom"] == 1
+        assert approximate["substitutions"] == chosen["substitutions"]
+        assert cast("dict[str, object]", approximate["snapshot"])["base"] == old_snapshot["base"]
         for name in ("workflows", "models", "outputs"):
             assert (root / name / "sentinel").read_bytes() == name.encode(
                 "ascii"
