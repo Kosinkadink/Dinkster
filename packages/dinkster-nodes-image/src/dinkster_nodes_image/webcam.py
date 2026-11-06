@@ -1,0 +1,78 @@
+"""Decode browser-captured camera frames from host-granted image assets."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+import numpy as np
+from dinkster_api.v1 import (
+    CORE_BOOLEAN,
+    CORE_INT,
+    IMAGE_TYPE,
+    IMAGE_WORKING_SET_LIMIT_BYTES,
+    AssetRef,
+    CustomWidgetDescriptor,
+    InputSpec,
+    LocalAssetRef,
+    Node,
+    NodeSchema,
+    NumberWidget,
+    OutputSpec,
+    TypeExpr,
+    open_image_components,
+)
+
+
+class WebcamCapture(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.image.webcam_capture",
+            display_name="Webcam Capture",
+            category="image",
+            search_terms=(
+                "WebcamCapture",
+                "camera input",
+                "live capture",
+                "camera feed",
+                "snapshot",
+            ),
+            inputs=(
+                InputSpec(
+                    "image", TypeExpr.concrete("WEBCAM"), widget=CustomWidgetDescriptor("WEBCAM")
+                ),
+                *(
+                    InputSpec(
+                        name,
+                        TypeExpr.concrete(CORE_INT),
+                        default=0,
+                        widget=NumberWidget(min=0, max=16384, step=1),
+                    )
+                    for name in ("width", "height")
+                ),
+                InputSpec("capture_on_queue", TypeExpr.concrete(CORE_BOOLEAN), default=True),
+            ),
+            outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        image: object,
+        width: int = 0,
+        height: int = 0,
+        capture_on_queue: bool = True,
+    ) -> Mapping[str, object]:
+        # Dimensions and queue capture configure the browser, not the saved frame decoder.
+        if not isinstance(image, (AssetRef, LocalAssetRef)):
+            raise TypeError("image must be an AssetRef or LocalAssetRef")
+        with open_image_components(
+            image,
+            max_dimension=16384,
+            max_source_bytes=IMAGE_WORKING_SET_LIMIT_BYTES,
+            max_working_set_bytes=IMAGE_WORKING_SET_LIMIT_BYTES // 2,
+        ) as frames:
+            frame = next(iter(frames))
+            pixels = np.ascontiguousarray(frame.pixels)[None]
+        return cls.outputs(IMAGE=pixels)
