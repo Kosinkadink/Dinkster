@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     CORE_INT,
     IMAGE_TYPE,
     IMAGE_WORKING_SET_LIMIT_BYTES,
+    WEBCAM_TYPE,
     AssetRef,
     CustomWidgetDescriptor,
     InputSpec,
@@ -39,7 +40,7 @@ class WebcamCapture(Node):
             ),
             inputs=(
                 InputSpec(
-                    "image", TypeExpr.concrete("WEBCAM"), widget=CustomWidgetDescriptor("WEBCAM")
+                    "image", TypeExpr.concrete(WEBCAM_TYPE), widget=CustomWidgetDescriptor("WEBCAM")
                 ),
                 *(
                     InputSpec(
