@@ -193,6 +193,57 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("installed", [False, True])
+def test_pack_metadata_discovers_manifest_entries_without_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed: bool
+) -> None:
+    import importlib.metadata
+
+    from dinkster.packs import first_party_pack_metadata
+
+    root = tmp_path / "source"
+    site = tmp_path / "site"
+    project = root / "packages/dinkster-nodes-unlisted-family"
+    project.mkdir(parents=True)
+    (project / "pyproject.toml").write_text('[project]\nname = "different-distribution"\n')
+    manifest = (
+        site / "surprising_pack/dinkster-pack.toml" if installed else project / "dinkster-pack.toml"
+    )
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        '[pack]\nname = "unlisted-runtime"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "never_import_this.nodes:NODES"\n'
+    )
+    (manifest.parent / "never_import_this.py").write_text("raise RuntimeError('not discovery')\n")
+    if installed:
+        metadata = site / "different_distribution-1.0.dist-info"
+        metadata.mkdir()
+        (metadata / "METADATA").write_text("Name: different-distribution\nVersion: 1.0\n")
+        (metadata / "RECORD").write_text("surprising_pack/dinkster-pack.toml,,\n")
+        distributions = tuple(importlib.metadata.distributions(path=[str(site)]))
+        monkeypatch.setattr(importlib.metadata, "distributions", lambda: distributions)
+        root = tmp_path / "engine-wheel"
+    assert first_party_pack_metadata(root) == {
+        "unlisted-runtime": ("never_import_this.nodes", "different-distribution")
+    }
+    manifest.write_text(
+        manifest.read_text().replace('publisher = "dinkster"', 'publisher = "other"')
+    )
+    assert first_party_pack_metadata(root) == {}
+    manifest.write_text(
+        manifest.read_text().replace('publisher = "other"', 'publisher = "dinkster"')
+    )
+    duplicate = (site if installed else project) / "duplicate_pack/dinkster-pack.toml"
+    duplicate.parent.mkdir()
+    duplicate.write_text(manifest.read_text())
+    if installed:
+        (site / "different_distribution-1.0.dist-info/RECORD").write_text(
+            "surprising_pack/dinkster-pack.toml,,\nduplicate_pack/dinkster-pack.toml,,\n"
+        )
+    with pytest.raises(ValueError, match="duplicate installed pack identity: unlisted-runtime"):
+        first_party_pack_metadata(root)
+
+
 def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

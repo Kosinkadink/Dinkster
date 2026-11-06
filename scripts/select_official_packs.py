@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from dinkster_workers import load_manifest
 
-from scripts.build_official_packs import OFFICIAL_PACK_FAMILIES
+from scripts.build_official_packs import is_official_pack_manifest
 
 
 def publication_selection(root: Path, before: str) -> tuple[str, ...]:
@@ -60,20 +60,13 @@ def select_packs(
         .decode()
         .split("\0")
     )
-    families = {f"dinkster-nodes-{family}" for family in OFFICIAL_PACK_FAMILIES}
     vision = PurePosixPath("packages/dinkster-nodes-vision")
     packs = {}
     with tempfile.TemporaryDirectory(prefix="official-pack-selection-") as directory:
         manifest_path = Path(directory) / "dinkster-pack.toml"
         for name in tracked:
             path = PurePosixPath(name)
-            if path.name != "dinkster-pack.toml" or not (
-                len(path.parts) == 3
-                and path.parts[1] in families
-                or len(path.parts) == 4
-                and path.parent.parent == vision
-                and path.parent.name.endswith("_pack")
-            ):
+            if not is_official_pack_manifest(path):
                 continue
             manifest_path.write_bytes(
                 subprocess.check_output(["git", "-C", str(root), "show", f"{head}:{name}"])

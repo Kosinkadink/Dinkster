@@ -395,6 +395,7 @@ def test_official_publication_uses_selected_manifest_versions(
         "dinkster-nodes-remote": "1.2.4",
         "dinkster-text": "0.1.0",
         "dinkster-upscale": "0.2.1",
+        "dinkster-nodes-unlisted-family": "4.2.1",
     }
     tracked = io.BytesIO()
     with tarfile.open(fileobj=tracked, mode="w") as archive:
@@ -469,6 +470,7 @@ def test_official_publication_uses_selected_manifest_versions(
         (("src/dinkster/serve.py", "pyproject.toml"), ()),
         (("packages/dinkster-nodes-foundation/src/nodes.py",), ("foundation",)),
         (("packages/dinkster-nodes-image/deleted.py",), ("image",)),
+        (("packages/dinkster-nodes-unlisted-family/src/nodes.py",), ("unlisted",)),
         (("packages/dinkster-nodes-dev/src/nodes.py",), ()),
         (("packages/dinkster-nodes-generation/dinkster-pack.toml",), ()),
         (("packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",), ("first",)),
@@ -495,6 +497,7 @@ def test_official_publication_selects_only_changed_committed_packs(
         "image": "packages/dinkster-nodes-image/dinkster-pack.toml",
         "first": "packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",
         "second": "packages/dinkster-nodes-vision/second_pack/dinkster-pack.toml",
+        "unlisted": "packages/dinkster-nodes-unlisted-family/dinkster-pack.toml",
     }
     committed = {
         path: (
@@ -503,7 +506,7 @@ def test_official_publication_selects_only_changed_committed_packs(
             f'[pack.entry]\nnodes = "vision.{name}:NODES"\n'
         ).encode()
         for (name, path), version in zip(
-            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5"), strict=True
+            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5", "4.2.1"), strict=True
         )
     }
 
@@ -523,7 +526,14 @@ def test_official_publication_selects_only_changed_committed_packs(
     monkeypatch.setattr("scripts.select_official_packs.subprocess.check_output", git)
     (tmp_path / "dinkster-pack.toml").write_text("invalid uncommitted data")
     assert select_packs(tmp_path, before="b" * 40) == expected
-    assert select_packs(tmp_path, before="0" * 40) == ("first", "foundation", "image", "second")
+    assert select_packs(tmp_path, before="0" * 40) == (
+        "first",
+        "foundation",
+        "image",
+        "second",
+        "unlisted",
+    )
+    assert select_packs(tmp_path, tag="pack/unlisted/v4.2.1") == ("unlisted",)
     assert select_packs(tmp_path, tag="pack/first/v3.4rc1") == ("first",)
     for tag in ("v3.4rc1", "pack/first/v3.4", "pack/unknown/v3.4rc1", "pack/first/v3.4rc1/extra"):
         with pytest.raises(ValueError, match="pack tag"):
@@ -1481,6 +1491,7 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     module = source / "dinkster_nodes_text"
     module.mkdir(parents=True)
     (module / "__init__.py").write_text(f"VALUE = {selected_value}\nNODES = []\n")
+    (source / "pyproject.toml").write_text('[project]\nname = "dinkster-nodes-text"\n')
     (source / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
