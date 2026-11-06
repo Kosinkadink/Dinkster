@@ -20,6 +20,10 @@
   order to target naming positions instead of preserving suffix IDs. The option
   composes with historical-template metadata; omitted options retain their wire
   shape. This is a declaration contract, not a claim of frontend migration support.
+- Historical replacement declarations may also rename the node type. First-party
+  schema renames retain historical family rules before a modern identity fallback;
+  dynamic native documents still require the frontend planner, not backend pure
+  graph renaming. The ComfyUI translation index includes only the identity fallback.
 - Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
   Expression publish same-type rules for historical family member identities.
   Rules preserve the math expression and output identities, and identify the

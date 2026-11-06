@@ -110,8 +110,8 @@ def first_party_schema(schema: NodeSchema) -> NodeSchema:
         schema.input_families or schema.output_families or schema.combos or schema.slots
     ):
         raise ValueError(f"{source}: backendPureRename disagrees with the schema")
-    if any(rule.from_type == source for rule in schema.replacements):
-        raise ValueError(f"{source}: existing same-type migration requires explicit integration")
+    if any(rule.from_type == source and rule.migration is None for rule in schema.replacements):
+        raise ValueError(f"{source}: existing replacement conflicts with the identity rule")
     renamed = replace(
         schema,
         node_type=target,

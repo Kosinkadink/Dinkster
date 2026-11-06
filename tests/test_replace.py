@@ -593,14 +593,15 @@ def test_rule_wire_roundtrip_full() -> None:
     assert "outputs" not in wire["cases"][1]
 
 
-def test_same_type_migration_wire_and_validation() -> None:
+@pytest.mark.parametrize("target", ["new.node", "renamed.node"])
+def test_historical_migration_wire_and_validation(target: str) -> None:
     migration = ReplacementMigration(("legacy.policy", "color_source", "color_value"))
     rule = ReplacementRule(
         from_type="new.node",
         migration=migration,
         cases=(
             ReplacementCase.build(
-                "new.node",
+                target,
                 slot_variants={"policy": "exact_color", "policy.color_source": "integer"},
                 inputs={"policy.color_source.color_value": MappingSource.copy("color_value")},
             ),
@@ -620,12 +621,6 @@ def test_same_type_migration_wire_and_validation() -> None:
         ReplacementMigration(("value", "value"))
     with pytest.raises(ValueError, match="invalid historical input id"):
         ReplacementMigration(("bad..path",))
-    with pytest.raises(ValueError, match="every case must preserve the node type"):
-        ReplacementRule(
-            from_type="old.node",
-            migration=ReplacementMigration(("value",)),
-            cases=(ReplacementCase.build("new.node"),),
-        )
     with pytest.raises(ValueError, match="must be ReplacementMigration"):
         ReplacementRule(
             from_type="new.node",

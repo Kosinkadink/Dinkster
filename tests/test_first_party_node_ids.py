@@ -213,13 +213,45 @@ def test_translation_index_collects_schema_rules_and_refuses_wrong_claims() -> N
 
 
 @pytest.mark.parametrize(
-    "source", ["ReferenceMultiLatent", "TextEncodeMOSSImageEdit", "MergeSplat", "MergeMeshes"]
+    "source",
+    [
+        "ReferenceMultiLatent",
+        "TextEncodeMOSSImageEdit",
+        "MergeSplat",
+        "MergeMeshes",
+        "ComfyAndNode",
+        "ComfyOrNode",
+        "ComfyMathExpression",
+        "BatchImagesNode",
+        "BatchMasksNode",
+        "BatchLatentsNode",
+        "CreateList",
+        "ConcatenateVideo",
+    ],
 )
 def test_renamed_prefixed_families_validate_without_serving_the_source(source: str) -> None:
     original = next(node.schema() for node in COMFY_NODES if node.schema().node_type == source)
     schema = first_party_schema(original)
     assert validate_replacement_references({schema.node_type: schema}) == ()
     assert schema.input_families == original.input_families
+    assert len(schema.replacements) == len(original.replacements) + 1
+    for before, after in zip(original.replacements, schema.replacements, strict=False):
+        assert after.migration == before.migration
+        assert after.from_type == before.from_type
+        assert after.cases == tuple(replace(case, to=schema.node_type) for case in before.cases)
+    row = next(
+        row
+        for row in json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())[
+            "nodes"
+        ]
+        if row["from"] == source
+    )
+    index = collect_comfy_translations([("dinkster", row["pack"], "0.0.1", (schema,))])
+    assert index["items"] == [
+        {"pack": row["pack"], "version": "0.0.1", "rule": rule_to_wire(schema.replacements[-1])}
+    ]
+    graph = Graph({"native": GraphNode(source, {"untouched": 17})})
+    assert migrate_pure_node_type_replacements(graph, {schema.node_type: schema}) == graph
     for case in schema.replacements[-1].cases:
         for family, mapping in case.input_families:
             assert mapping.source_family == family
