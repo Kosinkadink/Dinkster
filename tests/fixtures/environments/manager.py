@@ -8,7 +8,11 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--root")
+parser.add_argument("--registry")
 parser.add_argument("command")
+parser.add_argument("snapshot", nargs="?", type=Path)
+parser.add_argument("--no-venv", action="store_true")
+parser.add_argument("--yes", action="store_true")
 parser.add_argument("--catalog-lock", type=Path)
 parser.add_argument("--artifacts", type=Path)
 parser.add_argument("--output", type=Path)
@@ -44,5 +48,10 @@ if args.command == "prepare-registry-sources":
 elif args.command == "prepare-registry-locks":
     args.output.mkdir()
     print(json.dumps({"locks": [str(args.catalog_lock)] if problem == "path" else []}))
+elif args.command == "restore":
+    assert args.no_venv and args.yes
+    snapshot = json.loads(args.snapshot.read_bytes())
+    assert snapshot["format"] == "dinkster.snapshot/1"
+    assert snapshot["lockfile"]["packs"] == []
 elif args.command != "prepare-catalogs":
     parser.error("unsupported fixture command")

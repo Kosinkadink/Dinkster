@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-from .environment_history import prepare_entry, publish_entry
+from .environment_history import prepare_entry, publish_entry, record_failed_restore
 from .environment_runtime import (
     engine_assignments,
     preserve_stopped_engine,
@@ -93,6 +93,7 @@ def begin_activation(
     operation: str,
     *,
     project_settings: dict[str, str] | None = None,
+    restored_from: int | None = None,
 ) -> Path:
     """Persist prior bindings before building; caller holds the project writer lock."""
     if operation not in {"update", "rollback", "repair", "restore"}:
@@ -132,6 +133,7 @@ def begin_activation(
             "planned",
             bindings=tuple(bindings),
             project_settings=project_settings,
+            restored_from=restored_from,
         ).write(path)
         Journal.read(path)
         return path
@@ -242,4 +244,11 @@ def recover_activation(root: Path, path: Path) -> None:
         shutil.rmtree(target_root)
     if journal.setup_registration is not None:
         restore_setup_registration(root, journal.setup_registration)
+    if journal.operation == "restore" and journal.restored_from is not None:
+        record_failed_restore(
+            root,
+            path.stem,
+            journal.restored_from,
+            journal.error or "restore interrupted before successful activation",
+        )
     replace(journal, stage="rolled-back").write(path)

@@ -176,6 +176,12 @@ approves substitutions. A changed project, current pointer or history invalidate
 the approval. Without an obtainable candidate, restore makes no changes.
 Failed restores append separate immutable receipts under
 `<root>/attempts/`, exposed as `attempts` in the history JSON result.
+The activation journal records `restoredFrom` before construction; recovery of an
+interrupted restore appends its failure receipt before making the journal terminal.
+Repeated recovery never duplicates an attempt. Source archives are retained in
+the engine cache after admission. Restore uses the target engine's exact-pin pack
+restore in a disposable install root to reacquire missing sources; it does not
+resolve newer pack versions or mutate the project's standalone pack install.
 
 Activation journals retain a prepared `historyEntry` before starting the target.
 Only a completed activation publishes that entry. Recovery republishes an

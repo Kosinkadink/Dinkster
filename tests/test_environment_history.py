@@ -137,6 +137,53 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
         assert queried["attempts"][0]["restoredFrom"] == 1
         assert queried["attempts"][0]["error"] == failed["error"]
         monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
+        interrupt_restore = """
+import os
+import sys
+from dinkster_supervisor import environment, environment_restore
+built = sys.argv[2] == 'built'
+original = environment_restore.build_generation
+def interrupt(**kwargs):
+    if built:
+        original(**kwargs)
+    os._exit(73)
+environment_restore.build_generation = interrupt
+sys.argv = ['dinkster-env', '--root', sys.argv[1], 'restore', '1', '--yes', '--json']
+environment.main()
+"""
+        for count, stage in enumerate(("building", "built"), 2):
+            interrupted = subprocess.run(
+                [sys.executable, "-c", interrupt_restore, str(root), stage], timeout=120
+            )
+            assert interrupted.returncode == 73
+            assert (root / "current").read_text() == "3\n" and history(root) == entries
+            if stage == "building":
+                interrupted_recovery = """
+import os
+import sys
+from dinkster_supervisor import environment, environment_transactions
+original = environment_transactions.record_failed_restore
+def interrupt(*args, **kwargs):
+    original(*args, **kwargs)
+    os._exit(74)
+environment_transactions.record_failed_restore = interrupt
+sys.argv = ['dinkster-env', '--root', sys.argv[1], 'stop', '--yes', '--json']
+environment.main()
+"""
+                recovered_once = subprocess.run(
+                    [sys.executable, "-c", interrupted_recovery, str(root)], timeout=120
+                )
+                assert recovered_once.returncode == 74
+                assert len(_run(root, "history")[1]["attempts"]) == count
+            assert _run(root, "stop", "--yes")[0] == 0
+            assert not (root / "generations/4").exists()
+            code, recovered = _run(root, "history")
+            assert code == 0 and len(recovered["attempts"]) == count
+            assert recovered["attempts"][-1]["restoredFrom"] == 1
+            assert "interrupted" in recovered["attempts"][-1]["error"]
+            assert history(root) == entries
+            assert _run(root, "stop", "--yes")[0] == 0
+            assert _run(root, "history")[1]["attempts"] == recovered["attempts"]
         old_snapshot = cast("dict[str, object]", first["snapshot"])
         old_engine = cast("dict[str, str]", old_snapshot["engine"])
         old_metadata = cast("dict[str, str]", old_snapshot["metadata"])

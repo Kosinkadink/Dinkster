@@ -118,7 +118,7 @@ def restore_entry(
     with writer_lock(store), writer_lock(root):
         revalidate()
         target = next_generation(root)
-        journal = begin_activation(root, target, "restore")
+        journal = begin_activation(root, target, "restore", restored_from=entry_id)
         try:
             replace(Journal.read(journal), stage="building").write(journal)
             with tempfile.TemporaryDirectory(prefix="dinkster-restore-") as temporary:
@@ -238,6 +238,7 @@ def restore_entry(
                     if "dinkster.lock" in metadata
                     else None,
                     acquire_pack_wheels=True,
+                    acquire_pack_sources=True,
                     artifact_sources=provenance,
                 )
             entry = prepare_entry(

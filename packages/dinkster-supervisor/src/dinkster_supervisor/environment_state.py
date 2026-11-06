@@ -399,6 +399,7 @@ class Journal:
     collected_store_paths: tuple[str, ...] = ()
     relocation: dict[str, object] | None = None
     history_entry: dict[str, object] | None = None
+    restored_from: int | None = None
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -577,6 +578,11 @@ class Journal:
             ):
                 raise EnvironmentError("journal history entry must describe its activation")
             generation_number(entry.get("id"))
+        restored_from = value.get("restoredFrom")
+        if restored_from is not None:
+            if operation != "restore":
+                raise EnvironmentError("restoredFrom requires a restore journal")
+            restored_from = generation_number(restored_from)
         return cls(
             operation,
             None if previous is None else generation_number(previous),
@@ -591,6 +597,7 @@ class Journal:
             store_paths,
             relocation,
             entry,
+            restored_from,
         )
 
     @property
@@ -622,6 +629,8 @@ class Journal:
             value["relocation"] = self.relocation
         if self.history_entry is not None:
             value["historyEntry"] = self.history_entry
+        if self.restored_from is not None:
+            value["restoredFrom"] = self.restored_from
         write_document(path, value)
 
 
