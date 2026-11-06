@@ -17,6 +17,7 @@ CAMERA_INFO_STATE_TYPE = "CAMERA_INFO_STATE"
 
 IMAGE_TYPE = "IMAGE"
 IMAGECOMPARE_TYPE = "IMAGECOMPARE"
+WEBCAM_TYPE = "WEBCAM"
 MASK_TYPE = "MASK"
 LATENT_TYPE = "LATENT"
 MODEL_TYPE = "MODEL"
@@ -215,6 +216,7 @@ __all__ = [
     "VIDEO_TYPE",
     "VOXEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
+    "WEBCAM_TYPE",
 ]
 
 # Image documents remain owned by the image pack, not foundation.
