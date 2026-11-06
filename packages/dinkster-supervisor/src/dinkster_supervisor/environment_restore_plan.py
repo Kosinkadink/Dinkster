@@ -369,14 +369,11 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
             continue
         try:
             if "dependencies" in engine:
-                selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
-                validate_dependency_base(selection, base)
                 requirements = engine_constraints(engine, variant)
             else:
                 requirements = next(
                     read_metadata(root, "constraints.txt").decode("utf-8") for root in roots
                 )
-            constraints = effective_constraints(requirements, base, strict="dependencies" in engine)
             candidate = copy.deepcopy(snapshot)
             candidate_metadata = dict(metadata)
             candidate_provenance = copy.deepcopy(provenance)
@@ -395,12 +392,19 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
                 json.dumps(candidate_provenance, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
             )
             candidate_metadata["engine-manifest.json"] = data.decode("utf-8")
-            candidate_metadata["constraints.txt"] = constraints
+            candidate_metadata["constraints.txt"] = requirements
             candidate["engine"] = {"version": engine["version"], "release": identity}
+            candidate["metadata"] = candidate_metadata
+            # A replacement engine may require a base the historical engine cannot use.
+            alternatives.extend(_base_alternatives(candidate))
+            if "dependencies" in engine:
+                selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
+                validate_dependency_base(selection, base)
+            constraints = effective_constraints(requirements, base, strict="dependencies" in engine)
+            candidate_metadata["constraints.txt"] = constraints
             candidate["constraints"] = (
                 "sha256:" + hashlib.sha256(constraints.encode("utf-8")).hexdigest()
             )
-            candidate["metadata"] = candidate_metadata
             alternatives.append(candidate)
         except (OSError, ValueError):
             continue

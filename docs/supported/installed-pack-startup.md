@@ -12,8 +12,10 @@
   Missing local interpreter files or wheels are disclosed before activation.
 - For snapshots without packs, a missing base can be replaced by an indexed base
   with the same native platform, Python and worker protocol when its locked engine
-  requirements agree. The proposal preserves the engine and requires explicit
-  substitution approval rather than silently upgrading it.
+  requirements agree. Compatible engine/base pairs are offered when replacing
+  either component alone cannot work. Proposals prefer fewer changed identities,
+  preserve an obtainable compatible engine, and disclose every substitution for
+  explicit approval rather than silently upgrading it.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.

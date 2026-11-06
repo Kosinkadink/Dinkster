@@ -19,11 +19,12 @@ from test_environment_cli import _run
 from test_environment_runtime import free_port
 from test_environment_state import _generation
 
-from tests.fixtures.environments.build import canonical_json, executable_release
+from tests.fixtures.environments.build import build_base, canonical_json, executable_release
 
 
-def test_missing_base_offers_only_compatible_substitution_without_upgrading_engine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("combined", [False, True], ids=["base-only", "engine-and-base"])
+def test_missing_base_offers_minimal_compatible_replacements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, combined: bool
 ):
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
@@ -72,6 +73,42 @@ def test_missing_base_offers_only_compatible_substitution_without_upgrading_engi
         shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
         code, result = _run(root, "update", "--yes")
         assert code == 0 and result["current"] == 2, result
+        expected_engine = snapshot["engine"]
+        if combined:
+            scratch = tmp_path / "replacement-base"
+            scratch.mkdir()
+            base = build_base(mirror, scratch, base_record["variant"], version="1.1")
+            replacement_id = base["id"]
+            index.append(
+                {
+                    "id": replacement_id,
+                    "path": f"base/{base_record['variant']}/{replacement_id[7:]}",
+                }
+            )
+            (published.parent / "index.json").write_text(json.dumps(index))
+            executable_release(mirror, base, "3.0", 73)
+            channel_path = mirror / "channels/main.json"
+            channel = json.loads(channel_path.read_bytes())
+            expected_engine = {key: channel["engine"][key] for key in ("version", "release")}
+            channel["base"][base_record["variant"]] = {
+                "id": replacement_id,
+                "locations": [
+                    {
+                        "type": "mirror",
+                        "path": f"base/{base_record['variant']}/{replacement_id[7:]}/manifest.json",
+                    }
+                ],
+            }
+            channel_path.write_bytes(canonical_json(channel))
+            # Neither replacement works with its historical counterpart.
+            for item in index[1:-1]:
+                shutil.rmtree(mirror / item["path"])
+            old_release = snapshot["engine"]["release"][7:]
+            shutil.rmtree(mirror / "engine" / old_release)
+            manifest = json.loads(snapshot["metadata"]["engine-manifest.json"])
+            for row in manifest["artifacts"]:
+                if row["name"].endswith(".whl"):
+                    shutil.rmtree(store / "wheels" / row["sha256"])
         preserved = {path.name: path.read_bytes() for path in (root / "history").glob("*.json")}
         shutil.rmtree(published)
         shutil.rmtree(store / "bases" / base_record["id"][7:])
@@ -88,15 +125,25 @@ def test_missing_base_offers_only_compatible_substitution_without_upgrading_engi
         alternatives = result["restorePlan"]["alternatives"]
         assert len(alternatives) == 1
         chosen = alternatives[0]
-        assert chosen["snapshot"]["engine"] == snapshot["engine"]
+        assert chosen["snapshot"]["engine"] == expected_engine
         assert chosen["snapshot"]["base"]["id"] == replacement_id
-        assert chosen["substitutions"] == [
-            {
-                "field": "base",
-                "before": base_record,
-                "after": {"id": replacement_id, "variant": base_record["variant"]},
+        base_change = {
+            "field": "base",
+            "before": base_record,
+            "after": {"id": replacement_id, "variant": base_record["variant"]},
+        }
+        assert base_change in chosen["substitutions"]
+        assert {row["field"] for row in chosen["substitutions"]} == (
+            {"engine", "base", "constraints"} if combined else {"base"}
+        )
+        if combined:
+            assert next(row for row in chosen["substitutions"] if row["field"] == "engine") == {
+                "field": "engine",
+                "before": snapshot["engine"],
+                "after": expected_engine,
             }
-        ]
+        else:
+            assert chosen["substitutions"] == [base_change]
         assert {
             path.relative_to(root).as_posix(): path.read_bytes()
             for path in root.rglob("*")
@@ -107,7 +154,7 @@ def test_missing_base_offers_only_compatible_substitution_without_upgrading_engi
         code, result = _run(root, "restore", "1", "--approve", chosen["approval"])
         assert code == 0 and result["current"] == 3 and result["exact"] is False, result
         restored = history(root)[-1]
-        assert cast("dict", restored["snapshot"])["engine"] == snapshot["engine"]
+        assert cast("dict", restored["snapshot"])["engine"] == expected_engine
         assert cast("dict", restored["snapshot"])["base"]["id"] == replacement_id
         assert restored["substitutions"] == chosen["substitutions"]
         assert {
