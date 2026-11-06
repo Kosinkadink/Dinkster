@@ -3817,6 +3817,42 @@
       "pack": "dinkster-wan",
       "nodeType": "dinkster.wan.wan_block_swap",
       "backendPureRename": true
+    },
+    {
+      "from": "CreateBoundingBoxes",
+      "pack": "dinkster-image",
+      "nodeType": "dinkster.image.create_bounding_boxes",
+      "backendPureRename": true
+    },
+    {
+      "from": "LayersFromBoundingBoxes",
+      "pack": "dinkster-image",
+      "nodeType": "dinkster.image.layers_from_bounding_boxes",
+      "backendPureRename": true
+    },
+    {
+      "from": "ImageCompositor",
+      "pack": "dinkster-image",
+      "nodeType": "dinkster.image.image_compositor",
+      "backendPureRename": true
+    },
+    {
+      "from": "WebcamCapture",
+      "pack": "dinkster-image",
+      "nodeType": "dinkster.image.webcam_capture",
+      "backendPureRename": true
+    },
+    {
+      "from": "LoadMoGeModel",
+      "pack": "dinkster-vision-moge",
+      "nodeType": "dinkster.vision.moge.load_mo_ge_model",
+      "backendPureRename": true
+    },
+    {
+      "from": "SplatToMesh",
+      "pack": "dinkster-3d",
+      "nodeType": "dinkster.3d.splat_to_mesh",
+      "backendPureRename": true
     }
   ]
 }
