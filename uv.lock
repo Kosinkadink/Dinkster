@@ -1281,7 +1281,7 @@ requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
 name = "dinkster-nodes-image"
-version = "0.0.5"
+version = "0.0.2"
 source = { editable = "packages/dinkster-nodes-image" }
 dependencies = [
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
