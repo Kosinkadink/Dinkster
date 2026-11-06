@@ -7,7 +7,20 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import numpy as np
-from dinkster_api.v1 import Node
+from dinkster_api.v1 import (
+    ARRAY_TYPE,
+    BOUNDING_BOX_TYPE,
+    BOUNDING_BOXES_TYPE,
+    CORE_INT,
+    CORE_STRING,
+    IMAGE_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    NumberWidget,
+    OutputSpec,
+    TypeExpr,
+)
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 
@@ -299,6 +312,78 @@ def build_elements(regions: list[Any]) -> list[dict[str, Any]]:
 
 
 class CreateBoundingBoxes(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.image.create_bounding_boxes",
+            display_name="Create Bounding Boxes",
+            category="utilities",
+            description=(
+                "Draw bounding boxes in a canvas. Outputs Ideogram prompt elements, "
+                "pixel-space bounding boxes, and a preview image."
+            ),
+            search_terms=("CreateBoundingBoxes",),
+            output_node=True,
+            inputs=(
+                InputSpec(
+                    "background",
+                    TypeExpr.concrete(IMAGE_TYPE),
+                    required=False,
+                    doc="Optional image used as background in the canvas and preview.",
+                ),
+                InputSpec(
+                    "bboxes",
+                    TypeExpr.union(BOUNDING_BOX_TYPE, ARRAY_TYPE, CORE_STRING),
+                    required=False,
+                    doc=(
+                        "Bounding boxes, elements, or a JSON string to initialize the canvas. "
+                        "A new upstream value initializes the canvas; edits made on the canvas "
+                        "take priority and are kept until the upstream value changes again."
+                    ),
+                ),
+                InputSpec(
+                    "width",
+                    TypeExpr.concrete(CORE_INT),
+                    default=1024,
+                    widget=NumberWidget(min=64, max=16_384, step=16),
+                    doc="Width of the canvas and the pixel grid for the bounding boxes.",
+                ),
+                InputSpec(
+                    "height",
+                    TypeExpr.concrete(CORE_INT),
+                    default=1024,
+                    widget=NumberWidget(min=64, max=16_384, step=16),
+                    doc="Height of the canvas and the pixel grid for the bounding boxes.",
+                ),
+                InputSpec(
+                    "editor_state",
+                    TypeExpr.concrete(BOUNDING_BOXES_TYPE),
+                    default=[],
+                    doc=(
+                        "Draw bounding boxes and set each box type, text, description, color "
+                        "palette. Start with background element first and foreground last."
+                    ),
+                ),
+                InputSpec(
+                    "last_incoming",
+                    TypeExpr.concrete(BOUNDING_BOXES_TYPE),
+                    required=False,
+                    default=[],
+                    socketless=True,
+                    doc=(
+                        "Internal state managed by the canvas: the upstream bboxes value that "
+                        "last initialized it. Leave empty to re-initialize the canvas from "
+                        "the bboxes input on the next run."
+                    ),
+                ),
+            ),
+            outputs=(
+                OutputSpec("preview", TypeExpr.concrete(IMAGE_TYPE), display_name="preview"),
+                OutputSpec("bboxes", TypeExpr.concrete(BOUNDING_BOX_TYPE), display_name="bboxes"),
+                OutputSpec("elements", TypeExpr.concrete(ARRAY_TYPE), display_name="elements"),
+            ),
+        )
+
     @classmethod
     def execute(
         cls,
