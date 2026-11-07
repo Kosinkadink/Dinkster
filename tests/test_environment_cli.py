@@ -874,7 +874,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
         assert code == 0 and any("feasibility: pending" in line for line in unavailable["plan"])
         assert '"version": "9.9.9"' in "\n".join(unavailable["plan"])
         assert snapshot() == before
-    cached = next(artifacts.glob("*.zip"))
+    cached = next(artifacts.rglob("*.zip"))
     cached.write_bytes(b"x" * cached.stat().st_size)
     before = snapshot()
     code, corrupt = _run(root, "update", "--plan")
@@ -1295,7 +1295,7 @@ environment.main()
             "official-packs.lock"
         ]
         assert sorted(
-            path.read_bytes() for path in (cached_release / "artifacts").glob("*.zip")
+            path.read_bytes() for path in (cached_release / "artifacts").rglob("*.zip")
         ) == sorted(payload for name, payload in payloads.items() if name.endswith(".zip"))
         assert {path: path.read_bytes() for path in (root / "journal").glob("*.json")} == (
             before_journals
