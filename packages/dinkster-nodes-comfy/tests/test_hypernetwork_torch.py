@@ -202,7 +202,8 @@ def test_hypernetwork_layer_norm_and_dropout(tmp_path: Path, last_layer_dropout:
     expected_k = expected(torch.tensor([[[9.0, -6.5], [-5.0, 9.5]]]))
     expected_v = expected(torch.tensor([[[-14.0, 6.5], [14.0, -1.5]]]))
     torch.manual_seed(441)
-    _, k, v = patch(value, value, value, {})
+    with torch.inference_mode():
+        _, k, v = patch(value, value, value, {})
     torch.testing.assert_close(k, expected_k)
     torch.testing.assert_close(v, expected_v)
 
