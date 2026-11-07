@@ -12,6 +12,7 @@ def void_providers(in_process: bool, *, sampling: bool = False) -> dict[Path, Pa
     packages = [
         ("dinkster-latent", "dinkster_nodes_latent"),
         ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+        ("dinkster-video", "dinkster_nodes_video"),
     ]
     if sampling:
         packages.append(("dinkster-sampling", "dinkster_nodes_sampling"))

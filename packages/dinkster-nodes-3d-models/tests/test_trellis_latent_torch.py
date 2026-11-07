@@ -14,6 +14,7 @@ def test_empty_trellis_latent_layout() -> None:
     assert samples.dtype == torch.float32
     assert torch.count_nonzero(samples).item() == 0
     assert {key: value for key, value in result.items() if key != "samples"} == {"type": "trellis2"}
-    samples.fill_(3)
+    with torch.inference_mode():
+        samples.fill_(3)
     fresh = EmptyTrellis2LatentStructure.execute(batch_size=2)["LATENT"]
     assert torch.count_nonzero(fresh["samples"]).item() == 0

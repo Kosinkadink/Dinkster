@@ -70,9 +70,7 @@ def _sam3d_worker_env(tmp_path: Path, **values: str) -> dict[str, str]:
 def _sam3d_pack_info(manifest: Path) -> dict[str, PackInfo]:
     return {
         "dinkster-nodes-image": {"dinkster-image": PackInfo("Image", version="0.0.1")},
-        "dinkster-nodes-vision-sam3": {
-            "dinkster-vision-sam3": PackInfo("SAM3", version="0.0.1")
-        },
+        "dinkster-nodes-vision-sam3": {"dinkster-vision-sam3": PackInfo("SAM3", version="0.0.1")},
         "dinkster-nodes-vision-sam3d-body": {
             "dinkster-vision-sam3d-body": PackInfo("SAM3D Body", version="0.0.1")
         },
