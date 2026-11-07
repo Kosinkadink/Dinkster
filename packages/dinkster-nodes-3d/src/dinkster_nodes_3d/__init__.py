@@ -10,18 +10,16 @@ from dinkster_api.v1 import (
     TypeRegistry,
     register_asset_type,
     register_file3d_types,
-    register_load3d_type,
-    register_media_types,
-    register_splat_type,
-    register_video_value_type,
-    resolver_from_env,
-)
-from dinkster_inference_wire.camera_wire import (
     register_load3d_camera_type,
     register_load3d_model_info_type,
+    register_load3d_type,
+    register_media_types,
+    register_mesh_type,
+    register_splat_type,
+    register_video_value_type,
+    register_voxel_type,
+    resolver_from_env,
 )
-from dinkster_inference_wire.geometry_wire import register_mesh_type
-from dinkster_inference_wire.voxel_wire import register_voxel_type
 
 from .camera_angle import CameraAngle
 from .camera_info import CreateCameraInfo

@@ -459,6 +459,13 @@ from dinkster_video import (
 _VIDEO_MODULE_EXPORTS = frozenset(
     {"image_math", "timeline_document", "timeline_render", "timeline_runtime"}
 )
+_PACK_CODEC_EXPORTS = {
+    "register_load3d_camera_type": "dinkster_inference_wire.camera_wire",
+    "register_load3d_model_info_type": "dinkster_inference_wire.camera_wire",
+    "register_mesh_type": "dinkster_inference_wire.geometry_wire",
+    "register_shape_subdivides_type": "dinkster_inference_wire.shape_subdivides_wire",
+    "register_voxel_type": "dinkster_inference_wire.voxel_wire",
+}
 _PACK_MEDIA_EXPORTS = {
     "IMAGE_DOCUMENT_MEDIA_TYPE": "dinkster_image_document.format",
     "BLEND_MODES": "dinkster_image_document.format",
@@ -487,7 +494,9 @@ _PACK_MEDIA_EXPORTS = {
 
 
 def __getattr__(name: str) -> object:
-    if name in _PACK_MEDIA_EXPORTS:
+    if name in _PACK_CODEC_EXPORTS:
+        value = getattr(import_module(_PACK_CODEC_EXPORTS[name]), name)
+    elif name in _PACK_MEDIA_EXPORTS:
         value = getattr(import_module(_PACK_MEDIA_EXPORTS[name]), name)
     elif name in _VIDEO_MODULE_EXPORTS:
         import dinkster_video
@@ -532,6 +541,7 @@ def __dir__() -> list[str]:
     return sorted(
         set(globals())
         | _VIDEO_MODULE_EXPORTS
+        | _PACK_CODEC_EXPORTS.keys()
         | _PACK_MEDIA_EXPORTS.keys()
         | {
             "LatentStream",
@@ -578,8 +588,14 @@ if TYPE_CHECKING:
         ordered_layer_ids,
     )
     from dinkster_image_document.interchange import export_ora, export_psd, load_document
+    from dinkster_inference_wire.camera_wire import (
+        register_load3d_camera_type,
+        register_load3d_model_info_type,
+    )
+    from dinkster_inference_wire.geometry_wire import register_mesh_type
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.shape_subdivides_wire import register_shape_subdivides_type
     from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
@@ -595,6 +611,7 @@ if TYPE_CHECKING:
         register_media_types,
         register_vision_packet_types,
     )
+    from dinkster_inference_wire.voxel_wire import register_voxel_type
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
     from dinkster_video import timeline as timeline_render
@@ -603,6 +620,11 @@ if TYPE_CHECKING:
 __all__ = [
     "TriangleMeshBatch",
     "materialize_mesh",
+    "register_load3d_camera_type",
+    "register_load3d_model_info_type",
+    "register_mesh_type",
+    "register_shape_subdivides_type",
+    "register_voxel_type",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",

@@ -13,8 +13,8 @@ from typing import cast
 
 import numpy as np
 import torch
+from dinkster_api.v1 import TriangleMeshBatch
 from dinkster_inference import model_management
-from dinkster_inference_wire import TriangleMeshBatch
 from scipy.ndimage import map_coordinates
 from scipy.ndimage import maximum as ndi_maximum
 from scipy.ndimage import minimum as ndi_minimum

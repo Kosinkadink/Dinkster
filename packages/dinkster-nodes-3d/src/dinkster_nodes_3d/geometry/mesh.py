@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
-from dinkster_inference_wire import TriangleMeshBatch
+from dinkster_api.v1 import TriangleMeshBatch
 from PIL import Image
 
 

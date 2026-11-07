@@ -11,6 +11,8 @@
   through that API without importing worker internals.
 - Packs can register latent-based transport codecs through `dinkster_api.v1`
   using the canonical encoder, decoder, fingerprint and encoded-value validator.
+- Packs can register mesh, voxel, shape-subdivision, Load3D camera and model-info
+  codecs through the same API without importing Torch or the inference runtime.
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.

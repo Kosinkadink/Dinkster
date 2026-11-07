@@ -14,11 +14,11 @@ from dinkster_api.v1 import (
     latent_fingerprint,
     register_asset_type,
     register_media_types,
+    register_mesh_type,
     register_resident_type,
     resolver_from_env,
     validate_latent_encoded,
 )
-from dinkster_inference_wire.geometry_wire import register_mesh_type
 
 from .loader import LoadMoGeModel
 from .moge import MoGeGeometryToFOV

@@ -33,6 +33,11 @@ from tests.async_scenarios import run_scenario
 GOLDEN_V1_SURFACE = (
     "TriangleMeshBatch",
     "materialize_mesh",
+    "register_load3d_camera_type",
+    "register_load3d_model_info_type",
+    "register_mesh_type",
+    "register_shape_subdivides_type",
+    "register_voxel_type",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -825,7 +830,9 @@ from dinkster_inference_wire import materialize_voxel
 from dinkster_native.native import register_native_types
 assert materialize_voxel is api.materialize_voxel
 for registrations in ((api.register_inference_types, register_native_types),
-                      (register_native_types, api.register_inference_types)):
+                      (register_native_types, api.register_inference_types),
+                      (api.register_voxel_type, register_native_types),
+                      (register_native_types, api.register_voxel_type)):
     for preexisting in (True, False):
         registry = api.TypeRegistry()
         first = registry.register(api.VOXEL_TYPE) if preexisting else None
@@ -956,10 +963,14 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_image_document.document as document
     import dinkster_image_document.format as document_format
     import dinkster_image_document.interchange as document_interchange
+    import dinkster_inference_wire.camera_wire as camera_wire
+    import dinkster_inference_wire.geometry_wire as geometry_wire
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
+    import dinkster_inference_wire.shape_subdivides_wire as shape_wire
     import dinkster_inference_wire.sparse as sparse_values
     import dinkster_inference_wire.types as inference_types
+    import dinkster_inference_wire.voxel_wire as voxel_wire
     import dinkster_memory
     import dinkster_memory.resident as resident_pool
     import dinkster_protocol
@@ -971,6 +982,11 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_workers.execution as worker_execution
 
     document_sources = {
+        "register_load3d_camera_type": camera_wire,
+        "register_load3d_model_info_type": camera_wire,
+        "register_mesh_type": geometry_wire,
+        "register_shape_subdivides_type": shape_wire,
+        "register_voxel_type": voxel_wire,
         "first_party_schema": first_party,
         "default_pool": resident_pool,
         "comfy_resident_meta": resident_codec,

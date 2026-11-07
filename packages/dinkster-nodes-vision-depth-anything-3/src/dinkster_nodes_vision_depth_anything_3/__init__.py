@@ -9,11 +9,11 @@ from dinkster_api.v1 import (
     default_pool,
     register_asset_type,
     register_media_types,
+    register_mesh_type,
     register_resident_type,
     register_vision_packet_types,
     resolver_from_env,
 )
-from dinkster_inference_wire.geometry_wire import register_mesh_type
 
 from .depth_anything_3 import DA3GeometryToMesh, DA3Inference, DA3Render, LoadDA3Model
 

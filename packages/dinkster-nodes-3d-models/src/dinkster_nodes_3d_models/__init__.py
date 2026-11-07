@@ -9,13 +9,13 @@ from dinkster_api.v1 import (
     comfy_resident_meta,
     default_pool,
     register_media_types,
+    register_mesh_type,
     register_resident_type,
+    register_shape_subdivides_type,
     register_splat_type,
+    register_voxel_type,
 )
 from dinkster_inference_wire.conditioning_wire import register_conditioning_type
-from dinkster_inference_wire.geometry_wire import register_mesh_type
-from dinkster_inference_wire.shape_subdivides_wire import register_shape_subdivides_type
-from dinkster_inference_wire.voxel_wire import register_voxel_type
 
 from .latent_model_specific import EmptyTrellis2LatentStructure
 from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning

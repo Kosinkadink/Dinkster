@@ -15,7 +15,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import torch
-from dinkster_inference_wire import MEBIBYTE
+from dinkster_api.v1 import MEBIBYTE
 from torch import Tensor
 
 from . import mesh as _mesh

@@ -13,12 +13,12 @@ from dinkster_api.v1 import (
     register_asset_type,
     register_box_types,
     register_file3d_types,
+    register_load3d_camera_type,
     register_media_types,
     register_resident_type,
     register_vision_packet_types,
     resolver_from_env,
 )
-from dinkster_inference_wire.camera_wire import register_load3d_camera_type
 from dinkster_inference_wire.sam3_wire import register_sam3_track_type
 
 from .sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
