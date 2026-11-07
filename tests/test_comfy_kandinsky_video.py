@@ -1,14 +1,14 @@
 """Torch-free Kandinsky video discovery and public schema."""
 
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.kandinsky_video import Kandinsky5ImageToVideo
+from dinkster_nodes_misc_models import NODES
+from dinkster_nodes_misc_models.kandinsky_video import Kandinsky5ImageToVideo
 
 
 def test_kandinsky_video_public_schema() -> None:
     schema = Kandinsky5ImageToVideo.schema()
-    assert Kandinsky5ImageToVideo in COMFY_NODES
-    assert schema.node_type == "Kandinsky5ImageToVideo"
+    assert NODES.count(Kandinsky5ImageToVideo) == 1
+    assert schema.node_type == "dinkster.misc.models.kandinsky5_image_to_video"
     assert schema.category == "model/conditioning/kandinsky"
     assert tuple(item.id for item in schema.inputs) == (
         "positive",

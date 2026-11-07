@@ -1,14 +1,24 @@
 """Torch-free Stable Zero123 and Stable Video 3D public interfaces."""
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.stable3d import STABLE3D_NODES
+from dinkster_nodes_sd import NODES
+from dinkster_nodes_sd.stable3d import (
+    StableZero123_Conditioning,
+    StableZero123_Conditioning_Batched,
+    SV3D_Conditioning,
+)
+
+STABLE3D_NODES = (
+    StableZero123_Conditioning,
+    StableZero123_Conditioning_Batched,
+    SV3D_Conditioning,
+)
 
 
 def test_stable3d_interfaces() -> None:
     expected = (
         (
-            "StableZero123_Conditioning",
+            "dinkster.sd.stable_zero123_conditioning",
             (
                 "clip_vision",
                 "init_image",
@@ -21,7 +31,7 @@ def test_stable3d_interfaces() -> None:
             ),
         ),
         (
-            "StableZero123_Conditioning_Batched",
+            "dinkster.sd.stable_zero123_conditioning_batched",
             (
                 "clip_vision",
                 "init_image",
@@ -36,7 +46,7 @@ def test_stable3d_interfaces() -> None:
             ),
         ),
         (
-            "SV3D_Conditioning",
+            "dinkster.sd.sv3_d_conditioning",
             ("clip_vision", "init_image", "vae", "width", "height", "video_frames", "elevation"),
         ),
     )
@@ -48,7 +58,7 @@ def test_stable3d_interfaces() -> None:
         == expected
     )
     for node in STABLE3D_NODES:
-        assert node in COMFY_NODES
+        assert NODES.count(node) == 1
         assert tuple(output.id for output in node.schema().outputs) == (
             "positive",
             "negative",
