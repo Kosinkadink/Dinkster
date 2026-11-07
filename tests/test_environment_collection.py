@@ -359,6 +359,7 @@ def test_cleanup_preview_and_status_are_read_only_and_explain_retention(
         "covered",
         "observer-changed",
         "packed-no-launch",
+        "unsealed-pack-runtime",
         "missing-history",
         "prepared-only",
         "missing-provenance",
@@ -404,7 +405,7 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
             snapshot = cast("dict[str, object]", entry["snapshot"])
             snapshot["host"] = {"system": "other", "python": "different"}
             snapshot["tools"] = {"version": "older"}
-        if condition == "packed-no-launch" and number == 2:
+        if condition in {"packed-no-launch", "unsealed-pack-runtime"} and number == 2:
             lock = tree / "packs/fixture/pack-lock.json"
             lock.parent.mkdir(parents=True)
             lock.write_text("{}")
@@ -417,6 +418,8 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
             metadata = cast("dict[str, str]", snapshot["metadata"])
             metadata["packs/fixture/pack-lock.json"] = "{}"
             # The sealed interpreter fixture cannot execute; preview must only read it.
+            if condition == "unsealed-pack-runtime":
+                (lock.parent / "runtime.py").write_bytes(b"modified runtime, unchanged lock")
         publish_entry(tmp_path, entry)
         Journal(
             operation,

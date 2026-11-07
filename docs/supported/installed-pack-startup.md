@@ -283,6 +283,8 @@
   ambiguous coverage defers the tree. Host and tools observations do not change
   software identity. Preview never launches an interpreter, publishes or repairs
   history; candidate status is advisory rather than deletion authorization.
+  Pack environments containing runtime payloads not represented in software
+  history defer rather than treating unchanged dependency locks as payload proof.
   Managed interpreter acquisition is serialized against generation collection;
   pending launches and unproven child cleanup retain the generation.
   Stopped assignments carried across updates remain stopped and do not by
