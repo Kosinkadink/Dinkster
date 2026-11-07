@@ -552,9 +552,6 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
     if snapshot.get("source") != "published":
         return []
     metadata = _metadata(snapshot)
-    source_lock = parse_metadata(metadata.get("dinkster.lock", '{"packs":[]}').encode("utf-8"))
-    if source_lock.get("packs") or any(name.startswith("packs/") for name in metadata):
-        return []
     provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
     recorded_base = cast("dict[str, str]", snapshot["base"])
     variant = recorded_base["variant"]

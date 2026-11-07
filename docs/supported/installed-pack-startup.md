@@ -17,10 +17,12 @@
 - Local-development software snapshots rebuild from their recorded manifests,
   retained interpreter and hash-pinned wheels, without resolving a checkout again.
   Missing local interpreter files or wheels are disclosed before activation.
-- For snapshots without packs, a missing base can be replaced by an indexed base
+- A missing base can be replaced by an indexed base
   with the same native platform, Python and worker protocol when its locked engine
-  requirements agree. Compatible engine/base pairs are offered when replacing
-  either component alone cannot work. Proposals prefer fewer changed identities,
+  and unchanged pack dependency requirements agree. Packs, source locks and
+  in-process placement are preserved. For snapshots without packs, compatible
+  engine/base pairs are offered when replacing either component alone cannot work.
+  Proposals prefer fewer changed identities,
   preserve an obtainable compatible engine, and disclose every substitution for
   explicit approval rather than silently upgrading it.
 - Standalone pack-only roots can be adopted with `setup --adopt-from` into a

@@ -97,8 +97,9 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+@pytest.mark.parametrize("replace_base", [False, True], ids=["exact", "missing-base"])
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_base: bool
 ):
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_supervisor.environment_state import interpreter
@@ -242,13 +243,84 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
                 assert _run(root, "stop", "--yes")[0] == 0
                 shutil.rmtree(root / "generations/1")
-                code, restored = _run(root, "restore", "1", "--yes")
+                approval: tuple[str, ...] = ("--yes",)
+                if replace_base:
+                    snapshot = cast("dict", first["snapshot"])
+                    original = json.loads(snapshot["metadata"]["base-manifest.json"])
+                    base_id = snapshot["base"]["id"]
+                    published = mirror / "base/fixture-cpu" / base_id[7:]
+                    index = []
+                    replacement_id = None
+                    for compatible in (False, True):
+                        base = json.loads(json.dumps(original))
+                        base["interpreter"]["release"] = (
+                            "compatible-replacement" if compatible else "conflicting-replacement"
+                        )
+                        if not compatible:
+                            conflicting, sha = _wheel(dependencies, "fixture_adopt", "2.0", 99)
+                            base["wheels"].append(
+                                {
+                                    "name": "fixture-adopt",
+                                    "version": "2.0",
+                                    "filename": conflicting.name,
+                                    "sha256": sha,
+                                    "size": conflicting.stat().st_size,
+                                }
+                            )
+                            base["replaces"] = sorted([*base["replaces"], "fixture-adopt"])
+                        identity_fields = {
+                            key: value
+                            for key, value in base.items()
+                            if key not in {"id", "signature"}
+                        }
+                        identity_fields["archive"] = {"format": "tar+zstd"}
+                        identity = hashlib.sha256(canonical_json(identity_fields)).hexdigest()
+                        base["id"] = "sha256:" + identity
+                        destination = published.parent / identity
+                        shutil.copytree(published, destination)
+                        (destination / "manifest.json").write_bytes(canonical_json(base))
+                        index.append({"id": base["id"], "path": f"base/fixture-cpu/{identity}"})
+                        if compatible:
+                            replacement_id = base["id"]
+                    (published.parent / "index.json").write_text(json.dumps(index))
+                    shutil.rmtree(published)
+                    shutil.rmtree(store / "bases" / base_id[7:])
+                    shutil.rmtree(store / "downloads" / base_id[7:])
+                    preserved = {
+                        path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    }
+                    code, proposal = _run(root, "restore", "1", "--yes")
+                    assert code == 0 and proposal["status"] == "approval-required", proposal
+                    alternatives = proposal["restorePlan"]["alternatives"]
+                    assert len(alternatives) == 1, alternatives
+                    chosen = alternatives[0]
+                    assert chosen["substitutions"] == [
+                        {
+                            "field": "base",
+                            "before": snapshot["base"],
+                            "after": {"id": replacement_id, "variant": "fixture-cpu"},
+                        }
+                    ]
+                    assert chosen["snapshot"]["engine"] == snapshot["engine"]
+                    assert chosen["snapshot"]["inProcessPacks"] == ["healthy"]
+                    assert {
+                        path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    } == preserved
+                    approval = ("--approve", chosen["approval"])
+                code, restored = _run(root, "restore", "1", *approval)
                 assert code == 0 and restored["current"] == 3, restored.get("error", restored)
         records = history(root)
         assert len(records) == 3 and records[0] == first
         assert records[1]["reason"] == "update"
         assert records[2]["restoredFrom"] == 1
-        assert all(entry["exact"] is True for entry in records)
+        assert [entry["exact"] for entry in records] == [True, True, not replace_base]
+        if replace_base:
+            assert cast("dict", records[2]["snapshot"])["base"]["id"] == replacement_id
+            assert records[2]["substitutions"] == chosen["substitutions"]
         assert {
             path.relative_to(source): path.read_bytes()
             for path in source.rglob("*")
