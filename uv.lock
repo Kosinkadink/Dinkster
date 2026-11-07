@@ -1149,6 +1149,7 @@ version = "0.0.2"
 source = { editable = "packages/dinkster-inference-wire" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "dinkster-assets" },
     { name = "dinkster-memory" },
     { name = "dinkster-schema" },
     { name = "dinkster-values" },
@@ -1157,6 +1158,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
+    { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },

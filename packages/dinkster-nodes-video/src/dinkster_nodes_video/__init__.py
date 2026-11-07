@@ -13,6 +13,7 @@ from dinkster_api.v1 import (
     register_audio_value_type,
     register_media_types,
     register_resident_type,
+    register_video_edit_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -51,6 +52,7 @@ def register_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_media_types(registry)
+    register_video_edit_type(registry)
     for type_id in (INTERP_MODEL_TYPE, OPTICAL_FLOW_TYPE):
         if type_id not in registry:
             register_resident_type(

@@ -1,6 +1,6 @@
 """First-party ltx model nodes."""
 
-from dinkster_api.v1 import TypeRegistry, TypeSpec
+from dinkster_api.v1 import TypeRegistry, TypeSpec, register_inference_types
 from dinkster_inference_wire.ic_lora_parameters import register_ic_lora_parameters_type
 
 from .context_windows import LTXVContextWindows
@@ -31,6 +31,7 @@ from .video_latent_ops import LTXVFreezeLatent
 
 
 def register_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
+    register_inference_types(registry)
     return tuple(
         registry.spec(type_id)
         if type_id in registry

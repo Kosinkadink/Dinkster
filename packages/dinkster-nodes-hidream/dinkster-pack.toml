@@ -22,3 +22,4 @@ dinkster-conditioning = ">=0.0.1,<1"
 
 [pack.entry]
 nodes = "dinkster_nodes_hidream:NODES"
+types = "dinkster_nodes_hidream:register_types"

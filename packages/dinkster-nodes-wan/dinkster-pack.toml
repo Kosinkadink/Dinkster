@@ -21,6 +21,7 @@ api = "dinkster-api/v1"
 [pack.dependencies]
 "dinkster-conditioning" = ">=0.0.1"
 "dinkster-models" = ">=0.0.1"
+"dinkster-vision-sam3" = ">=0.0.1"
 
 [pack.entry]
 nodes = "dinkster_nodes_wan:NODES"

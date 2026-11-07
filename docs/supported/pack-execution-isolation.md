@@ -17,6 +17,10 @@
   identities; a rejected replacement preserves the active owners.
   Built-in identities remain owned by the engine (`core`) independently of the
   official pack that provides their codec and survive pack removal.
+- First-party runtime packs install shared inference, asset and audio codecs in
+  their own workers. Pack dependencies order composition; they do not share a
+  registry between isolated workers. Family-specific codecs retain their
+  producer's identity, including SAM3 tracking values consumed by WAN.
 - Typed asset references can target a type declared by an isolated pack without
   loading its codec in the engine. Envelope-aware nodes can forward values
   without decoding payloads, including foundation list selection of images.

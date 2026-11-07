@@ -1,3 +1,5 @@
+from dinkster_api.v1 import register_inference_types as register_types
+
 from .ace_text_conditioning import TextEncodeAceStepAudio, TextEncodeAceStepAudio15
 from .audio_encoder import SheetSage2AudioToABC
 from .audio_latent import EmptyAceStep15LatentAudio, EmptyAceStepLatentAudio, EmptyYuE2LatentAudio
@@ -16,4 +18,4 @@ NODES = (
     YuE2GenerateMusic,
 )
 
-__all__ = ["NODES"]
+__all__ = ["NODES", "register_types"]

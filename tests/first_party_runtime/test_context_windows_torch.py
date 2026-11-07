@@ -204,7 +204,17 @@ def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
             )
             manifests = tuple(
                 root / f"packages/dinkster-nodes-{name}/dinkster-pack.toml"
-                for name in ("latent", "conditioning", "models", "llm", "video", "wan", "ltx")
+                for name in (
+                    "image",
+                    "vision-sam3",
+                    "latent",
+                    "conditioning",
+                    "models",
+                    "llm",
+                    "video",
+                    "wan",
+                    "ltx",
+                )
             )
             for manifest in (*manifests, fixture_manifest):
                 await composer.add_pack(

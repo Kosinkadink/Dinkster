@@ -23,3 +23,4 @@ api = "dinkster-api/v1"
 
 [pack.entry]
 nodes = "dinkster_nodes_hunyuan:NODES"
+types = "dinkster_nodes_hunyuan:register_types"

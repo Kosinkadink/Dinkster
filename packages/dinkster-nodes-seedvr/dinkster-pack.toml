@@ -19,3 +19,4 @@ api = "dinkster-api/v1"
 
 [pack.entry]
 nodes = "dinkster_nodes_seedvr:NODES"
+types = "dinkster_nodes_seedvr:register_types"

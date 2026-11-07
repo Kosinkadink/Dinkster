@@ -1,5 +1,7 @@
 """First-party seedvr model nodes."""
 
+from dinkster_api.v1 import register_inference_types as register_types
+
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
@@ -12,3 +14,5 @@ NODES = (
     SeedVR2TemporalChunk,
     SeedVR2TemporalMerge,
 )
+
+__all__ = ["NODES", "register_types"]

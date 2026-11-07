@@ -565,10 +565,23 @@ def test_producer_pack_type_ownership_survives_ordinary_loading() -> None:
         pack = name.removeprefix("dinkster-")
         manifest = load_manifest(root / f"dinkster-nodes-{pack}/dinkster-pack.toml")
         _worker, isolated_registry, _nodes, _arms = load_pack(manifest)
+        for schema in _worker.schemas.values():
+            pending: list[object] = [schema_to_wire(schema)]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    if value.get("kind") == "concrete":
+                        for atom in value["types"]:
+                            assert atom in isolated_registry, (name, schema.node_type, atom)
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
         for type_id in producers.get(pack, ()):
             assert isolated_registry.owner_of(type_id) == name
             assert isolated_registry.spec(type_id).declared_codec
         if pack == "vision-sam3d-body":
+            assert isolated_registry.owner_of("SAM3_TRACK_DATA") == "dinkster-vision-sam3"
+        if pack == "wan":
             assert isolated_registry.owner_of("SAM3_TRACK_DATA") == "dinkster-vision-sam3"
         if pack == "void":
             assert isolated_registry.owner_of("OPTICAL_FLOW") == "dinkster-video"

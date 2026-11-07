@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from functools import partial
 
+from dinkster_assets import register_asset_type, register_audio_value_type, resolver_from_env
 from dinkster_memory.resident import default_pool
 from dinkster_values import (
+    ASSET_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOXES_TYPE,
     CAMERA_INFO_STATE_TYPE,
@@ -118,6 +121,10 @@ _STRUCTURAL_TYPE_IDS = (TIMESTEPS_RANGE_TYPE, FLOATS_TYPE)
 
 def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     """Register shared codecs; family-specific codecs belong to producer packs."""
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
+    if AUDIO_TYPE not in registry:
+        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     table = default_pool()
     registered = [
         registry.spec(CONDITIONING_TYPE_ID)

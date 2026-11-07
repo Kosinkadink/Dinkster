@@ -1,6 +1,7 @@
 """First-party wan model nodes."""
 
-from dinkster_api.v1 import TypeRegistry, TypeSpec
+from dinkster_api.v1 import TypeRegistry, TypeSpec, register_inference_types
+from dinkster_inference_wire.sam3_wire import register_sam3_track_type
 from dinkster_inference_wire.wan_wire import register_wan_type
 
 from .compile import wanBlockSwap
@@ -31,6 +32,12 @@ from .wandancer_video import WanDancerVideo
 
 
 def register_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
+    register_inference_types(registry)
+    if "SAM3_TRACK_DATA" not in registry:
+        with registry.registering_pack(
+            "dinkster-vision-sam3", ("SAM3_TRACK_DATA",), allow_bare=True
+        ):
+            register_sam3_track_type(registry)
     return tuple(
         registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         for type_id in ("WAN_CAMERA_EMBEDDING", "TRACKS")

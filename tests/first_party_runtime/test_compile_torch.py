@@ -205,6 +205,8 @@ def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
         original_compile = torch.compile
         try:
             manifests = (
+                root / "packages/dinkster-nodes-image/dinkster-pack.toml",
+                root / "packages/dinkster-nodes-vision-sam3/dinkster-pack.toml",
                 root / "packages/dinkster-nodes-latent/dinkster-pack.toml",
                 root / "packages/dinkster-nodes-conditioning/dinkster-pack.toml",
                 root / "packages/dinkster-nodes-models/dinkster-pack.toml",

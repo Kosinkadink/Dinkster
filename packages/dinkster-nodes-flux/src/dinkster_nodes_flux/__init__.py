@@ -1,3 +1,5 @@
+from dinkster_api.v1 import register_inference_types as register_types
+
 from .cache import FluxKVCache
 from .flux_conditioning import (
     CLIPTextEncodeFlux,
@@ -23,4 +25,4 @@ NODES = (
     Flux2Scheduler,
 )
 
-__all__ = ["NODES"]
+__all__ = ["NODES", "register_types"]

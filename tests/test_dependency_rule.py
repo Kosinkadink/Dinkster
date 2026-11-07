@@ -46,6 +46,7 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_graph": {"dinkster_schema", "dinkster_values"},
     # Shared inference codecs use the Torch-free governed resident pool.
     "dinkster_inference_wire": {
+        "dinkster_assets",
         "dinkster_schema",
         "dinkster_protocol",
         "dinkster_values",
