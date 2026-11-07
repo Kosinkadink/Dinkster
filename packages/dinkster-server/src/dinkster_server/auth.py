@@ -836,6 +836,7 @@ async def handle_delegations(request: web.Request) -> web.Response:
 _CATALOG_PATHS = frozenset(
     {
         "/api/nodes",
+        "/api/comfy-translations",
         "/api/workers",
         "/api/composition",
         "/api/templates",
