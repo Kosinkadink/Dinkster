@@ -32,7 +32,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import EncodedLatentTensor, encode_latent, register_core_types
+from dinkster_workers import load_manifest
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -60,19 +62,35 @@ def test_selected_vision_packet_registration_leaves_other_codecs_unregistered() 
     assert len(register_vision_packet_types(registry)) == 4
 
 
-@pytest.mark.parametrize("type_id", ("DA3_MODEL", "FACE_DETECTION_MODEL", "SAM3D_BODY_MODEL"))
-def test_family_models_retain_their_complete_holding_process_object(type_id: str) -> None:
+@pytest.mark.parametrize(
+    "type_id,pack",
+    (
+        ("DA3_MODEL", "depth-anything-3"),
+        ("FACE_DETECTION_MODEL", "mediapipe"),
+        ("SAM3D_BODY_MODEL", "sam3d-body"),
+    ),
+)
+def test_family_models_retain_their_complete_holding_process_object(
+    type_id: str, pack: str
+) -> None:
+    manifest = load_manifest(Path(f"packages/dinkster-nodes-vision-{pack}/dinkster-pack.toml"))
+    assert manifest.types_entry is not None
+    register_types = resolve_entry(manifest.types_entry)
+    assert callable(register_types)
     registry = TypeRegistry()
-    register_inference_types(registry)
+    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
+        register_types(registry)
     spec = registry.spec(type_id)
     wrapper = {"model": object(), "patchers": {"short": object(), "full": object()}}
     assert spec.decode(spec.encode(wrapper)) is wrapper
-    register_inference_types(registry)
+    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
+        register_types(registry)
     assert registry.spec(type_id) is spec
 
     authority = TypeRegistry()
-    previous = authority.register(type_id, encode=lambda _: b"first", decode=lambda _: wrapper)
-    register_inference_types(authority)
+    with authority.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
+        previous = authority.register(type_id, encode=lambda _: b"first", decode=lambda _: wrapper)
+        register_types(authority)
     assert authority.spec(type_id) is previous
     assert authority.spec(type_id).encode(wrapper) == b"first"
 
@@ -155,15 +173,20 @@ from dinkster_api.v1 import (
 )
 from dinkster_values import EncodedLatentTensor
 from dinkster_api.v1 import TriangleMeshBatch
-from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_3d import NODES as geometry_nodes
+from dinkster_nodes_hunyuan import NODES as hunyuan_nodes
 from dinkster_workers import load_manifest
-runtimes = {node.schema().node_type: node.schema() for node in COMFY_NODES}
-names = {'RotateMesh', 'GetMeshInfo', 'VAEDecodeHunyuan3D', 'VoxelToMeshBasic', 'VoxelToMesh'}
+runtimes = {node.schema().node_type: node.schema() for node in (*geometry_nodes, *hunyuan_nodes)}
+names = {'dinkster.3d.rotate_mesh', 'dinkster.3d.get_mesh_info',
+         'dinkster.hunyuan.vae_decode_hunyuan3_d',
+         'dinkster.3d.voxel_to_mesh_basic', 'dinkster.3d.voxel_to_mesh'}
 assert names <= runtimes.keys()
-manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')
-assert names <= set(manifest.namespaces)
-assert runtimes['VoxelToMeshBasic'].deprecation is not None
-assert runtimes['VoxelToMeshBasic'].search_visibility == 'deprecated'
+for pack, nodes in (('3d', geometry_nodes), ('hunyuan', hunyuan_nodes)):
+    manifest = load_manifest(f'packages/dinkster-nodes-{pack}/dinkster-pack.toml')
+    assert all(any(node.schema().node_type.startswith(ns + '.') for ns in manifest.namespaces)
+               for node in nodes)
+assert runtimes['dinkster.3d.voxel_to_mesh_basic'].deprecation is not None
+assert runtimes['dinkster.3d.voxel_to_mesh_basic'].search_visibility == 'deprecated'
 r = TypeRegistry()
 register_inference_types(r)
 m = TriangleMeshBatch(EncodedLatentTensor('float32', (1, 0, 3), b''),
@@ -513,9 +536,9 @@ def test_vision_packets_preserve_native_containers_and_optional_fields(type_id: 
                 "openpose18_joint_weights": np.array([0.25, 0.75], dtype=np.float32),
             }
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_vision_packet_types(registry)
     spec = registry.spec(type_id)
-    register_inference_types(registry)
+    register_vision_packet_types(registry)
     assert registry.spec(type_id) is spec
     encoded = spec.encode(packet)
     cold = spec.decode(encoded)
@@ -552,7 +575,7 @@ def test_vision_packets_preserve_native_containers_and_optional_fields(type_id: 
     )
     authority = TypeRegistry()
     first = authority.register(type_id, encode=lambda _: b"authority", decode=lambda _: packet)
-    register_inference_types(authority)
+    register_vision_packet_types(authority)
     assert authority.spec(type_id) is first
 
 
@@ -562,10 +585,10 @@ import sys
 sys.modules['torch'] = None
 sys.modules['numpy'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_api.v1 import TypeRegistry, register_inference_types
+from dinkster_api.v1 import TypeRegistry, register_vision_packet_types
 from dinkster_values import EncodedLatentTensor, encode_latent
 r = TypeRegistry()
-register_inference_types(r)
+register_vision_packet_types(r)
 face = ('mapping', {'frames': ('list', []), 'image_size': ('tuple', [113,197]),
                     'connection_sets': ('mapping', {'edge': ('topology', [(9,2)])}),
                     'array': ('numpy', EncodedLatentTensor(
@@ -583,7 +606,7 @@ for name in ('torch', 'numpy', 'dinkster_inference'):
     )
     assert result.returncode == 0, result.stderr
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_vision_packet_types(registry)
     for type_id in ("DA3_GEOMETRY", "FACE_LANDMARKS", "MHR_POSE_DATA", "KIMODO_POSE_DATA"):
         spec = registry.spec(type_id)
         for bad in (
