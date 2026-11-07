@@ -17,6 +17,7 @@ import packaging
 from .environment_state import (
     EnvironmentError,
     Generation,
+    Journal,
     content_digest,
     generation_number,
     interpreter,
@@ -131,6 +132,77 @@ def history(root: Path) -> list[dict[str, object]]:
 def attempts(root: Path) -> list[dict[str, object]]:
     """Return failed restores separately from successful installation history."""
     return _records(root, "attempts")
+
+
+def generation_history_coverage(root: Path, number: int) -> int:
+    """Return the covering entry ID, or refuse unproven software/provenance; never write."""
+    generation_number(number)
+    if (root / "history").is_junction() or not (root / "history").is_dir():
+        raise EnvironmentError("history coverage requires published software history")
+    entries = history(root)
+    journals: dict[str, Journal] = {}
+    directory = root / "journal"
+    if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
+        raise EnvironmentError("history coverage requires unlinked activation journals")
+    for path in sorted(directory.glob("*.json")):
+        if path.is_symlink() or path.is_junction() or not path.stem.isdecimal():
+            raise EnvironmentError("history coverage requires unlinked numeric journals")
+        journal = Journal.read(path)
+        if journal.operation in {"setup", "update", "rollback", "repair", "restore"}:
+            journals[path.stem] = journal
+    if any(
+        journal.stage == "complete"
+        and journal.history_entry is not None
+        and journal.history_entry not in entries
+        for journal in journals.values()
+    ):
+        raise EnvironmentError("history coverage requires completed history publication")
+    for entry in entries:
+        generation_number(entry.get("generation"))
+        snapshot = cast("dict[str, object]", entry["snapshot"])
+        if snapshot.get("format") != "dinkster.install-snapshot/1":
+            raise EnvironmentError("history coverage requires supported software snapshots")
+        operation = entry.get("operation")
+        journal = journals.get(operation) if isinstance(operation, str) else None
+        if (
+            journal is None
+            or journal.stage != "complete"
+            or journal.error is not None
+            or journal.history_entry != entry
+            or journal.target != entry.get("generation")
+            or journal.operation != entry.get("reason")
+        ):
+            raise EnvironmentError(
+                "history coverage requires matching completed activation provenance"
+            )
+    matching = [entry for entry in entries if entry.get("generation") == number]
+    activations = [journal for journal in journals.values() if journal.target == number]
+    if len(matching) != 1 or len(activations) != 1:
+        raise EnvironmentError("history coverage requires one unambiguous published activation")
+    tree = root / "generations" / str(number)
+    seal = tree / "generation.json"
+    if any(path.is_symlink() or path.is_junction() for path in (root / "generations", tree, seal)):
+        raise EnvironmentError("history coverage requires an unlinked generation seal")
+    record = Generation.read(seal)
+    if record.number != number:
+        raise EnvironmentError("generation directory and recorded number disagree")
+    python = interpreter(tree)
+    if not python.is_file() or python.relative_to(tree).as_posix() not in dict(record.files):
+        raise EnvironmentError("history coverage requires the generation interpreter")
+    for name, _ in record.files:
+        path = tree / name
+        if any(parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)):
+            raise EnvironmentError("history coverage refuses linked sealed software")
+    if record.drift(tree):
+        raise EnvironmentError("history coverage requires an intact generation seal")
+    snapshot = capture_software(tree)
+    recorded = cast("dict[str, object]", matching[0]["snapshot"])
+    # Host and tools describe the observer, not the sealed generation's software.
+    if {key: value for key, value in recorded.items() if key not in {"host", "tools"}} != {
+        key: value for key, value in snapshot.items() if key not in {"host", "tools"}
+    }:
+        raise EnvironmentError("history coverage software differs from the sealed generation")
+    return generation_number(matching[0]["id"])
 
 
 def _records(root: Path, kind: str) -> list[dict[str, object]]:

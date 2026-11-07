@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
+from typing import cast
 from urllib.request import Request, urlopen
 
 import pytest
@@ -332,10 +333,10 @@ def test_cleanup_preview_and_status_are_read_only_and_explain_retention(
         rows = {row["generation"]: row for row in preview["cleanup"]["generations"]}
         assert rows[1]["reasons"] == ["previous successful activation"]
         assert rows[3]["reasons"] == ["current activation"]
-        assert rows[2]["status"] == ("candidate" if condition is None else "deferred")
+        assert rows[2]["status"] == "deferred"
         if condition == "ambiguous":
             assert "invalid" in rows[2]["reasons"][0]
-            assert rows[7]["status"] == "candidate"
+            assert rows[7]["status"] == "deferred"
         elif condition == "pending":
             assert rows[7]["status"] == "deferred"
             assert "requires recovery" in rows[7]["reasons"][0]
@@ -348,6 +349,141 @@ def test_cleanup_preview_and_status_are_read_only_and_explain_retention(
     assert {
         p.relative_to(tmp_path): content_digest(p) for p in tmp_path.rglob("*") if p.is_file()
     } == before
+    assert not (tmp_path / ".lock").exists()
+    assert not (tmp_path / "runtime/.lock").exists()
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "covered",
+        "observer-changed",
+        "missing-history",
+        "prepared-only",
+        "missing-provenance",
+        "duplicate-provenance",
+        "failed-provenance",
+        "changed-provenance",
+        "corrupt-later-entry",
+        "missing-later-entry",
+        "unpublished-tail",
+        "missing-interpreter",
+        "drifted-interpreter",
+        "engine",
+        "base",
+        "constraints",
+        "workerProtocol",
+        "source",
+        "inProcessPacks",
+        "metadata",
+    ],
+)
+def test_cleanup_preview_requires_published_sealed_software_and_completed_provenance(
+    tmp_path: Path, condition: str
+):
+    from dinkster_supervisor.environment_history import prepare_entry, publish_entry
+    from dinkster_supervisor.environment_state import interpreter
+
+    entries = []
+    # Activation ancestry, not numeric folder order, protects generation 1.
+    for index, number in enumerate((2, 1, 3), 1):
+        tree = _generation(tmp_path, number).parent
+        python = interpreter(tree)
+        python.parent.mkdir(exist_ok=True)
+        python.write_bytes(b"sealed interpreter fixture")
+        seal = tree / "generation.json"
+        record = Generation.read(seal)
+        replace(
+            record,
+            files=(*record.files, (python.relative_to(tree).as_posix(), content_digest(python))),
+        ).write(seal)
+        operation = "setup" if index == 1 else "update"
+        entry = prepare_entry(tmp_path, tree, operation=str(index * 100), reason=operation)
+        if condition == "observer-changed":
+            snapshot = cast("dict[str, object]", entry["snapshot"])
+            snapshot["host"] = {"system": "other", "python": "different"}
+            snapshot["tools"] = {"version": "older"}
+        publish_entry(tmp_path, entry)
+        Journal(
+            operation,
+            None if index == 1 else (2 if index == 2 else 1),
+            number,
+            "complete",
+            history_entry=entry,
+        ).write(tmp_path / f"journal/{index * 100}.json")
+        entries.append(entry)
+    (tmp_path / "current").write_text("3\n")
+    first_history = tmp_path / "history/00000000000000000001.json"
+    first_journal = tmp_path / "journal/100.json"
+    tree = tmp_path / "generations/2"
+    if condition == "missing-history":
+        first_history.unlink()
+    elif condition == "prepared-only":
+        for path in (tmp_path / "history").glob("*.json"):
+            path.unlink()
+    elif condition == "missing-provenance":
+        first_journal.unlink()
+    elif condition == "duplicate-provenance":
+        Journal("update", 1, 2, "complete", history_entry=entries[0]).write(
+            tmp_path / "journal/400.json"
+        )
+    elif condition == "failed-provenance":
+        replace(Journal.read(first_journal), stage="rolled-back").write(first_journal)
+    elif condition == "changed-provenance":
+        entry = {**entries[0], "timestamp": "changed receipt"}
+        replace(Journal.read(first_journal), history_entry=entry).write(first_journal)
+    elif condition == "corrupt-later-entry":
+        (tmp_path / "history/00000000000000000003.json").write_text("broken")
+    elif condition == "missing-later-entry":
+        (tmp_path / "history/00000000000000000002.json").unlink()
+    elif condition == "unpublished-tail":
+        (tmp_path / "history/00000000000000000003.json").unlink()
+    elif condition == "missing-interpreter":
+        interpreter(tree).unlink()
+    elif condition == "drifted-interpreter":
+        interpreter(tree).write_bytes(b"changed interpreter")
+    elif condition in {"engine", "base", "workerProtocol", "source", "inProcessPacks"}:
+        document = json.loads((tree / "generation.json").read_bytes())
+        document[condition] = {
+            "engine": {"version": "9.0", "release": "sha256:" + "d" * 64},
+            "base": "sha256:" + "e" * 64,
+            "workerProtocol": 2,
+            "source": "local",
+            "inProcessPacks": ["other"],
+        }[condition]
+        write_document(tree / "generation.json", document)
+    elif condition in {"constraints", "metadata"}:
+        name = "constraints.txt" if condition == "constraints" else "artifact-sources.json"
+        (tree / name).write_text("demo==2\n" if condition == "constraints" else "{}")
+        record = Generation.read(tree / "generation.json")
+        files = dict(record.files)
+        files[name] = content_digest(tree / name)
+        replace(record, constraints=files["constraints.txt"], files=tuple(files.items())).write(
+            tree / "generation.json"
+        )
+    for name in ("workflows", "models", "outputs", "mounts"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "sentinel").write_bytes(b"private user data")
+    before = {
+        p.relative_to(tmp_path): content_digest(p) for p in tmp_path.rglob("*") if p.is_file()
+    }
+    for command in (("cleanup", "--plan"), ("status",)):
+        code, result = _run(tmp_path, *command)
+        assert code == 0, result
+        rows = {row["generation"]: row for row in result["cleanup"]["generations"]}
+        assert rows[1]["reasons"] == ["previous successful activation"]
+        assert rows[3]["reasons"] == ["current activation"]
+        if condition in {"covered", "observer-changed"}:
+            assert rows[2]["status"] == "candidate", rows[2]
+            assert rows[2]["reasons"] == [
+                "outside current and previous; covered by history entry 1"
+            ]
+        else:
+            assert rows[2]["status"] == "deferred", rows[2]
+            assert "history coverage required" in rows[2]["reasons"][0]
+        assert {
+            p.relative_to(tmp_path): content_digest(p) for p in tmp_path.rglob("*") if p.is_file()
+        } == before
     assert not (tmp_path / ".lock").exists()
     assert not (tmp_path / "runtime/.lock").exists()
 

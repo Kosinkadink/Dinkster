@@ -11,6 +11,7 @@ from typing import cast
 
 from .environment_constraints import requirement_hashes
 from .environment_generations import pack_operation
+from .environment_history import generation_history_coverage
 from .environment_runtime import generation_runtime_lock, generation_runtime_reason
 from .environment_state import (
     EnvironmentError,
@@ -308,10 +309,12 @@ def collection_preview(root: Path) -> dict[str, object]:
             state = "deferred"
             reasons.extend(warnings)
         if state == "candidate":
-            reasons.append(
-                "outside current and previous; durable history coverage required "
-                "before automatic deletion"
-            )
+            try:
+                entry_id = generation_history_coverage(root, number)
+                reasons.append(f"outside current and previous; covered by history entry {entry_id}")
+            except (OSError, ValueError) as exc:
+                state = "deferred"
+                reasons.append(f"durable history coverage required: {exc}")
         rows.append({"generation": number, "status": state, "reasons": reasons})
     if current not in present or (predecessor is not None and predecessor not in present):
         raise EnvironmentError("current or previous generation tree is missing")

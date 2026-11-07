@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_supervisor.environment_history import history, prepare_entry, publish_entry
+from dinkster_supervisor.environment_history import (
+    generation_history_coverage,
+    history,
+    prepare_entry,
+    publish_entry,
+)
 from dinkster_supervisor.environment_runtime import engine_status
 from dinkster_supervisor.environment_state import EnvironmentError, Generation
 from test_environment_cli import _run
@@ -1228,6 +1233,8 @@ environment.main()
             code, result = _run(root, "update", "--yes")
             assert code == 0 and result["current"] == 2, result
         second = (root / "history/00000000000000000002.json").read_bytes()
+        assert generation_history_coverage(root, 1) == 1
+        assert generation_history_coverage(root, 2) == 2
         parked_port = free_port()
         assert (
             _run(root, "start", "--engine", "parked", "--port", str(parked_port), "--yes")[0] == 0
@@ -1249,6 +1256,7 @@ environment.main()
         assert entries[-1]["reason"] == operation
         assert entries[-1]["snapshot"] == first["snapshot"]
         assert entries[-1]["recordedTools"] == cast("dict", first["snapshot"])["tools"]
+        assert generation_history_coverage(root, 3) == 3
         assert engine_status(root)[1] == {
             "name": "parked",
             "generation": 3,
