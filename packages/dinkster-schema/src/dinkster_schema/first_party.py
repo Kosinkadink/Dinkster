@@ -114,6 +114,7 @@ def first_party_schema(schema: NodeSchema) -> NodeSchema:
     renamed = replace(
         schema,
         node_type=target,
+        display_name=schema.display_name or source,
         aliases=(),
         search_terms=tuple(dict.fromkeys((*schema.search_terms, source))),
         replacements=(),

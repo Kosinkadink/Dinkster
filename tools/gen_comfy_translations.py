@@ -27,7 +27,7 @@ def generate(root: Path = ROOT) -> bytes:
     expected = {row["from"] for row in identities["nodes"] if row["pack"] in selected}
     packs: list[tuple[str, str, str, list[NodeSchema]]] = []
     found: set[str] = set()
-    for path in sorted((root / "packages").glob("dinkster-nodes-*/**/dinkster-pack.toml")):
+    for path in sorted((root / "packages").glob("dinkster-nodes-*/dinkster-pack.toml")):
         manifest = load_manifest(path)
         if manifest.name not in selected:
             continue

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from collections import Counter
 from dataclasses import replace
 from importlib import import_module
@@ -13,22 +14,51 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_text import NODES as TEXT_NODES
 from dinkster_nodes_text.text import StringConcatenate, StringFormat
-from dinkster_nodes_upscale import NODES as UPSCALE_NODES
-from dinkster_schema import NodeSchema, claim_covers, validate_name
+from dinkster_schema import Node, NodeSchema, claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
 from dinkster_schema.wire import schema_from_wire, schema_to_wire
 from dinkster_server.auth import Principal, StaticBearerAuthenticator, install_auth
 from dinkster_workers import load_manifest
-from dinkster_workers.manifest import validate_registration_claims
+from dinkster_workers.manifest import resolve_entry, validate_registration_claims
 
 from dinkster.comfy_translations_api import add_comfy_translation_routes
 from tests.async_scenarios import run_scenario
 from tools.compare_nodes import SCOPE_RULES, compare_registry
 from tools.gen_comfy_translations import OUTPUT, generate
+
+
+def _source_schemas() -> dict[str, NodeSchema]:
+    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
+    packs = {row["pack"] for row in inventory["nodes"]}
+    schemas = {}
+    for path in Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml"):
+        manifest = load_manifest(path)
+        if manifest.name not in packs:
+            continue
+        nodes = resolve_entry(manifest.nodes_entry)
+        assert isinstance(nodes, (list, tuple))
+        for node in nodes:
+            assert isinstance(node, type) and issubclass(node, Node)
+            schema = node.schema()
+            for rule in schema.replacements:
+                assert rule.from_type not in schemas
+                schemas[rule.from_type] = schema
+    return schemas
+
+
+def test_default_install_set_contains_every_comfy_origin_pack() -> None:
+    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
+    expected = {row["pack"] for row in inventory["nodes"]} | {"dinkster-nodes-remote"}
+    defaults = tomllib.loads(Path("src/dinkster/default-packs.toml").read_text())["packs"]
+    assert defaults.keys() == expected
+    declarations = {
+        manifest.name: manifest.compatibility.version
+        for path in Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml")
+        if (manifest := load_manifest(path)).compatibility is not None and manifest.name in expected
+    }
+    assert defaults == declarations
 
 
 @pytest.mark.parametrize("authenticated", [False, True])
@@ -54,7 +84,8 @@ def test_offline_translation_route_without_registered_packs(authenticated: bool)
             assert await response.read() == OUTPUT.read_bytes()
             index = await response.json()
             items = {item["rule"]["from"]: item for item in index["items"]}
-            assert len(items) == 18
+            assert len(items) == 644
+            assert len({item["pack"] for item in items.values()}) == 35
             assert items["StringFormat"]["pack"] == "dinkster-text"
             assert items["UpscaleModelLoader"]["pack"] == "dinkster-upscale"
             assert items["StringFormat"]["schema"]["nodeType"] == "dinkster.text.string_format"
@@ -139,14 +170,10 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "vision-sam3d-body": 6,
         "vision-sdpose": 3,
     }
-    schemas = {node.schema().node_type: node.schema() for node in COMFY_NODES}
-    schemas.update(
-        {
-            node.schema().replacements[-1].from_type: node.schema()
-            for node in (*TEXT_NODES, *UPSCALE_NODES)
-        }
-    )
-    assert {row["from"] for row in rows[:636]} == schemas.keys()
+    schemas = _source_schemas()
+    assert {row["from"]: row["nodeType"] for row in rows} == {
+        source: schema.node_type for source, schema in schemas.items()
+    }
     assert {row["from"]: row["nodeType"] for row in rows[636:]} == {
         "CreateBoundingBoxes": "dinkster.image.create_bounding_boxes",
         "LayersFromBoundingBoxes": "dinkster.image.layers_from_bounding_boxes",
@@ -212,6 +239,14 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "dinkster-vision-moge": {"absent": 1},
         "dinkster-3d": {"absent": 1},
     }
+
+
+@pytest.mark.parametrize("display_name", ["", "Join text explicitly"])
+def test_pack_identity_preserves_the_effective_display_name(display_name: str) -> None:
+    original = NodeSchema(node_type="StringConcatenate", display_name=display_name)
+    renamed = first_party_schema(original)
+    assert renamed.node_type == "dinkster.text.string_concatenate"
+    assert schema_to_wire(renamed)["displayName"] == (display_name or "StringConcatenate")
 
 
 def test_retained_image_classes_have_ordinary_identity_rules() -> None:
@@ -380,8 +415,9 @@ def test_translation_interfaces_retain_positional_order_after_json_round_trip() 
     ],
 )
 def test_renamed_prefixed_families_validate_without_serving_the_source(source: str) -> None:
-    original = next(node.schema() for node in COMFY_NODES if node.schema().node_type == source)
-    schema = first_party_schema(original)
+    schema = _source_schemas()[source]
+    original = replace(schema, node_type=source, replacements=())
+    assert first_party_schema(original) == schema
     assert validate_replacement_references({schema.node_type: schema}) == ()
     assert schema.input_families == original.input_families
     assert len(schema.replacements) == 1
@@ -394,10 +430,7 @@ def test_renamed_prefixed_families_validate_without_serving_the_source(source: s
 
 
 def test_nested_rename_rules_map_only_the_selected_branch_inputs() -> None:
-    original = next(
-        node.schema() for node in COMFY_NODES if node.schema().node_type == "BuildPoseFile"
-    )
-    schema = first_party_schema(original)
+    schema = _source_schemas()["BuildPoseFile"]
     assert validate_replacement_references({schema.node_type: schema}) == ()
     rule = schema.replacements[-1]
     case = next(
