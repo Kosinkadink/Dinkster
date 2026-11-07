@@ -12,6 +12,7 @@ tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true
+writable-mounts = true
 
 [pack.contracts]
 host = "dinkster-pack-host/1"
