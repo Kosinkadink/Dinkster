@@ -415,8 +415,9 @@
   history without changing current software, rollback selection or activation
   diffs. `dinkster-env import GENERATION --plan` previews capture; `--yes` confirms
   capture after completed history recovery under the project writer lock.
-  Imports require intact sealed software and unambiguous completed
-  activation ancestry; conflicting captures refuse. Their timestamps describe
+  Capture never launches the retained interpreter. Imports require intact sealed
+  software and unambiguous completed activation ancestry; conflicting captures
+  refuse. Their timestamps describe
   observation, and unknown historical tools, host facts and wheel compatibility
   tags stay unknown. `restore ID` accepts an imported entry after its generation
   tree is collected, revalidating its completed activation provenance. Missing

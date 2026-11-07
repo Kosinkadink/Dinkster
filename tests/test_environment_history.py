@@ -38,7 +38,7 @@ from tests.fixtures.environments.build import build_base, canonical_json, execut
 
 @pytest.mark.parametrize("existing_history", [False, True])
 def test_legacy_import_preserves_activation_selection_and_refuses_conflicting_capture(
-    tmp_path: Path, existing_history: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_history: bool
 ):
     (tmp_path / "journal").mkdir()
     for operation, previous, number in ((10, None, 7), (20, 7, 2), (30, 2, 9)):
@@ -47,10 +47,16 @@ def test_legacy_import_preserves_activation_selection_and_refuses_conflicting_ca
         python.parent.mkdir(exist_ok=True)
         python.write_bytes(b"sealed interpreter fixture")
         record = Generation.read(tree / "generation.json")
+        files = (*record.files, (python.relative_to(tree).as_posix(), content_digest(python)))
+        if number == 7:
+            lock = tree / "packs/example/pack-lock.json"
+            lock.parent.mkdir(parents=True)
+            lock.write_bytes(b"{}\n")
+            files = (*files, (lock.relative_to(tree).as_posix(), content_digest(lock)))
         replace(
             record,
             engine_version=f"0.3.{number}",
-            files=(*record.files, (python.relative_to(tree).as_posix(), content_digest(python))),
+            files=files,
         ).write(tree / "generation.json")
         entry = None
         if existing_history and number != 7:
@@ -65,7 +71,12 @@ def test_legacy_import_preserves_activation_selection_and_refuses_conflicting_ca
         ).write(tmp_path / "journal" / f"{operation}.json")
     set_current(tmp_path, 9)
     old_entries = {path: path.read_bytes() for path in (tmp_path / "history").glob("*.json")}
-    with writer_lock(tmp_path):
+    with writer_lock(tmp_path), monkeypatch.context() as patch:
+
+        def forbidden_probe(*args, **kwargs):
+            raise AssertionError("legacy import must not execute the retained interpreter")
+
+        patch.setattr("dinkster_supervisor.environment_history.subprocess.run", forbidden_probe)
         imported = import_generation(tmp_path, 7)
         assert import_generation(tmp_path, 7) == imported
     assert imported["kind"] == "import" and imported["reason"] == "legacy-import"
@@ -1106,7 +1117,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         "machine": "unknown",
         "python": "unknown",
     }
-    assert "py3-none-any" in imported["observedWith"]["host"]["wheelTags"]
+    assert "wheelTags" not in imported["observedWith"]["host"]
     original = (root / "history/00000000000000000001.json").read_bytes()
     code, result = _run(root, "restore", "1", "--yes")
     assert code == 1 and "wheel compatibility tags" in result["error"], result

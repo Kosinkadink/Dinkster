@@ -46,7 +46,7 @@ def is_software_metadata(name: str) -> bool:
     )
 
 
-def capture_software(generation: Path) -> dict[str, object]:
+def capture_software(generation: Path, *, inspect_wheel_tags: bool = True) -> dict[str, object]:
     """Read only sealed software metadata, never project libraries or mounts."""
     record = Generation.read(generation / "generation.json")
     expected = dict(record.files)
@@ -68,7 +68,7 @@ def capture_software(generation: Path) -> dict[str, object]:
         "machine": platform.machine(),
         "python": platform.python_version(),
     }
-    if any(name.startswith("packs/") for name in metadata):
+    if inspect_wheel_tags and any(name.startswith("packs/") for name in metadata):
         try:
             result = subprocess.run(
                 [
@@ -245,7 +245,7 @@ def import_generation(root: Path, number: int) -> dict[str, object]:
             raise EnvironmentError("legacy import refuses user data in a software seal")
     if record.drift(tree):
         raise EnvironmentError("legacy import requires an intact generation seal")
-    snapshot = capture_software(tree)
+    snapshot = capture_software(tree, inspect_wheel_tags=False)
     matching = [entry for entry in entries if entry.get("operation") == operation]
     if matching:
         recorded = cast("dict[str, object]", matching[0]["snapshot"])
