@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import os
 import sys
 import threading
 from contextlib import nullcontext
 from functools import wraps
-from importlib import import_module
 from typing import Any, cast
 
 from dinkster_schema import Node
@@ -19,7 +19,7 @@ _initialization_lock = threading.Lock()
 def inference_mode() -> Any:
     """Enter the caller's inference boundary without requiring Torch at import time."""
     try:
-        torch = import_module("torch")
+        torch = importlib.import_module("torch")
     except ModuleNotFoundError as exc:
         if exc.name != "torch":
             raise
@@ -63,15 +63,15 @@ def initialize_inference_process() -> None:
     with _initialization_lock:
         if sys.modules.get("dinkster_inference.model_management") is not None:
             return
-        torch = import_module("torch")
-        cli_args = import_module("dinkster_inference.cli_args")
+        torch = importlib.import_module("torch")
+        cli_args = importlib.import_module("dinkster_inference.cli_args")
         if os.environ.get("DINKSTER_ACCELERATOR", "auto") == "cpu" or not (
             torch.cuda.is_available()
             or torch.xpu.is_available()
             or torch.backends.mps.is_available()
         ):
             cli_args.args.cpu = True
-        import_module("dinkster_inference.model_management")
+        importlib.import_module("dinkster_inference.model_management")
 
 
 __all__ = ["inference_mode", "inference_nodes", "initialize_inference_process"]
