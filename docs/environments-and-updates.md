@@ -546,7 +546,7 @@ collect, recover operations, or capture history. The preference lives in
 `cleanup.json`, outside activation settings and software history, so restore
 and rollback do not undo an opt-out. Invalid or linked policy files refuse
 policy changes and preview rather than falling back to automatic deletion.
-No automatic collection trigger is enabled by this preference command.
+The preference command does not run collection synchronously.
 
 `cleanup --yes --json` retries generation-only collection using the same policy,
 preview eligibility, project lock and runtime acquisition lock. It never calls
@@ -555,7 +555,16 @@ attempts coalesce. `cleanup.lastAttempt` preserves the last attempt's status,
 collected generation numbers, deferred records and warnings across invocations.
 Uncommitted generation quarantine is recovered before retry; committed trash
 is retried after deletion failures. Shared-store quarantine is left to explicit
-cache GC and its recovery. Automatic triggers are not enabled by a retry.
+cache GC and its recovery.
+
+Successful CLI setup, update, repair, rollback, restore, start and stop attempt
+generation-only collection after transaction locks are released. A managed
+supervisor also attempts collection after startup and every hour while running,
+then after its acknowledged listener/child shutdown receipt. Busy acquisition
+locks and overlapping collectors retry after 30 seconds instead of waiting an
+hour. Opt-out is checked on each attempt. Cleanup warnings do not change the
+successful command result; unreadable maintenance state is also logged. Missing
+legacy history and unrecorded or linked pack runtime payloads still defer.
 
 Interpreter acquisition and collection share a runtime admission lock in
 addition to the existing project transaction lock. A pending launch protects

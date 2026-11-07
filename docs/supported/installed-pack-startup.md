@@ -291,12 +291,17 @@
   themselves prevent collection after leaving the retained rollback set.
   `cleanup --automatic off --yes` persists an opt-out without collecting;
   `--automatic on` restores the default preference. Preview and status expose
-  the same policy. Policy changes do not enable automatic deletion triggers.
+  the same policy. Policy commands do not collect synchronously.
   `cleanup --yes` retries generation-only collection for history-covered unused
   trees when the policy is enabled. Busy projects defer, overlapping retries
   coalesce, and status preserves the last attempt and retryable failures.
   Interrupted quarantine recovers and committed deletion retries without
   collecting shared caches, changing history or stopping processes.
+  Successful CLI activation, repair, restore, start and stop attempt collection
+  after releasing transaction locks. Managed supervisors attempt startup,
+  hourly and acknowledged-shutdown collection, retrying busy locks sooner.
+  Cleanup failures remain warnings rather than invalidating a successful
+  update. Uncovered legacy trees still defer; Desktop controls are separate.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs

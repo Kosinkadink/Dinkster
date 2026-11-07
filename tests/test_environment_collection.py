@@ -506,24 +506,29 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
 
 
 @pytest.fixture
-def cleanup_project(tmp_path: Path) -> Path:
+def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     from dinkster_supervisor.environment_history import prepare_entry, publish_entry
     from dinkster_supervisor.environment_state import interpreter
 
     for index, number in enumerate((2, 7, 1, 3), 1):
-        tree = _generation(tmp_path, number).parent
-        python = interpreter(tree)
-        python.parent.mkdir(exist_ok=True)
-        python.write_bytes(b"sealed interpreter, not executable")
-        seal = tree / "generation.json"
-        generation = Generation.read(seal)
-        replace(
-            generation,
-            files=(
-                *generation.files,
-                (python.relative_to(tree).as_posix(), content_digest(python)),
-            ),
-        ).write(seal)
+        if getattr(request, "param", False):
+            from test_environment_transactions import _target
+
+            tree = _target(tmp_path, number)
+        else:
+            tree = _generation(tmp_path, number).parent
+            python = interpreter(tree)
+            python.parent.mkdir(exist_ok=True)
+            python.write_bytes(b"sealed interpreter, not executable")
+            seal = tree / "generation.json"
+            generation = Generation.read(seal)
+            replace(
+                generation,
+                files=(
+                    *generation.files,
+                    (python.relative_to(tree).as_posix(), content_digest(python)),
+                ),
+            ).write(seal)
         operation = "setup" if index == 1 else "update"
         entry = prepare_entry(tmp_path, tree, operation=str(index * 100), reason=operation)
         Journal(
@@ -669,6 +674,90 @@ def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
     assert (parked / "sentinel").read_bytes() == b"explicit cache GC only"
     assert (store / "uv-cache/sentinel").read_text() == "cache/uv-cache"
     assert not list((root / ".garbage").rglob("generation.json"))
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_successful_cli_stop_attempts_cleanup_without_turning_failure_into_failed_stop(
+    cleanup_project: Path, failure: bool
+):
+    root = cleanup_project
+    write_document(
+        root / "project.json",
+        {
+            "format": "dinkster.project/1",
+            "channel": "main",
+            "variant": "linux-cpu",
+            "mirrors": [str(root / "mirror")],
+            "port": 3639,
+        },
+    )
+    if failure:
+        (root / "runtime").mkdir()
+        (root / "runtime/maintenance").write_bytes(b"keep this unexpected file")
+    code, planned = _run(root, "stop", "--plan")
+    assert code == 0 and planned["status"] == "planned", planned
+    assert all((root / "generations" / str(n)).exists() for n in (1, 2, 3, 7))
+    code, stopped = _run(root, "stop", "--yes")
+    assert code == 0 and stopped["status"] == "applied", stopped
+    assert stopped["cleanupAttempt"]["status"] == ("deferred" if failure else "complete")
+    assert (root / "current").read_text() == "3\n"
+    assert (root / "generations/2").exists() == failure
+    assert (root / "generations/7").exists() == failure
+    if failure:
+        assert (root / "runtime/maintenance").read_bytes() == b"keep this unexpected file"
+
+
+@pytest.mark.parametrize("cleanup_project", [True], indirect=True)
+def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_generations(
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from test_environment_runtime import free_port
+
+    root = cleanup_project
+    launch = subprocess.Popen
+    script = (
+        "from functools import partial\n"
+        "from dinkster_supervisor import environment_collection as c, supervisor\n"
+        "c.maintain_generations=partial(c.maintain_generations,interval=0.05)\n"
+        "supervisor.main()\n"
+    )
+
+    def short_interval(command, **kwargs):
+        return launch([command[0], "-c", script, *command[3:]], **kwargs)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", short_interval)
+    write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False})
+    old_port, current_port = free_port(), free_port()
+    try:
+        start_engine(root, 2, "old", old_port)
+        start_engine(root, 3, "main", current_port)
+        import time
+
+        assert (root / "generations/7").exists()
+        write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": True})
+        deadline = time.monotonic() + 20
+        while (root / "generations/7").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not (root / "generations/7").exists()
+        assert (root / "generations/2").is_dir()
+        with urlopen(f"http://127.0.0.1:{old_port}/api/health", timeout=5) as response:
+            assert response.status == 200
+        stop_engine(root, "old", generation=2)
+        if sys.platform == "linux" or os.name == "nt":
+            deadline = time.monotonic() + 20
+            while (root / "generations/2").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert not (root / "generations/2").exists()
+        else:
+            assert (root / "generations/2").is_dir()
+        assert (root / "generations/1").is_dir()
+        with urlopen(f"http://127.0.0.1:{current_port}/api/health", timeout=5) as response:
+            assert response.status == 200
+    finally:
+        stop_engine(root, "old", generation=2)
+        stop_engine(root, "main", generation=3)
 
 
 def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: Path):

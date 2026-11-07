@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import shutil
 import time
@@ -363,8 +365,10 @@ def retry_generation_collection(root: Path) -> dict[str, object]:
         except EnvironmentError:
             result.update(status="coalesced", warnings=["generation cleanup is already running"])
             return result
+        acquiring = True
         try:
             with writer_lock(root), generation_runtime_lock(root):
+                acquiring = False
                 if not collection_policy(root)["automatic"]:
                     result["status"] = "disabled"
                     write_document(maintenance / "cleanup", result)
@@ -398,8 +402,39 @@ def retry_generation_collection(root: Path) -> dict[str, object]:
                     result.update(status="deferred", deferred=deferred)
         except (OSError, ValueError) as exc:
             result.update(status="deferred", warnings=[str(exc)])
+            if acquiring:
+                result["busy"] = True
         write_document(maintenance / "cleanup", result)
         return result
+
+
+def automatic_generation_collection(root: Path) -> dict[str, object]:
+    """Maintenance failure must not invalidate a successful activation or engine lifecycle."""
+    result: dict[str, object]
+    try:
+        result = retry_generation_collection(root)
+    except (OSError, ValueError) as exc:
+        result = {"status": "deferred", "warnings": [str(exc)]}
+    for warning in cast("list[str]", result.get("warnings", [])):
+        logging.getLogger(__name__).warning("generation cleanup: %s", warning)
+    return result
+
+
+async def maintain_generations(
+    root: Path, stopped: asyncio.Event, *, interval: float = 3600.0
+) -> None:
+    """One managed supervisor supplies startup and hourly maintenance without a service."""
+    while not stopped.is_set():
+        result = await asyncio.to_thread(automatic_generation_collection, root)
+        delay = (
+            min(interval, 30.0)
+            if result.get("busy") or result["status"] == "coalesced"
+            else interval
+        )
+        try:
+            await asyncio.wait_for(stopped.wait(), timeout=delay)
+        except TimeoutError:
+            pass
 
 
 def _covered_collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:

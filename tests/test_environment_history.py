@@ -786,7 +786,13 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     root, store = Path(fixture["root"]), Path(fixture["store"])
     setup = fixture["commands"]["setup"]
     code, result = _run(root, *setup[setup.index("setup") : -1])
-    assert code == 0, result
+    assert code == 0, (
+        result,
+        {
+            str(path.relative_to(root)): path.read_text(encoding="utf-8", errors="replace")
+            for path in (root / "runtime").glob("*/*.log")
+        },
+    )
     assert _run(root, "stop", "--yes")[0] == 0
     source = wheel(tmp_path, "required_extra", "1.0", 73)
     payload = source.read_bytes()

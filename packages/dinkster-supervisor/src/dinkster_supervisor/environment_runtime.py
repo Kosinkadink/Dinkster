@@ -121,6 +121,8 @@ def _start_engine(
         f"--shutdown-token={token}",
         "--process-state",
         str(lifecycle),
+        "--environment-root",
+        str(root),
         "--host",
         "127.0.0.1",
         "--port",

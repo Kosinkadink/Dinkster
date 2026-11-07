@@ -17,6 +17,7 @@ from typing import cast
 from .environment_adoption import dependency_comparison, standalone_inputs
 from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
+    automatic_generation_collection,
     cleanup_collection,
     collect_generations,
     collection_plan,
@@ -1359,6 +1360,21 @@ def main() -> None:
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
+    if (
+        code == 0
+        and result["status"] == "applied"
+        and args.operation
+        in {
+            "setup",
+            "update",
+            "doctor",
+            "rollback",
+            "restore",
+            "start",
+            "stop",
+        }
+    ):
+        result["cleanupAttempt"] = automatic_generation_collection(args.root)
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
