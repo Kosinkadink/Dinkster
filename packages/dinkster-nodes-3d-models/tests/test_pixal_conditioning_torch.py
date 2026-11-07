@@ -225,7 +225,7 @@ def test_native_manifest_conditions_twice(
         fixture_module = f"pixal_fixture_{int(multi_view)}"
         (tmp_path / f"{fixture_module}.py").write_text(
             "from test_pixal_conditioning_torch import Source, Inspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
             "NODES = (Source, Inspect)\n",
             encoding="ascii",
         )

@@ -1,6 +1,12 @@
 """ComfyUI-origin nodes with independent first-party identities."""
 
-from dinkster_api.v1 import TypeRegistry, register_inference_types
+from dinkster_api.v1 import (
+    ASSET_TYPE,
+    TypeRegistry,
+    register_asset_type,
+    register_inference_types,
+    resolver_from_env,
+)
 
 from .camera_angle import CameraAngle
 from .camera_info import CreateCameraInfo
@@ -71,8 +77,10 @@ NODES = (
 
 
 def register_types(registry: TypeRegistry) -> None:
-    from dinkster_api.v1 import register_file3d_types, register_load3d_type, resolver_from_env
+    from dinkster_api.v1 import register_file3d_types, register_load3d_type
 
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
     register_inference_types(registry)
     register_file3d_types(registry, resolver_from_env())
     register_load3d_type(registry)

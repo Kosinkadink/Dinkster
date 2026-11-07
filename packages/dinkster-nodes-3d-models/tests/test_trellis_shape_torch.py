@@ -178,7 +178,7 @@ def test_ordinary_manifest_shape_stage_twice(tmp_path: Path, in_process: bool) -
         module = f"shape_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_trellis_shape_torch import ShapeSource, ShapeInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
             "NODES = (ShapeSource, ShapeInspect)\n",
             encoding="ascii",
         )
@@ -357,7 +357,7 @@ def test_ordinary_shape_decoder_hosts_twice(tmp_path: Path, in_process: bool) ->
         module = f"shape_decode_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_trellis_shape_torch import ShapeDecodeSource\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
             "NODES = (ShapeDecodeSource,)\n",
             encoding="ascii",
         )

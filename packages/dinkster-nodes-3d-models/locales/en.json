@@ -1,46 +1,46 @@
 {
   "nodes": {
     "dinkster.3d.models.empty_trellis2_latent_structure": {
-      "displayName": "EmptyTrellis2LatentStructure"
+      "displayName": "Empty Trellis2 Latent Structure"
     },
     "dinkster.3d.models.pixal3_d_conditioning": {
-      "displayName": "Pixal3DConditioning"
+      "displayName": "Pixal3D Conditioning"
     },
     "dinkster.3d.models.pixal3_d_multi_view_conditioning": {
-      "displayName": "Pixal3DMultiViewConditioning"
+      "displayName": "Pixal3D Multi-View Conditioning"
     },
     "dinkster.3d.models.trellis2_conditioning": {
-      "displayName": "Trellis2Conditioning"
+      "displayName": "Trellis2 Conditioning"
     },
     "dinkster.3d.models.trellis2_shape_stage": {
-      "displayName": "Trellis2ShapeStage"
+      "displayName": "Trellis2 Shape Stage"
     },
     "dinkster.3d.models.trellis2_texture_stage": {
-      "displayName": "Trellis2TextureStage"
+      "displayName": "Trellis2 Texture Stage"
     },
     "dinkster.3d.models.trellis2_upsample_stage": {
-      "displayName": "Trellis2UpsampleStage"
+      "displayName": "Trellis2 Upsample Stage"
     },
     "dinkster.3d.models.tripo_splat_conditioning": {
-      "displayName": "TripoSplatConditioning"
+      "displayName": "TripoSplat Conditioning"
     },
     "dinkster.3d.models.tripo_splat_preprocess_image": {
-      "displayName": "TripoSplatPreprocessImage"
+      "displayName": "TripoSplat Preprocess Image"
     },
     "dinkster.3d.models.tripo_splat_sampling_preview": {
-      "displayName": "TripoSplatSamplingPreview"
+      "displayName": "TripoSplat Sampling Preview"
     },
     "dinkster.3d.models.vae_decode_tripo_splat": {
-      "displayName": "VAEDecodeTripoSplat"
+      "displayName": "TripoSplat Decode"
     },
     "dinkster.3d.models.vae_decode_shape_trellis": {
-      "displayName": "VaeDecodeShapeTrellis"
+      "displayName": "Trellis2 VAE Decode Shape"
     },
     "dinkster.3d.models.vae_decode_structure_trellis2": {
-      "displayName": "VaeDecodeStructureTrellis2"
+      "displayName": "Trellis2 VAE Decode Structure"
     },
     "dinkster.3d.models.vae_decode_texture_trellis": {
-      "displayName": "VaeDecodeTextureTrellis"
+      "displayName": "Trellis2 VAE Decode Texture"
     }
   },
   "searchTerms": {

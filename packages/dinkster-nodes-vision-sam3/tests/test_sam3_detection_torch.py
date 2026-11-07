@@ -321,7 +321,7 @@ def test_native_manifest_detects_and_transports_results_twice(
         module = f"sam3_detect_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_sam3_detection_torch import DetectionSource, DetectionInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_vision_sam3 import register_types as register_inference_types\n"
             "NODES = (DetectionSource, DetectionInspect)\n",
             encoding="ascii",
         )

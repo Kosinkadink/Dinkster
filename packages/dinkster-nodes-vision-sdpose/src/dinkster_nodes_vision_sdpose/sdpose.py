@@ -169,7 +169,7 @@ class SDPoseDrawKeypoints(Node):
         initialize_inference_process()
         management = importlib.import_module("dinkster_inference.model_management")
         np = importlib.import_module("numpy")
-        from .pose_draw import draw_pose
+        from dinkster_nodes_image.pose_draw import draw_pose
 
         height, width = keypoints[0]["canvas_height"], keypoints[0]["canvas_width"]
 

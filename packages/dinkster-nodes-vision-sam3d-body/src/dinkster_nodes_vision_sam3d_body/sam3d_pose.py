@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-from .pose_draw import BODY_EDGES, COLORS, HAND_EDGES, HEAD_EDGES
+from dinkster_nodes_image.pose_draw import BODY_EDGES, COLORS, HAND_EDGES, HEAD_EDGES
 
 np = importlib.import_module("numpy")
 

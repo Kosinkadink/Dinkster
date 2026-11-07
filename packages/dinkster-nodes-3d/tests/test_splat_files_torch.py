@@ -183,7 +183,7 @@ def test_ordinary_splat_export_hosts_with_restart_cache(
         monkeypatch.setenv(key, value)
     module = f"splat_file_source_{format}"
     (tmp_path / f"{module}.py").write_text(
-        "from dinkster_nodes_comfy import register_inference_types\n"
+        "from dinkster_nodes_3d import register_types as register_inference_types\n"
         "from test_splat_files_torch import SplatFileSource\nNODES=(SplatFileSource,)\n",
         encoding="ascii",
     )

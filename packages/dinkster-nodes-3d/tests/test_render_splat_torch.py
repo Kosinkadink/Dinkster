@@ -123,7 +123,8 @@ def test_render_splat_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
     module = "splat_render_source"
     (tmp_path / f"{module}.py").write_text(
         "from test_render_splat_torch import SplatSource\n"
-        "from dinkster_nodes_comfy import register_inference_types\nNODES=(SplatSource,)\n"
+        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "NODES=(SplatSource,)\n"
     )
     manifest = tmp_path / "source.toml"
     manifest.write_text(

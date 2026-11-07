@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_image,
 )
-from dinkster_nodes_conditioning.lotus import LotusConditioning
+from dinkster_nodes_misc_models.lotus import LotusConditioning
 
 
 def _openpose_frames(keypoints: list[Any], scores: list[Any], height: int, width: int) -> list[Any]:

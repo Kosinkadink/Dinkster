@@ -264,7 +264,7 @@ def test_native_manifest_tracks_and_selects_twice(tmp_path: Path, in_process: bo
         module = f"sam3_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_sam3_torch import TrackingSource, TrackingInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_vision_sam3 import register_types as register_inference_types\n"
             "NODES = (TrackingSource, TrackingInspect)\n",
             encoding="ascii",
         )
