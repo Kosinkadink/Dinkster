@@ -487,7 +487,18 @@ def test_exact_image_editors_execute_through_ordinary_manifests(
                     "load": GraphNode("dinkster.image.load_image", {"image": asset.to_wire()}),
                     "shader": GraphNode(
                         "dinkster.image.glsl_shader",
-                        {"images.image0": Link("load", "IMAGE")},
+                        {
+                            "images.image0": Link("load", "IMAGE"),
+                            # Exact transport checks require full-precision texture sampling.
+                            "fragment_shader": """#version 300 es
+precision highp float;
+precision highp sampler2D;
+uniform sampler2D u_image0;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() { fragColor0 = texture(u_image0, v_texCoord); }
+""",
+                        },
                         slot_variants={"size_mode": "from_input"},
                     ),
                     "compare": GraphNode(
