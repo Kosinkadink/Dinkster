@@ -16,6 +16,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 
+__all__ = ["_integer", "_schema", "_runtime"]
+
 
 def _integer(
     name: str, default: int, maximum: int, minimum: int = 1, step: int | None = None
