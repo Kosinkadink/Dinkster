@@ -631,7 +631,7 @@ def test_generation_cleanup_coalesces_and_does_not_stop_pending_launches(cleanup
     assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
 
 
-@pytest.mark.parametrize("interrupted", ["quarantine", "cleanup"])
+@pytest.mark.parametrize("interrupted", ["before-quarantine", "quarantine", "cleanup", "sharing"])
 def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
     cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str
 ):
@@ -646,7 +646,25 @@ def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
         "gc", 3, 3, "complete", collection_store=str(store), collected_store_paths=("uv-cache",)
     ).write(root / "journal/500.json")
     write_document(store / "collection-state.json", {"keep": True})
-    if interrupted == "cleanup":
+    protected = {
+        p: p.read_bytes()
+        for name in (
+            "history",
+            "workflows",
+            "models",
+            "outputs",
+            "mounts",
+            "cache",
+            "generations/1",
+            "generations/3",
+        )
+        for p in (root / name).rglob("*")
+        if p.is_file()
+    }
+    store_journal = root / "journal/500.json"
+    protected[store_journal] = store_journal.read_bytes()
+    journal = None
+    if interrupted == "sharing":
         original = collection.shutil.rmtree
 
         def refuse(path, *args, **kwargs):
@@ -663,14 +681,56 @@ def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
         assert status["cleanup"]["quarantine"], status
         monkeypatch.undo()
     else:
-        journal = root / "journal/600.json"
-        Journal("gc", 3, 3, "building", collected_generations=(2,)).write(journal)
-        directory = root / ".garbage/600"
-        directory.mkdir(parents=True)
-        (root / "generations/2").rename(directory / "2")
+        script = """
+import os, sys
+from pathlib import Path
+from dinkster_supervisor import environment_collection as collection, environment
+root, interruption = Path(sys.argv[1]), sys.argv[2]
+original = collection.durable_rename
+def interrupt(source, destination):
+    if interruption == 'before-quarantine': os._exit(73)
+    original(source, destination)
+    os._exit(73)
+if interruption == 'cleanup':
+    collection.shutil.rmtree = lambda *args, **kwargs: os._exit(73)
+else:
+    collection.durable_rename = interrupt
+sys.argv = ['dinkster-env', '--root', str(root), 'cleanup', '--yes', '--json']
+environment.main()
+"""
+        child = subprocess.run(
+            [sys.executable, "-c", script, str(root), interrupted],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert child.returncode == 73, child.stdout + child.stderr
+        journal = next(
+            p
+            for p in (root / "journal").glob("*.json")
+            if (record := Journal.read(p)).operation == "gc" and record.collection_store is None
+        )
+        record = Journal.read(journal)
+        assert record.collected_generations == (2, 7)
+        assert record.stage == ("complete" if interrupted == "cleanup" else "building")
+        directory = root / ".garbage" / journal.stem
+        for number in (2, 7):
+            moved = interrupted == "cleanup" or (interrupted == "quarantine" and number == 2)
+            assert (directory / str(number)).is_dir() == moved
+            assert (root / "generations" / str(number)).is_dir() != moved
+        before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        code, status = _run(root, "status")
+        assert code == 0, status
+        assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+        assert {p: p.read_bytes() for p in protected} == protected
     code, retried = _run(root, "cleanup", "--yes")
     assert code == 0 and retried["status"] == "complete", retried
     assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert {p: p.read_bytes() for p in protected} == protected
+    if journal is not None:
+        assert Journal.read(journal).stage == (
+            "complete" if interrupted == "cleanup" else "rolled-back"
+        )
     assert (parked / "sentinel").read_bytes() == b"explicit cache GC only"
     assert (store / "uv-cache/sentinel").read_text() == "cache/uv-cache"
     assert not list((root / ".garbage").rglob("generation.json"))
