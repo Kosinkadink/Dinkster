@@ -241,37 +241,42 @@ def test_collection_retains_legacy_direct_child_only_stop_receipt(tmp_path: Path
     assert {p: p.read_bytes() for p in before} == before
 
 
+@pytest.mark.parametrize("cleanup_project", [True], indirect=True)
+@pytest.mark.parametrize("command", ["gc", "cleanup"])
 def test_failed_owned_family_cleanup_cannot_make_generation_collectible(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, command: str
 ):
     from dinkster_supervisor import environment_runtime as runtime
     from dinkster_supervisor.environment_state import EnvironmentError
-    from test_environment_runtime import free_port, make_generation
+    from test_environment_runtime import free_port
 
-    for number in (1, 2, 3):
-        make_generation(tmp_path, number)
-    (tmp_path / "current").write_text("3\n")
-    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    tmp_path = cleanup_project
+    if command == "gc":
+        (tmp_path / "store").unlink()
     original = subprocess.Popen
     processes: list[subprocess.Popen] = []
     script = (
-        "from dinkster_supervisor import supervisor\n"
+        "from dinkster_supervisor import environment_collection as c, supervisor\n"
         "from dinkster_supervisor.process_family import ProcessFamily\n"
+        "async def disabled(root, stopped): await stopped.wait()\n"
+        "c.maintain_generations=disabled\n"
         "def refuse(self): raise RuntimeError('owned cleanup fixture failure')\n"
         "ProcessFamily.stop_children=refuse\n"
         "supervisor.main()\n"
     )
 
     def launch(command, **kwargs):
+        if "dinkster_supervisor.supervisor" not in command:
+            return original(command, **kwargs)
         process = original([command[0], "-c", script, *command[3:]], **kwargs)
         processes.append(process)
         return process
 
     monkeypatch.setattr(runtime.subprocess, "Popen", launch)
     try:
-        runtime.start_engine(tmp_path, 1, "old", free_port())
+        runtime.start_engine(tmp_path, 2, "old", free_port())
         with pytest.raises(EnvironmentError, match="without proving child cleanup"):
-            runtime.stop_engine(tmp_path, "old", generation=1)
+            runtime.stop_engine(tmp_path, "old", generation=2)
         assert processes[0].wait(timeout=5) != 0
     finally:
         # The injected failure occurs after direct-engine shutdown; only the fixture host remains.
@@ -281,10 +286,26 @@ def test_failed_owned_family_cleanup_cannot_make_generation_collectible(
                 process.wait(timeout=10)
     monkeypatch.undo()
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    code, refused = _run(tmp_path, "gc", "--yes")
-    assert code == 1 and "cleanup is unproven" in refused["error"], refused
-    assert (tmp_path / "generations/1").is_dir()
-    assert {p: p.read_bytes() for p in before} == before
+    for _ in range(2):
+        code, result = _run(tmp_path, command, "--yes")
+        if command == "gc":
+            assert code == 1 and "cleanup is unproven" in result["error"], result
+            assert {p: p.read_bytes() for p in before} == before
+        else:
+            assert code == 0 and result["status"] == "complete", result
+            assert (tmp_path / "generations/2").is_dir()
+            assert not (tmp_path / "generations/7").exists()
+            code, status = _run(tmp_path, "status")
+            assert code == 0, status
+            rows = {row["generation"]: row for row in status["cleanup"]["generations"]}
+            assert rows[2]["status"] == "retained", rows[2]
+            assert any("cleanup is unproven" in reason for reason in rows[2]["reasons"])
+            protected = {
+                p: data
+                for p, data in before.items()
+                if not p.is_relative_to(tmp_path / "generations/7")
+            }
+            assert {p: p.read_bytes() for p in protected} == protected
 
 
 def test_cleanup_policy_persists_without_collecting_or_changing_software(tmp_path: Path):
@@ -628,7 +649,10 @@ def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("blocked", [None, "history", "payload", "disabled", "busy"])
+@pytest.mark.parametrize(
+    "blocked",
+    [None, "history", "unreadable-history", "generation", "runtime", "payload", "disabled", "busy"],
+)
 def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
     cleanup_project: Path, blocked: str | None
 ):
@@ -637,8 +661,23 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
     from dinkster_supervisor.environment_state import writer_lock
 
     tmp_path = cleanup_project
+    damaged: Path | None = None
+    original: bytes | None = None
     if blocked == "history":
         (tmp_path / "history/00000000000000000001.json").unlink()
+    elif blocked == "unreadable-history":
+        damaged = tmp_path / "history/00000000000000000001.json"
+        original = damaged.read_bytes()
+        damaged.unlink()
+        damaged.mkdir()
+    elif blocked == "generation":
+        damaged = tmp_path / "generations/2/generation.json"
+        original = damaged.read_bytes()
+        damaged.write_bytes(b"{corrupt generation")
+    elif blocked == "runtime":
+        damaged = tmp_path / "runtime/2/old.json"
+        damaged.parent.mkdir(parents=True)
+        damaged.write_bytes(b"{corrupt runtime binding")
     elif blocked == "payload":
         payload = tmp_path / "generations/2/packs/fixture/runtime.py"
         payload.parent.mkdir(parents=True)
@@ -647,6 +686,7 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         write_document(
             tmp_path / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False}
         )
+    old_tree = {p: p.read_bytes() for p in (tmp_path / "generations/2").rglob("*") if p.is_file()}
     protected = {
         p: p.read_bytes()
         for parent in (
@@ -656,12 +696,14 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
             "outputs",
             "mounts",
             "cache",
+            "runtime/2",
             "generations/1",
             "generations/3",
         )
         for p in (tmp_path / parent).rglob("*")
         if p.is_file()
     }
+    protected[tmp_path / "current"] = (tmp_path / "current").read_bytes()
     with writer_lock(tmp_path) if blocked == "busy" else nullcontext():
         code, result = _run(tmp_path, "cleanup", "--yes")
     assert code == 0, result
@@ -669,19 +711,42 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
     assert result["status"] == expected, result
     assert {p: p.read_bytes() for p in protected} == protected
     for number in (2, 7):
-        retained = blocked in {"history", "disabled", "busy"} or (
-            blocked == "payload" and number == 2
+        retained = blocked in {"history", "unreadable-history", "disabled", "busy"} or (
+            blocked in {"payload", "generation", "runtime"} and number == 2
         )
         assert (tmp_path / "generations" / str(number)).exists() == retained
+    if blocked:
+        assert {p: p.read_bytes() for p in old_tree} == old_tree
+    before_status = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     code, status = _run(tmp_path, "status")
     assert code == 0, status
     assert status["cleanup"]["lastAttempt"] == result["cleanupAttempt"]
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before_status
     if blocked == "busy":
         assert "another environment writer holds" in result["cleanupAttempt"]["warnings"][0]
         code, retried = _run(tmp_path, "cleanup", "--yes")
         assert code == 0 and retried["status"] == "complete", retried
         assert not (tmp_path / "generations/2").exists()
     assert {p: p.read_bytes() for p in protected} == protected
+    if damaged is not None:
+        rows = {row["generation"]: row for row in status["cleanup"]["generations"]}
+        assert rows[2]["status"] == "deferred" and rows[2]["reasons"], rows[2]
+        if damaged.is_dir():
+            damaged.rmdir()
+        else:
+            damaged.unlink()
+        if original is not None:
+            damaged.write_bytes(original)
+        preserved = {
+            p: p.read_bytes()
+            for p in protected
+            if p.exists() and not p.is_relative_to(tmp_path / "generations/2")
+        }
+        preserved.update({p: p.read_bytes() for p in (tmp_path / "history").glob("*.json")})
+        code, retried = _run(tmp_path, "cleanup", "--yes")
+        assert code == 0 and retried["status"] == "complete", retried
+        assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
+        assert {p: p.read_bytes() for p in preserved} == preserved
 
 
 def test_generation_cleanup_coalesces_and_does_not_stop_pending_launches(cleanup_project: Path):
