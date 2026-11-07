@@ -10,6 +10,9 @@
 - Restore can recover selected source archives retained by another engine release
   when the recorded source cache was pruned. Retained bytes must match the locked
   BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
+- Restore planning checks exact pack source availability. When retained archives
+  are gone, acquisition probes use disposable storage and verify the recorded
+  digest; changed or unavailable sources are disclosed without changing the install.
 - Software restore rebuilds isolated and in-process pack dependencies from the
   snapshot's complete locks, including after its old generation was pruned;
   it does not inherit packs from the current generation.

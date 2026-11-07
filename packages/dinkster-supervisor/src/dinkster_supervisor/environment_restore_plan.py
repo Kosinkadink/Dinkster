@@ -6,6 +6,9 @@ import copy
 import hashlib
 import json
 import os
+import signal
+import subprocess
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -29,16 +32,125 @@ from .environment_artifacts import (
 )
 from .environment_constraints import effective_constraints
 from .environment_downloads import artifact_available, read_metadata
-from .environment_generations import verify_base_inputs
+from .environment_generations import retained_pack_archive, verify_base_inputs
 from .environment_history import history
 from .environment_state import (
     Channel,
     EnvironmentError,
     content_digest,
     digest,
+    interpreter,
     read_current,
     relative_file,
 )
+
+
+def _pack_source_missing(
+    snapshot: dict[str, object], store: Path, root: Path
+) -> list[dict[str, object]]:
+    text = _metadata(snapshot).get("dinkster.lock")
+    if text is None:
+        return []
+    lock = parse_metadata(text.encode("utf-8"))
+    rows = cast("list[dict[str, object]]", lock["packs"])
+    needed = [
+        row
+        for row in rows
+        if retained_pack_archive(store, cast("str", row["artifactDigest"])) is None
+    ]
+    if not needed:
+        return []
+    lock["packs"] = needed
+    # Only acquisition runs in the active engine: no pack imports, provisioning or activation.
+    script = """
+import json, os, sys
+from pathlib import Path
+from dinkster.installer import Installer
+from dinkster.registries import (
+    RegistryConfig, load_registries, routing_registry_fetcher, select_registry,
+)
+from dinkster_registry import Lockfile
+project = Path(sys.argv[1])
+config_path = project / 'registries.toml'
+if config_path.is_file():
+    config = load_registries(config_path)
+elif os.environ.get('DINKSTER_REGISTRIES'):
+    config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
+else:
+    config = RegistryConfig()
+selector = os.environ.get('DINKSTER_REGISTRY', '')
+if not selector and not config_path.is_file() and not os.environ.get('DINKSTER_REGISTRIES'):
+    selector = 'https://registry.dinkster.org'
+selected = select_registry(config, selector) if selector else None
+installer = Installer(
+    Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
+)
+missing = []
+for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
+    try:
+        installer.acquire(entry)
+    except Exception:
+        missing.append(entry.artifact_digest)
+print(json.dumps(missing))
+"""
+    unavailable = {cast("str", row["artifactDigest"]) for row in needed}
+    current = read_current(root)
+    if current is not None:
+        try:
+            with tempfile.TemporaryDirectory(prefix="dinkster-source-probe-") as directory:
+                with subprocess.Popen(
+                    [
+                        str(interpreter(root / "generations" / str(current))),
+                        "-I",
+                        "-B",
+                        "-c",
+                        script,
+                        str(root),
+                    ],
+                    cwd=directory,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DINKSTER_SHARED_STORE": ""},
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    start_new_session=os.name != "nt",
+                ) as process:
+                    try:
+                        output, _ = process.communicate(json.dumps(lock), timeout=120)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            if os.name == "nt":
+                                subprocess.run(
+                                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    timeout=10,
+                                )
+                            else:
+                                os.killpg(process.pid, signal.SIGKILL)
+                        finally:
+                            process.kill()
+                        raise
+            if process.returncode == 0:
+                reported: object = json.loads(output)
+                if isinstance(reported, list) and all(
+                    isinstance(item, str) and item in unavailable
+                    for item in cast("list[object]", reported)
+                ):
+                    unavailable = set(cast("list[str]", reported))
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    return [
+        {
+            "kind": "pack-source",
+            "identity": row["artifactDigest"],
+            "artifact": f"{cast('str', row['artifactDigest'])[7:]}.zip",
+            "pack": row["pack"],
+            "source": row["source"],
+        }
+        for row in needed
+        if row["artifactDigest"] in unavailable
+    ]
 
 
 def _identity(value: object) -> str:
@@ -694,7 +806,15 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         "settings": content_digest(root / "project.json"),
         "store": content_digest(root / "store"),
     }
-    missing = missing_inputs(snapshot, store)
+    sources: dict[str | None, list[dict[str, object]]] = {}
+
+    def unavailable_inputs(candidate: dict[str, object]) -> list[dict[str, object]]:
+        source_lock = _metadata(candidate).get("dinkster.lock")
+        if source_lock not in sources:
+            sources[source_lock] = _pack_source_missing(candidate, store, root)
+        return [*missing_inputs(candidate, store), *sources[source_lock]]
+
+    missing = unavailable_inputs(snapshot)
     candidates = (
         [snapshot]
         if not missing
@@ -709,7 +829,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         if candidate.get("source") not in {"published", "local"}:
             continue
         try:
-            unavailable = missing_inputs(candidate, store)
+            unavailable = unavailable_inputs(candidate)
         except (OSError, ValueError, KeyError):
             continue
         if unavailable:

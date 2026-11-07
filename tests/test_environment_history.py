@@ -98,12 +98,22 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
 
 
 @pytest.mark.parametrize(
-    ("replace_base", "replace_engine"),
-    [(False, False), (True, False), (False, True), (True, True)],
-    ids=["exact", "missing-base", "missing-engine", "missing-engine-and-base"],
+    ("replace_base", "replace_engine", "reacquire"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (False, False, True),
+    ],
+    ids=["exact", "missing-base", "missing-engine", "missing-engine-and-base", "reacquired-source"],
 )
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_base: bool, replace_engine: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replace_base: bool,
+    replace_engine: bool,
+    reacquire: bool,
 ):
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_supervisor.environment_state import interpreter
@@ -156,7 +166,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         staging.rename(retained)
         if name != "extra":
             shutil.copyfile(retained, archives / retained.name)
-        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,)))
+        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,), f"local:{pack}"))
         path = dependencies / f"{name}.pack-lock.json"
         PackLock(
             name,
@@ -281,6 +291,51 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     (corrupt_cache / f"{entry.artifact_digest[7:]}.zip").write_bytes(
                         b"not the digest-pinned pack archive"
                     )
+                if reacquire:
+                    for entry in entries[:2]:
+                        (
+                            store
+                            / "engines"
+                            / current_release[7:]
+                            / "artifacts"
+                            / f"{entry.artifact_digest[7:]}.zip"
+                        ).unlink()
+                    preserved_sources = {
+                        path: path.read_bytes()
+                        for parent in (root, store)
+                        for path in parent.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    }
+                    code, available = _run(root, "restore", "1", "--plan")
+                    assert code == 0 and available["restorePlan"]["exact"], available
+                    changed = tmp_path / "healthy/healthy_nodes.py"
+                    original_nodes = changed.read_bytes()
+                    for content in (original_nodes + b"\n# changed source bytes\n", None):
+                        if content is None:
+                            changed.unlink()
+                        else:
+                            changed.write_bytes(content)
+                        code, unavailable = _run(root, "restore", "1", "--yes")
+                        assert code == 0 and unavailable["status"] == "approval-required", (
+                            unavailable
+                        )
+                        assert unavailable["restorePlan"]["missing"] == [
+                            {
+                                "kind": "pack-source",
+                                "identity": entries[0].artifact_digest,
+                                "artifact": f"{entries[0].artifact_digest[7:]}.zip",
+                                "pack": "healthy",
+                                "source": f"local:{tmp_path / 'healthy'}",
+                            }
+                        ]
+                        assert not unavailable["restorePlan"]["exact"]
+                    changed.write_bytes(original_nodes)
+                    assert {
+                        path: path.read_bytes()
+                        for parent in (root, store)
+                        for path in parent.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    } == preserved_sources
                 approval: tuple[str, ...] = ("--yes",)
                 if replace_base:
                     snapshot = cast("dict", first["snapshot"])
