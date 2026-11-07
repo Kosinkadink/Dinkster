@@ -107,6 +107,57 @@ def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: P
     assert not (tmp_path / "generations/1").exists()
 
 
+@pytest.mark.parametrize("pending_attempt", [False, True])
+def test_inherited_stopped_assignment_does_not_pin_an_unused_generation(
+    tmp_path: Path, pending_attempt: bool
+):
+    from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
+    from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
+    from dinkster_supervisor.environment_transactions import activate, begin_activation
+    from test_environment_runtime import free_port
+    from test_environment_transactions import _target
+
+    _target(tmp_path, 1)
+    port = free_port()
+    start_engine(tmp_path, 1, "parked", port)
+    stop_engine(tmp_path, "parked", generation=1)
+    instance = "interrupted-target-launch"
+    lifecycle = (
+        tmp_path / "runtime/2/parked.process" / hashlib.sha256(instance.encode()).hexdigest()
+    )
+    if pending_attempt:
+        prepare_process(lifecycle, instance)
+    for number in (2, 3, 4):
+        path = begin_activation(tmp_path, number, "update")
+        _target(tmp_path, number)
+        activate(tmp_path, path, revalidate=lambda: None)
+        rows = engine_status(tmp_path)
+        assert [(row["generation"], row["state"], row["url"]) for row in rows] == [
+            (number, "stopped", f"http://127.0.0.1:{port}")
+        ]
+    if pending_attempt:
+        code, refused = _run(tmp_path, "gc", "--yes")
+        assert code == 1 and "child cleanup is unproven" in refused["error"], refused
+        assert all((tmp_path / "generations" / str(number)).is_dir() for number in (1, 2, 3, 4))
+        assert not cancel_pending_process(lifecycle, instance)
+    code, applied = _run(tmp_path, "gc", "--yes")
+    assert code == 0 and applied["status"] == "applied", applied
+    assert not (tmp_path / "generations/1").exists()
+    assert not (tmp_path / "generations/2").exists()
+    assert (tmp_path / "generations/3").is_dir()
+    assert (tmp_path / "generations/4").is_dir()
+    try:
+        row = start_engine(tmp_path, 4, "parked", port)
+        assert row == {
+            "name": "parked",
+            "generation": 4,
+            "state": "ready",
+            "url": f"http://127.0.0.1:{port}",
+        }
+    finally:
+        stop_engine(tmp_path, "parked", generation=4)
+
+
 def test_collection_defers_while_an_old_generation_is_being_acquired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

@@ -294,24 +294,32 @@ def generation_runtime_reason(root: Path, generation: int) -> str | None:
 
 def preserve_stopped_engine(root: Path, name: str, previous: int, target: int, port: int) -> None:
     """Carry a stopped binding forward without launching it during activation."""
-    record = _load_record(root, name, previous)
-    existing = _load_record(root, name, target)
-    if record is None or _inspect(record)["state"] != "stopped":
-        raise EnvironmentError("previous binding is not safely stopped")
-    if existing is not None and _inspect(existing)["state"] != "stopped":
-        raise EnvironmentError("target binding is not safely stopped")
-    _write_record(
-        root,
-        name,
-        record
-        | {
-            "generation": target,
-            "port": port,
-            "url": f"http://127.0.0.1:{port}",
-            "pid": 0,
-            "state": "stopped",
-        },
-    )
+    with generation_runtime_lock(root):
+        record = _load_record(root, name, previous)
+        existing = _load_record(root, name, target)
+        if record is None or _inspect(record)["state"] != "stopped":
+            raise EnvironmentError("previous binding is not safely stopped")
+        if existing is not None and _inspect(existing)["state"] != "stopped":
+            raise EnvironmentError("target binding is not safely stopped")
+        instance = secrets.token_urlsafe(24)
+        lifecycle = _process_directory(_runtime_path(root, name, target), instance)
+        prepare_process(lifecycle, instance)
+        # This target binding never launched; cancellation must not impersonate child shutdown.
+        cancel_pending_process(lifecycle, instance)
+        _write_record(
+            root,
+            name,
+            record
+            | {
+                "generation": target,
+                "port": port,
+                "url": f"http://127.0.0.1:{port}",
+                "instance": instance,
+                "shutdownToken": secrets.token_urlsafe(32),
+                "pid": 0,
+                "state": "stopped",
+            },
+        )
 
 
 def require_idle(root: Path) -> None:
