@@ -269,6 +269,8 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
         assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
         assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
         journals = sorted((tmp_path / "journal").glob("*.json"))
+        code, preference = _run(tmp_path, "cleanup", "--automatic", "off", "--yes")
+        assert code == 0 and preference["cleanup"]["policy"]["automatic"] is False, preference
         if migration:
             (tmp_path / "project.json").write_text(json.dumps({**selected, "custom": "later edit"}))
             edited = (tmp_path / "project.json").read_bytes()
@@ -289,6 +291,8 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
         assert (tmp_path / "project.json").read_text() == previous_settings
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[1]["state"] == "stopped"
+        code, status = _run(tmp_path, "status")
+        assert code == 0 and status["cleanup"]["policy"]["automatic"] is False, status
         code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
         assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
         assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0

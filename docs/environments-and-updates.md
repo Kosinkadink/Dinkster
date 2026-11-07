@@ -525,7 +525,7 @@ bindings refuse collection. Previously published generation numbers are not reus
 
 `dinkster-env --root /absolute/project cleanup --plan --json` reports a
 read-only generation safety preview. `status --json` includes the same
-`cleanup` object: `current`, `generations` (generation number, status and
+`cleanup` object: `policy`, `current`, `generations` (generation number, status and
 reasons), `quarantine` (journal, stage and generation numbers), and `warnings`.
 Rows distinguish retained generations, candidates outside current/previous,
 and deferred records. A candidate is not authorization for automatic deletion:
@@ -534,6 +534,18 @@ The preview never recovers operations, captures history, acquires writer
 locks, removes trash, or changes project settings. Corrupt records report a
 reason rather than granting permission to delete. Committed quarantine stays
 visible until cleanup succeeds.
+
+`cleanup --automatic off --yes --json` persists the project's opt-out;
+`--automatic on` restores its preference for automatic cleanup. Add `--plan`
+instead of `--yes` to inspect without writing. The shared `cleanup.policy`
+object reports `automatic` (default true), `previousSuccessfulActivations`
+(1), and `minimumAgeSeconds` (0). These are retention preferences, not proof
+of history coverage or deletion eligibility. Changing the preference does not
+collect, recover operations, or capture history. The preference lives in
+`cleanup.json`, outside activation settings and software history, so rollback
+does not undo an opt-out. Invalid or linked policy files refuse policy changes
+and preview rather than falling back to automatic deletion. No automatic
+collection trigger is enabled by this preference command.
 
 Interpreter acquisition and collection share a runtime admission lock in
 addition to the existing project transaction lock. A pending launch protects

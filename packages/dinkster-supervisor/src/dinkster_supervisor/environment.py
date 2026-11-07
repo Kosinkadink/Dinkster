@@ -18,6 +18,7 @@ from .environment_collection import (
     cleanup_collection,
     collect_generations,
     collection_plan,
+    collection_policy,
     collection_preview,
     recover_collection,
     recover_store_collection,
@@ -898,6 +899,37 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    preview = collection_preview(root)
+    plan = [
+        f"generation {row['generation']}: {row['status']}: "
+        + "; ".join(cast("list[str]", row["reasons"]))
+        for row in cast("list[dict[str, object]]", preview["generations"])
+    ] + cast("list[str]", preview["warnings"])
+    result.update(cleanup=preview, current=preview["current"], status="planned", plan=plan)
+    if args.automatic is None:
+        if args.yes:
+            raise EnvironmentError("cleanup --yes requires --automatic on or off")
+        return 0
+    automatic = args.automatic == "on"
+    plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
+    result["requestedAutomaticCleanup"] = automatic
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        policy = collection_policy(root)
+        if policy != preview["policy"]:
+            raise EnvironmentError("cleanup policy changed after planning; request a new plan")
+        write_document(
+            root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": automatic}
+        )
+        policy["automatic"] = automatic
+        preview["policy"] = policy
+    result["status"] = "applied"
+    return 0
+
+
 def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if args.yes:
@@ -1070,14 +1102,16 @@ def main() -> None:
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
-    cleanup = commands.add_parser("cleanup", help="preview generation retention without mutation")
-    cleanup.add_argument("--plan", action="store_true", help="inspect without mutation")
+    cleanup = commands.add_parser("cleanup", help="preview generation retention or set its policy")
+    cleanup.add_argument(
+        "--automatic", choices=("on", "off"), help="persist automatic cleanup preference"
+    )
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (tools, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (tools, doctor, setup, update, start, stop, rollback, gc, cleanup, move):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
@@ -1130,19 +1164,7 @@ def main() -> None:
         elif args.operation == "gc":
             code = _gc(args, result)
         elif args.operation == "cleanup":
-            preview = collection_preview(args.root)
-            result.update(
-                cleanup=preview,
-                current=preview["current"],
-                status="planned",
-                plan=[
-                    f"generation {row['generation']}: {row['status']}: "
-                    + "; ".join(cast("list[str]", row["reasons"]))
-                    for row in cast("list[dict[str, object]]", preview["generations"])
-                ]
-                + cast("list[str]", preview["warnings"]),
-            )
-            code = 0
+            code = _cleanup(args, result)
         elif args.operation == "move":
             code = _move(args, result)
         elif args.operation in {"start", "stop"}:

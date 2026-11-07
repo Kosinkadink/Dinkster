@@ -240,6 +240,9 @@
   pending launches and unproven child cleanup retain the generation.
   Stopped assignments carried across updates remain stopped and do not by
   themselves prevent collection after leaving the retained rollback set.
+  `cleanup --automatic off --yes` persists an opt-out without collecting;
+  `--automatic on` restores the default preference. Preview and status expose
+  the same policy. Policy changes do not enable automatic deletion triggers.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs

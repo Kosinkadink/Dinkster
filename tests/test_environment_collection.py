@@ -22,6 +22,86 @@ from test_environment_cli import _run
 from test_environment_state import _generation
 
 
+def test_cleanup_policy_persists_without_collecting_or_changing_software(tmp_path: Path):
+    from dinkster_supervisor.environment_state import writer_lock
+
+    for number in (1, 2, 3):
+        _generation(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 1, 3, "complete").write(tmp_path / "journal/100.json")
+    for name in ("workflows", "models", "outputs", "mounts", "history", "store"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "sentinel").write_text(name)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    default = {"automatic": True, "previousSuccessfulActivations": 1, "minimumAgeSeconds": 0}
+    code, preview = _run(tmp_path, "cleanup", "--plan")
+    assert code == 0 and preview["cleanup"]["policy"] == default, preview
+    for flags in (("--plan",), ()):
+        code, planned = _run(tmp_path, "cleanup", "--automatic", "off", *flags)
+        assert code == 0 and planned["status"] == "planned", planned
+        assert planned["requestedAutomaticCleanup"] is False
+        assert planned["cleanup"]["policy"] == default
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    with writer_lock(tmp_path):
+        code, refused = _run(tmp_path, "cleanup", "--automatic", "off", "--yes")
+    assert code == 1 and "another environment writer holds" in refused["error"], refused
+    assert not (tmp_path / "cleanup.json").exists()
+    for option, enabled in (("off", False), ("on", True), ("off", False)):
+        code, applied = _run(tmp_path, "cleanup", "--automatic", option, "--yes")
+        assert code == 0 and applied["status"] == "applied", applied
+        policy = default | {"automatic": enabled}
+        assert applied["cleanup"]["policy"] == policy
+        for command in ("cleanup", "status"):
+            code, read = _run(tmp_path, command)
+            assert code == 0 and read["cleanup"]["policy"] == policy, read
+        assert all(p.read_bytes() == value for p, value in before.items())
+        assert not (tmp_path / ".garbage").exists()
+    assert json.loads((tmp_path / "cleanup.json").read_text()) == {
+        "format": "dinkster.cleanup/1",
+        "automatic": False,
+    }
+
+
+@pytest.mark.parametrize("condition", ["json", "format", "string", "number", "linked"])
+def test_invalid_cleanup_policy_refuses_preview_and_policy_changes(tmp_path: Path, condition: str):
+    _generation(tmp_path, 1)
+    (tmp_path / "current").write_text("1\n")
+    Journal("setup", None, 1, "complete").write(tmp_path / "journal/100.json")
+    policy = tmp_path / "cleanup.json"
+    target = tmp_path / "keep-policy"
+    if condition == "linked":
+        target.write_text('{"format":"dinkster.cleanup/1","automatic":false}')
+        policy.symlink_to(target)
+    elif condition == "json":
+        policy.write_text("broken")
+    else:
+        policy.write_text(
+            json.dumps(
+                {
+                    "format": "unknown" if condition == "format" else "dinkster.cleanup/1",
+                    "automatic": "false"
+                    if condition == "string"
+                    else (0 if condition == "number" else False),
+                }
+            )
+        )
+    before = policy.read_bytes()
+    for arguments in (("--plan",), ("--automatic", "on", "--yes")):
+        code, refused = _run(tmp_path, "cleanup", *arguments)
+        assert code == 1, refused
+        assert "policy" in refused["error"] or "cannot read cleanup.json" in refused["error"], (
+            refused
+        )
+        assert policy.read_bytes() == before
+        assert (tmp_path / "generations/1/generation.json").is_file()
+    code, status = _run(tmp_path, "status")
+    assert code == 0 and status["cleanup"]["warnings"], status
+    assert "policy" not in status["cleanup"]
+    assert policy.read_bytes() == before
+    assert policy.is_symlink() == (condition == "linked")
+
+
 @pytest.mark.parametrize(
     "condition", [None, "pending", "ambiguous", "quarantine", "corrupt-journal"]
 )

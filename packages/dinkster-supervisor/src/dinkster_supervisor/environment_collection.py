@@ -22,6 +22,7 @@ from .environment_state import (
     durable_rename,
     durable_unlink,
     read_current,
+    read_document,
     store_cache_path,
     writer_lock,
 )
@@ -211,8 +212,30 @@ def collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
     return current, tuple(sorted(retained)), tuple(sorted(collected))
 
 
+def collection_policy(root: Path) -> dict[str, object]:
+    """Keep cleanup preferences independent of software activation and rollback."""
+    path = root / "cleanup.json"
+    if path.is_symlink() or path.is_junction():
+        raise EnvironmentError("cleanup policy must not be linked")
+    automatic = True
+    if path.exists():
+        document = read_document(path)
+        if (
+            document.get("format") != "dinkster.cleanup/1"
+            or type(document.get("automatic")) is not bool
+        ):
+            raise EnvironmentError("invalid cleanup policy")
+        automatic = cast("bool", document["automatic"])
+    return {
+        "automatic": automatic,
+        "previousSuccessfulActivations": 1,
+        "minimumAgeSeconds": 0,
+    }
+
+
 def collection_preview(root: Path) -> dict[str, object]:
     """Observe generation safety without locking, recovering or authorizing deletion."""
+    policy = collection_policy(root)
     directory = root / "generations"
     if directory.is_symlink() or directory.is_junction():
         raise EnvironmentError("collection refuses a linked generations directory")
@@ -293,6 +316,7 @@ def collection_preview(root: Path) -> dict[str, object]:
     if current not in present or (predecessor is not None and predecessor not in present):
         raise EnvironmentError("current or previous generation tree is missing")
     return {
+        "policy": policy,
         "current": current,
         "generations": rows,
         "quarantine": quarantine,
