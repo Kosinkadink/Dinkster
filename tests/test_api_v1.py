@@ -74,6 +74,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_voxel",
     "register_inference_types",
     "register_media_types",
+    "register_vision_packet_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",

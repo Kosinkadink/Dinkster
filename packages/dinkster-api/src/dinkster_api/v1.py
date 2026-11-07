@@ -496,6 +496,7 @@ def __getattr__(name: str) -> object:
     elif name in {
         "register_inference_types",
         "register_media_types",
+        "register_vision_packet_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
@@ -530,6 +531,7 @@ def __dir__() -> list[str]:
             "TriangleMeshBatch",
             "register_inference_types",
             "register_media_types",
+            "register_vision_packet_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
@@ -582,6 +584,7 @@ if TYPE_CHECKING:
         materialize_voxel,
         register_inference_types,
         register_media_types,
+        register_vision_packet_types,
     )
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
@@ -637,6 +640,7 @@ __all__ = [
     "materialize_voxel",
     "register_inference_types",
     "register_media_types",
+    "register_vision_packet_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
