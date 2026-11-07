@@ -1402,7 +1402,8 @@ async def serve_connection(
         result_send_locked = False
         try:
             vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
-            if vault_root:
+            # Read-only vaults are borrowed from the parent, which retains them.
+            if vault_root and os.access(vault_root, os.W_OK):
                 produced_context.enter_context(
                     contextlib.closing(hold_produced_vault(Path(vault_root)))
                 )
@@ -1836,7 +1837,7 @@ async def serve_connection(
         produced_context = contextlib.ExitStack()
         try:
             vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
-            if vault_root:
+            if vault_root and os.access(vault_root, os.W_OK):
                 produced_context.enter_context(
                     contextlib.closing(hold_produced_vault(Path(vault_root)))
                 )
@@ -2600,7 +2601,7 @@ async def serve_connection(
                     use_produced_output_job(f"{process_instance_token()}-{request_id}", 1)
                 )
                 vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
-                if vault_root:
+                if vault_root and os.access(vault_root, os.W_OK):
                     ownership.enter_context(
                         contextlib.closing(hold_produced_vault(Path(vault_root)))
                     )
