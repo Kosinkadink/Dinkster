@@ -1,0 +1,42 @@
+{
+  "nodes": {
+    "dinkster.qwen.empty_qwen_image_layered_latent_image": {
+      "displayName": "Empty Qwen Image Layered Latent"
+    },
+    "dinkster.qwen.qwen_image21_cache": {
+      "displayName": "Qwen Image 2.1 Cache"
+    },
+    "dinkster.qwen.qwen_image_diffsynth_controlnet": {
+      "displayName": "Apply Qwen Image DiffSynth ControlNet"
+    },
+    "dinkster.qwen.text_encode_qwen_image21": {
+      "displayName": "Text Encode Qwen Image 2.1"
+    },
+    "dinkster.qwen.text_encode_qwen_image_edit": {
+      "displayName": "Text Encode Qwen Image Edit"
+    },
+    "dinkster.qwen.text_encode_qwen_image_edit_plus": {
+      "displayName": "Text Encode Qwen Image Edit Plus"
+    }
+  },
+  "searchTerms": {
+    "dinkster.qwen.empty_qwen_image_layered_latent_image": [
+      "EmptyQwenImageLayeredLatentImage"
+    ],
+    "dinkster.qwen.qwen_image21_cache": [
+      "QwenImage21Cache"
+    ],
+    "dinkster.qwen.qwen_image_diffsynth_controlnet": [
+      "QwenImageDiffsynthControlnet"
+    ],
+    "dinkster.qwen.text_encode_qwen_image21": [
+      "TextEncodeQwenImage21"
+    ],
+    "dinkster.qwen.text_encode_qwen_image_edit": [
+      "TextEncodeQwenImageEdit"
+    ],
+    "dinkster.qwen.text_encode_qwen_image_edit_plus": [
+      "TextEncodeQwenImageEditPlus"
+    ]
+  }
+}
