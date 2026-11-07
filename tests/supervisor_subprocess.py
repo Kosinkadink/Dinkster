@@ -128,7 +128,7 @@ def _request_snapshot(directory: Path) -> str:
     )
 
 
-def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
         with subprocess.Popen(
@@ -146,7 +146,7 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
             env={**os.environ, "PYTHONFAULTHANDLER": "1"},
         ) as process:
             try:
-                stdout, stderr = process.communicate(timeout=30)
+                stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
                 # poll must precede kill: an exited child can leave inherited pipes open.
                 returncode = process.poll()

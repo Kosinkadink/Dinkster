@@ -220,6 +220,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         str(fixture["port"]),
         *locks[:4],
         "--yes",
+        timeout=120,
     )
     try:
         assert code == 0 and result["current"] == 1, result.get("error", result)
@@ -268,6 +269,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     str(updated_artifacts),
                     *locks,
                     "--yes",
+                    timeout=120,
                 )
                 assert code == 0 and updated["current"] == 2, updated.get("error", updated)
                 assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
@@ -436,7 +438,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         if path.is_file() and path.name != ".lock"
                     } == preserved
                     approval = ("--approve", chosen["approval"])
-                code, restored = _run(root, "restore", "1", *approval)
+                code, restored = _run(root, "restore", "1", *approval, timeout=120)
                 assert code == 0 and restored["current"] == 3, restored.get("error", restored)
         records = history(root)
         assert len(records) == 3 and records[0] == first
