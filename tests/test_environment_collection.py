@@ -1092,6 +1092,7 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
     from dinkster_supervisor import environment_runtime as runtime
     from dinkster_supervisor.environment_history import history, validate_import
     from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from dinkster_supervisor.environment_state import EnvironmentError, writer_lock
     from test_environment_runtime import free_port
 
     root = cleanup_project
@@ -1128,9 +1129,13 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
 
     def collection_finished(number: int) -> bool:
         # Quarantine hides the tree before its collection journal commits.
-        return not (root / "generations" / str(number)).exists() and not any(
-            Journal.read(path).incomplete for path in (root / "journal").glob("*.json")
-        )
+        try:
+            with writer_lock(root):
+                return not (root / "generations" / str(number)).exists() and not any(
+                    Journal.read(path).incomplete for path in (root / "journal").glob("*.json")
+                )
+        except EnvironmentError:
+            return False
 
     try:
         start_engine(root, 2, "old", old_port)
@@ -1185,9 +1190,9 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
             imported = {p: p.read_bytes() for p in (root / "history").glob("*.json")}
             constraints.write_bytes(original_constraints)
         deadline = time.monotonic() + 20
-        while not collection_finished(7) and time.monotonic() < deadline:
+        while not (finished := collection_finished(7)) and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert collection_finished(7)
+        assert finished
         if capture_fault:
             assert {p: p.read_bytes() for p in imported} == imported
         assert (root / "generations/2").is_dir()
@@ -1196,9 +1201,9 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
         stop_engine(root, "old", generation=2)
         if sys.platform == "linux" or os.name == "nt":
             deadline = time.monotonic() + 20
-            while not collection_finished(2) and time.monotonic() < deadline:
+            while not (finished := collection_finished(2)) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            assert collection_finished(2)
+            assert finished
         else:
             assert (root / "generations/2").is_dir()
         assert (root / "generations/1").is_dir()
