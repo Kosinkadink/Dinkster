@@ -138,7 +138,6 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
     from dinkster_workers.pack_lock import PackLock
     from test_installer import _download_ticket, _release_record, _serve_artifacts, write_pack
 
-    from dinkster import __version__
     from tests.fixtures.environments.build import wheel
 
     store = tmp_path / "store"
@@ -207,7 +206,7 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
             base=base,
             constraints=constraints,
             variant="linux-cpu",
-            engine_version=__version__,
+            engine_version="1.0",
             project=project,
             installed_lock=installed,
             additions=("added@1.2",),

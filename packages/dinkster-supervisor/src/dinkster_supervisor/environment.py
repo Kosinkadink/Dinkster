@@ -43,6 +43,7 @@ from .environment_generations import (
 )
 from .environment_history import attempts, history
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
+from .environment_pack_install import apply_pack_install, plan_pack_install
 from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
@@ -1172,6 +1173,12 @@ def main() -> None:
     history_show.add_argument("entry", type=int)
     history_command.add_argument("--json", action="store_true", help="emit one result object")
     history_show.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    packs_plan = commands.add_parser("packs-plan", help="retain exact additive software inputs")
+    packs_plan.add_argument("packs", nargs="+", metavar="PACK@VERSION")
+    packs_plan.add_argument("--output", type=Path, required=True)
+    packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
+    packs_apply.add_argument("--input", type=Path, required=True)
+    packs_apply.add_argument("--approval", required=True)
     doctor = commands.add_parser("doctor", help="report active generation and pack drift")
     doctor.add_argument(
         "--repair", action="store_true", help="rebuild offline from the local store"
@@ -1230,6 +1237,8 @@ def main() -> None:
         tools,
         catalog,
         status,
+        packs_plan,
+        packs_apply,
         doctor,
         setup,
         update,
@@ -1266,7 +1275,13 @@ def main() -> None:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
-        if args.operation == "tools":
+        if args.operation == "packs-plan":
+            result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+            code = 0
+        elif args.operation == "packs-apply":
+            result.update(apply_pack_install(args.root, args.input, args.approval))
+            code = 0
+        elif args.operation == "tools":
             selected = acquire_tools(tuple(args.mirror), args.channel, args.root, download=args.yes)
             result.update(
                 tools=selected,
