@@ -29,6 +29,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_nodes_void.void_sampler import VOIDSampler
+from void_pack_fixtures import void_providers
 
 
 def test_void_sampler_schema_is_torch_free() -> None:
@@ -194,11 +195,31 @@ def test_void_sampler_returns_float32_noise_without_steps() -> None:
     assert calls == []
 
 
+class _LatentFormat:
+    latent_channels = 1
+    latent_dimensions = 2
+    spacial_downscale_ratio = 8
+    temporal_downscale_ratio = 1
+
+    def fix_empty_latent(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+
+class _ModelSampling:
+    sigma_max = 1.0
+
+    def noise_scaling(
+        self, sigma: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor, _maximum: bool
+    ) -> torch.Tensor:
+        return latent + noise * sigma
+
+    def inverse_noise_scaling(self, _sigma: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+
 class _VoidModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        from test_custom_sampling_torch import _LatentFormat, _ModelSampling
-
         self.weight = torch.nn.Parameter(torch.ones(()))
         self.latent_format = _LatentFormat()
         self.model_sampling = _ModelSampling()
@@ -330,7 +351,8 @@ def test_void_sampler_graph_runs_through_native_advanced_sampler_and_cache(
 
         from dinkster.compose import PackSpec, ServingComposer
 
-        manifests = (native, fixture)
+        providers = void_providers(in_process, sampling=True)
+        manifests = (*providers, native, fixture)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -346,6 +368,7 @@ def test_void_sampler_graph_runs_through_native_advanced_sampler_and_cache(
                     PackSpec(
                         trust_reserved=True,
                         manifest=manifest,
+                        packs=providers[manifest].packs if manifest in providers else None,
                         in_process=in_process,
                         worker_group=None if in_process else "void-fixture",
                         group_manifests=() if in_process else manifests,

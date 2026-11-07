@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_minimax.minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
+from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -109,14 +110,17 @@ def test_empty_av_runs_twice_through_ordinary_pack_hosts(tmp_path: Path, in_proc
                 'types = "minimax_empty_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            for manifest in (native, fixture):
+            providers = conditioning_providers(in_process)
+            manifests = (*providers, native, fixture)
+            for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
                         trust_reserved=True,
                         manifest=manifest,
+                        packs=providers[manifest].packs if manifest in providers else None,
                         in_process=in_process,
                         worker_group=None if in_process else "minimax-empty-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             graph = Graph(
@@ -317,14 +321,17 @@ def test_minimax_image_runs_twice_through_ordinary_pack_hosts(
             }
         )
         try:
-            for manifest in (native, fixture):
+            providers = conditioning_providers(in_process)
+            manifests = (*providers, native, fixture)
+            for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
                         trust_reserved=True,
                         manifest=manifest,
+                        packs=providers[manifest].packs if manifest in providers else None,
                         in_process=in_process,
                         worker_group=None if in_process else "minimax-image-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             graph = Graph(

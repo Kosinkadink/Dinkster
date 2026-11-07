@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     resolver_from_env,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -125,6 +126,8 @@ def test_guides_run_twice_through_both_ordinary_hosts(tmp_path: Path, in_process
             encoding="ascii",
         )
         native = package / "dinkster-pack.toml"
+        providers = conditioning_providers(in_process)
+        manifests = (*providers, native, fixture)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -135,14 +138,15 @@ def test_guides_run_twice_through_both_ordinary_hosts(tmp_path: Path, in_process
             }
         )
         try:
-            for manifest in (native, fixture):
+            for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
                         trust_reserved=True,
                         manifest=manifest,
+                        packs=providers[manifest].packs if manifest in providers else None,
                         in_process=in_process,
                         worker_group=None if in_process else "minimax-guide-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             graph = Graph(

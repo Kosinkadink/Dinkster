@@ -27,6 +27,7 @@ from dinkster_nodes_minimax.audio_music_conditioning import (
     MiniMaxMusic3TextEncode,
     ReferenceTimbreAudio,
 )
+from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -207,6 +208,8 @@ def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process
                 ),
                 encoding="ascii",
             )
+            for provider in conditioning_providers(in_process).values():
+                await composer.add_pack(provider)
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=manifest, in_process=in_process)
             )
