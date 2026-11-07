@@ -106,6 +106,8 @@ from .registries import (
     prepare_registry_sources,
     prepare_registry_update_sources,
     publish_release,
+    registry_source_lock,
+    resolve_release,
     routing_registry_fetcher,
     select_registry,
     static_pack_releases,
@@ -1089,6 +1091,8 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
         raise InstallError("--allow-missing is only valid for fresh pack selection")
     if args.retain_sources and not args.installed_lock:
         raise InstallError("--retain-sources requires an installed generation source lock")
+    if args.add and not (args.installed_lock and args.retain_sources):
+        raise InstallError("--add requires --installed-lock and --retain-sources")
     if args.installed_lock and args.installed_lock.resolve() == args.catalog_lock.resolve():
         raise InstallError("candidate source lock must differ from --installed-lock")
     minimums: dict[str, str] = {}
@@ -1103,13 +1107,41 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     try:
         if args.installed_lock:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
-            lock = prepare_registry_update_sources(
-                config,
-                installed,
-                args.artifacts.resolve(),
-                engine_version=dinkster_version,
-                selected=select_registry(config, args.registry) if args.registry else None,
-            )
+            if args.add:
+                selections: dict[str, str] = {}
+                installed_names = {entry.pack for entry in installed.packs}
+                for raw in args.add:
+                    parsed = parse_registry_spec(raw)
+                    if parsed is None or raw != f"{parsed[0]}@{parsed[1]}":
+                        raise InstallError("--add requires canonical PACK@VERSION selections")
+                    pack, version = parsed
+                    if pack in installed_names or pack in selections:
+                        raise InstallError(f"{pack}: --add requires a distinct absent pack")
+                    selections[pack] = version
+                registry = select_registry(config, args.registry)
+                fetch = routing_registry_fetcher(config, registry)
+                entries = list(installed.packs)
+                args.artifacts.mkdir(parents=True, exist_ok=True)
+                for pack, version in selections.items():
+                    selected = resolve_release(
+                        registry, pack, version, engine_version=dinkster_version
+                    )
+                    cached = args.artifacts / f"{selected.artifact_digest[7:]}.zip"
+                    if not cached.exists():
+                        cached.write_bytes(fetch(selected))
+                    entry = registry_source_lock(selected, cached, engine_version=dinkster_version)
+                    if entry.publisher != "dinkster":
+                        raise InstallError(f"{pack}: --add requires a first-party pack")
+                    entries.append(entry)
+                lock = Lockfile.of(entries)
+            else:
+                lock = prepare_registry_update_sources(
+                    config,
+                    installed,
+                    args.artifacts.resolve(),
+                    engine_version=dinkster_version,
+                    selected=select_registry(config, args.registry) if args.registry else None,
+                )
             if args.retain_sources:
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 fetch = routing_registry_fetcher(
@@ -1350,6 +1382,13 @@ def main() -> None:
         "--retain-sources",
         action="store_true",
         help="cache unchanged sources from the installed generation's pack-sources tree",
+    )
+    sources.add_argument(
+        "--add",
+        action="append",
+        default=[],
+        metavar="PACK@VERSION",
+        help="add an exact absent first-party pack without re-resolving installed sources",
     )
     sources.set_defaults(handler=_cmd_prepare_registry_sources)
 
