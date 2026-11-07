@@ -13,13 +13,14 @@ def test_moge_inference_cold_schema_and_registration() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.moge_inference import MoGeInference
+from dinkster_nodes_vision_moge import NODES
+from dinkster_nodes_vision_moge.moge_inference import MoGeInference
 from dinkster_workers import load_manifest
 schema = MoGeInference.define_schema()
-manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')
-assert COMFY_NODES.count(MoGeInference) == 1
-assert manifest.namespaces.count('MoGeInference') == 1
+manifest = load_manifest('packages/dinkster-nodes-vision-moge/dinkster-pack.toml')
+assert NODES.count(MoGeInference) == 1
+assert manifest.namespaces.count('dinkster.vision.moge') == 1
+assert schema.node_type == 'dinkster.vision.moge.mo_ge_inference'
 assert [i.id for i in schema.inputs] == [
     'moge_model', 'image', 'resolution_level', 'fov_x_degrees', 'batch_size',
     'force_projection', 'apply_mask', 'refine_steps'
