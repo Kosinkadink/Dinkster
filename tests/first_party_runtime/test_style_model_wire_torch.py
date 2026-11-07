@@ -26,6 +26,7 @@ from dinkster_api.v1 import (
 from dinkster_caches import MemoryLRUCache
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory.resident import ResidentPool, default_pool
+from dinkster_server import PackInfo
 from dinkster_values import (
     RESOURCE_ID_META_KEY,
     RESOURCE_OWNER_META_KEY,
@@ -36,7 +37,7 @@ from dinkster_values import (
     resident_resource_id,
 )
 
-from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def _model() -> Any:
@@ -137,11 +138,15 @@ class StyleConsumer(Node):
 def test_style_model_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
-            worker_env={"PYTHONPATH": str(Path(__file__).parent), "CUDA_VISIBLE_DEVICES": ""}
+            worker_env={
+                "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+                "CUDA_VISIBLE_DEVICES": "",
+            }
         )
         try:
             (tmp_path / "style_fixture.py").write_text(
-                "from test_style_model_wire_torch import StyleSource, StyleConsumer\n"
+                "from tests.first_party_runtime.test_style_model_wire_torch import "
+                "StyleSource, StyleConsumer\n"
                 "from dinkster_api.v1 import register_inference_types\n"
                 "NODES = [StyleSource, StyleConsumer]\n",
                 encoding="ascii",
@@ -296,18 +301,22 @@ class ModelPatchConsumer(Node):
         (LATENT_UPSCALE_MODEL_TYPE, False),
     ),
 )
-def test_model_patch_full_native_manifest_and_fixture_hosts(
+def test_model_patch_models_manifest_and_fixture_hosts(
     tmp_path: Path, in_process: bool, value_type: str
 ) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
-            worker_env={"PYTHONPATH": str(Path(__file__).parent), "CUDA_VISIBLE_DEVICES": ""}
+            worker_env={
+                "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+                "CUDA_VISIBLE_DEVICES": "",
+            }
         )
         try:
             module = "model_patch_fixture_" + str(in_process) + "_" + value_type.lower()
             (tmp_path / f"{module}.py").write_text(
-                "from test_style_model_wire_torch import ModelPatchConsumer, ModelPatchSource\n"
-                "from dinkster_inference_wire import register_inference_types\n"
+                "from tests.first_party_runtime.test_style_model_wire_torch import "
+                "ModelPatchConsumer, ModelPatchSource\n"
+                "from dinkster_api.v1 import register_inference_types\n"
                 "class Source(ModelPatchSource):\n"
                 f"    value_type = {value_type!r}\n"
                 "class Consumer(ModelPatchConsumer):\n"
@@ -319,41 +328,27 @@ def test_model_patch_full_native_manifest_and_fixture_hosts(
             fixture_manifest.write_text(
                 '[pack]\nname = "model-patch-fixture"\npublisher = "dinkster"\n'
                 'namespaces = ["model-patch-fixture"]\n'
+                '[pack.dependencies]\ndinkster-models = ">=0.0.1,<1"\n'
                 f'[pack.entry]\nnodes = "{module}:NODES"\n'
                 f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            packages = Path(__file__).resolve().parents[2]
-            generation = default_pack_spec("dinkster-nodes-generation")
-            native_manifest = packages / "dinkster-native" / "dinkster-pack.toml"
-            if in_process:
-                await composer.add_pack(generation)
-                await composer.add_pack(PackSpec(manifest=native_manifest, trust_reserved=True))
-                await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=True))
-            else:
-                group_manifests = (Path(generation.manifest), native_manifest, fixture_manifest)
+            root = Path(__file__).resolve().parents[2]
+            models_manifest = root / "packages/dinkster-nodes-models/dinkster-pack.toml"
+            manifests = (models_manifest, fixture_manifest)
+            for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
-                        manifest=generation.manifest,
-                        packs=generation.packs,
-                        trust_reserved=True,
-                        worker_group="model-patch-fixture",
-                        group_manifests=group_manifests,
-                    )
-                )
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=native_manifest,
-                        trust_reserved=True,
-                        worker_group="model-patch-fixture",
-                        group_manifests=group_manifests,
-                    )
-                )
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=fixture_manifest,
-                        worker_group="model-patch-fixture",
-                        group_manifests=group_manifests,
+                        manifest=manifest,
+                        in_process=in_process,
+                        trust_reserved=manifest == models_manifest,
+                        packs={
+                            "dinkster-models": PackInfo("dinkster-nodes-models", version="0.0.1")
+                        }
+                        if manifest == models_manifest
+                        else None,
+                        worker_group=None if in_process else "model-patch-fixture",
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             engine = composer.composition.make_engine(lambda _event: None)
