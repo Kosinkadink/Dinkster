@@ -3,6 +3,49 @@
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
+- Published software history can rebuild a pruned generation without restoring
+  workflows, models or outputs. Missing engine inputs expose read-only alternatives
+  and all substitutions before a proposal-specific approval; `--yes` alone cannot
+  approve an approximate restore. Shared tools are recorded, never replaced.
+- Restoring recorded registry pack sources reacquires exact digest-pinned archives,
+  not newer releases. Interrupted software restores retain a failed-attempt receipt
+  while leaving successful history unchanged.
+- Restore can recover selected source archives retained by another engine release
+  when the recorded source cache was pruned. Retained bytes must match the locked
+  BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
+- Restore planning checks exact pack source availability. When retained archives
+  are gone, acquisition probes use disposable storage and verify the recorded
+  digest; changed or unavailable sources are disclosed without changing the install.
+- Software restore rebuilds isolated and in-process pack dependencies from the
+  snapshot's complete locks, including after its old generation was pruned;
+  it does not inherit packs from the current generation.
+- Software history records the generation interpreter's wheel compatibility tags.
+  Restore planning reports missing pack dependency wheels before activation,
+  honors inherited base/engine and in-process dependencies, and verifies retained
+  wheel bytes without creating project or cache files.
+- Local-development software snapshots rebuild from their recorded manifests,
+  retained interpreter and hash-pinned wheels, without resolving a checkout again.
+  Missing local interpreter files or wheels are disclosed before activation.
+- A missing base can be replaced by an indexed base
+  with the same native platform, Python and worker protocol when its locked engine
+  and unchanged pack dependency requirements agree. Packs, source locks and
+  in-process placement are preserved. Engine replacements and combined engine/base
+  proposals also preserve packs when recorded pack manifests declare compatible
+  engine ranges and unchanged dependency locks remain compatible and obtainable.
+  Entries without those declarations do not guess compatibility. Proposals prefer
+  fewer changed identities, preserve an obtainable compatible engine, and disclose
+  every substitution for explicit approval rather than silently upgrading it.
+- Standalone pack-only roots can be adopted with `setup --adopt-from` into a
+  new, separate supervisor root using explicitly chosen published engine/base
+  identities and target dependency locks. The plan displays exact pack sources,
+  locks and in-process placement; the old root, shared store and user data stay
+  untouched. Shared-venv groups currently refuse rather than change topology.
+- Adoption displays source pack distribution versions and differences from target
+  dependency locks, with separate shared-store accelerator scopes. Inspection is
+  metadata-only and never executes old Python or .pth files. Ambient/inherited
+  packages are not claimed as captured, and changed metadata invalidates approval.
+  Linked source roots, shared stores, archives and their ownership ancestors are
+  refused, including Windows directory junctions.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.
@@ -189,8 +232,11 @@
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
 - Published engine and base locations can carry readable dated labels alongside
-  their hash prefix. Existing hash-only locations remain installable, and local
-  stores keep full-hash directory names for both forms. Contributor setup can
+  their hash prefix. Local base, engine, pack and wheel downloads use readable
+  names while retaining full content identity. Different contents with the same
+  label stay separate, and relabeling identical bytes reuses the existing copy.
+  Existing hash-only local installs remain usable without renaming their
+  interpreters or environments. Contributor setup can
   locate an absent legacy base directory through the variant index, matching
   only its pinned full content id and verifying the manifest before installation.
 - Status and doctor show installed base and engine labels from identity-matched
@@ -276,6 +322,9 @@
   independently versioned tools publication without engine or base payloads.
   Planning creates no cache; confirmed acquisition checks manifest and archive
   integrity and refuses corrupt tools rather than falling back to engine assets.
+  Local ZIP folders use dated supervisor versions without hashes; different
+  content with the same label receives a numeric suffix. Existing cached tools
+  remain reusable, and planning leaves collision allocations unchanged.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.
@@ -320,7 +369,7 @@
   --variant linux-cpu --json`.
   This reads registered scoped workflow records and explicit additions from
   project.json, the source generation's dinkster.lock, and an admitted target
-  registry lock. Cached `<artifact-digest-hex>.zip` archives are hash-verified
+  registry lock. Cached source archives, in readable or legacy locations, are hash-verified
   before their manifests are read in disposable scratch. It returns requirements,
   a missing-item plan and input revision/digest snapshots without creating a
   generation, fetching content or changing project/vault bytes or logical library
@@ -348,8 +397,8 @@
   diagnostic journal. First setup with requirements still needs an existing
   generation interpreter. Channel/variant selection replans requirements for the
   selected target; workflow records and other project fields are preserved.
-  Rollback restores the retained selection without rebuilding, refusing when
-  settings were edited after selection rather than discarding user changes.
+  Rollback rebuilds the preceding software snapshot as a new generation, preserving
+  current project settings and any edits made after the recorded activation.
 - Unconfirmed `dinkster-env update` and `update --plan` report saved workflow
   requirements without acquiring target payloads or claiming source feasibility.
   Confirmed updates check those requirements against the same registry-selected
@@ -371,3 +420,34 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+- `dinkster-env history` lists successful software activations in order, and
+  `history show ID` displays the recorded software and changes. History survives
+  generation-directory collection. Snapshots exclude workflows, models, outputs,
+  libraries and mounts. Interrupted activation does not become a successful entry;
+  completed activation history publication is recoverable without duplication.
+- Legacy software can be preserved as explicitly marked imports in the same
+  history without changing current software, rollback selection or activation
+  diffs. `dinkster-env import GENERATION --plan` previews capture; `--yes` confirms
+  capture after completed history recovery under the project writer lock.
+  Capture never launches the retained interpreter. Imports require intact sealed
+  software and unambiguous completed activation ancestry; conflicting captures
+  refuse. Their timestamps describe
+  observation, and unknown historical tools, host facts and wheel compatibility
+  tags stay unknown. `restore ID` accepts an imported entry after its generation
+  tree is collected, revalidating its completed activation provenance. Missing
+  historical compatibility facts can prevent reconstruction.
+- Software snapshots describe canonical reconstruction inputs, not the integrity
+  of every materialized pack runtime file. A successful import or exact restore
+  does not establish that an existing same-lock runtime has no local edits.
+  Unrecorded or linked pack payloads must remain retained when that proof is
+  unavailable; capture alone does not authorize their collection.
+- `dinkster-env restore ID` rebuilds a published software snapshot in a new
+  generation after confirmation. Recorded identities are preserved; unavailable
+  inputs refuse activation. Tools versions are displayed but tools are never
+  replaced. Failed attempts remain separate from successful history. Restore
+  preserves existing history, project settings, workflows, models and outputs.
+- `dinkster-env rollback` rebuilds the preceding successful history entry, even
+  after its generation directory was pruned. It uses restore's missing-input and
+  proposal-approval contract, appends a source-linked entry with reason `rollback`,
+  and leaves project settings and user data unchanged. Planning recovers an
+  interrupted publication of a completed activation before selecting that entry.

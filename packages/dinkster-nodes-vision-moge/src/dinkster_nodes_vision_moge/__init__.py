@@ -11,6 +11,7 @@ from dinkster_api.v1 import (
     decode_latent,
     default_pool,
     encode_latent,
+    inference_nodes,
     latent_fingerprint,
     register_asset_type,
     register_media_types,
@@ -54,3 +55,6 @@ def register_types(registry: TypeRegistry) -> None:
             fingerprint=latent_fingerprint(MOGE_GEOMETRY_TYPE),
             validate_encoded=partial(validate_latent_encoded, require_samples=False),
         )
+
+
+inference_nodes(NODES)

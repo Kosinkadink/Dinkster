@@ -7,6 +7,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_asset_type,
     register_media_types,
     register_mesh_type,
@@ -35,3 +36,6 @@ def register_types(registry: TypeRegistry) -> None:
             registry, DA3_MODEL_TYPE, table=default_pool(), meta=comfy_resident_meta
         )
     register_vision_packet_types(registry, type_ids=(DA3_GEOMETRY_TYPE,))
+
+
+inference_nodes(NODES)

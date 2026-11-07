@@ -1,6 +1,6 @@
 """First-party wan model nodes."""
 
-from dinkster_api.v1 import TypeRegistry, TypeSpec, register_inference_types
+from dinkster_api.v1 import TypeRegistry, TypeSpec, inference_nodes, register_inference_types
 from dinkster_inference_wire.sam3_wire import register_sam3_track_type
 from dinkster_inference_wire.wan_wire import register_wan_type
 
@@ -78,3 +78,5 @@ NODES = (
     WanVaceToVideo,
     wanBlockSwap,
 )
+
+inference_nodes(NODES)

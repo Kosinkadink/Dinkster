@@ -14,10 +14,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from dinkster_store import object_path
 from dinkster_workers.boundary import PROTOCOL_VERSION
 from dinkster_workers.pack_environment import (
     GenerationContext,
     doctor_generation,
+    fetch_wheel,
     main,
     pack_drift,
     preflight_generation,
@@ -55,6 +57,37 @@ def _wheel(root: Path, name: str, version: str, module: str, body: str) -> Locke
     return LockedWheel(
         filename, path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest(), path.as_uri()
     )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_wheel_cache_keeps_same_filename_contents_distinct_and_reuses_offline(
+    tmp_path: Path, legacy: bool
+) -> None:
+    source, store = tmp_path / "source", tmp_path / "store"
+    source.mkdir()
+    first = _wheel(source, "example", "1.0", "example", "VALUE = 1\n")
+    original = (source / first.filename).read_bytes()
+    if legacy:
+        cached = store / first.sha256 / first.filename
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(original)
+    first_path = fetch_wheel(first, store)
+    assert first_path.parent.name == (first.sha256 if legacy else "example-1.0-py3-none-any")
+    second = _wheel(source, "example", "1.0", "example", "VALUE = 23\n")
+    second_path = fetch_wheel(second, store)
+    assert second_path.parent.name == (
+        "example-1.0-py3-none-any" if legacy else "example-1.0-py3-none-any--2"
+    )
+    assert first_path.read_bytes() == original
+    assert second_path.read_bytes() == (source / second.filename).read_bytes()
+    renamed_source = source / "example-1.0-1-py3-none-any.whl"
+    renamed_source.write_bytes(original)
+    renamed = replace(first, filename=renamed_source.name, url=renamed_source.as_uri())
+    assert fetch_wheel(renamed, store) == first_path.parent / renamed.filename
+    (source / first.filename).unlink()
+    assert fetch_wheel(first, store, offline=True) == first_path
+    assert fetch_wheel(second, store, offline=True) == second_path
+    assert first_path.read_bytes() == original
 
 
 def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
@@ -148,7 +181,7 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
         "short": "wheel hash or size mismatch",
         "oversize": "wheel exceeds locked size",
     }[failure] in message
-    assert not (store / wheel.sha256 / wheel.filename).exists()
+    assert not (object_path(store, "sha256:" + wheel.sha256) / wheel.filename).exists()
     assert not list(store.rglob("*.partial"))
     assert not (generation / "packs/example").exists()
 

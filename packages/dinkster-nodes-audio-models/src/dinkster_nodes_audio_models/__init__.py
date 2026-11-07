@@ -1,3 +1,4 @@
+from dinkster_api.v1 import inference_nodes
 from dinkster_api.v1 import register_inference_types as register_types
 
 from .ace_text_conditioning import TextEncodeAceStepAudio, TextEncodeAceStepAudio15
@@ -19,3 +20,5 @@ NODES = (
 )
 
 __all__ = ["NODES", "register_types"]
+
+inference_nodes(NODES)

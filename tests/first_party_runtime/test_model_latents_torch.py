@@ -81,7 +81,8 @@ def test_model_latent_layout(
     assert samples.dtype == torch.float32
     assert torch.count_nonzero(samples).item() == 0
     assert {key: value for key, value in result.items() if key != "samples"} == metadata
-    samples.fill_(3)
+    with torch.inference_mode():
+        samples.fill_(3)
     assert torch.count_nonzero(node.execute(**inputs)["LATENT"]["samples"]).item() == 0
 
 

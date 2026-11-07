@@ -1,5 +1,7 @@
 """First-party models nodes."""
 
+from dinkster_api.v1 import inference_nodes
+
 from .attention_multiply import (
     CLIPAttentionMultiply,
     UNetCrossAttentionMultiply,
@@ -255,3 +257,5 @@ NODES = (
     CheckpointSave,
     ModelSave,
 )
+
+inference_nodes(NODES)

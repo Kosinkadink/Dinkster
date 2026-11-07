@@ -67,6 +67,7 @@ GOLDEN_V1_SURFACE = (
     "register_resident_type",
     "LatentStream",
     "MultiStreamLatent",
+    "inference_nodes",
     "initialize_inference_process",
     "prepare_sampling_model",
     "materialize_audio",

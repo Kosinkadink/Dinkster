@@ -1,5 +1,7 @@
 """First-party latent nodes."""
 
+from dinkster_api.v1 import inference_nodes
+
 from .audio_latent import (
     EmptyLatentAudio,
     GetAudioLatentSize,
@@ -119,3 +121,5 @@ NODES = (
     LoadLatent,
     SaveLatent,
 )
+
+inference_nodes(NODES)

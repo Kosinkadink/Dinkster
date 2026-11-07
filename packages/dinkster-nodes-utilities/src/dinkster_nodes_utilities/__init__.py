@@ -4,6 +4,7 @@ from dinkster_api.v1 import (
     COLOR_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     TypeRegistry,
+    inference_nodes,
     register_box_types,
 )
 
@@ -93,3 +94,5 @@ def register_types(registry: TypeRegistry) -> None:
 
 
 __all__ = ["NODES", "register_types"]
+
+inference_nodes(NODES)

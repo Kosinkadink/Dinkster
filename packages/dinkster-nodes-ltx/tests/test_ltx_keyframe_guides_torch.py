@@ -275,8 +275,9 @@ def test_separate_preserves_surrounding_guides_and_storage(
         assert metadata["guide_attention_entries"][0]["label"] == label
         assert metadata["guide_attention_entries"][1]["after"] is True
         assert args[name][0][1]["generated_keyframes"]["num_keyframes"] == 2
-    result["keyframes"]["samples"].zero_()
-    result["latent"]["samples"].zero_()
+    with torch.inference_mode():
+        result["keyframes"]["samples"].zero_()
+        result["latent"]["samples"].zero_()
     assert torch.equal(args["latent"]["samples"], before)
 
 
@@ -330,7 +331,8 @@ def test_generated_auto_placement_occupancy_and_terminal_frame(use_mask: bool) -
     assert metadata["guide_attention_entries"][0]["pre_filter_count"] == 12
     assert metadata["guide_attention_entries"][0]["latent_shape"] == [2, 2, 3]
     assert result["latent"]["extra"] == 17
-    result["latent"]["samples"].zero_()
+    with torch.inference_mode():
+        result["latent"]["samples"].zero_()
     assert torch.equal(args["latent"]["samples"], before)
     assert args["positive"][0][1] == {"keep": "p"}
 

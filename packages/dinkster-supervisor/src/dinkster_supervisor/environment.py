@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import tempfile
 from contextlib import ExitStack
@@ -13,6 +14,9 @@ from pathlib import Path
 from platform import machine
 from typing import cast
 
+from dinkster_store import object_path, pack_archive_path
+
+from .environment_adoption import dependency_comparison, standalone_inputs
 from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
     cleanup_collection,
@@ -39,7 +43,9 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
+from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
+from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
     engine_status,
@@ -54,6 +60,7 @@ from .environment_state import (
     Journal,
     atomic_write,
     content_digest,
+    generation_number,
     read_current,
     read_document,
     write_document,
@@ -72,7 +79,6 @@ from .environment_transactions import (
     begin_activation,
     begin_setup,
     next_generation,
-    previous_activation,
     recover_activation,
 )
 
@@ -104,9 +110,20 @@ def _settings(root: Path) -> dict[str, object] | None:
 
 def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
-    settings = _settings(root)
     current = read_current(root)
     result["current"] = current
+    if args.operation == "history":
+        entries = history(root)
+        if args.history_action == "show":
+            selected = next((entry for entry in entries if entry["id"] == args.entry), None)
+            if selected is None:
+                raise EnvironmentError(f"installation history has no entry {args.entry}")
+            result["entry"] = selected
+        else:
+            result["history"] = entries
+            result["attempts"] = attempts(root)
+        return 0
+    settings = _settings(root)
     if current is not None and args.operation in {"status", "doctor"}:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
@@ -124,7 +141,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
-            manifest = store / "bases" / generation.base[7:] / "manifest.json"
+            manifest = object_path(store / "bases", generation.base) / "manifest.json"
             if manifest.is_file():
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
                 result["base"] = base_details(base)
@@ -218,6 +235,12 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
             if journal.incomplete:
                 raise EnvironmentError("move requires recovery before acquiring project locks")
             continue
+        if journal.stage == "complete" and journal.history_entry is not None:
+            with ExitStack() as locks:
+                if locked_store is None:
+                    locks.enter_context(writer_lock(root))
+                recover_activation(root, path)
+            continue
         if not journal.incomplete and not (
             journal.operation == "gc" and journal.stage == "complete"
         ):
@@ -250,6 +273,23 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
+    adopting = getattr(args, "adopt_from", None)
+    if adopting is not None and (root.exists() or args.root.is_symlink()):
+        raise EnvironmentError("adoption requires a new, nonexistent --root")
+    if adopting is not None and (
+        args.from_scratch or args.catalog_lock is not None or args.artifacts is not None
+    ):
+        raise EnvironmentError(
+            "adoption uses recorded standalone sources and a published engine/base"
+        )
+    if adopting is not None and (not args.engine_release or not args.base_id or not args.variant):
+        raise EnvironmentError(
+            "adoption requires explicit --engine-release, --base-id and --variant"
+        )
+    if adopting is None and (
+        getattr(args, "engine_release", None) or getattr(args, "base_id", None)
+    ):
+        raise EnvironmentError("--engine-release and --base-id require --adopt-from")
     if args.yes and root.is_dir():
         _recover_pending(root)
     settings = _settings(root)
@@ -329,6 +369,34 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             raise EnvironmentError("project store differs from requested --data")
         requested = configured
     store = select_store(root, requested)
+    adoption = standalone_inputs(adopting, root, store) if adopting is not None else None
+    adoption_locks = (
+        {str(path): content_digest(path) for path in args.pack_lock} if adoption else {}
+    )
+    if adoption is not None:
+        if adoption["venvGroups"]:
+            raise EnvironmentError("adoption does not support standalone shared-venv groups")
+        recorded_placement = tuple(cast("list[str]", adoption["inProcessPacks"]))
+        if args.in_process_pack is not None and set(in_process) != set(recorded_placement):
+            raise EnvironmentError("adoption must preserve recorded in-process placement")
+        in_process = recorded_placement
+        pack_names = {row["pack"] for row in cast("list[dict[str, object]]", adoption["packs"])}
+        supplied_names: set[str] = set()
+        for path in args.pack_lock:
+            document = read_document(path)
+            name = document.get("pack")
+            if (
+                path.is_symlink()
+                or document.get("format") != "dinkster.pack-lock/1"
+                or document.get("variant") != variant
+                or not isinstance(name, str)
+            ):
+                raise EnvironmentError("adoption requires intact target-variant dependency locks")
+            supplied_names.add(name)
+        if supplied_names != pack_names or len(args.pack_lock) != len(pack_names):
+            raise EnvironmentError(
+                "adoption requires one explicit --pack-lock for each recorded pack"
+            )
     local = None
     catalog = None
     custom = None
@@ -355,6 +423,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         ]
     else:
         catalog = discover(mirrors, channel)
+        if adoption is not None and (
+            catalog.channel.engine_release != args.engine_release
+            or catalog.channel.base_for(variant) != args.base_id
+        ):
+            raise EnvironmentError(
+                "selected channel does not match the approved engine release/base"
+            )
         retained = previous_root / "base-manifest.json" if previous_root is not None else None
         if (
             retained is not None
@@ -378,6 +453,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             if definitions is not None:
                 template = native_template(catalog.bases)
                 selection = custom_selection(definitions, variant, template)
+        if adoption is not None and selection is not None:
+            raise EnvironmentError(
+                "adoption requires an exact published base, not a custom definition"
+            )
         if custom is not None or selection is not None:
             template = template or native_template(catalog.bases)
             dependency_variant = cast("str", template["variant"])
@@ -416,6 +495,29 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     result.update(
         current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
     )
+    if adoption is not None:
+        result["adoption"] = adoption
+        result["dependencyLocks"] = {str(path): read_document(path) for path in args.pack_lock}
+        result["dependencyComparison"] = dependency_comparison(adoption, tuple(args.pack_lock))
+        plan.extend(
+            [
+                f"adopt standalone generation {adoption['generation']} from {adopting} into {root}",
+                f"preserve source lock: {adoption['sourceLock']}",
+                f"preserve in-process placement: {', '.join(in_process) or 'none'}",
+                "old engine/base are not recorded; use the explicitly selected identities",
+                "source dependency inspection reads local distribution metadata only; "
+                "ambient, inherited and .pth-provided packages are not captured",
+                "shared-store scopes are displayed independently; no source accelerator is guessed",
+                "comparison is against pack locks, not the total target engine/base closure; "
+                "a null targetLock means not declared in that pack lock, not necessarily removed",
+                "source dependencies: "
+                f"{json.dumps(adoption['installedDependencies'], sort_keys=True)}",
+                "dependency comparison: "
+                f"{json.dumps(result['dependencyComparison'], sort_keys=True)}",
+                f"target dependency locks: {json.dumps(result['dependencyLocks'], sort_keys=True)}",
+                "leave the old installation, shared store and all user data untouched",
+            ]
+        )
     workflow = None
     workflow_catalog = None
     workflow_catalog_digest = None
@@ -463,7 +565,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     "base=json.load(sys.stdin)\n"
                     "row=next(row for row in base['wheels'] if row['name']=='torch')\n"
                     "print(acquired_base_device(base,Path(sys.argv[1])/row['filename']))\n",
-                    str(store / "bases" / cast("str", custom["id"])[7:] / "wheels"),
+                    str(object_path(store / "bases", cast("str", custom["id"])) / "wheels"),
                 ],
                 cwd=engine,
                 input=json.dumps(custom),
@@ -492,6 +594,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
+        if adoption is not None and (
+            standalone_inputs(cast("Path", adopting), root, store) != adoption
+            or any(content_digest(Path(path)) != value for path, value in adoption_locks.items())
+        ):
+            raise EnvironmentError("standalone inputs changed after planning; request a new plan")
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
@@ -524,7 +631,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
 
     registry = registry_path().parent
     registry.mkdir(parents=True, exist_ok=True)
-    root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=adoption is None)
     with writer_lock(registry):
         if select_store(root, requested) != store:
             raise EnvironmentError("store changed after planning; request a new plan")
@@ -535,6 +642,21 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             published_constraints = None
             catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
             pack_locks = tuple(args.pack_lock)
+            if adoption is not None:
+                scratch = Path(preparation.enter_context(tempfile.TemporaryDirectory(dir=store)))
+                catalog_lock, source_artifacts = scratch / "dinkster.lock", scratch / "artifacts"
+                atomic_write(catalog_lock, cast("str", adoption["sourceLock"]))
+                source_artifacts.mkdir()
+                archives = Path(cast("str", adoption["artifacts"]))
+                archive_digests = cast("dict[str, str]", adoption["archiveDigests"])
+                for row in cast("list[dict[str, object]]", adoption["packs"]):
+                    identity = cast("str", row["artifactDigest"])
+                    archive = pack_archive_path(archives, identity)
+                    expected = archive_digests[archive.relative_to(archives).as_posix()]
+                    copied = source_artifacts / f"{identity[7:]}.zip"
+                    shutil.copyfile(archive, copied)
+                    if content_digest(copied) != expected:
+                        raise EnvironmentError("standalone archive changed during adoption")
             if local is None:
                 assert catalog is not None
                 if selection is not None:
@@ -550,7 +672,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     store,
                     package_index=cast("str | None", package_index),
                     base=custom,
-                    base_sources=(str(store / "downloads" / base_id[7:]),)
+                    base_sources=(str(object_path(store / "downloads", base_id)),)
                     if custom is not None
                     else None,
                 )
@@ -608,7 +730,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
                     if workflow is not None:
                         preflight_workflow(scratch, catalog_lock, source_artifacts)
-                    if not pack_locks:
+                    if not pack_locks and adoption is None:
                         pack_locks = (
                             custom_locks(
                                 scratch, catalog_lock, source_artifacts, scratch.parent / "locks"
@@ -682,7 +804,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     worker_protocol = cast("int", base["workerProtocol"])
                 measured = sum(
                     path.stat().st_size
-                    for path in (store / "bases" / base_id[7:] / "python").rglob("*")
+                    for path in (object_path(store / "bases", base_id) / "python").rglob("*")
                     if path.is_file()
                 )
                 build_generation(
@@ -709,6 +831,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     source_kind="local" if local is not None else "published",
                     prepare_packs=prepare_packs,
                     acquire_pack_wheels=local is None,
+                    artifact_sources={
+                        "channel": catalog.document,
+                        "engine": list(catalog.engine_sources),
+                        "base": [str(object_path(store / "downloads", base_id))]
+                        if custom is not None
+                        else list(catalog.base_sources[dependency_variant]),
+                        "dependencyVariant": dependency_variant,
+                        "dependencyBase": catalog.bases[dependency_variant],
+                        "packageIndex": package_index,
+                        "mirrors": list(mirrors),
+                    }
+                    if catalog is not None
+                    else None,
                 )
                 if workflow is not None and previous_root is not None:
                     workflow_target = root / "generations" / str(target)
@@ -760,8 +895,8 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     select_store(root, store)
     settings = (root / "project.json").read_bytes()
     expected = dict(generation.files)
-    base = store / "bases" / generation.base[7:] / "python"
-    release = store / "engines" / generation.engine_release[7:]
+    base = object_path(store / "bases", generation.base) / "python"
+    release = object_path(store / "engines", generation.engine_release)
     constraints = previous / "constraints.txt"
     if (
         not constraints.is_file()
@@ -827,6 +962,9 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 artifacts=release / "artifacts" if catalog is not None else None,
                 refresh_cache=True,
                 source_kind=generation.source,
+                artifact_sources=read_document(previous / "artifact-sources.json")
+                if "artifact-sources.json" in expected
+                else None,
             )
             added_locks = {
                 name
@@ -853,42 +991,71 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
-def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
+def _import(args: argparse.Namespace, result: dict[str, object]) -> int:
+    number = generation_number(args.generation)
     root = Path(args.root)
-    current = read_current(root)
-    settings = _settings(root)
-    if current is None or settings is None:
-        raise EnvironmentError("project has no active generation")
-    snapshot = (root / "project.json").read_bytes()
-    journal = previous_activation(root, current)
-    target = journal.previous if journal is not None else None
-    project_settings = None
-    if journal is not None and journal.project_settings is not None:
-        if snapshot.decode("utf-8") != journal.project_settings["target"]:
-            raise EnvironmentError(
-                "project settings changed since selection; cannot restore prior settings"
-            )
-        project_settings = {
-            "previous": journal.project_settings["target"],
-            "target": journal.project_settings["previous"],
-        }
-    if target is None:
-        raise EnvironmentError("project has no previous successful generation")
-    plan = [f"reactivate retained generation {target} without rebuilding generation {current}"]
-    result.update(current=current, plan=plan, status="planned")
+    plan = [
+        f"preserve generation {number} as an explicit legacy software import",
+        "recover completed history publication; require intact software and completed ancestry",
+        "keep current software and activation chronology; retain unrecorded pack payloads",
+    ]
+    result.update(current=read_current(root), plan=plan, status="planned")
     if not _confirmed(args, plan):
         return 0
-
-    def revalidate() -> None:
-        if read_current(root) != current or (root / "project.json").read_bytes() != snapshot:
-            raise EnvironmentError("project changed after planning; request a new plan")
-
     _recover_pending(root)
     with writer_lock(root):
-        revalidate()
-        path = begin_activation(root, target, "rollback", project_settings=project_settings)
-        activate(root, path, revalidate=revalidate)
-        result.update(current=target, status="applied", engines=list(engine_status(root)))
+        entry = import_generation(root, number)
+        result.update(current=read_current(root), entry=entry, status="applied")
+    return 0
+
+
+def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    with writer_lock(root):
+        for path in sorted((root / "journal").glob("*.json")):
+            journal = Journal.read(path)
+            if journal.stage == "complete" and journal.history_entry is not None:
+                recover_activation(root, path)
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("project has no active generation")
+        entries = activation_entries(root)
+        if len(entries) < 2:
+            raise EnvironmentError("project has no previous successful history entry")
+        if entries[-1]["generation"] != current:
+            raise EnvironmentError("current generation does not match installation history")
+    return _restore(args, result, cast("int", entries[-2]["id"]), reason="rollback")
+
+
+def _restore(
+    args: argparse.Namespace,
+    result: dict[str, object],
+    entry_id: int,
+    *,
+    reason: str = "restore",
+) -> int:
+    result.update(restore_entry(args.root, entry_id, apply=False, approval=args.approve))
+    can_apply = result["status"] != "approval-required" or args.approve is not None
+    if can_apply and (
+        (args.approve is not None and not args.plan)
+        or _confirmed(args, cast("list[str]", result["plan"]))
+    ):
+        _recover_pending(args.root)
+        result.update(
+            restore_entry(
+                args.root,
+                entry_id,
+                apply=True,
+                approval=args.approve,
+                expected_plan=cast("dict[str, object]", result["restorePlan"]),
+                reason=reason,
+            )
+        )
+        engines = list(engine_status(args.root))
+        result["engines"] = engines
+        ready = next((row for row in engines if row["state"] == "ready"), None)
+        if ready is not None:
+            result["url"] = ready["url"]
     return 0
 
 
@@ -1028,6 +1195,12 @@ def main() -> None:
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
+    history_command = commands.add_parser("history", help="list durable software history")
+    history_actions = history_command.add_subparsers(dest="history_action")
+    history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
+    history_show.add_argument("entry", type=int)
+    history_command.add_argument("--json", action="store_true", help="emit one result object")
+    history_show.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     doctor = commands.add_parser("doctor", help="report active generation and pack drift")
     doctor.add_argument(
         "--repair", action="store_true", help="rebuild offline from the local store"
@@ -1041,6 +1214,11 @@ def main() -> None:
         "--source", type=Path, default=Path.cwd(), help="Dinkster checkout with uv.lock"
     )
     setup.add_argument("--python", type=Path, help="explicit host interpreter override")
+    setup.add_argument(
+        "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
+    )
+    setup.add_argument("--engine-release", help="explicit published engine digest for adoption")
+    setup.add_argument("--base-id", help="explicit published base digest for adoption")
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
         command.add_argument("--mirror", action="append", default=[])
@@ -1062,18 +1240,50 @@ def main() -> None:
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
-    rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
+    rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
+    restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
+    restore.add_argument("entry", type=int)
+    legacy_import = commands.add_parser("import", help="preserve identified legacy software")
+    legacy_import.add_argument("generation", type=int)
+    for command in (rollback, restore):
+        command.add_argument("--approve", help="approve one complete restore proposal digest")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (tools, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (
+        tools,
+        doctor,
+        setup,
+        update,
+        start,
+        stop,
+        rollback,
+        restore,
+        legacy_import,
+        gc,
+        move,
+    ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (tools, catalog, status, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (
+        tools,
+        catalog,
+        status,
+        doctor,
+        setup,
+        update,
+        start,
+        stop,
+        rollback,
+        restore,
+        legacy_import,
+        gc,
+        move,
+    ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -1087,6 +1297,14 @@ def main() -> None:
         "status": "clean",
     }
     try:
+        current = read_current(args.root)
+        if current is not None and (args.root / "generations" / f"{current}.json").is_file():
+            raise EnvironmentError(
+                "standalone pack-only root has no recorded engine release/base; "
+                "choose a new --root and run setup --adopt-from with explicit "
+                "--engine-release, --base-id, --variant and target --pack-lock inputs; "
+                "the old root and user data will stay untouched"
+            )
         destination = moved_to(args.root)
         if destination is not None:
             if getattr(args, "yes", False):
@@ -1106,6 +1324,10 @@ def main() -> None:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
+        elif args.operation == "restore":
+            code = _restore(args, result, args.entry)
+        elif args.operation == "import":
+            code = _import(args, result)
         elif args.operation == "gc":
             code = _gc(args, result)
         elif args.operation == "move":
@@ -1139,6 +1361,10 @@ def main() -> None:
             print(change)
         if "error" in result:
             print(result["error"], file=sys.stderr)
+        if args.operation == "history" and code == 0:
+            print(
+                json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
+            )
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     raise SystemExit(code)

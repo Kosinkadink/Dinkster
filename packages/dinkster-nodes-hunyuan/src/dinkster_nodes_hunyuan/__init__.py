@@ -1,5 +1,6 @@
 """First-party hunyuan model nodes."""
 
+from dinkster_api.v1 import inference_nodes
 from dinkster_api.v1 import register_inference_types as register_types
 
 from .hunyuan3d import Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView, VAEDecodeHunyuan3D
@@ -32,3 +33,5 @@ NODES = (
 )
 
 __all__ = ["NODES", "register_types"]
+
+inference_nodes(NODES)

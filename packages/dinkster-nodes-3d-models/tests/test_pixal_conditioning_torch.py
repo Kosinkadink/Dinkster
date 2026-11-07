@@ -121,7 +121,8 @@ def test_single_view_patch_layout_projection_and_naf(
         clip_vision_model=Vision(custom=custom, naf=naf), image=image.numpy(), camera_angle_x=90
     )
     check_single(result["positive"], result["negative"], custom=custom, naf=naf)
-    result["negative"][0][0].fill_(123)
+    with torch.inference_mode():
+        result["negative"][0][0].fill_(123)
     assert torch.count_nonzero(result["negative"][0][1]["embeds"]) == 0
     assert not torch.any(result["positive"][0][0] == 123)
     assert torch.equal(image, before)

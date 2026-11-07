@@ -6,6 +6,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_asset_type,
     register_media_types,
     register_resident_type,
@@ -28,3 +29,6 @@ def register_types(registry: TypeRegistry) -> None:
         register_resident_type(
             registry, BACKGROUND_REMOVAL_TYPE, table=default_pool(), meta=comfy_resident_meta
         )
+
+
+inference_nodes(NODES)

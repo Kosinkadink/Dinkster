@@ -1,5 +1,7 @@
 """First-party sampling nodes."""
 
+from dinkster_api.v1 import inference_nodes
+
 from .advanced_samplers import (
     SamplerEulerCFGpp,
     SamplerLCM,
@@ -157,3 +159,5 @@ NODES = (
     SamplerLCM,
     SamplerEulerCFGpp,
 )
+
+inference_nodes(NODES)

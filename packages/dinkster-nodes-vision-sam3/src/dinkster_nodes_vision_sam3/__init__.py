@@ -7,6 +7,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_box_types,
     register_media_types,
     register_resident_type,
@@ -35,3 +36,6 @@ def register_types(registry: TypeRegistry) -> None:
         register_resident_type(registry, MODEL_TYPE, table=default_pool(), meta=comfy_resident_meta)
     if SAM3_TRACK_DATA_TYPE not in registry:
         register_sam3_track_type(registry)
+
+
+inference_nodes(NODES)

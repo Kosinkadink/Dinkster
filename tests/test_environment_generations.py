@@ -15,6 +15,7 @@ from functools import partial
 from pathlib import Path, PureWindowsPath
 
 import pytest
+from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
@@ -158,18 +159,30 @@ def _standalone_tree(root: Path) -> None:
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
 
 
-@pytest.mark.parametrize("cached", ["exact", "absent", "corrupt", "directory", "changed-copy"])
+@pytest.mark.parametrize(
+    "cached", ["exact", "readable", "absent", "corrupt", "directory", "changed-copy"]
+)
 def test_generation_retains_verified_engine_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: str
 ) -> None:
     root, store = tmp_path / "project", tmp_path / "store"
     base_id = "sha256:" + "a" * 64
-    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    base_path = object_path(
+        store / "bases",
+        base_id,
+        label="linux-cpu/2026-11-03-py3.14.10-torch2.14.1" if cached == "readable" else None,
+    )
+    _standalone_tree(base_path / "python")
     constraints = tmp_path / "constraints.txt"
     constraints.write_text("")
     raw = b'{  "version": "0.5", "unknown": [3, 1] }\r\n'
     release = hashlib.sha256(raw).hexdigest()
-    cached_manifest = store / "engines" / release / "release-manifest.json"
+    release_path = object_path(
+        store / "engines",
+        "sha256:" + release,
+        label="2026-11-03-0.5" if cached == "readable" else None,
+    )
+    cached_manifest = release_path / "release-manifest.json"
     if cached != "absent":
         cached_manifest.parent.mkdir(parents=True)
         if cached == "directory":
@@ -190,7 +203,7 @@ def test_generation_retains_verified_engine_manifest(
 
     def prepare(target: Path) -> None:
         callbacks.append(target)
-        if cached == "exact":
+        if cached in {"exact", "readable"}:
             assert (target / "engine-manifest.json").read_bytes() == raw
 
     def build():
@@ -217,7 +230,7 @@ def test_generation_retains_verified_engine_manifest(
         generation = build()
         assert callbacks == [target]
         assert generation.drift(target) == ()
-        if cached == "exact":
+        if cached in {"exact", "readable"}:
             assert (target / "engine-manifest.json").read_bytes() == raw
             assert dict(generation.files)["engine-manifest.json"] == "sha256:" + release
         else:
@@ -495,12 +508,14 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         channel["engine"]["release"] = "sha256:" + identity
         channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
         channel_path.write_bytes(publisher.canonical_json(channel))
+        # Windows setup took 24s and was still starting at 30s; allow composite-work margin.
         code, result = _run(
             root,
             *fixture["commands"]["setup"][5:],
             "--pack-lock",
             str(release.parent / identity / lock_path.name),
             "--yes",
+            timeout=120,
         )
         if provisioner == "without-acquire":
             assert code == 1, result
@@ -510,7 +525,9 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             return
         assert code == 0, result
         assert result["current"] == 1
-        assert (store / "wheels" / sha / wheel.name).read_bytes() == wheel.read_bytes()
+        assert (
+            object_path(store / "wheels", "sha256:" + sha) / wheel.name
+        ).read_bytes() == wheel.read_bytes()
         python = venv_python(root / "generations/1/packs/example")
         assert (
             subprocess.check_output(
@@ -531,6 +548,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
     [
         None,
         "update",
+        "restore",
         "extra",
         "missing",
         "variant",
@@ -626,7 +644,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         archive = artifacts / "staging.zip"
         identity = build_artifact(source, archive)
         archive.rename(artifacts / f"{identity.removeprefix('blake3:')}.zip")
-        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,)))
+        entries.append(
+            LockedPack(
+                name, "1.0.0", identity, "registry" if problem == "restore" else "local", (name,)
+            )
+        )
         if name == "healthy" or problem != "missing":
             path = tmp_path / f"{name}-1.0.0-{variant}.pack-lock.json"
             locked_variant = (
@@ -730,7 +752,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         "move-cross-volume-missing-resource",
         "move-cross-volume-corrupt-wheel-cache",
     }
-    if problem is not None and problem not in {"update", "extra", "custom"} | repairs | moves:
+    if (
+        problem is not None
+        and problem not in {"update", "restore", "extra", "custom"} | repairs | moves
+    ):
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -743,6 +768,53 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         generation = invoke()
         target = root / "generations" / str(number)
         assert generation.drift(target) == ()
+        assert {
+            f"{entry.artifact_digest[7:]}.zip": pack_archive_path(
+                store / "engines" / ("b" * 64) / "artifacts", entry.artifact_digest
+            ).read_bytes()
+            for entry in entries
+        } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
+        if problem == "restore":
+            from test_installer import _download_ticket, _serve_artifacts
+
+            retained = store / "engines" / ("b" * 64) / "artifacts"
+            responses: dict[str, bytes] = {}
+            for entry in entries:
+                filename = f"{entry.artifact_digest[7:]}.zip"
+                data = (artifacts / filename).read_bytes()
+                archive = pack_archive_path(retained, entry.artifact_digest)
+                assert archive.read_bytes() == data
+                archive.unlink()
+                responses[f"/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"] = (
+                    _download_ticket(entry, data)
+                )
+                responses[f"/v1/artifacts/{entry.artifact_digest}"] = data
+            before = (target / "generation.json").read_bytes()
+            requests: list[tuple[str, str | None]] = []
+            server = _serve_artifacts(responses, requests)
+            try:
+                monkeypatch.setenv("DINKSTER_REGISTRY", f"http://127.0.0.1:{server.server_port}")
+                rebuilt = invoke(number=2, artifacts=retained, acquire_pack_sources=True)
+                assert len(requests) == 4
+                assert rebuilt.drift(root / "generations/2") == ()
+                assert (root / "generations/2/dinkster.lock").read_bytes() == (
+                    target / "dinkster.lock"
+                ).read_bytes()
+                assert (target / "generation.json").read_bytes() == before
+                assert read_current(root) is None
+                entry = entries[0]
+                pack_archive_path(retained, entry.artifact_digest).unlink()
+                url = f"/v1/artifacts/{entry.artifact_digest}"
+                responses[url] = b"x" * len(responses[url])
+                with pytest.raises(EnvironmentError, match="target exact source restore refused"):
+                    invoke(number=3, artifacts=retained, acquire_pack_sources=True)
+                assert not (root / "generations/3").exists()
+                assert (target / "generation.json").read_bytes() == before
+                assert rebuilt.drift(root / "generations/2") == ()
+                assert read_current(root) is None
+            finally:
+                server.shutdown()
+                server.server_close()
         assert not (target / "packs/healthy/bin").exists()
         assert venv_python(target / "packs/other").is_file()
         if problem == "custom":
@@ -809,7 +881,6 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 directory = wheels / hashlib.sha256(cached.read_bytes()).hexdigest()
                 directory.mkdir()
                 cached.rename(directory / cached.name)
-            shutil.copytree(artifacts, store / "engines" / ("b" * 64) / "artifacts")
             (root / "library").mkdir()
             (root / "library/asset").write_bytes(b"preserve this project asset")
             destination = tmp_path / "moved project"
@@ -839,6 +910,17 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 monkeypatch.setattr(environment_move, "volume", volume)
                 monkeypatch.setattr(environment_stores, "volume", volume)
                 target_store = tmp_path / "destination-store"
+                if problem == "move-cross-volume-plain":
+                    label = "stable_fixture-1.0-py3-none-any"
+                    transfer = tmp_path / "wheel-transfer"
+                    (wheels / sha).rename(transfer)
+                    source_wheel = object_path(wheels, "sha256:" + sha, label=label)
+                    transfer.rename(source_wheel)
+                    occupied = object_path(
+                        target_store / "wheels", "sha256:" + "f" * 64, label=label
+                    )
+                    occupied.mkdir(parents=True)
+                    (occupied / "retained.txt").write_bytes(b"different wheel with the same label")
                 if problem in {
                     "move-cross-volume-cached-aliases",
                     "move-cross-volume-missing-resource",
@@ -961,6 +1043,19 @@ environment.main()
             assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
             moved_tree = destination / "generations/1"
             assert Generation.read(moved_tree / "generation.json").drift(moved_tree) == ()
+            if problem == "move-cross-volume-plain":
+                resolved = object_path(moved_store / "wheels", "sha256:" + sha)
+                assert resolved.name == "stable_fixture-1.0-py3-none-any--2"
+                assert (
+                    hashlib.sha256(
+                        (resolved / "stable_fixture-1.0-py3-none-any.whl").read_bytes()
+                    ).hexdigest()
+                    == sha
+                )
+                retained = object_path(moved_store / "wheels", "sha256:" + "f" * 64)
+                assert (
+                    retained / "retained.txt"
+                ).read_bytes() == b"different wheel with the same label"
             if cross_volume:
                 moved_generation = Generation.read(moved_tree / "generation.json")
                 assert dict(moved_generation.files).keys() == dict(generation.files).keys()
@@ -1034,8 +1129,6 @@ environment.main()
                     "port": 3639,
                 },
             )
-            release = store / "engines" / ("b" * 64)
-            shutil.copytree(artifacts, release / "artifacts")
             code, result = _run(root, "doctor", "--repair", "--yes")
             if problem == "repair":
                 assert code == 0 and result["current"] == 2, result
@@ -1142,6 +1235,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/unreachable")
+    (tmp_path / "catalog.lock").write_text('{"format":"dinkster.lock/1","packs":[]}\n')
 
     def build(
         number: int,

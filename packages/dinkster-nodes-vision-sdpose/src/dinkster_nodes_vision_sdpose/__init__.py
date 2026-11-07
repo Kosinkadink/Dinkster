@@ -7,6 +7,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_box_types,
     register_media_types,
     register_resident_type,
@@ -33,3 +34,6 @@ def register_types(registry: TypeRegistry) -> None:
             )
     if POSE_KEYPOINT_TYPE not in registry:
         register_pose_keypoint_type(registry)
+
+
+inference_nodes(NODES)

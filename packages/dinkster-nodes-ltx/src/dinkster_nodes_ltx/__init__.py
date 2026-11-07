@@ -1,6 +1,6 @@
 """First-party ltx model nodes."""
 
-from dinkster_api.v1 import TypeRegistry, TypeSpec, register_inference_types
+from dinkster_api.v1 import TypeRegistry, TypeSpec, inference_nodes, register_inference_types
 from dinkster_inference_wire.ic_lora_parameters import register_ic_lora_parameters_type
 
 from .context_windows import LTXVContextWindows
@@ -72,3 +72,5 @@ NODES = (
     ModelSamplingLTXV,
     TextGenerateLTX2Prompt,
 )
+
+inference_nodes(NODES)

@@ -8,6 +8,7 @@ from dinkster_api.v1 import (
     LOAD3D_MODEL_INFO_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
+    inference_nodes,
     register_asset_type,
     register_file3d_types,
     register_load3d_camera_type,
@@ -109,3 +110,6 @@ def register_types(registry: TypeRegistry) -> None:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_file3d_types(registry, resolver_from_env())
     register_load3d_type(registry)
+
+
+inference_nodes(NODES)

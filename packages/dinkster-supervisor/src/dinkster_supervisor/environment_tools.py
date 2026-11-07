@@ -12,6 +12,7 @@ from platform import machine
 from typing import cast
 from urllib.parse import urlsplit
 
+from dinkster_store import object_path, readable_label
 from packaging.version import InvalidVersion, Version
 
 from .environment_artifacts import (
@@ -145,7 +146,14 @@ def acquire_tools(
     )
     if row is None:
         raise EnvironmentError("publication has no tools for this operating system/architecture")
-    archive = destination / label / name
+    directory = object_path(
+        destination,
+        "sha256:" + reference["sha256"],
+        label=readable_label(cast("str", manifest["label"])),
+        legacy=label,
+        reserve=download,
+    )
+    archive = directory / name
     if download:
         fetch_artifact(sources, name, archive, cast("str", row["sha256"]), cast("int", row["size"]))
-    return {"label": label, "release": sources[0], "archive": str(archive), **row}
+    return {"label": directory.name, "release": sources[0], "archive": str(archive), **row}

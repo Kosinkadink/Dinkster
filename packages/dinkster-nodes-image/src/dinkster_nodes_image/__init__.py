@@ -13,6 +13,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     decode_latent,
     encode_latent,
+    inference_nodes,
     latent_fingerprint,
     register_asset_type,
     register_box_types,
@@ -68,3 +69,5 @@ def register_types(registry: TypeRegistry) -> None:
 
 
 __all__ = ["NODES", "register_types"]
+
+inference_nodes(NODES)

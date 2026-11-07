@@ -5,6 +5,7 @@ from dinkster_api.v1 import (
     TypeSpec,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_asset_type,
     register_inference_types,
     register_resident_type,
@@ -78,3 +79,5 @@ def register_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
 
 
 __all__.append("register_types")
+
+inference_nodes(NODES)

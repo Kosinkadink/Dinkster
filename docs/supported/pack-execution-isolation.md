@@ -13,6 +13,9 @@
   using the canonical encoder, decoder, fingerprint and encoded-value validator.
 - Packs can register mesh, voxel, shape-subdivision, Load3D camera and model-info
   codecs through the same API without importing Torch or the inference runtime.
+- Synchronous ComfyUI-origin node bodies run in inference mode in each of the
+  35 first-party packs. Returning or raising restores the caller's mode; async
+  orchestration and ordinary gradient-capable nodes remain outside that boundary.
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.

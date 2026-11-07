@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from dinkster_store import object_path
 from dinkster_supervisor.environment_state import (
     Generation,
     Journal,
@@ -22,12 +23,26 @@ from test_environment_state import _generation
 @pytest.mark.parametrize(
     "interruption", [None, "quarantine", "cleanup", "missing-project", "corrupt-constraints"]
 )
+@pytest.mark.parametrize("readable", [False, True])
 def test_shared_store_collection_keeps_all_registered_references_and_recovers_from_another_project(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interruption: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interruption: str | None, readable: bool
 ):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-data"))
     store = tmp_path / "store"
+    paths: dict[tuple[str, str], Path] = {}
+
+    def cache(category: str, identity: str) -> Path:
+        key = (category, identity)
+        if key not in paths:
+            label = f"2026-11-03-1.0-{identity}"
+            if category in {"bases", "downloads"}:
+                label = "linux-cpu/" + label
+            paths[key] = object_path(
+                store / category, "sha256:" + identity * 64, label=label if readable else None
+            )
+        return paths[key]
+
     first, second = tmp_path / "first", tmp_path / "second"
     references = (
         (first, 1, "a", "b", "e"),
@@ -56,7 +71,7 @@ def test_shared_store_collection_keeps_all_registered_references_and_recovers_fr
             ("downloads", base),
             ("wheels", wheel),
         ):
-            directory = store / category / (identity * 64)
+            directory = cache(category, identity)
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "payload").write_bytes(identity.encode())
     for project, current in ((first, 3), (second, 1)):
@@ -80,8 +95,8 @@ def test_shared_store_collection_keeps_all_registered_references_and_recovers_fr
         {"format": "dinkster.store/1", "projects": [str(first), str(second)]},
     )
     for category in ("wheels", "bases", "engines", "downloads"):
-        extra = store / category / ("7" * 64)
-        extra.mkdir()
+        extra = cache(category, "7")
+        extra.mkdir(parents=True)
         (extra / "payload").write_bytes(b"unreferenced")
     (store / "uv-cache").mkdir()
     (store / "uv-cache/entry").write_bytes(b"disposable extracted cache")
@@ -140,20 +155,18 @@ environment.main()
         )
         if interruption == "quarantine":
             for category in ("wheels", "bases", "engines", "downloads"):
-                assert (store / category / ("7" * 64) / "payload").read_bytes() == b"unreferenced"
+                assert (cache(category, "7") / "payload").read_bytes() == b"unreferenced"
             assert (first / "generations/2").is_dir()
     code, applied = _run(first, "gc", "--yes")
     assert code == 0 and applied["status"] == "applied", applied
     assert not (first / "generations/2").exists()
     for category in ("wheels", "bases", "engines", "downloads"):
-        assert not (store / category / ("7" * 64)).exists()
+        assert not cache(category, "7").exists()
     for project, number, base, engine, wheel in references:
         if project == first and number == 2:
             continue
         for category, identity in (("bases", base), ("engines", engine), ("wheels", wheel)):
-            assert (
-                store / category / (identity * 64) / "payload"
-            ).read_bytes() == identity.encode()
+            assert (cache(category, identity) / "payload").read_bytes() == identity.encode()
         assert (
             Generation.read(project / "generations" / str(number) / "generation.json").drift(
                 project / "generations" / str(number)
@@ -273,7 +286,8 @@ environment.main()
     for name, digest in retained.items():
         assert content_digest(tmp_path / name) == digest
     code, rollback = _run(tmp_path, "rollback", "--plan")
-    assert code == 0 and "reactivate retained generation 1" in rollback["plan"][0], rollback
+    assert code == 1 and "no previous successful history entry" in rollback["error"], rollback
+    assert (tmp_path / "current").read_bytes() == b"3\n"
 
 
 @pytest.mark.parametrize("numbers", [[1], [2, 2], [0], [True], ["2"]])

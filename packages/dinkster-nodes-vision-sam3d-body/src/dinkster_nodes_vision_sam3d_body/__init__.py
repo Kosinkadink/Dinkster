@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_asset_type,
     register_box_types,
     register_file3d_types,
@@ -55,3 +56,6 @@ def register_types(registry: TypeRegistry) -> None:
             registry, SAM3D_BODY_MODEL_TYPE, table=default_pool(), meta=comfy_resident_meta
         )
     register_vision_packet_types(registry, type_ids=(MHR_POSE_DATA_TYPE, KIMODO_POSE_DATA_TYPE))
+
+
+inference_nodes(NODES)

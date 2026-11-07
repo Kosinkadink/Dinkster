@@ -1,5 +1,7 @@
 """First-party conditioning nodes."""
 
+from dinkster_api.v1 import inference_nodes
+
 from .audio_encoder import (
     AudioEncoderEncode,
     AudioEncoderLoader,
@@ -81,3 +83,5 @@ NODES = (
     ConditioningLoader,
     SaveConditioning,
 )
+
+inference_nodes(NODES)

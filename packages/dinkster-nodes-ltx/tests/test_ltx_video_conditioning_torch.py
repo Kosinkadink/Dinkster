@@ -329,8 +329,9 @@ def test_crop_guides_preserves_sources_and_clears_only_removed_guides(
         assert result["negative"][0][1]["keep"] == "negative"
     else:
         assert result["positive"] is positive and result["negative"] is negative
-    output["samples"].zero_()
-    output["noise_mask"].zero_()
+    with torch.inference_mode():
+        output["samples"].zero_()
+        output["noise_mask"].zero_()
     assert torch.equal(samples, before) and torch.equal(mask, before_mask)
 
 

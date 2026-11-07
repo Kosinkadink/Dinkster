@@ -81,7 +81,8 @@ def test_batch_normalization_resolution_tokens_and_independent_negatives(
     before = image.clone()
     result = Trellis2Conditioning.execute(clip_vision_model=Vision(custom), image=image.numpy())
     check_conditioning(result["positive"], result["negative"], custom)
-    result["negative"][0][0].fill_(99)
+    with torch.inference_mode():
+        result["negative"][0][0].fill_(99)
     assert not torch.any(result["positive"][0][0] == 99)
     assert torch.count_nonzero(result["negative"][0][1]["embeds"]) == 0
     assert torch.equal(image, before)

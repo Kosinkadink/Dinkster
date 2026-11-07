@@ -9,6 +9,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     comfy_resident_meta,
     default_pool,
+    inference_nodes,
     register_asset_type,
     register_audio_value_type,
     register_media_types,
@@ -61,3 +62,5 @@ def register_types(registry: TypeRegistry) -> None:
 
 
 __all__ = ["NODES", "register_types"]
+
+inference_nodes(NODES)
