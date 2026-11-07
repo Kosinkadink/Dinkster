@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.mesh_unwrap import UnwrapMesh
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def source() -> Any:
@@ -131,8 +132,8 @@ def test_ordinary_unwrap_hosts_twice(tmp_path: Path, in_process: bool) -> None:
             }
         )
         try:
-            for pack in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", manifest):
-                await composer.add_pack(PackSpec(manifest=pack, in_process=in_process))
+            for spec in geometry_pack_specs(manifest, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 {

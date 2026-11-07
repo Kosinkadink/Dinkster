@@ -19,8 +19,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.gaussian_splat import MergeSplat
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def _sources() -> tuple[SimpleNamespace, SimpleNamespace]:
@@ -189,8 +190,8 @@ def test_merge_splat_executes_through_the_ordinary_manifest(
             }
         )
         try:
-            for path in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", fixture):
-                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 {

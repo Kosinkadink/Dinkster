@@ -32,8 +32,9 @@ from dinkster_assets import AssetVault
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_nodes_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_values import register_core_types
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def export_splat() -> SimpleNamespace:
@@ -209,11 +210,8 @@ def test_ordinary_splat_export_hosts_with_restart_cache(
                 pack_scratch_root=tmp_path / "scratch",
             )
             try:
-                for manifest in (
-                    Path(__file__).resolve().parents[1] / "dinkster-pack.toml",
-                    fixture,
-                ):
-                    await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+                for spec in geometry_pack_specs(fixture, in_process=in_process):
+                    await composer.add_pack(spec)
                 graph = Graph(
                     {
                         "source": GraphNode("splat-file-source.make"),
@@ -537,12 +535,8 @@ def test_empty_ply_import_hosts_and_restart_cache(
                 pack_scratch_root=tmp_path / "scratch",
             )
             try:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=Path(__file__).resolve().parents[1] / "dinkster-pack.toml",
-                        in_process=in_process,
-                    )
-                )
+                for spec in geometry_pack_specs(in_process=in_process):
+                    await composer.add_pack(spec)
                 graph = Graph(
                     {
                         "import": GraphNode(

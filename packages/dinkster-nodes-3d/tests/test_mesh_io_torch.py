@@ -37,9 +37,10 @@ from dinkster_nodes_3d.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_protocol import use_export_snapshot
 from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import register_core_types
+from geometry_pack_fixtures import geometry_pack_specs
 from PIL import Image
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def export_mesh() -> TriangleMeshBatch[Any]:
@@ -178,11 +179,8 @@ def test_ordinary_mesh_export_hosts_twice(
                 pack_scratch_root=tmp_path / "scratch",
             )
             try:
-                for manifest in (
-                    Path(__file__).resolve().parents[1] / "dinkster-pack.toml",
-                    fixture,
-                ):
-                    await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+                for spec in geometry_pack_specs(fixture, in_process=in_process):
+                    await composer.add_pack(spec)
                 engine = composer.composition.make_engine(lambda _event: None)
                 graph = Graph(
                     {
@@ -313,8 +311,8 @@ def test_ordinary_save_glb_hosts_twice(
             }
         )
         try:
-            for manifest in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", fixture):
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             graph = Graph(
                 {
                     "source": GraphNode("mesh-export-fixture.source"),
@@ -738,8 +736,8 @@ def test_ordinary_mesh_io_hosts_twice(
         )
         composer = ServingComposer(worker_env=environment)
         try:
-            for manifest in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", fixture):
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 {

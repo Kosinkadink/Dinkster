@@ -20,8 +20,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.gaussian_splat import GetSplatCount
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def _source(case: str) -> SimpleNamespace:
@@ -85,7 +86,6 @@ def test_splat_count_executes_through_the_ordinary_manifest(
             f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
             encoding="ascii",
         )
-        manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -94,8 +94,8 @@ def test_splat_count_executes_through_the_ordinary_manifest(
             }
         )
         try:
-            for path in (manifest, fixture):
-                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             for case, expected in (
                 ("uniform", 6),

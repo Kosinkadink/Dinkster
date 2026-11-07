@@ -29,8 +29,9 @@ from dinkster_api.v1 import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.mesh import GetMeshInfo, MergeMeshes, RotateMesh
 from dinkster_nodes_3d.voxel_mesh import VoxelToMesh, VoxelToMeshBasic
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def mesh() -> TriangleMeshBatch[Any]:
@@ -357,7 +358,6 @@ class GeometryInspect(Node):
 @pytest.mark.parametrize("in_process", [True, False])
 def test_ordinary_geometry_sequence_in_both_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         module = f"geometry_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_mesh_torch import GeometrySource, GeometryInspect\n"
@@ -374,25 +374,22 @@ def test_ordinary_geometry_sequence_in_both_hosts_twice(tmp_path: Path, in_proce
         )
         composer = ServingComposer(
             worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
                 "PYTHONPATH": os.pathsep.join(
                     (
+                        str(tmp_path),
                         str(Path(__file__).parent),
                         os.environ.get("PYTHONPATH", ""),
                     )
-                )
+                ),
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest,
-                        worker_group="geometry-fixture",
-                        group_manifests=(native, fixture),
-                    )
-                )
+            for spec in geometry_pack_specs(
+                fixture, in_process=in_process, worker_group="geometry-fixture"
+            ):
+                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "source": GraphNode("geometry-fixture.source"),

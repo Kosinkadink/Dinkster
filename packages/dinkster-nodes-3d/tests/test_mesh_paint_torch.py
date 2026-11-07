@@ -23,8 +23,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.mesh_paint import PaintMesh
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def sources() -> tuple[TriangleMeshBatch, dict[str, object]]:
@@ -149,9 +150,8 @@ def test_ordinary_paint_hosts_twice(tmp_path: Path, in_process: bool) -> None:
             }
         )
         try:
-            native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            for manifest in (native, fixture):
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 {

@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.camera_info import CreateCameraInfo
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def _execute(mode: dict[str, Any], **overrides: Any) -> dict[str, Any]:
@@ -160,7 +161,6 @@ class CameraInfoInspect(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 def test_camera_info_ordinary_production_manifest_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "camera_info_fixture.py").write_text(
             "from test_camera_info_torch import CameraStateSource, CameraInfoInspect\n"
             "from dinkster_nodes_3d import register_types as register_inference_types\n"
@@ -185,15 +185,10 @@ def test_camera_info_ordinary_production_manifest_twice(tmp_path: Path, in_proce
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "camera-info-fixture",
-                        group_manifests=() if in_process else (native, fixture),
-                    )
-                )
+            for spec in geometry_pack_specs(
+                fixture, in_process=in_process, worker_group="camera-info-fixture"
+            ):
+                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "state": GraphNode("camera-info-fixture.state"),
