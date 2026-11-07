@@ -11,7 +11,8 @@ from dinkster_api.v1 import TypeRegistry
 from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_nodes_dev import combo_choices as dev_combo_choices
 from dinkster_nodes_foundation import FOUNDATION_NODES, register_foundation_types
-from dinkster_nodes_image import IMAGE_NODES, image_choices, register_image_types
+from dinkster_nodes_image import NODES as IMAGE_NODES
+from dinkster_nodes_image import register_types as register_image_types
 from dinkster_nodes_media_io import (
     AUDIO_DEVICE_CHOICES_ID,
     MEDIA_IO_NODES,
@@ -24,7 +25,7 @@ SCAFFOLD_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES, *PACK_NODES]
 
 def scaffold_choices() -> Mapping[str, Sequence[str]]:
     """Return every static remote choice owned by the scaffold packs."""
-    return {**dev_combo_choices(), **image_choices()}
+    return dev_combo_choices()
 
 
 def scaffold_lazy_choices() -> dict[str, Callable[[], Awaitable[Sequence[str]]]]:
