@@ -15,7 +15,7 @@ from functools import partial
 from pathlib import Path, PureWindowsPath
 
 import pytest
-from dinkster_store import object_path
+from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
@@ -767,8 +767,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         target = root / "generations" / str(number)
         assert generation.drift(target) == ()
         assert {
-            path.name: path.read_bytes()
-            for path in (store / "engines" / ("b" * 64) / "artifacts").glob("*.zip")
+            f"{entry.artifact_digest[7:]}.zip": pack_archive_path(
+                store / "engines" / ("b" * 64) / "artifacts", entry.artifact_digest
+            ).read_bytes()
+            for entry in entries
         } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
         if problem == "restore":
             from test_installer import _download_ticket, _serve_artifacts
@@ -778,8 +780,9 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             for entry in entries:
                 filename = f"{entry.artifact_digest[7:]}.zip"
                 data = (artifacts / filename).read_bytes()
-                assert (retained / filename).read_bytes() == data
-                (retained / filename).unlink()
+                archive = pack_archive_path(retained, entry.artifact_digest)
+                assert archive.read_bytes() == data
+                archive.unlink()
                 responses[f"/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"] = (
                     _download_ticket(entry, data)
                 )
@@ -798,7 +801,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 assert (target / "generation.json").read_bytes() == before
                 assert read_current(root) is None
                 entry = entries[0]
-                (retained / f"{entry.artifact_digest[7:]}.zip").unlink()
+                pack_archive_path(retained, entry.artifact_digest).unlink()
                 url = f"/v1/artifacts/{entry.artifact_digest}"
                 responses[url] = b"x" * len(responses[url])
                 with pytest.raises(EnvironmentError, match="target exact source restore refused"):
@@ -1230,6 +1233,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/unreachable")
+    (tmp_path / "catalog.lock").write_text('{"format":"dinkster.lock/1","packs":[]}\n')
 
     def build(
         number: int,
