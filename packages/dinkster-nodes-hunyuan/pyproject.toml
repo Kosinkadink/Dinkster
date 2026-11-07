@@ -3,7 +3,7 @@ name = "dinkster-nodes-hunyuan"
 version = "0.0.2"
 description = "Dinkster hunyuan model nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-nodes-latent", "dinkster-nodes-video"]
+dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-nodes-video"]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,5 +20,4 @@ packages = ["src/dinkster_nodes_hunyuan"]
 [tool.uv.sources]
 dinkster-api = { workspace = true }
 dinkster-nodes-conditioning = { workspace = true }
-dinkster-nodes-latent = { workspace = true }
 dinkster-nodes-video = { workspace = true }
