@@ -173,8 +173,9 @@ def test_loader_builds_duration_head_from_safe_asset(tmp_path: Path, vault_backe
         }
     )
     video = torch.full((1, 1, 4096), 0.25)
-    assert torch.equal(patcher.model(video_tokens=video), reference(video_tokens=video))
-    assert torch.equal(patcher.model(video_tokens=video), torch.tensor([0.5]).exp())
+    with torch.inference_mode():
+        assert torch.equal(patcher.model(video_tokens=video), reference(video_tokens=video))
+        assert torch.equal(patcher.model(video_tokens=video), torch.tensor([0.5]).exp())
     verified = AssetRef(
         digest_file(checkpoint),
         checkpoint.name,
@@ -540,7 +541,8 @@ class ModelPatchInspect(Node):
             assert value.dtype == torch.float32
             expected = 0.0 if key == "mlp_out.weight" else 0.5 if key == "mlp_out.bias" else 0.001
             assert torch.equal(value, torch.full_like(value, expected))
-        output = patch.model(video_tokens=torch.full((1, 2, 4096), 0.25))
+        with torch.inference_mode():
+            output = patch.model(video_tokens=torch.full((1, 2, 4096), 0.25))
         assert torch.equal(output, torch.tensor([0.5]).exp())
         return cls.outputs(summary="duration checkpoint retained")
 

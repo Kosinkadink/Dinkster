@@ -7,6 +7,7 @@ from dinkster_api.v1 import (
     VIDEO_TYPE,
     Node,
     TypeRegistry,
+    inference_nodes,
     register_asset_type,
     register_audio_value_type,
     register_curve_type,
@@ -610,6 +611,8 @@ COMFY_NODES: tuple[type[Node], ...] = (
     MediaPipeFaceLandmarker,
     BuildPoseFile,
 )
+
+inference_nodes(COMFY_NODES)
 
 
 def register_inference_types(registry: TypeRegistry) -> None:

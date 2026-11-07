@@ -278,7 +278,8 @@ def test_conditioning_normalization_reference_batch_and_zero_streams(
     assert torch.equal(image, original)
     # Hand-derived independence: writing the negative reference does not
     # change the positive reference or original input.
-    result["negative"][0][1]["reference_latents"][0].fill_(99)
+    with torch.inference_mode():
+        result["negative"][0][1]["reference_latents"][0].fill_(99)
     assert not torch.any(result["positive"][0][1]["reference_latents"][0] == 99)
     assert torch.equal(image, original)
 
