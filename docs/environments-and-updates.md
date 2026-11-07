@@ -548,6 +548,15 @@ and rollback do not undo an opt-out. Invalid or linked policy files refuse
 policy changes and preview rather than falling back to automatic deletion.
 No automatic collection trigger is enabled by this preference command.
 
+`cleanup --yes --json` retries generation-only collection using the same policy,
+preview eligibility, project lock and runtime acquisition lock. It never calls
+shared-store GC or stops processes. Busy writers defer; overlapping cleanup
+attempts coalesce. `cleanup.lastAttempt` preserves the last attempt's status,
+collected generation numbers, deferred records and warnings across invocations.
+Uncommitted generation quarantine is recovered before retry; committed trash
+is retried after deletion failures. Shared-store quarantine is left to explicit
+cache GC and its recovery. Automatic triggers are not enabled by a retry.
+
 Interpreter acquisition and collection share a runtime admission lock in
 addition to the existing project transaction lock. A pending launch protects
 its generation even if the caller exits before publishing its engine binding.

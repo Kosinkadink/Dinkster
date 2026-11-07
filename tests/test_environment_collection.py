@@ -505,6 +505,172 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
     assert not (tmp_path / "runtime/.lock").exists()
 
 
+@pytest.fixture
+def cleanup_project(tmp_path: Path) -> Path:
+    from dinkster_supervisor.environment_history import prepare_entry, publish_entry
+    from dinkster_supervisor.environment_state import interpreter
+
+    for index, number in enumerate((2, 7, 1, 3), 1):
+        tree = _generation(tmp_path, number).parent
+        python = interpreter(tree)
+        python.parent.mkdir(exist_ok=True)
+        python.write_bytes(b"sealed interpreter, not executable")
+        seal = tree / "generation.json"
+        generation = Generation.read(seal)
+        replace(
+            generation,
+            files=(
+                *generation.files,
+                (python.relative_to(tree).as_posix(), content_digest(python)),
+            ),
+        ).write(seal)
+        operation = "setup" if index == 1 else "update"
+        entry = prepare_entry(tmp_path, tree, operation=str(index * 100), reason=operation)
+        Journal(
+            operation,
+            None if index == 1 else (2, 7, 1)[index - 2],
+            number,
+            "complete",
+            history_entry=entry,
+        ).write(tmp_path / "journal" / f"{index * 100}.json")
+        publish_entry(tmp_path, entry)
+    (tmp_path / "current").write_text("3\n")
+    for name in ("workflows", "models", "outputs", "mounts", "cache/uv-cache", "cache/wheels"):
+        directory = tmp_path / name
+        directory.mkdir(parents=True)
+        (directory / "sentinel").write_text(name)
+    (tmp_path / "store").write_text(str(tmp_path / "cache") + "\n")
+    return tmp_path
+
+
+@pytest.mark.parametrize("blocked", [None, "history", "payload", "disabled", "busy"])
+def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
+    cleanup_project: Path, blocked: str | None
+):
+    from contextlib import nullcontext
+
+    from dinkster_supervisor.environment_state import writer_lock
+
+    tmp_path = cleanup_project
+    if blocked == "history":
+        (tmp_path / "history/00000000000000000001.json").unlink()
+    elif blocked == "payload":
+        payload = tmp_path / "generations/2/packs/fixture/runtime.py"
+        payload.parent.mkdir(parents=True)
+        payload.write_text("hand edited runtime")
+    elif blocked == "disabled":
+        write_document(
+            tmp_path / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False}
+        )
+    protected = {
+        p: p.read_bytes()
+        for parent in (
+            "history",
+            "workflows",
+            "models",
+            "outputs",
+            "mounts",
+            "cache",
+            "generations/1",
+            "generations/3",
+        )
+        for p in (tmp_path / parent).rglob("*")
+        if p.is_file()
+    }
+    with writer_lock(tmp_path) if blocked == "busy" else nullcontext():
+        code, result = _run(tmp_path, "cleanup", "--yes")
+    assert code == 0, result
+    expected = "disabled" if blocked == "disabled" else ("deferred" if blocked else "complete")
+    assert result["status"] == expected, result
+    assert {p: p.read_bytes() for p in protected} == protected
+    for number in (2, 7):
+        retained = blocked in {"history", "disabled", "busy"} or (
+            blocked == "payload" and number == 2
+        )
+        assert (tmp_path / "generations" / str(number)).exists() == retained
+    code, status = _run(tmp_path, "status")
+    assert code == 0, status
+    assert status["cleanup"]["lastAttempt"] == result["cleanupAttempt"]
+    if blocked == "busy":
+        assert "another environment writer holds" in result["cleanupAttempt"]["warnings"][0]
+        code, retried = _run(tmp_path, "cleanup", "--yes")
+        assert code == 0 and retried["status"] == "complete", retried
+        assert not (tmp_path / "generations/2").exists()
+    assert {p: p.read_bytes() for p in protected} == protected
+
+
+def test_generation_cleanup_coalesces_and_does_not_stop_pending_launches(cleanup_project: Path):
+    from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
+    from dinkster_supervisor.environment_state import writer_lock
+
+    root = cleanup_project
+    maintenance = root / "runtime/maintenance"
+    maintenance.mkdir(parents=True)
+    with writer_lock(maintenance):
+        code, result = _run(root, "cleanup", "--yes")
+    assert code == 0 and result["status"] == "coalesced", result
+    assert not (maintenance / "cleanup").exists()
+    assert all((root / "generations" / str(n)).is_dir() for n in (1, 2, 3, 7))
+    instance = "pending-generation-launch"
+    lifecycle = root / "runtime/2/old.process" / hashlib.sha256(instance.encode()).hexdigest()
+    prepare_process(lifecycle, instance)
+    pending = {p: p.read_bytes() for p in lifecycle.rglob("*") if p.is_file()}
+    code, result = _run(root, "cleanup", "--yes")
+    assert code == 0, result
+    assert (root / "generations/2").is_dir()
+    assert not (root / "generations/7").exists()
+    assert {p: p.read_bytes() for p in pending} == pending
+    assert not cancel_pending_process(lifecycle, instance)
+    code, result = _run(root, "cleanup", "--yes")
+    assert code == 0 and result["status"] == "complete", result
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+
+
+@pytest.mark.parametrize("interrupted", ["quarantine", "cleanup"])
+def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str
+):
+    from dinkster_supervisor import environment_collection as collection
+
+    root = cleanup_project
+    store = root / "cache"
+    parked = store / ".garbage/500/uv-cache"
+    parked.mkdir(parents=True)
+    (parked / "sentinel").write_bytes(b"explicit cache GC only")
+    Journal(
+        "gc", 3, 3, "complete", collection_store=str(store), collected_store_paths=("uv-cache",)
+    ).write(root / "journal/500.json")
+    write_document(store / "collection-state.json", {"keep": True})
+    if interrupted == "cleanup":
+        original = collection.shutil.rmtree
+
+        def refuse(path, *args, **kwargs):
+            if path.is_relative_to(root / ".garbage"):
+                raise PermissionError("fixture Windows sharing violation")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(collection.shutil, "rmtree", refuse)
+        result = collection.retry_generation_collection(root)
+        assert result["status"] == "deferred", result
+        assert "sharing violation" in cast("list[str]", result["warnings"])[0]
+        code, status = _run(root, "status")
+        assert code == 0 and status["cleanup"]["lastAttempt"] == result, status
+        assert status["cleanup"]["quarantine"], status
+        monkeypatch.undo()
+    else:
+        journal = root / "journal/600.json"
+        Journal("gc", 3, 3, "building", collected_generations=(2,)).write(journal)
+        directory = root / ".garbage/600"
+        directory.mkdir(parents=True)
+        (root / "generations/2").rename(directory / "2")
+    code, retried = _run(root, "cleanup", "--yes")
+    assert code == 0 and retried["status"] == "complete", retried
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert (parked / "sentinel").read_bytes() == b"explicit cache GC only"
+    assert (store / "uv-cache/sentinel").read_text() == "cache/uv-cache"
+    assert not list((root / ".garbage").rglob("generation.json"))
+
+
 def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: Path):
     from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
 

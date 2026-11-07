@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -25,6 +26,7 @@ from .environment_state import (
     read_current,
     read_document,
     store_cache_path,
+    write_document,
     writer_lock,
 )
 from .environment_stores import store_projects
@@ -318,20 +320,103 @@ def collection_preview(root: Path) -> dict[str, object]:
         rows.append({"generation": number, "status": state, "reasons": reasons})
     if current not in present or (predecessor is not None and predecessor not in present):
         raise EnvironmentError("current or previous generation tree is missing")
-    return {
+    result: dict[str, object] = {
         "policy": policy,
         "current": current,
         "generations": rows,
         "quarantine": quarantine,
         "warnings": warnings,
     }
+    runtime = root / "runtime"
+    maintenance = runtime / "maintenance"
+    state = maintenance / "cleanup"
+    if any(p.is_symlink() or p.is_junction() for p in (runtime, maintenance, state)):
+        warnings.append("cleanup attempt status must not be linked")
+    elif state.exists():
+        try:
+            attempt = read_document(state)
+            if attempt.get("format") != "dinkster.cleanup-attempt/1":
+                raise EnvironmentError("invalid cleanup attempt status")
+            result["lastAttempt"] = attempt
+        except (OSError, ValueError) as exc:
+            warnings.append(str(exc))
+    return result
+
+
+def retry_generation_collection(root: Path) -> dict[str, object]:
+    """Retry only history-covered generation deletion, never shared-store GC or process stops."""
+    runtime = root / "runtime"
+    maintenance = runtime / "maintenance"
+    if any(p.is_symlink() or p.is_junction() for p in (runtime, maintenance)):
+        raise EnvironmentError("cleanup maintenance directory must not be linked")
+    runtime.mkdir(exist_ok=True)
+    maintenance.mkdir(exist_ok=True)
+    with ExitStack() as locks:
+        result: dict[str, object] = {
+            "format": "dinkster.cleanup-attempt/1",
+            "attemptedAt": time.time_ns(),
+            "status": "complete",
+            "warnings": [],
+        }
+        try:
+            locks.enter_context(writer_lock(maintenance))
+        except EnvironmentError:
+            result.update(status="coalesced", warnings=["generation cleanup is already running"])
+            return result
+        try:
+            with writer_lock(root), generation_runtime_lock(root):
+                if not collection_policy(root)["automatic"]:
+                    result["status"] = "disabled"
+                    write_document(maintenance / "cleanup", result)
+                    return result
+                journals = root / "journal"
+                if journals.is_symlink() or journals.is_junction():
+                    raise EnvironmentError("collection refuses linked journals")
+                for path in sorted(journals.glob("*.json")):
+                    if path.is_symlink():
+                        raise EnvironmentError("collection refuses linked journals")
+                    journal = Journal.read(path)
+                    if journal.operation == "gc" and journal.collection_store is None:
+                        if journal.incomplete:
+                            recover_collection(root, path)
+                        elif journal.stage == "complete":
+                            cleanup_collection(root, path)
+                    elif journal.incomplete:
+                        raise EnvironmentError("pending environment operation requires recovery")
+                approved = _covered_collection_plan(root)
+                _collect_generations(
+                    root, approved, store=None, store_paths=(), preserve_history=True
+                )
+                result["collectedGenerations"] = list(approved[2])
+                preview = collection_preview(root)
+                deferred = [
+                    row
+                    for row in cast("list[dict[str, object]]", preview["generations"])
+                    if row["status"] == "deferred"
+                ]
+                if deferred:
+                    result.update(status="deferred", deferred=deferred)
+        except (OSError, ValueError) as exc:
+            result.update(status="deferred", warnings=[str(exc)])
+        write_document(maintenance / "cleanup", result)
+        return result
+
+
+def _covered_collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
+    preview = collection_preview(root)
+    retained: list[int] = []
+    collected: list[int] = []
+    for row in cast("list[dict[str, object]]", preview["generations"]):
+        target = collected if row["status"] == "candidate" else retained
+        target.append(cast("int", row["generation"]))
+    return cast("int", preview["current"]), tuple(sorted(retained)), tuple(sorted(collected))
 
 
 def _quarantine(root: Path, path: Path) -> Path:
     if not path.stem.isdecimal():
         raise EnvironmentError("collection journal must have a numeric timestamp name")
     directory = root / ".garbage" / path.stem
-    if (root / ".garbage").is_symlink() or directory.is_symlink():
+    if any(p.is_symlink() or p.is_junction() for p in (directory.parent, directory)):
         raise EnvironmentError("collection refuses linked quarantine directories")
     return directory
 
@@ -343,7 +428,7 @@ def cleanup_collection(root: Path, path: Path) -> None:
     directory = _quarantine(root, path)
     for number in journal.collected_generations:
         tree = directory / str(number)
-        if tree.is_symlink():
+        if tree.is_symlink() or tree.is_junction():
             raise EnvironmentError("collection refuses linked quarantine trees")
         if tree.exists():
             shutil.rmtree(tree)
@@ -359,12 +444,12 @@ def recover_collection(root: Path, path: Path) -> None:
         return
     if read_current(root) != journal.target:
         raise EnvironmentError("current changed during generation collection")
-    if (root / "generations").is_symlink():
+    if (root / "generations").is_symlink() or (root / "generations").is_junction():
         raise EnvironmentError("collection refuses a linked generations directory")
     directory = _quarantine(root, path)
     for number in journal.collected_generations:
         original, parked = root / "generations" / str(number), directory / str(number)
-        if original.is_symlink() or parked.is_symlink():
+        if any(p.is_symlink() or p.is_junction() for p in (original, parked)):
             raise EnvironmentError("collection recovery refuses linked generation trees")
         if parked.exists():
             if original.exists():
@@ -401,8 +486,10 @@ def _collect_generations(
     *,
     store: Path | None,
     store_paths: tuple[str, ...],
+    preserve_history: bool = False,
 ) -> None:
-    if collection_plan(root) != approved:
+    actual = _covered_collection_plan(root) if preserve_history else collection_plan(root)
+    if actual != approved:
         raise EnvironmentError("generation collection changed after planning; request a new plan")
     if store is not None and store_collection_plan(root, store, approved[2]) != store_paths:
         raise EnvironmentError("store collection changed after planning; request a new plan")
@@ -410,7 +497,11 @@ def _collect_generations(
         record = Journal.read(old)
         if record.incomplete:
             raise EnvironmentError("incomplete environment operation requires recovery first")
-        if record.operation == "gc" and record.stage == "complete":
+        if (
+            record.operation == "gc"
+            and record.stage == "complete"
+            and (not preserve_history or record.collection_store is None)
+        ):
             cleanup_collection(root, old)
     current, _, numbers = approved
     if not numbers and not store_paths:

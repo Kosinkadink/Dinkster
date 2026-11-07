@@ -24,6 +24,7 @@ from .environment_collection import (
     collection_preview,
     recover_collection,
     recover_store_collection,
+    retry_generation_collection,
     store_collection_plan,
 )
 from .environment_custom import (
@@ -1044,6 +1045,11 @@ def _restore(
 
 def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
+    if args.automatic is None and args.yes:
+        attempt = retry_generation_collection(root)
+        result.update(cleanupAttempt=attempt, status=attempt["status"], current=read_current(root))
+        result["cleanup"] = collection_preview(root)
+        return 0
     preview = collection_preview(root)
     plan = [
         f"generation {row['generation']}: {row['status']}: "
@@ -1052,8 +1058,6 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     ] + cast("list[str]", preview["warnings"])
     result.update(cleanup=preview, current=preview["current"], status="planned", plan=plan)
     if args.automatic is None:
-        if args.yes:
-            raise EnvironmentError("cleanup --yes requires --automatic on or off")
         return 0
     automatic = args.automatic == "on"
     plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
