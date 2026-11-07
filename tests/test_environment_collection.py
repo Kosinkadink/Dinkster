@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
+from urllib.request import Request, urlopen
 
 import pytest
 from dinkster_supervisor.environment_state import (
@@ -24,9 +25,9 @@ from test_environment_cli import _run
 from test_environment_state import _generation
 
 
-@pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("worker_kind", ["isolated", "grouped", "descendant"])
 def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
-    tmp_path: Path, grouped: bool
+    tmp_path: Path, worker_kind: str
 ):
     from dinkster_supervisor.environment_runtime import start_engine, stop_engine
     from test_environment_runtime import free_port, make_generation
@@ -45,7 +46,7 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         listener.settimeout(20)
-        (pack / "cleanup_fixture.py").write_text(
+        blocked_import = (
             "import socket\n"
             f"connection=socket.create_connection(('127.0.0.1',{listener.getsockname()[1]}))\n"
             "connection.sendall(b'ready')\n"
@@ -55,10 +56,20 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             " connection.sendall(b'p')\n"
             "connection.close()\nNODES=[]\n"
         )
+        if worker_kind == "descendant":
+            blocked_import = (
+                "import signal\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\n" + blocked_import
+            )
+            (pack / "cleanup_fixture.py").write_text(
+                f"import subprocess,sys\nsubprocess.run([sys.executable,'-c',{blocked_import!r}])\n"
+                "NODES=[]\n"
+            )
+        else:
+            (pack / "cleanup_fixture.py").write_text(blocked_import)
         serve = tmp_path / "dinkster/serve.py"
         worker = (
             f"GroupIsolatedWorker('cleanup-group', [{str(manifest)!r}], registry, use_shm=False)"
-            if grouped
+            if worker_kind == "grouped"
             else f"IsolatedWorker({str(manifest)!r}, registry, use_shm=False)"
         )
         serve.write_text(
@@ -78,7 +89,8 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
         )
         connection = None
         try:
-            start_engine(tmp_path, 1, "old", free_port())
+            port = free_port()
+            start_engine(tmp_path, 1, "old", port)
             connection, _ = listener.accept()
             connection.settimeout(10)
             assert connection.recv(5) == b"ready"
@@ -87,6 +99,27 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             connection.sendall(b"p")
             assert connection.recv(1) == b"p"
             assert (tmp_path / "generations/1").is_dir()
+            if sys.platform == "linux" or os.name == "nt":
+                request = Request(
+                    f"http://127.0.0.1:{port}/supervisor/engine/restart",
+                    data=b"{}",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(request, timeout=25) as response:
+                    assert response.status == 200
+                try:
+                    assert connection.recv(1) == b""
+                except ConnectionResetError:
+                    pass
+                connection.close()
+                connection, _ = listener.accept()
+                connection.settimeout(10)
+                assert connection.recv(5) == b"ready"
+                code, refused = _run(tmp_path, "gc", "--yes")
+                assert code == 1 and "cleanup is unproven" in refused["error"], refused
+                connection.sendall(b"p")
+                assert connection.recv(1) == b"p"
             stop_engine(tmp_path, "old", generation=1)
             if sys.platform != "linux" and os.name != "nt":
                 code, refused = _run(tmp_path, "gc", "--yes")
@@ -123,6 +156,52 @@ def test_collection_retains_legacy_direct_child_only_stop_receipt(tmp_path: Path
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     code, refused = _run(tmp_path, "gc", "--yes")
     assert code == 1 and "descendant cleanup is unproven" in refused["error"], refused
+    assert (tmp_path / "generations/1").is_dir()
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_failed_owned_family_cleanup_cannot_make_generation_collectible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from test_environment_runtime import free_port, make_generation
+
+    for number in (1, 2, 3):
+        make_generation(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    original = subprocess.Popen
+    processes: list[subprocess.Popen] = []
+    script = (
+        "from dinkster_supervisor import supervisor\n"
+        "from dinkster_supervisor.process_family import ProcessFamily\n"
+        "def refuse(self): raise RuntimeError('owned cleanup fixture failure')\n"
+        "ProcessFamily.stop_children=refuse\n"
+        "supervisor.main()\n"
+    )
+
+    def launch(command, **kwargs):
+        process = original([command[0], "-c", script, *command[3:]], **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", launch)
+    try:
+        runtime.start_engine(tmp_path, 1, "old", free_port())
+        with pytest.raises(EnvironmentError, match="without proving child cleanup"):
+            runtime.stop_engine(tmp_path, "old", generation=1)
+        assert processes[0].wait(timeout=5) != 0
+    finally:
+        # The injected failure occurs after direct-engine shutdown; only the fixture host remains.
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+    monkeypatch.undo()
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    code, refused = _run(tmp_path, "gc", "--yes")
+    assert code == 1 and "cleanup is unproven" in refused["error"], refused
     assert (tmp_path / "generations/1").is_dir()
     assert {p: p.read_bytes() for p in before} == before
 
