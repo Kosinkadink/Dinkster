@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -185,7 +186,7 @@ else:
             assert entries[0]["generation"] == 1
             software = cast("dict[str, object]", entries[0]["snapshot"])
             metadata = cast("dict[str, object]", software["metadata"])
-            assert metadata["constraints.txt"] == "test\n"
+            assert metadata["constraints.txt"] == "test" + os.linesep
             with pytest.raises(EnvironmentError, match="already has an active"):
                 begin_setup(tmp_path, 2, free_port())
         else:

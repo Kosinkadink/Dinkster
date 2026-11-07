@@ -1173,7 +1173,14 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     target = tmp_path / "user-files"
     target.mkdir()
     (target / "private").write_text("not software")
-    (generation / "packs").symlink_to(target, target_is_directory=True)
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(generation / "packs"), str(target)],
+            capture_output=True,
+            check=True,
+        )
+    else:
+        (generation / "packs").symlink_to(target, target_is_directory=True)
     document = json.loads((generation / "generation.json").read_bytes())
     document["files"]["packs/private/pack-lock.json"] = "sha256:" + "e" * 64
     (generation / "generation.json").write_text(json.dumps(document))
