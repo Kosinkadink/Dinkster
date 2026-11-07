@@ -22,6 +22,7 @@ import pytest
 import zstandard
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import Lockfile
+from dinkster_store import object_path
 from dinkster_supervisor.environment_artifacts import acquire_sources, discover
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
 from supervisor_subprocess import run as run_with_diagnostics
@@ -1289,7 +1290,7 @@ environment.main()
         )
         # The empty-pack fixture must refuse nonempty explicit sources, not omit them.
         assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
-        cached_release = store / "engines" / source_release.name
+        cached_release = object_path(store / "engines", "sha256:" + source_release.name)
         assert (cached_release / "official-packs.lock").read_bytes() == payloads[
             "official-packs.lock"
         ]
@@ -1323,7 +1324,7 @@ environment.main()
         assert code == 1 and drift["status"] == "drift"
         assert "missing: constraints.txt" in drift["changes"]
         assert _run(root, "stop", "--yes")[0] == 0
-        base_python = store / "bases" / base_id / "python"
+        base_python = object_path(store / "bases", "sha256:" + base_id) / "python"
         bytecode = base_python / "__pycache__/runtime.cpython-312.pyc"
         bytecode.parent.mkdir(exist_ok=True)
         bytecode.write_bytes(b"disposable bytecode outside the sealed inventory")
@@ -1565,20 +1566,16 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert run("setup")["current"] == 1
         check(1, fixture["expected"]["initial"], "setup")
         store = Path((root / "store").read_text().strip())
-        assert (store / "bases" / base_id).is_dir()
-        assert (store / "downloads" / base_id).is_dir()
-        assert (store / "engines" / engine_id).is_dir()
+        assert object_path(store / "bases", "sha256:" + base_id).is_dir()
+        assert object_path(store / "downloads", "sha256:" + base_id).is_dir()
+        assert object_path(store / "engines", "sha256:" + engine_id).is_dir()
         wheel_paths = list((store / "wheels").iterdir())
         assert wheel_paths and all(
             len(path.name) == 64 and all(c in "0123456789abcdef" for c in path.name)
             for path in wheel_paths
         )
-        for directory in (store, root):
-            assert all(
-                base_label not in part and engine_label not in part
-                for path in directory.rglob("*")
-                for part in path.relative_to(directory).parts
-            )
+        assert object_path(store / "engines", "sha256:" + engine_id).name == engine_label
+        assert object_path(store / "bases", "sha256:" + base_id).parent.name == variant
         run("advance")
         assert run("update")["current"] == 2
         check(2, fixture["expected"]["updated"], "update")

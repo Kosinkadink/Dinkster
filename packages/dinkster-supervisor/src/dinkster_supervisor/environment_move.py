@@ -12,6 +12,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
+from dinkster_store import object_path
+
 from .environment_collection import recover_store_collection
 from .environment_constraints import requirement_hashes
 from .environment_generations import build_generation, link_file, pack_operation, verify_base_inputs
@@ -288,14 +290,19 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 )
         for category, identities in required.items():
             for identity in sorted(identities):
-                entry = plan.source_store / category / identity
+                source_root = plan.source_store / category
+                entry = object_path(source_root, "sha256:" + identity)
                 if not entry.exists() and category in {"wheels", "engines"}:
                     continue
-                destination = plan.target_store / category / entry.name
+                destination = object_path(
+                    plan.target_store / category,
+                    "sha256:" + identity,
+                    label=entry.relative_to(source_root).as_posix(),
+                )
                 if entry.is_symlink() or not entry.is_dir():
-                    raise EnvironmentError("move requires digest-directory local caches")
+                    raise EnvironmentError("move requires unlinked local cache directories")
                 if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
-                    raise EnvironmentError("move requires digest-directory local caches")
+                    raise EnvironmentError("move requires unlinked local cache directories")
                 if not destination.exists():
                     staging = (
                         plan.target_store
@@ -303,7 +310,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                         / path.stem
                         / "transfer"
                         / category
-                        / entry.name
+                        / identity
                     )
                     if staging.exists():
                         shutil.rmtree(staging)
@@ -320,10 +327,10 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
         generation = Generation.read(tree / "generation.json")
         destination = target / "generations" / tree.name
         if plan.cross_volume:
-            base = plan.target_store / "bases" / generation.base[7:] / "python"
+            base = object_path(plan.target_store / "bases", generation.base) / "python"
             expected = dict(generation.files)
             verify_base_inputs(base, expected, operation="move")
-            release = plan.target_store / "engines" / generation.engine_release[7:]
+            release = object_path(plan.target_store / "engines", generation.engine_release)
             build_generation(
                 root=target,
                 number=generation.number,

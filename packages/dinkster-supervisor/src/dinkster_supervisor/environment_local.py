@@ -19,9 +19,11 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from blake3 import blake3
+from dinkster_store import object_path
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
 from packaging.utils import parse_wheel_filename
 
+from .environment_artifacts import base_label, engine_label
 from .environment_constraints import effective_constraints, requirement_hashes
 from .environment_downloads import fetch_artifact
 from .environment_state import (
@@ -369,7 +371,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         )
         identity = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
         base["id"] = identity
-        base_root = store / "bases" / identity[7:]
+        base_root = object_path(store / "bases", identity, label=base_label(base))
         if base_root.exists():
             cached_files = {
                 path.relative_to(base_root).as_posix(): content_digest(path)
@@ -397,7 +399,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         release_id = (
             "sha256:" + hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
         )
-        engine_root = store / "engines" / release_id[7:]
+        engine_root = object_path(store / "engines", release_id, label=engine_label(release))
         engine_root.mkdir(parents=True, exist_ok=True)
         write_document(engine_root / "release-manifest.json", release)
         constraints = engine_root / f"constraints-{selection['variant']}.txt"
@@ -430,7 +432,7 @@ def prepare_local_packs(
     """Resolve checkout pack requirements against this target, never a published base lock."""
     from .environment_generations import pack_operation, prepare_pack_catalogs, stage_pack_sources
 
-    artifacts = store / "engines" / release[7:] / "artifacts"
+    artifacts = object_path(store / "engines", release) / "artifacts"
     links = [
         str(store / "wheels" / digest)
         for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))

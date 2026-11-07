@@ -17,9 +17,10 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 import zstandard
+from dinkster_store import object_path
 from packaging.version import InvalidVersion, Version
 
-from .environment_artifacts import acquire_base, validate_manifest
+from .environment_artifacts import acquire_base, base_label, validate_manifest
 from .environment_constraints import requirement_hashes
 from .environment_local import retain_wheels, run_local_command
 from .environment_state import (
@@ -278,8 +279,8 @@ def build_custom_base(
                 )
         base["archive"]["parts"] = parts
         validate_manifest(json.dumps(base).encode("ascii"), identity, selection["variant"])
-        retained = store / "downloads" / identity[7:]
-        existing = store / "bases" / identity[7:] / "manifest.json"
+        retained = object_path(store / "downloads", identity, label=base_label(base))
+        existing = object_path(store / "bases", identity) / "manifest.json"
         if existing.exists():
             previous = validate_manifest(existing.read_bytes(), identity, selection["variant"])
             acquire_base(previous, (str(retained),), store)

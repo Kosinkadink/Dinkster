@@ -32,10 +32,10 @@ def readable_label(*components: str) -> str:
         if _RESERVED.fullmatch(label):
             label = "object-" + label
         labels.append(label)
-    return _relative("/".join(labels))
+    return relative_path("/".join(labels))
 
 
-def _relative(value: object) -> str:
+def relative_path(value: object) -> str:
     if not isinstance(value, str) or not value or len(value) > 240:
         raise StorePathError("store paths must be bounded portable relative paths")
     parts = value.split("/")
@@ -146,7 +146,7 @@ def _read(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     paths: list[str] = []
     for identity, relative in cast("dict[str, object]", objects).items():
-        result[_identity(identity)] = _relative(relative)
+        result[_identity(identity)] = relative_path(relative)
         paths.append(cast("str", relative).casefold())
     path_set = set(paths)
     if len(path_set) != len(paths):
@@ -180,7 +180,7 @@ def object_path(
     must still verify its bytes. Missing content never releases its allocated name.
     """
     _identity(identity)
-    old = _relative(legacy if legacy is not None else identity.split(":", 1)[1])
+    old = relative_path(legacy if legacy is not None else identity.split(":", 1)[1])
 
     def existing(objects: Mapping[str, str]) -> Path | None:
         if identity in objects:
@@ -191,7 +191,7 @@ def object_path(
     _unlinked(root)
     if label is None:
         return existing(_read(root)) or _unlinked(root, old)
-    _relative(label)
+    relative_path(label)
     root.mkdir(parents=True, exist_ok=True)
     with _lock(root):
         objects = _read(root)

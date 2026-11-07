@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 import zstandard
 from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_store import object_path
 from dinkster_supervisor import environment_artifacts
 from dinkster_supervisor.environment_artifacts import (
     acquire,
@@ -321,7 +322,9 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     )
     for path in acquired:
         assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
-    retained = store / "engines" / channel["engine"]["release"][7:] / "release-manifest.json"
+    retained = (
+        object_path(store / "engines", channel["engine"]["release"]) / "release-manifest.json"
+    )
     assert retained.read_bytes() == _json(engine) + b"\n"
 
 
@@ -343,14 +346,15 @@ def test_acquisition_retains_published_base_metadata_without_replacing_custom_pr
     (mirror / "base/fixture-cpu" / base["id"][7:] / "manifest.json").write_bytes(_json(base))
     catalog = discover((str(mirror),), "main")
     acquire(catalog, "fixture-cpu", store)
-    retained = store / "bases" / base["id"][7:] / "manifest.json"
+    retained = object_path(store / "bases", base["id"]) / "manifest.json"
+    assert retained.parent == store / "bases/fixture-cpu/2026-11-01-py3.14.10-torchnone"
     assert json.loads(retained.read_bytes()) == base
     custom = _json({**base, "source": "user-defined", "build": {"sourceDigest": "a" * 64}})
     retained.write_bytes(custom)
     acquire(catalog, "fixture-cpu", store)
     assert retained.read_bytes() == custom
     retained.unlink()
-    wheel = store / "bases" / base["id"][7:] / "wheels" / base["wheels"][0]["filename"]
+    wheel = retained.parent / "wheels" / base["wheels"][0]["filename"]
     wheel.write_bytes(b"damaged cached base")
     with pytest.raises(EnvironmentError, match="extracted base wheel differs"):
         acquire(catalog, "fixture-cpu", store)
@@ -382,10 +386,10 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     assert not store.exists()
     manifest.write_bytes(b"changed after discovery")
     acquire(catalog, "fixture-cpu", store)
-    retained = store / "engines" / identity / "release-manifest.json"
+    retained = object_path(store / "engines", "sha256:" + identity) / "release-manifest.json"
     assert retained.read_bytes() == data
     assert hashlib.sha256(retained.read_bytes()).hexdigest() == identity
-    assert all(engine["label"] not in part for path in store.rglob("*") for part in path.parts)
+    assert retained.parent == store / "engines" / engine["label"]
     retained.write_bytes(b"corrupt cache")
     acquire(catalog, "fixture-cpu", store)
     assert retained.read_bytes() == data
@@ -754,7 +758,9 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
         next((tmp_path / "store/wheels").glob("*/fixture_engine*.whl")).read_bytes()
         == b"engine wheel bytes"
     )
-    retained = tmp_path / "store/engines" / release / "release-manifest.json"
+    retained = (
+        object_path(tmp_path / "store/engines", "sha256:" + release) / "release-manifest.json"
+    )
     assert (
         retained.read_bytes() == (second / f"engine/{release}/release-manifest.json").read_bytes()
     )
@@ -790,7 +796,7 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
     store = tmp_path / "store"
     with pytest.raises(EnvironmentError, match="extracted base wheel differs"):
         acquire(catalog, "fixture-cpu", store)
-    assert not (store / "bases" / base["id"][7:]).exists()
+    assert not object_path(store / "bases", base["id"]).exists()
     assert not list(store.glob("wheels/*/*.whl"))
 
 
@@ -1454,7 +1460,7 @@ def test_custom_rebuild_preserves_recoverable_archive_and_provenance(
         lambda *_: json.loads(json.dumps(template["wheels"])),
     )
     first = environment_custom.build_custom_base(selection, template, sources, store)
-    retained = store / "downloads" / first["id"][7:]
+    retained = object_path(store / "downloads", first["id"])
     original = {path.name: path.read_bytes() for path in retained.iterdir()}
     assert environment_custom.build_custom_base(selection, template, sources, store) == first
     assert {path.name: path.read_bytes() for path in retained.iterdir()} == original
@@ -1466,7 +1472,7 @@ def test_custom_rebuild_preserves_recoverable_archive_and_provenance(
     )
     assert {
         path.name: path.read_bytes()
-        for path in (download_only / "downloads" / first["id"][7:]).iterdir()
+        for path in object_path(download_only / "downloads", first["id"]).iterdir()
     } == original
     recovered = environment_artifacts.acquire_base(first, (str(retained),), tmp_path / "recovered")
     for wheel in first["wheels"]:

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import cast
 
+from dinkster_store import StorePathError, relative_path
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -604,9 +606,17 @@ class Journal:
 
 
 def store_cache_path(value: object) -> str:
-    if not isinstance(value, str) or (
-        value != "uv-cache"
-        and re.fullmatch(r"(?:bases|engines|downloads|wheels)/[0-9a-f]{64}", value) is None
-    ):
+    try:
+        path = relative_path(value)
+    except StorePathError as exc:
+        raise EnvironmentError("store collection paths must name disposable cache entries") from exc
+    if path == "uv-cache":
+        return path
+    parts = path.split("/")
+    depths = {"bases": {2, 3}, "downloads": {2, 3}, "engines": {2}, "wheels": {2}}
+    if len(parts) not in depths.get(parts[0], set()):
         raise EnvironmentError("store collection paths must name disposable cache entries")
-    return value
+    if parts[0] in {"bases", "downloads"} and len(parts) == 2:
+        if re.fullmatch(r"[0-9a-f]{64}", parts[1]) is None:
+            raise EnvironmentError("store collection paths must name disposable cache entries")
+    return path
