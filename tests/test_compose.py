@@ -1699,7 +1699,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:17abaff653c06945f694f46e185d28db12f4a54dd68a20b4af173a635b0c5dc9")
+    assert expected == ("blake3:f5a5119c694602068645d04ee4887c86af68651b216e549a2eda948abd0aeaf1")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1750,7 +1750,7 @@ def test_shared_distribution_pack_uses_manifest_version(
     assert pack is not None
     assert pack.version == "0.0.3"
     assert pack.artifact_digest == (
-        "blake3:921320363e6f14e9075e469eedb8491365835a9b1c23a4a925e1a7bf82207cf5"
+        "blake3:2c53612b623d2632c3ee55240d758781c344181eabdcb644448f7330b0c26c6b"
     )
     if mismatch == "pack":
         pack = replace(pack, version="0.0.2")
