@@ -143,6 +143,12 @@
   them. Recorded registries remain authoritative; third-party, local and git
   selections remain unchanged for generation admission. Unavailable releases refuse
   before the candidate source lock is written, even with missing-default opt-in.
+- Additive source preparation accepts exact absent first-party pack selections
+  with `prepare-registry-sources --installed-lock PATH --retain-sources --add PACK@VERSION`.
+  Existing source identities remain unchanged instead of being re-resolved.
+  Repeated or installed pack names, noncanonical selections, incompatible engines,
+  third-party manifests and corrupt archives refuse before a candidate lock is
+  written. Preparation does not activate a generation or modify project data.
 - Generation source admission checks each declared pack engine range against
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a
