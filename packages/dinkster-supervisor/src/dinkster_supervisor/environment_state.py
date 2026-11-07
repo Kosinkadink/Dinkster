@@ -398,6 +398,8 @@ class Journal:
     collection_store: str | None = None
     collected_store_paths: tuple[str, ...] = ()
     relocation: dict[str, object] | None = None
+    history_entry: dict[str, object] | None = None
+    restored_from: int | None = None
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -409,6 +411,7 @@ class Journal:
             "setup",
             "update",
             "rollback",
+            "restore",
             "move",
             "repair",
             "gc",
@@ -465,7 +468,12 @@ class Journal:
             ports.add(target_port)
             checked.append(binding)
         previous = value.get("previous")
-        if previous == value.get("target") and operation in {"update", "rollback", "repair"}:
+        if previous == value.get("target") and operation in {
+            "update",
+            "rollback",
+            "repair",
+            "restore",
+        }:
             raise EnvironmentError("activation journal must name distinct generations")
         collected = value.get("collectedGenerations", [])
         if not isinstance(collected, list):
@@ -558,6 +566,23 @@ class Journal:
                 relative_file(name)
                 if not isinstance(identity, str):
                     raise EnvironmentError("relocation source identities must be strings")
+        entry = value.get("historyEntry")
+        if entry is not None:
+            if not isinstance(entry, dict):
+                raise EnvironmentError("journal historyEntry must be an object")
+            entry = cast("dict[str, object]", entry)
+            if (
+                entry.get("format") != "dinkster.install-history/1"
+                or entry.get("generation") != value.get("target")
+                or operation not in {"setup", "update", "rollback", "repair", "restore"}
+            ):
+                raise EnvironmentError("journal history entry must describe its activation")
+            generation_number(entry.get("id"))
+        restored_from = value.get("restoredFrom")
+        if restored_from is not None:
+            if operation not in {"restore", "rollback"}:
+                raise EnvironmentError("restoredFrom requires a restore or rollback journal")
+            restored_from = generation_number(restored_from)
         return cls(
             operation,
             None if previous is None else generation_number(previous),
@@ -571,6 +596,8 @@ class Journal:
             store,
             store_paths,
             relocation,
+            entry,
+            restored_from,
         )
 
     @property
@@ -600,6 +627,10 @@ class Journal:
             value["collectedStorePaths"] = list(self.collected_store_paths)
         if self.relocation is not None:
             value["relocation"] = self.relocation
+        if self.history_entry is not None:
+            value["historyEntry"] = self.history_entry
+        if self.restored_from is not None:
+            value["restoredFrom"] = self.restored_from
         write_document(path, value)
 
 

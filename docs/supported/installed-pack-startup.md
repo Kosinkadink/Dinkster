@@ -1,5 +1,64 @@
 ## Installed pack startup
 
+- Published software history can rebuild a pruned generation without restoring
+  workflows, models or outputs. Missing engine inputs expose read-only alternatives
+  and all substitutions before a proposal-specific approval; `--yes` alone cannot
+  approve an approximate restore. Shared tools are recorded, never replaced.
+- Restoring recorded registry pack sources reacquires exact digest-pinned archives,
+  not newer releases. Interrupted software restores retain a failed-attempt receipt
+  while leaving successful history unchanged.
+- Restore can recover selected source archives retained by another engine release
+  when the recorded source cache was pruned. Retained bytes must match the locked
+  BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
+- Restore planning checks exact pack source availability. When retained archives
+  are gone, acquisition probes use disposable storage and verify the recorded
+  digest; changed or unavailable sources are disclosed without changing the install.
+- Software restore rebuilds isolated and in-process pack dependencies from the
+  snapshot's complete locks, including after its old generation was pruned;
+  it does not inherit packs from the current generation.
+- Software history records the generation interpreter's wheel compatibility tags.
+  Restore planning reports missing pack dependency wheels before activation,
+  honors inherited base/engine and in-process dependencies, and verifies retained
+  wheel bytes without creating project or cache files.
+- Local-development software snapshots rebuild from their recorded manifests,
+  retained interpreter and hash-pinned wheels, without resolving a checkout again.
+  Missing local interpreter files or wheels are disclosed before activation.
+- A missing base can be replaced by an indexed base
+  with the same native platform, Python and worker protocol when its locked engine
+  and unchanged pack dependency requirements agree. Packs, source locks and
+  in-process placement are preserved. Engine replacements and combined engine/base
+  proposals also preserve packs when recorded pack manifests declare compatible
+  engine ranges and unchanged dependency locks remain compatible and obtainable.
+  Entries without those declarations do not guess compatibility. Proposals prefer
+  fewer changed identities, preserve an obtainable compatible engine, and disclose
+  every substitution for explicit approval rather than silently upgrading it.
+- Standalone pack-only roots can be adopted with `setup --adopt-from` into a
+  new, separate supervisor root using explicitly chosen published engine/base
+  identities and target dependency locks. The plan displays exact pack sources,
+  locks and in-process placement; the old root, shared store and user data stay
+  untouched. Shared-venv groups currently refuse rather than change topology.
+- Adoption displays source pack distribution versions and differences from target
+  dependency locks, with separate shared-store accelerator scopes. Inspection is
+  metadata-only and never executes old Python or .pth files. Ambient/inherited
+  packages are not claimed as captured, and changed metadata invalidates approval.
+  Linked source roots, shared stores, archives and their ownership ancestors are
+  refused, including Windows directory junctions.
+- Managed install-root hosts can opt into local human pack installation with
+  `dinkster-serve --install-root PATH --allow-pack-install` or the inherited
+  `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the plan/apply routes
+  do not exist. Exact registry selections produce a reviewable plan and a
+  short-lived single-use confirmation; application rejects a changed install
+  root and activates the complete installed generation. Remote, agent and
+  delegated callers cannot use the routes. Sealed `--generation` hosts do not
+  support this managed-root installation surface.
+  Authenticated loopback callers require a nondelegated human identity with
+  settings-write authority. Repeated cancellations after confirmation do not
+  interrupt the disk-apply/live-activation operation; reconnect and refresh the registry
+  before deciding whether another installation is needed.
+  Graceful server shutdown waits for confirmed installations to reach their
+  activation outcome before closing the live composition, even when the HTTP
+  request grace period expires. This wait has no separate installation deadline;
+  forcibly terminating the process is not a graceful shutdown.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.
@@ -103,6 +162,32 @@
   them. Recorded registries remain authoritative; third-party, local and git
   selections remain unchanged for generation admission. Unavailable releases refuse
   before the candidate source lock is written, even with missing-default opt-in.
+- Additive source preparation accepts exact absent first-party pack selections
+  with `prepare-registry-sources --installed-lock PATH --retain-sources --add PACK@VERSION`.
+  Existing source identities remain unchanged instead of being re-resolved.
+  Repeated or installed pack names, noncanonical selections, incompatible engines,
+  third-party manifests and corrupt archives refuse before a candidate lock is
+  written. Preparation does not activate a generation or modify project data.
+- `prepare-registry-locks --pack PACK` acquires only the named source's published
+  dependency lock for the exact base; repeat the option to select multiple packs.
+  Other source releases need not remain available in the registry. Duplicate or
+  absent selections refuse before fetching; explicit non-registry selections
+  cannot be silently omitted with `--registry-only`. Supervisor additive source
+  preparation uses these selections, retaining existing source identities and
+  leaving old dependency locks to inheritance from the source generation.
+- `dinkster-env packs-plan PACK@VERSION --output PATH --json` retains an exact
+  additive software review in a new host-owned disposable directory outside the
+  project and shared store. It reports source/dependency locks, retained engine,
+  base and placement, wheel downloads and isolation size without a generation
+  journal or activation. Intact retained registry sources can supply old archives
+  without contacting their release endpoints.
+- `packs-apply --input PATH --approval DIGEST --json` applies that review once
+  within 900 seconds. Changed project settings, current software or reviewed
+  input files refuse before construction. Successful application seals and
+  activates an ordinary next generation and appends its software history; existing
+  source/dependency locks and placement are preserved. Workflows, models, outputs,
+  user data and project settings remain unchanged. Hosts own review-directory
+  cleanup and must authorize the caller before invoking these local commands.
 - Generation source admission checks each declared pack engine range against
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a
@@ -340,8 +425,8 @@
   diagnostic journal. First setup with requirements still needs an existing
   generation interpreter. Channel/variant selection replans requirements for the
   selected target; workflow records and other project fields are preserved.
-  Rollback restores the retained selection without rebuilding, refusing when
-  settings were edited after selection rather than discarding user changes.
+  Rollback rebuilds the preceding software snapshot as a new generation, preserving
+  current project settings and any edits made after the recorded activation.
 - Unconfirmed `dinkster-env update` and `update --plan` report saved workflow
   requirements without acquiring target payloads or claiming source feasibility.
   Confirmed updates check those requirements against the same registry-selected
@@ -363,3 +448,18 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+- `dinkster-env history` lists successful software activations in order, and
+  `history show ID` displays the recorded software and changes. History survives
+  generation-directory collection. Snapshots exclude workflows, models, outputs,
+  libraries and mounts. Interrupted activation does not become a successful entry;
+  completed activation history publication is recoverable without duplication.
+- `dinkster-env restore ID` rebuilds a published software snapshot in a new
+  generation after confirmation. Recorded identities are preserved; unavailable
+  inputs refuse activation. Tools versions are displayed but tools are never
+  replaced. Failed attempts remain separate from successful history. Restore
+  preserves existing history, project settings, workflows, models and outputs.
+- `dinkster-env rollback` rebuilds the preceding successful history entry, even
+  after its generation directory was pruned. It uses restore's missing-input and
+  proposal-approval contract, appends a source-linked entry with reason `rollback`,
+  and leaves project settings and user data unchanged. Planning recovers an
+  interrupted publication of a completed activation before selecting that entry.

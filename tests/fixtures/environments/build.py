@@ -27,7 +27,15 @@ def artifact(name: str, data: bytes, *, key: str = "name") -> dict:
     return {key: name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool = False) -> Path:
+def wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    value: int,
+    *,
+    engine: bool = False,
+    pack_tools: bool = False,
+) -> Path:
     path = directory / f"{name}-{version}-py3-none-any.whl"
     metadata = f"{name}-{version}.dist-info"
     with zipfile.ZipFile(path, "w") as archive:
@@ -42,8 +50,20 @@ def wheel(directory: Path, name: str, version: str, value: int, *, engine: bool 
         )
         archive.writestr(f"{metadata}/RECORD", "")
         if engine:
-            archive.writestr("dinkster/__init__.py", "")
             archive.writestr("dinkster/serve.py", Path(__file__).with_name("serve.py").read_bytes())
+            if pack_tools:
+                source = Path(__file__).resolve().parents[3] / "src/dinkster"
+                for module in sorted(source.rglob("*.py")):
+                    relative = module.relative_to(source)
+                    if relative != Path("serve.py"):
+                        archive.writestr(
+                            f"dinkster/{relative.as_posix()}",
+                            f"__version__ = {version!r}\n".encode("ascii")
+                            if relative == Path("__init__.py")
+                            else module.read_bytes(),
+                        )
+                return path
+            archive.writestr("dinkster/__init__.py", "")
             archive.writestr(
                 "dinkster/manager.py", Path(__file__).with_name("manager.py").read_bytes()
             )
@@ -112,11 +132,11 @@ def standalone_tree(root: Path) -> None:
     subprocess.run([str(python), "-I", "-B", "-c", "import colorsys, http.server, ssl"], check=True)
 
 
-def build_base(mirror: Path, scratch: Path, variant: str) -> dict:
+def build_base(mirror: Path, scratch: Path, variant: str, *, version: str = "1.0") -> dict:
     tree = scratch / "tree"
     standalone_tree(tree / "python")
     (tree / "wheels").mkdir()
-    base_wheel = wheel(tree / "wheels", "fixture_base", "1.0", 37)
+    base_wheel = wheel(tree / "wheels", "fixture_base", version, 37)
     executable = "python/python.exe" if os.name == "nt" else "python/bin/python3"
     architecture = platform.machine().lower()
     if architecture == "amd64":
@@ -139,8 +159,8 @@ def build_base(mirror: Path, scratch: Path, variant: str) -> dict:
             {
                 **artifact(base_wheel.name, base_wheel.read_bytes(), key="filename"),
                 "name": "fixture-base",
-                "version": "1.0",
-                "lockedVersion": "1.0",
+                "version": version,
+                "lockedVersion": version,
                 "index": "https://pypi.org/simple",
                 "url": "https://example.invalid/fixture.whl",
                 "verification": "lock",
@@ -179,7 +199,8 @@ def executable_release(mirror: Path, base: dict, version: str, value: int) -> No
         path = wheel(scratch, "fixture_engine", version, value, engine=True)
         payload = path.read_bytes()
         constraints = (
-            f"fixture-base==1.0 --hash=sha256:{base['wheels'][0]['sha256']}\n"
+            f"fixture-base=={base['wheels'][0]['version']} "
+            f"--hash=sha256:{base['wheels'][0]['sha256']}\n"
             f"fixture-engine=={version} --hash=sha256:{hashlib.sha256(payload).hexdigest()}\n"
         ).encode("ascii")
         engine = {

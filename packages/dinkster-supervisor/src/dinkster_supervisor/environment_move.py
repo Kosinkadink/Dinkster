@@ -25,6 +25,7 @@ from .environment_state import (
     digest,
     durable_rename,
     read_current,
+    read_document,
     write_document,
     writer_lock,
 )
@@ -343,6 +344,9 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 artifacts=release / "artifacts" if (tree / "dinkster.lock").exists() else None,
                 refresh_cache=True,
                 source_kind=generation.source,
+                artifact_sources=read_document(tree / "artifact-sources.json")
+                if "artifact-sources.json" in expected
+                else None,
             )
         else:
             for cfg in (destination / "packs").glob("*/pyvenv.cfg"):

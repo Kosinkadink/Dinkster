@@ -3330,6 +3330,10 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         "variant",
         "missing",
         "local",
+        "selected",
+        "absent-selection",
+        "duplicate-selection",
+        "local-selection",
     ],
 )
 def test_cli_acquires_published_locks_for_exact_sources_and_base(
@@ -3377,12 +3381,16 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             installLocks={} if fault == "missing" else {"linux-cpu": binding},
         )
         files[lock_path + "?baseId=sha256%3A" + "1" * 64] = payload
-    server = _serve_artifacts(files, [])
+    requests: list[tuple[str, str | None]] = []
+    if problem == "selected":
+        files = {path: payload for path, payload in files.items() if "/z-other/" in path}
+        expected.pop("demo")
+    server = _serve_artifacts(files, requests)
     root = tmp_path / "project"
     root.mkdir()
     (root / "current").write_text("7\n")
     source = tmp_path / "dinkster.lock"
-    if problem == "local":
+    if problem in {"local", "local-selection"}:
         entries.append(replace(entries[0], pack="local-only", source="local:/retained"))
     source.write_text(Lockfile.of(entries).record_json())
     original = source.read_bytes()
@@ -3404,11 +3412,28 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     )
     if problem == "local":
         args += ("--registry-only",)
+    if problem == "selected":
+        args += ("--pack", "z-other")
+    elif problem == "absent-selection":
+        args += ("--pack", "absent")
+    elif problem == "duplicate-selection":
+        args += ("--pack", "demo", "--pack", "demo")
+    elif problem == "local-selection":
+        args += ("--pack", "local-only", "--registry-only")
     try:
-        if problem and problem != "local":
+        if problem and problem not in {"local", "selected"}:
             with pytest.raises(SystemExit):
                 run_cli(*args)
-            assert "z-other" in capsys.readouterr().err
+            error = capsys.readouterr().err
+            if problem in {"absent-selection", "duplicate-selection", "local-selection"}:
+                assert {
+                    "absent-selection": "selection is absent",
+                    "duplicate-selection": "must not repeat",
+                    "local-selection": "require registry provenance",
+                }[problem] in error
+                assert requests == []
+            else:
+                assert "z-other" in error
             assert not output.exists()
         else:
             run_cli(*args)
@@ -3418,6 +3443,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 path = output / f"{pack}.pack-lock.json"
                 assert path.read_bytes() == payload
                 assert PackLock.read(path).pack == pack
+            if problem == "selected":
+                assert requests and all("/z-other/" in path for path, _ in requests)
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
         assert sorted(path.name for path in root.iterdir()) == ["current"]
@@ -3476,6 +3503,91 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         assert Lockfile.from_record_json(candidate.read_text()) == lock
         assert (artifacts / f"{identity[7:]}.zip").read_bytes() == archive.read_bytes()
     assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("problem", [None, "existing", "duplicate", "third-party", "corrupt"])
+def test_cli_adds_exact_pack_without_reresolving_installed_sources(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    entries = []
+    archives = {}
+    for name, version in (("retained", "1.0"), ("added", "1.2")):
+        source = write_pack(tmp_path / name, name, "raise RuntimeError('must not import')\n")
+        publisher = "third-party" if name == "added" and problem == "third-party" else "dinkster"
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\npublisher="{publisher}"\n'
+            f'version="{version}"\nengine=">=0"\nnamespaces=["{name}"]\n'
+            f'[pack.entry]\nnodes="{name}_nodes:NODES"\n'
+        )
+        archive = tmp_path / f"{name}.zip"
+        identity = build_artifact(source, archive)
+        entries.append(LockedPack(name, version, identity, "dinkster", (name,)))
+        archives[name] = archive.read_bytes()
+    old, added = entries
+    files = {
+        "/v1/packs/added/versions/1.2": _release_record(
+            added, state="active", manifest={"dinkster": ">=0"}
+        ),
+        "/v1/packs/added/versions/1.2/download-tickets": _download_ticket(added, archives["added"]),
+        f"/v1/artifacts/{added.artifact_digest}": (
+            b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
+        ),
+    }
+    server = _serve_artifacts(files, [])
+    installed = tmp_path / "installed.lock"
+    installed.write_text(Lockfile.of([old]).record_json())
+    original = installed.read_bytes()
+    # The old registry is deliberately unreachable; its pinned archive is retained.
+    (artifacts / f"{old.artifact_digest[7:]}.zip").write_bytes(archives["retained"])
+    output = tmp_path / "candidate.lock"
+    requested = "retained@2.0" if problem == "existing" else "added@1.2"
+    args = [
+        "--root",
+        "",
+        "--registry",
+        f"http://127.0.0.1:{server.server_port}",
+        "prepare-registry-sources",
+        "--installed-lock",
+        str(installed),
+        "--retain-sources",
+        "--catalog-lock",
+        str(output),
+        "--artifacts",
+        str(artifacts),
+        "--add",
+        requested,
+    ]
+    if problem == "duplicate":
+        args.extend(["--add", requested])
+    try:
+        if problem:
+            with pytest.raises(SystemExit):
+                run_cli(*args)
+            error = capsys.readouterr().err
+            expected = {
+                "existing": "distinct absent pack",
+                "duplicate": "distinct absent pack",
+                "third-party": "first-party",
+                "corrupt": "digest mismatch",
+            }
+            assert expected[problem] in error
+            assert not output.exists()
+        else:
+            run_cli(*args)
+            assert json.loads(capsys.readouterr().out)["packs"] == ["added", "retained"]
+            result = Lockfile.from_record_json(output.read_text())
+            assert result.packs == (
+                replace(added, source=f"registry:http://127.0.0.1:{server.server_port}"),
+                old,
+            )
+            assert (artifacts / f"{added.artifact_digest[7:]}.zip").read_bytes() == archives[
+                "added"
+            ]
+        assert installed.read_bytes() == original
+    finally:
+        server.shutdown()
 
 
 @pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])
