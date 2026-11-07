@@ -601,6 +601,56 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
         path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
     } == before
     assert not target.exists() and not store.exists()
+    for boundary in dict.fromkeys((source, content, content / "artifacts")):
+        saved_boundary = boundary.with_name(boundary.name + "-unlinked")
+        boundary.rename(saved_boundary)
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(boundary), str(saved_boundary)],
+                    capture_output=True,
+                    check=True,
+                )
+            else:
+                boundary.symlink_to(saved_boundary, target_is_directory=True)
+            code, refused = _run(target, *args, "--plan")
+            assert code == 1 and "link" in refused["error"], refused
+            assert not target.exists() and not store.exists()
+        finally:
+            if sys.platform == "win32":
+                boundary.rmdir()
+            else:
+                boundary.unlink()
+            saved_boundary.rename(boundary)
+    linked_parent = tmp_path / "linked-parent"
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(linked_parent), str(tmp_path)],
+            capture_output=True,
+            check=True,
+        )
+    else:
+        linked_parent.symlink_to(tmp_path, target_is_directory=True)
+    try:
+        code, refused = _run(
+            target, *args, "--adopt-from", str(linked_parent / source.name), "--plan"
+        )
+        assert code == 1 and "link" in refused["error"], refused
+        if shared_store:
+            pointer = source / "shared-store"
+            original_pointer = pointer.read_bytes()
+            pointer.write_text(str(linked_parent / content.name) + "\n")
+            try:
+                code, refused = _run(target, *args, "--plan")
+                assert code == 1 and "link" in refused["error"], refused
+            finally:
+                pointer.write_bytes(original_pointer)
+        assert not target.exists() and not store.exists()
+    finally:
+        if sys.platform == "win32":
+            linked_parent.rmdir()
+        else:
+            linked_parent.unlink()
     if not in_process:
         distribution = sites[0] / "removed-9.0.dist-info"
         saved = tmp_path / "saved-distribution"
@@ -1115,9 +1165,11 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     assert (target / "private").read_text() == "not software"
 
 
-@pytest.mark.parametrize("operation", ["restore", "rollback"])
+@pytest.mark.parametrize(
+    "operation,interrupted_update", [("restore", False), ("rollback", False), ("rollback", True)]
+)
 def test_restore_rebuilds_pruned_software_without_changing_user_data(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, interrupted_update: bool
 ):
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
@@ -1146,8 +1198,32 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
             directory.mkdir(exist_ok=True)
             (directory / "sentinel").write_bytes(name.encode("ascii") + b" private data")
         shutil.copyfile(fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/main.json")
-        code, result = _run(root, "update", "--yes")
-        assert code == 0 and result["current"] == 2, result
+        if interrupted_update:
+            script = """
+import os, sys
+from dinkster_supervisor import environment, environment_transactions
+original = environment_transactions.publish_entry
+def interrupt(root, entry):
+    if entry['id'] == 2:
+        os._exit(74)
+    original(root, entry)
+environment_transactions.publish_entry = interrupt
+sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
+environment.main()
+"""
+            completed = subprocess.run(
+                [sys.executable, "-c", script, str(root)], capture_output=True, timeout=120
+            )
+            assert completed.returncode == 74, completed.stderr
+            assert (root / "current").read_text() == "2\n"
+            assert len(history(root)) == 1
+            code, result = _run(root, "rollback", "--plan")
+            assert code == 0 and result["status"] == "planned", result
+            assert len(history(root)) == 2
+            assert (root / "current").read_text() == "2\n"
+        else:
+            code, result = _run(root, "update", "--yes")
+            assert code == 0 and result["current"] == 2, result
         second = (root / "history/00000000000000000002.json").read_bytes()
         parked_port = free_port()
         assert (

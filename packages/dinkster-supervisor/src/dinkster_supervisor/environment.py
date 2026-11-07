@@ -987,14 +987,19 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
 
 def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
-    current = read_current(root)
-    if current is None:
-        raise EnvironmentError("project has no active generation")
-    entries = history(root)
-    if len(entries) < 2:
-        raise EnvironmentError("project has no previous successful history entry")
-    if entries[-1]["generation"] != current:
-        raise EnvironmentError("current generation does not match installation history")
+    with writer_lock(root):
+        for path in sorted((root / "journal").glob("*.json")):
+            journal = Journal.read(path)
+            if journal.stage == "complete" and journal.history_entry is not None:
+                recover_activation(root, path)
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("project has no active generation")
+        entries = history(root)
+        if len(entries) < 2:
+            raise EnvironmentError("project has no previous successful history entry")
+        if entries[-1]["generation"] != current:
+            raise EnvironmentError("current generation does not match installation history")
     return _restore(args, result, cast("int", entries[-2]["id"]), reason="rollback")
 
 

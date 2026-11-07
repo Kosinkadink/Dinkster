@@ -41,6 +41,8 @@
   dependency locks, with separate shared-store accelerator scopes. Inspection is
   metadata-only and never executes old Python or .pth files. Ambient/inherited
   packages are not claimed as captured, and changed metadata invalidates approval.
+  Linked source roots, shared stores, archives and their ownership ancestors are
+  refused, including Windows directory junctions.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.
@@ -417,4 +419,5 @@
 - `dinkster-env rollback` rebuilds the preceding successful history entry, even
   after its generation directory was pruned. It uses restore's missing-input and
   proposal-approval contract, appends a source-linked entry with reason `rollback`,
-  and leaves project settings and user data unchanged.
+  and leaves project settings and user data unchanged. Planning recovers an
+  interrupted publication of a completed activation before selecting that entry.
