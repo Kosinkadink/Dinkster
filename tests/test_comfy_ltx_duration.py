@@ -9,15 +9,16 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.ltx_duration import LTXVDurationPredictor
+from dinkster_nodes_ltx import NODES
+from dinkster_nodes_ltx.ltx_duration import LTXVDurationPredictor
+from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 
 
 def test_duration_predictor_schema_and_complete_manifest() -> None:
-    assert LTXVDurationPredictor in COMFY_NODES
+    assert LTXVDurationPredictor in NODES
     schema = LTXVDurationPredictor.schema()
-    assert schema.node_type == "LTXVDurationPredictor"
+    assert schema.node_type == "dinkster.ltx.ltxv_duration_predictor"
     assert schema.display_name == "LTXV Duration Predictor"
     assert schema.category == "model/conditioning/ltxv"
     assert tuple((i.id, i.type.types) for i in schema.inputs) == (
@@ -34,6 +35,8 @@ def test_duration_predictor_schema_and_complete_manifest() -> None:
         ("seconds", (CORE_FLOAT,)),
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == load_manifest(
-        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-    ).namespaces
+    manifest = load_manifest("packages/dinkster-nodes-ltx/dinkster-pack.toml")
+    assert all(
+        any(claim_covers(claim, node.schema().node_type) for claim in manifest.namespaces)
+        for node in NODES
+    )
