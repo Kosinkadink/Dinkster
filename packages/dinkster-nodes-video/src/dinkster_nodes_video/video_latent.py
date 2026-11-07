@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
-__all__ = ["_integer", "_schema", "_empty_video_latent"]
+__all__ = ["video_latent_schema", "empty_video_latent"]
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
 
@@ -86,3 +86,7 @@ def _empty_video_latent(
     if downscale_ratio_spacial is not None:
         latent["downscale_ratio_spacial"] = downscale_ratio_spacial
     return latent
+
+
+video_latent_schema = _schema
+empty_video_latent = _empty_video_latent
