@@ -3872,5 +3872,17 @@
       "nodeType": "dinkster.image.glsl_shader",
       "backendPureRename": false
     }
+  ],
+  "supportNodes": [
+    {
+      "pack": "dinkster-utilities",
+      "nodeType": "dinkster.utilities.make_list",
+      "bodyNotFromUpstream": true
+    },
+    {
+      "pack": "dinkster-utilities",
+      "nodeType": "dinkster.utilities.list_element",
+      "bodyNotFromUpstream": true
+    }
   ]
 }

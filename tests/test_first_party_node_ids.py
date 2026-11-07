@@ -16,7 +16,7 @@ from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_text import NODES as TEXT_NODES
 from dinkster_nodes_text.text import StringConcatenate, StringFormat
 from dinkster_nodes_upscale import NODES as UPSCALE_NODES
-from dinkster_schema import claim_covers, validate_name
+from dinkster_schema import NodeSchema, claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
 from dinkster_schema.wire import schema_from_wire, schema_to_wire
@@ -81,6 +81,22 @@ def test_offline_translation_route_without_registered_packs(authenticated: bool)
 def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
     inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
     rows = inventory["nodes"]
+    support = inventory["supportNodes"]
+    assert support == [
+        {
+            "pack": "dinkster-utilities",
+            "nodeType": node_type,
+            "bodyNotFromUpstream": True,
+        }
+        for node_type in ("dinkster.utilities.make_list", "dinkster.utilities.list_element")
+    ]
+    assert not ({row["nodeType"] for row in support} & {row["nodeType"] for row in rows})
+    assert collect_comfy_translations(
+        [
+            ("dinkster", "dinkster-utilities", "0.0.1", [NodeSchema(node_type=row["nodeType"])])
+            for row in support
+        ]
+    ) == {"schemaVersion": 1, "items": []}
     assert inventory["schemaVersion"] == 1
     assert inventory["referenceCommit"] == "bc5f880dbdd43e426077f42ccec53bb577ffee9f"
     assert len(rows) == len({row["from"] for row in rows}) == 644
@@ -165,7 +181,7 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         assert row["backendPureRename"] is not bool(
             schema.input_families or schema.output_families or schema.combos or schema.slots
         )
-    for row in rows:
+    for row in [*rows, *support]:
         assert validate_name(row["nodeType"]) is None
         namespace, leaf = row["nodeType"].rsplit(".", 1)
         assert namespace == row["pack"].replace("-", ".")
