@@ -23,7 +23,7 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import DEFAULT_INFERENCE_RESERVE_BYTES, InvocationView, MemoryGovernor
-from dinkster_nodes_dev import PACK_NODES
+from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
     AdmissionInvocation,
@@ -102,7 +102,6 @@ from dinkster_workers.doctor import diagnose
 from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
 from dinkster_workers.session import BoundarySession, WorkerDied
 from dinkster_workers.transport import TOKEN_ENV, BoundaryListener, connect_endpoint
-from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
@@ -115,7 +114,7 @@ _KILLED_RETURN_CODE = 1 if os.name == "nt" else -_SIGKILL
 # pack (test scaffolding, never a user surface) - so the isolated worker
 # under test hosts dinkster-nodes-dev.
 DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
-FOUNDATION_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-foundation" / "dinkster-pack.toml"
+UTILITIES_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-utilities" / "dinkster-pack.toml"
 TESTS_DIR = Path(__file__).parent
 
 
@@ -1966,7 +1965,7 @@ def test_worker_hello_discovers_broken_runtime_without_importing_it(
 
 def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
     import torch
-    from dinkster_compat_comfy.legacy_sources import discover_converted_sidecar
+    from dinkster_native.legacy_sources import discover_converted_sidecar
     from safetensors.torch import load_file
 
     source = tmp_path / "weights.ckpt"
@@ -2014,7 +2013,7 @@ def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) ->
     run_scenario(scenario())
 
 
-def test_worker_converter_delegates_retryable_classification_to_compat(
+def test_worker_converter_delegates_retryable_classification_to_native(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class Refusal(ValueError):
@@ -2034,7 +2033,7 @@ def test_worker_converter_delegates_retryable_classification_to_compat(
         classify_conversion_error=classify,
         resolve_weight_source=unavailable,
     )
-    monkeypatch.setitem(sys.modules, "dinkster_compat_comfy.legacy_sources", module)
+    monkeypatch.setitem(sys.modules, "dinkster_native.legacy_sources", module)
 
     status, reason = host_module._convert_legacy_checkpoint(tmp_path / "asset", "asset.ckpt")
 
@@ -2253,11 +2252,11 @@ def test_isolated_run_matches_in_process_run() -> None:
     async def scenario() -> None:
         # In-process reference: pack types registered locally.
         local_registry = core_registry()
-        register_scaffold_types(local_registry)
+        register_dev_types(local_registry)
         local_engine = Engine(
-            schemas=build_schemas(SCAFFOLD_NODES),
+            schemas=build_schemas(PACK_NODES),
             registry=local_registry,
-            worker=InProcessWorker(build_node_types(SCAFFOLD_NODES), local_registry),
+            worker=InProcessWorker(build_node_types(PACK_NODES), local_registry),
             cache=MemoryLRUCache(),
         )
         reference = await local_engine.run(image_graph(), ["s", "b"])
@@ -2762,10 +2761,11 @@ def test_isolated_lazy_hook_protocol_and_attribution(
     run_scenario(scenario())
 
 
-def test_isolated_lazy_route_executes_only_the_selected_dynamic_member() -> None:
+@pytest.mark.parametrize("selected", (False, True))
+def test_isolated_switch_executes_only_the_selected_input(selected: bool) -> None:
     async def scenario() -> None:
         registry = core_registry()
-        worker = IsolatedWorker(FOUNDATION_MANIFEST, registry)
+        worker = IsolatedWorker(UTILITIES_MANIFEST, registry)
         await worker.start()
         try:
             engine = Engine(
@@ -2776,22 +2776,23 @@ def test_isolated_lazy_route_executes_only_the_selected_dynamic_member() -> None
             )
             graph = Graph(
                 {
-                    "first": GraphNode("dinkster.string", {"value": "first"}),
-                    "second": GraphNode("dinkster.string", {"value": "second"}),
+                    "first": GraphNode("dinkster.utilities.primitive_string", {"value": "first"}),
+                    "second": GraphNode("dinkster.utilities.primitive_string", {"value": "second"}),
                     "route": GraphNode(
-                        "dinkster.route.switch",
+                        "dinkster.utilities.comfy_switch_node",
                         {
-                            "index": 1,
-                            "values.first": Link("first", "value"),
-                            "values.second": Link("second", "value"),
+                            "switch": selected,
+                            "on_false": Link("first", "STRING"),
+                            "on_true": Link("second", "STRING"),
                         },
                     ),
                 }
             )
 
             result = await engine.run(graph, ["route"])
-            assert result.outputs["route"]["value"].resolve() == "second"
-            assert set(result.executed) == {"second", "route"}
+            expected = "second" if selected else "first"
+            assert result.outputs["route"]["output"].resolve() == expected
+            assert set(result.executed) == {expected, "route"}
         finally:
             await worker.close()
 
@@ -2872,26 +2873,24 @@ def test_cancellation_reaches_the_worker(tmp_path: Path) -> None:
 def test_routing_worker_mixes_isolated_and_in_process(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = core_registry()
-        register_scaffold_types(registry)  # local worker handles scaffold nodes
+        register_dev_types(registry)
 
         isolated = iso_worker(tmp_path, registry)
         await isolated.start()
         try:
-            local = InProcessWorker(build_node_types(SCAFFOLD_NODES), registry)
+            local = InProcessWorker(build_node_types(PACK_NODES), registry)
             routes = {node_type: isolated for node_type in isolated.schemas}
             worker = RoutingWorker(routes, default=local)
 
-            schemas = {**build_schemas(SCAFFOLD_NODES), **isolated.schemas}
+            schemas = {**build_schemas(PACK_NODES), **isolated.schemas}
             engine = Engine(
                 schemas=schemas, registry=registry, worker=worker, cache=MemoryLRUCache()
             )
             # A single graph spanning both placements - zero engine changes.
             graph = Graph(
                 nodes={
-                    "hello": GraphNode(
-                        "std.string.concat", {"a": "he", "b": "llo", "separator": ""}
-                    ),
-                    "echo": GraphNode("iso.sleepy", {"value": Link("hello", "text")}),
+                    "hello": GraphNode("dev.util.delay", {"value": "hello", "seconds": 0.0}),
+                    "echo": GraphNode("iso.sleepy", {"value": Link("hello", "value")}),
                 }
             )
             result = await engine.run(graph, ["echo"])
@@ -2919,17 +2918,17 @@ def test_routing_worker_add_routes_is_additive_and_atomic() -> None:
 
     async def scenario() -> None:
         registry = core_registry()
-        register_scaffold_types(registry)
-        local = InProcessWorker(build_node_types(SCAFFOLD_NODES), registry)
+        register_dev_types(registry)
+        local = InProcessWorker(build_node_types(PACK_NODES), registry)
         worker = RoutingWorker({})
 
         with pytest.raises(KeyError, match="no worker routes"):
-            await worker.prepare(["std.string.concat"])
-        worker.add_routes({"std.string.concat": local})
-        await worker.prepare(["std.string.concat"])  # routes now
+            await worker.prepare(["dev.util.delay"])
+        worker.add_routes({"dev.util.delay": local})
+        await worker.prepare(["dev.util.delay"])
 
         with pytest.raises(ValueError, match="re-route"):
-            worker.add_routes({"dev.image.gradient": local, "std.string.concat": local})
+            worker.add_routes({"dev.image.gradient": local, "dev.util.delay": local})
         with pytest.raises(KeyError, match="no worker routes"):
             await worker.prepare(["dev.image.gradient"])  # atomic: not merged
         worker.add_routes({"dev.image.gradient": local})
