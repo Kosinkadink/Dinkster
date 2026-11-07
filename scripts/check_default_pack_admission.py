@@ -17,6 +17,7 @@ from dinkster_registry.archive_admission import (
     run_ingest_integrity,
     run_manifest_admission,
 )
+from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
 from packaging.specifiers import SpecifierSet
 
@@ -44,7 +45,7 @@ def check_defaults(registry: NamedRegistry, *, engine_version: str) -> dict[str,
         graph: dict[str, set[str]] = {}
         sources = {}
         for pack in catalog.packs:
-            archive = artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip"
+            archive = pack_archive_path(artifacts, pack.artifact_digest)
             data = archive.read_bytes()
             identity = f"{pack.pack}@{pack.version}"
             _require_accepted(run_ingest_integrity(data, len(data), pack.artifact_digest), identity)
