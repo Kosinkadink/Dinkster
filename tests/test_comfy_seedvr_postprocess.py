@@ -8,12 +8,14 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy.seedvr_postprocess import SeedVR2PostProcessing
+from dinkster_nodes_seedvr import NODES
+from dinkster_nodes_seedvr.seedvr_postprocess import SeedVR2PostProcessing
 
 
 def test_seedvr_postprocess_schema_wire_and_cold_discovery() -> None:
     schema = SeedVR2PostProcessing.schema()
-    assert schema.node_type == "SeedVR2PostProcessing"
+    assert NODES.count(SeedVR2PostProcessing) == 1
+    assert schema.node_type == "dinkster.seedvr.seed_vr2_post_processing"
     assert schema.display_name == "Post-Process SeedVR2 Output"
     assert schema.category == "image/post-processors"
     assert schema.search_terms == (
@@ -22,6 +24,7 @@ def test_seedvr_postprocess_schema_wire_and_cold_discovery() -> None:
         "color correction",
         "color match",
         "postprocess",
+        "SeedVR2PostProcessing",
     )
     assert [i.id for i in schema.inputs] == [
         "images",
