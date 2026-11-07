@@ -1,0 +1,65 @@
+{
+  "nodes": {
+    "dinkster.minimax.empty_mini_max_h3_latent_av": {
+      "displayName": "Empty MiniMax H3 AV Latent"
+    },
+    "dinkster.minimax.empty_mini_max_music3_latent_audio": {
+      "displayName": "Empty MiniMax Music3 Latent Audio"
+    },
+    "dinkster.minimax.mini_max_h3_add_guide": {
+      "displayName": "Add Guide for MiniMax H3"
+    },
+    "dinkster.minimax.mini_max_h3_fun_control_net_apply": {
+      "displayName": "Apply MiniMax H3 Fun ControlNet"
+    },
+    "dinkster.minimax.mini_max_h3_image_to_video": {
+      "displayName": "MiniMax H3 Image to Video"
+    },
+    "dinkster.minimax.mini_max_h3_reference_to_video": {
+      "displayName": "MiniMax H3 Reference to Video"
+    },
+    "dinkster.minimax.mini_max_h3_sigma_shift": {
+      "displayName": "ModelSamplingMiniMaxH3"
+    },
+    "dinkster.minimax.mini_max_music3_text_encode": {
+      "displayName": "MiniMax Music3 Text Encode"
+    },
+    "dinkster.minimax.reference_timbre_audio": {
+      "displayName": "Set Reference Audio"
+    }
+  },
+  "searchTerms": {
+    "dinkster.minimax.empty_mini_max_h3_latent_av": [
+      "EmptyMiniMaxH3LatentAV"
+    ],
+    "dinkster.minimax.empty_mini_max_music3_latent_audio": [
+      "EmptyMiniMaxMusic3LatentAudio"
+    ],
+    "dinkster.minimax.mini_max_h3_add_guide": [
+      "MiniMaxH3AddGuide"
+    ],
+    "dinkster.minimax.mini_max_h3_fun_control_net_apply": [
+      "minimax controlnet",
+      "h3 controlnet",
+      "video inpaint controlnet",
+      "MiniMaxH3FunControlNetApply"
+    ],
+    "dinkster.minimax.mini_max_h3_image_to_video": [
+      "MiniMaxH3ImageToVideo"
+    ],
+    "dinkster.minimax.mini_max_h3_reference_to_video": [
+      "MiniMaxH3ReferenceToVideo"
+    ],
+    "dinkster.minimax.mini_max_h3_sigma_shift": [
+      "sigma shift",
+      "minimax shift",
+      "MiniMaxH3SigmaShift"
+    ],
+    "dinkster.minimax.mini_max_music3_text_encode": [
+      "MiniMaxMusic3TextEncode"
+    ],
+    "dinkster.minimax.reference_timbre_audio": [
+      "ReferenceTimbreAudio"
+    ]
+  }
+}
