@@ -24,4 +24,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster_supervisor", "src/dinkster_store"]
+packages = ["src/dinkster_supervisor", "shared/dinkster_store"]

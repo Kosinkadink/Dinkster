@@ -1,4 +1,4 @@
-"""Resolve content identities independently of readable local folder names."""
+"""Shared content-identity resolution for readable local folder names."""
 
 from __future__ import annotations
 

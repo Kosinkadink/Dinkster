@@ -13,7 +13,7 @@ from dinkster_values.limits import (
     ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
 )
 
-SUPERVISOR_SOURCE = Path(__file__).parent.parent / "packages" / "dinkster-supervisor" / "src"
+SUPERVISOR_SOURCE = Path(__file__).parent.parent / "packages" / "dinkster-supervisor"
 
 
 def test_supervisor_imports_no_other_dinkster_packages() -> None:
