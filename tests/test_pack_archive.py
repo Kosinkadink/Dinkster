@@ -259,10 +259,14 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-audio",
         "dinkster-audio-models",
         "dinkster-conditioning",
+        "dinkster-cosmos",
         "dinkster-flux",
         "dinkster-hidream",
+        "dinkster-hunyuan",
         "dinkster-latent",
         "dinkster-llm",
+        "dinkster-ltx",
+        "dinkster-minimax",
         "dinkster-misc-models",
         "dinkster-models",
         "dinkster-nodes-comfy",
@@ -273,6 +277,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-qwen",
         "dinkster-sampling",
         "dinkster-sd",
+        "dinkster-seedvr",
         "dinkster-text",
         "dinkster-upscale",
         "dinkster-video",
@@ -285,6 +290,8 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-vision-rtdetr",
         "dinkster-vision-sam31",
         "dinkster-vision-upscale",
+        "dinkster-void",
+        "dinkster-wan",
     }
     assert {pack.pack for pack in lock.packs} == expected
     core_requirements = {
@@ -953,7 +960,7 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         path.name: path.read_bytes() for path in second
     }
     catalog = Lockfile.from_record_json(first[-1].read_text())
-    assert len(catalog.packs) == 29
+    assert len(catalog.packs) == 36
     for pack in catalog.packs:
         archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
         data = archive.read_bytes()

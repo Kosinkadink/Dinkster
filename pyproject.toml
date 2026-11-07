@@ -182,6 +182,13 @@ exclude = [
     "packages/dinkster-nodes-misc-models/tests",
     "packages/dinkster-nodes-llm/tests",
     "packages/dinkster-nodes-upscale/tests",
+    "packages/dinkster-nodes-cosmos/tests",
+    "packages/dinkster-nodes-hunyuan/tests",
+    "packages/dinkster-nodes-ltx/tests",
+    "packages/dinkster-nodes-minimax/tests",
+    "packages/dinkster-nodes-seedvr/tests",
+    "packages/dinkster-nodes-void/tests",
+    "packages/dinkster-nodes-wan/tests",
     "packages/dinkster-nodes-vision",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo
