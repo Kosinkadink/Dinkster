@@ -392,12 +392,46 @@ def test_default_pack_admission_uses_complete_version_history() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
     )
+    triggers = workflow[True]
+    assert "push" not in triggers
+    assert triggers["workflow_run"] == {
+        "workflows": ["Independent official pack publication"],
+        "types": ["completed"],
+        "branches": ["main"],
+    }
+    assert "pull_request" in triggers
+    selection = workflow["jobs"]["select"]
+    assert "github.event.workflow_run.event == 'workflow_run'" in selection["if"]
+    assert "github.event.workflow_run.conclusion == 'success'" in selection["if"]
+    assert (
+        "github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'"
+        in (selection["if"])
+    )
+    publication = next(step for step in selection["steps"] if step.get("id") == "publication")
+    assert "job.name === 'publish' && job.conclusion === 'success'" in publication["with"]["script"]
+    identity = next(step for step in selection["steps"] if step.get("id") == "identity")
+    assert (
+        "core.setOutput('engine', context.payload.pull_request.head.sha)"
+        in identity["with"]["script"]
+    )
+    assert "core.setOutput('engine', engine.commit)" in identity["with"]["script"]
+    assert "engine.repository !== 'Kosinkadink/Dinkster'" in identity["with"]["script"]
     checkout = next(
         step
         for step in workflow["jobs"]["admission"]["steps"]
         if step.get("uses") == "actions/checkout@v4"
     )
     assert checkout["with"]["fetch-depth"] == 0
+    assert checkout["with"]["ref"] == "${{ needs.select.outputs.engine }}"
+    for job in (selection, workflow["jobs"]["admission"]):
+        download = next(
+            step for step in job["steps"] if step.get("uses") == "actions/download-artifact@v4"
+        )
+        assert download["with"]["name"] == "official-publication-inputs"
+        assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
+    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    assert '--candidate-base "$CANDIDATE_BASE"' in command
+    assert "--published-sources .publication/sources/official-packs.lock" in command
 
 
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
