@@ -1,6 +1,7 @@
 """CPU behavior for native ComfyUI noise nodes."""
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,6 +21,28 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_nodes_sampling.noise import AddNoise, DisableNoise, RandomNoise
+
+
+def test_sampling_manifest_registers_consumer_codecs_without_unrelated_types() -> None:
+    from dinkster_workers import load_manifest
+    from dinkster_workers.host import load_pack
+
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "dinkster-pack.toml")
+    _, registry, _, _ = load_pack(manifest)
+    required = {"MODEL", "CONDITIONING", "LATENT", "SAMPLER", "SIGMAS", "NOISE", "GUIDER"}
+    assert required <= set(registry.type_ids())
+    assert all(registry.spec(type_id).declared_codec for type_id in required)
+    assert not {"PHOTOMAKER", "INTERP_MODEL", "VAE", "CLIP", "IMAGE", "MASK", "SVG"} & set(
+        registry.type_ids()
+    )
+    samples = torch.tensor([[[[1.25, -3.5, 8.0], [0.125, 7.0, -0.75]]]], dtype=torch.float64)
+    codec = registry.spec(LATENT_TYPE)
+    decoded = materialize_latent(
+        codec.decode(codec.encode({"samples": samples, "batch_index": [7]}))
+    )
+    assert decoded["batch_index"] == [7]
+    assert decoded["samples"].dtype == torch.float64
+    torch.testing.assert_close(decoded["samples"], samples, rtol=0, atol=0)
 
 
 def test_random_noise_uses_seeded_batch_indices_and_disable_noise_preserves_layout() -> None:
