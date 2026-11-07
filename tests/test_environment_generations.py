@@ -523,7 +523,9 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             return
         assert code == 0, result
         assert result["current"] == 1
-        assert (store / "wheels" / sha / wheel.name).read_bytes() == wheel.read_bytes()
+        assert (
+            object_path(store / "wheels", "sha256:" + sha) / wheel.name
+        ).read_bytes() == wheel.read_bytes()
         python = venv_python(root / "generations/1/packs/example")
         assert (
             subprocess.check_output(

@@ -371,7 +371,10 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
                 or content_digest(source) != "sha256:" + sha
             ):
                 raise EnvironmentError("extracted base wheel differs from its manifest")
-            destination = store / "wheels" / sha / source.name
+            destination = (
+                object_path(store / "wheels", "sha256:" + sha, label=readable_label(source.stem))
+                / source.name
+            )
             fetch_artifact(
                 (str(source.parent),), source.name, destination, sha, cast("int", row["size"])
             )
@@ -549,7 +552,12 @@ def acquire(
                 raise EnvironmentError("engine artifact has an invalid wheel filename") from exc
             if distribution in owned:
                 continue
-            destination = store / "wheels" / sha / name
+            destination = (
+                object_path(
+                    store / "wheels", "sha256:" + sha, label=readable_label(Path(name).stem)
+                )
+                / name
+            )
             nonbase_wheels.append(destination)
         elif name == "constraints.txt":
             destination = release_root / name
@@ -561,7 +569,12 @@ def acquire(
         for row in selected:
             name, sha = cast("str", row["filename"]), cast("str", row["sha256"])
             if row["name"] not in owned:
-                destination = store / "wheels" / sha / name
+                destination = (
+                    object_path(
+                        store / "wheels", "sha256:" + sha, label=readable_label(Path(name).stem)
+                    )
+                    / name
+                )
                 nonbase_wheels.append(destination)
                 if (
                     not destination.is_file()

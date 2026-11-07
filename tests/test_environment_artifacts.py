@@ -32,7 +32,7 @@ from dinkster_supervisor.environment_artifacts import (
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_custom import custom_selection, variant_file
 from dinkster_supervisor.environment_downloads import DownloadError
-from dinkster_supervisor.environment_state import EnvironmentError
+from dinkster_supervisor.environment_state import EnvironmentError, content_digest
 from test_environment_generations import _standalone_tree
 
 from dinkster.generation_packs import stage_generation_packs
@@ -321,7 +321,8 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
         [b"base wheel bytes; execution is covered by generation tests", b"engine wheel bytes"]
     )
     for path in acquired:
-        assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert path.parent.name == path.stem
+        assert object_path(store / "wheels", content_digest(path)) == path.parent
     retained = (
         object_path(store / "engines", channel["engine"]["release"]) / "release-manifest.json"
     )
@@ -495,16 +496,18 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
                 else None,
             ):
                 acquire(catalog, "fixture-cpu", store, package_index=package_index)
-            assert (store / "wheels" / dependency["sha256"] / filename).exists() == (
-                failure == "dependency"
-            )
+            assert (
+                object_path(store / "wheels", "sha256:" + dependency["sha256"]) / filename
+            ).exists() == (failure == "dependency")
             assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
             assert not any(".tar.gz" in path for path in requests)
             if failure == "base-hash":
                 assert not store.exists()
             return
         constraints = acquire(catalog, "fixture-cpu", store, package_index=package_index)
-        assert (store / "wheels" / dependency["sha256"] / filename).read_bytes() == payload
+        assert (
+            object_path(store / "wheels", "sha256:" + dependency["sha256"]) / filename
+        ).read_bytes() == payload
         assert set(constraints.read_text().splitlines()) == {
             "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(engine_payload).hexdigest(),
             "third-party==7.2 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),

@@ -418,7 +418,11 @@ def prepare_engine_interpreter(
     hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
     links = [
         wheels,
-        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+        *sorted(
+            path
+            for identity in hashes
+            if (path := object_path(wheels, "sha256:" + identity)).is_dir()
+        ),
     ]
     command = [
         uv,

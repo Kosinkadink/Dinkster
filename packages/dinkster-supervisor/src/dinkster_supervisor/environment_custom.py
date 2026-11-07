@@ -216,7 +216,7 @@ def build_custom_base(
         (payload / "wheels").mkdir()
         for wheel in wheels:
             shutil.copyfile(
-                store / "wheels" / wheel["sha256"] / wheel["filename"],
+                object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"],
                 payload / "wheels" / wheel["filename"],
             )
         archive = work / "base.tar.zst"
@@ -325,7 +325,11 @@ def prepare_custom_pack_locks(
     wheels = store / "wheels"
     links = [
         wheels,
-        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+        *sorted(
+            path
+            for identity in hashes
+            if (path := object_path(wheels, "sha256:" + identity)).is_dir()
+        ),
     ]
     command = [
         str(interpreter(generation)),

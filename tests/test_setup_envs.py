@@ -88,9 +88,9 @@ def test_setup_uses_pinned_full_id_and_same_archive_location(
     base_root = store / "bases/fixture-cpu/2026-11-01-py3.14.10-torchnone"
     assert (base_root / base["interpreter"]["executable"]).is_file()
     for wheel in base["wheels"]:
-        assert (store / "wheels" / wheel["sha256"] / wheel["filename"]).read_bytes() == (
-            base_root / "wheels" / wheel["filename"]
-        ).read_bytes()
+        assert (
+            store / "wheels" / Path(wheel["filename"]).stem / wheel["filename"]
+        ).read_bytes() == (base_root / "wheels" / wheel["filename"]).read_bytes()
     assert not (store / "bases" / identity).exists()
     if publication in {"labelled", "both"}:
         assert all(label not in path.parts for path in store.rglob("*"))

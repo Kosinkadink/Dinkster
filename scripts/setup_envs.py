@@ -174,7 +174,11 @@ def setup(
             for wheel in base["wheels"]:
                 target = base_root / "wheels" / wheel["filename"]
                 if not target.exists():
-                    shutil.copyfile(store / "wheels" / wheel["sha256"] / wheel["filename"], target)
+                    shutil.copyfile(
+                        object_path(store / "wheels", "sha256:" + wheel["sha256"])
+                        / wheel["filename"],
+                        target,
+                    )
         else:
             assert base is not None
             base_root = acquire_base(base, (base_sources[base["variant"]],), store)

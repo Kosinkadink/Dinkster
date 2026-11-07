@@ -1569,11 +1569,8 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert object_path(store / "bases", "sha256:" + base_id).is_dir()
         assert object_path(store / "downloads", "sha256:" + base_id).is_dir()
         assert object_path(store / "engines", "sha256:" + engine_id).is_dir()
-        wheel_paths = list((store / "wheels").iterdir())
-        assert wheel_paths and all(
-            len(path.name) == 64 and all(c in "0123456789abcdef" for c in path.name)
-            for path in wheel_paths
-        )
+        wheel_paths = list((store / "wheels").glob("*/*.whl"))
+        assert wheel_paths and all(path.parent.name == path.stem for path in wheel_paths)
         assert object_path(store / "engines", "sha256:" + engine_id).name == engine_label
         assert object_path(store / "bases", "sha256:" + base_id).parent.name == variant
         run("advance")

@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from blake3 import blake3
-from dinkster_store import object_path
+from dinkster_store import object_path, readable_label
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
 from packaging.utils import parse_wheel_filename
 
@@ -173,7 +173,13 @@ def retain_wheels(
                 with urlopen(url, timeout=60) as response, downloaded.open("wb") as output:
                     shutil.copyfileobj(response, output)
                 sha, size = content_digest(downloaded)[7:], downloaded.stat().st_size
-                fetch_artifact((directory,), filename, store / "wheels" / sha / filename, sha, size)
+                destination = (
+                    object_path(
+                        store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+                    )
+                    / filename
+                )
+                fetch_artifact((directory,), filename, destination, sha, size)
         if sha is not None and size is None and urlsplit(url).scheme == "https":
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
@@ -183,7 +189,12 @@ def retain_wheels(
                 raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
             sha = sha or content_digest(local)[7:]
             size = size if size is not None else local.stat().st_size
-        destination = store / "wheels" / sha / filename
+        destination = (
+            object_path(
+                store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+            )
+            / filename
+        )
         mirror = (
             str(Path(unquote(urlsplit(url).path)).parent)
             if urlsplit(url).scheme == "file"
@@ -434,7 +445,7 @@ def prepare_local_packs(
 
     artifacts = object_path(store / "engines", release) / "artifacts"
     links = [
-        str(store / "wheels" / digest)
+        str(object_path(store / "wheels", "sha256:" + digest))
         for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))
     ]
     run_local_command(

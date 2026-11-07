@@ -305,16 +305,24 @@ corrupt metadata falls through to the next configured location.
 
 Under the caller's store writer lock, `acquire(catalog, variant, store)` fetches
 and verifies base parts, safely extracts a missing base, verifies its selected
-wheels and populates `wheels/<sha256 hex>/<filename>`. After wheel verification,
-it atomically retains the producer base document at `bases/<base hex>/manifest.json`
+wheels and populates `wheels/<wheel filename stem>/<filename>`. After wheel verification,
+it atomically retains the producer base document at
+`bases/<variant>/<date>-py<python>-torch<version>/manifest.json`
 if absent, preserving an existing document's custom provenance. Base identity
 remains the producer's canonical fields, independent of JSON formatting.
+Each cache category records full content identities in `.objects.json`; a durable
+allocation journal and OS lock protect collision reservations. Different bytes
+with the same label receive `--2`, `--3`, and so on. A changed label for the same
+identity reuses its original location. Existing full-hash paths remain supported
+without renaming installed interpreters or environments. Base archive parts use
+the same base label under `downloads/`. Unknown build dates use the first local
+acquisition date in UTC. Wheel filenames remain unchanged, including backend tags.
 Engine-owned wheel and constraints artifacts are verified through the same
 downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
 the generation. Effective constraints are stored under
-`engines/<release hex>/constraints-<variant>.txt`. The original verified engine
-manifest bytes are atomically retained at `engines/<release hex>/release-manifest.json`,
+`engines/<date>-<version>/constraints-<variant>.txt`. The original verified engine
+manifest bytes are atomically retained beside those constraints,
 without reserialization or another metadata fetch. Missing or inconsistent
 catalog bytes refuse acquisition before cache creation. A base without hosted parts
 currently reports that manifest reconstruction is required; it never resolves
@@ -331,7 +339,7 @@ missing hashes and wheel filename/version mismatches fail without resolution.
 The resulting constraints are retained beside the generation record.
 
 `environment_generations.build_generation` constructs a complete target from
-an already verified base under `bases/<hex>/python/` and effective hashed
+an already verified base resolved by its full identity and effective hashed
 requirements. It runs uv offline with no indexes and binary wheels only,
 reading the store's wheels and uv cache. Linux attempts CoW interpreter clones
 and falls back to hardlinks when the filesystem cannot clone; Windows uses
