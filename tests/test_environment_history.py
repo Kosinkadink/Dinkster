@@ -1147,12 +1147,12 @@ def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_pat
 
 def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Path):
     generation = _generation(tmp_path, 1).parent
-    (generation / "constraints.txt").write_text("demo==2\n")
+    (generation / "constraints.txt").write_bytes(b"demo==2\n")
     with pytest.raises(EnvironmentError, match="intact software metadata: constraints.txt"):
         prepare_entry(tmp_path, generation, operation="install", reason="setup")
     assert history(tmp_path) == []
     assert not (tmp_path / "history").exists()
-    (generation / "constraints.txt").write_text("demo==1\n")
+    (generation / "constraints.txt").write_bytes(b"demo==1\n")
     target = tmp_path / "user-files"
     target.mkdir()
     (target / "private").write_text("not software")
