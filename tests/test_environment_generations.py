@@ -508,12 +508,14 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         channel["engine"]["release"] = "sha256:" + identity
         channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
         channel_path.write_bytes(publisher.canonical_json(channel))
+        # Windows setup took 24s and was still starting at 30s; allow composite-work margin.
         code, result = _run(
             root,
             *fixture["commands"]["setup"][5:],
             "--pack-lock",
             str(release.parent / identity / lock_path.name),
             "--yes",
+            timeout=120,
         )
         if provisioner == "without-acquire":
             assert code == 1, result
