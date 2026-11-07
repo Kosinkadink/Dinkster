@@ -38310,6 +38310,31 @@
               }
             ],
             "from": "ImageScaleToMaxDimension"
+          },
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "image": {
+                    "input": "images",
+                    "kind": "copy"
+                  },
+                  "largest_size": {
+                    "input": "longer_edge",
+                    "kind": "copy"
+                  },
+                  "upscale_method": {
+                    "kind": "constant",
+                    "value": "lanczos"
+                  }
+                },
+                "outputs": {
+                  "IMAGE": "images"
+                },
+                "to": "dinkster.image.image_scale_to_max_dimension"
+              }
+            ],
+            "from": "ResizeImagesByLongerEdge"
           }
         ],
         "schemaVersion": 1,

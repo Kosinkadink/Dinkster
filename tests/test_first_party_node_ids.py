@@ -176,9 +176,9 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "vision-sdpose": 3,
     }
     schemas = _source_schemas()
-    assert {row["from"]: row["nodeType"] for row in rows} == {
-        source: schema.node_type for source, schema in schemas.items()
-    }
+    expected_sources = {row["from"]: row["nodeType"] for row in rows}
+    expected_sources["ResizeImagesByLongerEdge"] = "dinkster.image.image_scale_to_max_dimension"
+    assert expected_sources == {source: schema.node_type for source, schema in schemas.items()}
     assert {row["from"]: row["nodeType"] for row in rows[636:]} == {
         "CreateBoundingBoxes": "dinkster.image.create_bounding_boxes",
         "LayersFromBoundingBoxes": "dinkster.image.layers_from_bounding_boxes",

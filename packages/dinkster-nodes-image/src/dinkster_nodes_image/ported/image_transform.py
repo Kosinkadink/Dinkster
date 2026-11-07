@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from dinkster_api.v1 import (
@@ -19,10 +20,13 @@ from dinkster_api.v1 import (
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     first_party_schema,
     materialize_image,
@@ -468,7 +472,27 @@ class ImageScaleToMaxDimension(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        schema = first_party_schema(schema)
+        return replace(
+            schema,
+            replacements=(
+                *schema.replacements,
+                ReplacementRule(
+                    from_type="ResizeImagesByLongerEdge",
+                    cases=(
+                        ReplacementCase.build(
+                            schema.node_type,
+                            inputs={
+                                "image": MappingSource.copy("images"),
+                                "largest_size": MappingSource.copy("longer_edge"),
+                                "upscale_method": MappingSource.constant("lanczos"),
+                            },
+                            outputs={"IMAGE": "images"},
+                        ),
+                    ),
+                ),
+            ),
+        )
 
     @classmethod
     def execute(cls, *, image: Any, upscale_method: str, largest_size: int) -> Mapping[str, object]:
