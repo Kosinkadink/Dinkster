@@ -112,6 +112,7 @@ def setup(
     python_override: Path | None = None,
     variants: Path | None = None,
 ) -> Path:
+    from dinkster_store import object_path
     from dinkster_supervisor.environment_artifacts import acquire_base, validate_manifest
     from dinkster_supervisor.environment_constraints import effective_constraints
     from dinkster_supervisor.environment_downloads import read_metadata
@@ -167,7 +168,7 @@ def setup(
             from dinkster_supervisor.environment_local import prepare_local
 
             inputs = prepare_local(root, local, store)
-            base_root = store / "bases" / inputs["base"][7:]
+            base_root = object_path(store / "bases", inputs["base"])
             base = json.loads((base_root / "manifest.json").read_text())
             (base_root / "wheels").mkdir(exist_ok=True)
             for wheel in base["wheels"]:
