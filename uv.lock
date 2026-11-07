@@ -1672,14 +1672,12 @@ version = "0.0.2"
 source = { editable = "packages/dinkster-nodes-remote" }
 dependencies = [
     { name = "dinkster-api" },
-    { name = "dinkster-nodes-media-io" },
     { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-nodes-media-io", editable = "packages/dinkster-nodes-media-io" },
     { name = "httpx", specifier = ">=0.28,<1" },
 ]
 

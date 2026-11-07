@@ -14,9 +14,6 @@ network = true
 host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
-[pack.dependencies]
-dinkster-nodes-media-io = ">=0.0.1,<1"
-
 [pack.presentation]
 display_name = "Remote Nodes"
 abbr = "Remote"
