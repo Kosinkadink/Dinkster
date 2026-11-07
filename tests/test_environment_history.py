@@ -233,7 +233,7 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
             candidate["snapshot"] == imported["snapshot"]
             for candidate in proposal["restorePlan"]["alternatives"]
         )
-        shutil.rmtree(root / "generations/1")
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["3", "4"]
         code, shown = _run(root, "history", "show", "3")
         assert code == 0 and shown["entry"] == imported
         journal_bytes = setup_journal.read_bytes()
