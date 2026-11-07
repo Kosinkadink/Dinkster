@@ -34,9 +34,49 @@ from dinkster_nodes_vision_sam3d_body import register_types
 from dinkster_nodes_vision_sam3d_body.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
 from dinkster_nodes_vision_sam3d_body.sam3d_expression import SAM3DBody_FaceExpression
 from dinkster_nodes_vision_sam3d_body.sam3d_prediction import SAM3DBody_Predict
+from dinkster_server import PackInfo
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def _sam3d_runtime_manifests() -> tuple[Path, Path, Path]:
+    checkout = Path(__file__).resolve().parents[3]
+    return (
+        checkout / "packages/dinkster-nodes-image/dinkster-pack.toml",
+        checkout / "packages/dinkster-nodes-vision-sam3/dinkster-pack.toml",
+        checkout / "packages/dinkster-nodes-vision-sam3d-body/dinkster-pack.toml",
+    )
+
+
+def _sam3d_worker_env(tmp_path: Path, **values: str) -> dict[str, str]:
+    checkout = Path(__file__).resolve().parents[3]
+    return {
+        "CUDA_VISIBLE_DEVICES": "",
+        "DINKSTER_ACCELERATOR": "cpu",
+        "PYTHONPATH": os.pathsep.join(
+            (
+                str(tmp_path),
+                str(Path(__file__).parent),
+                str(checkout / "src"),
+                *(str(path) for path in sorted((checkout / "packages").glob("*/src"))),
+                *(path for path in sys.path if path),
+            )
+        ),
+        **values,
+    }
+
+
+def _sam3d_pack_info(manifest: Path) -> dict[str, PackInfo]:
+    return {
+        "dinkster-nodes-image": {"dinkster-image": PackInfo("Image", version="0.0.1")},
+        "dinkster-nodes-vision-sam3": {
+            "dinkster-vision-sam3": PackInfo("SAM3", version="0.0.1")
+        },
+        "dinkster-nodes-vision-sam3d-body": {
+            "dinkster-vision-sam3d-body": PackInfo("SAM3D Body", version="0.0.1")
+        },
+    }[manifest.parent.name]
 
 
 def test_pack_registers_required_pose_packets_and_preserves_existing_authority() -> None:
@@ -671,8 +711,12 @@ def test_sam3d_loader_ordinary_hosts_twice(
     (tmp_path / f"{module}.py").write_text(
         "import sys\nfrom types import SimpleNamespace\n"
         "from test_sam3d_body_torch import LoaderModel, ModelInspect\n"
-        "from dinkster_api.v1 import register_inference_types\n"
+        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
         f"sys.modules[{model_module!r}] = SimpleNamespace(SAM3DBody=LoaderModel)\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-sam3d-body', "
+        "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"
+        "        register_sam3d(registry)\n"
         "NODES = (ModelInspect,)\n",
         encoding="ascii",
     )
@@ -680,27 +724,37 @@ def test_sam3d_loader_ordinary_hosts_twice(
     fixture.write_text(
         '[pack]\nname="sam3d-loader-fixture"\npublisher="dinkster"\n'
         'namespaces=["sam3d-loader-fixture"]\n'
+        '[pack.dependencies]\ndinkster-image=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3d-body=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
 
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        image, sam3, native = _sam3d_runtime_manifests()
+        manifests = (image, sam3, native, fixture)
         composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "DINKSTER_MOUNTS_SNAPSHOT": str(tmp_path / "mounts.json"),
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
-            }
+            worker_env=_sam3d_worker_env(
+                tmp_path, DINKSTER_MOUNTS_SNAPSHOT=str(tmp_path / "mounts.json")
+            )
         )
         try:
-            for manifest in (native, fixture):
+            for manifest in manifests:
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=True,
+                        trust_reserved=True,
+                        packs=_sam3d_pack_info(manifest) if manifest != fixture else None,
+                    )
                     if in_process
                     else PackSpec(
-                        manifest=manifest, worker_group="loader", group_manifests=(native, fixture)
+                        manifest=manifest,
+                        worker_group="loader",
+                        group_manifests=manifests,
+                        trust_reserved=True,
+                        packs=_sam3d_pack_info(manifest) if manifest != fixture else None,
                     )
                 )
             graph = graph_from_wire(
@@ -983,33 +1037,44 @@ def test_smoothing_ordinary_hosts_twice(tmp_path: Path, in_process: bool, expres
     module = f"sam3d_expression_fixture_{int(in_process)}_{int(expression)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_body_torch import Source, Inspect, ExpressionSource, ExpressionInspect\n"
-        "from dinkster_api.v1 import register_inference_types\n"
+        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-sam3d-body', "
+        "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"
+        "        register_sam3d(registry)\n"
         "NODES = (Source, Inspect, ExpressionSource, ExpressionInspect)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="sam3d-fixture"\npublisher="dinkster"\nnamespaces=["sam3d-fixture"]\n'
+        '[pack.dependencies]\ndinkster-image=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3d-body=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
 
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
-            }
-        )
+        image, sam3, native = _sam3d_runtime_manifests()
+        manifests = (image, sam3, native, fixture)
+        composer = ServingComposer(worker_env=_sam3d_worker_env(tmp_path))
         try:
-            for manifest in (native, fixture):
+            for manifest in manifests:
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=True,
+                        trust_reserved=True,
+                        packs=_sam3d_pack_info(manifest) if manifest != fixture else None,
+                    )
                     if in_process
                     else PackSpec(
-                        manifest=manifest, worker_group="sam3d", group_manifests=(native, fixture)
+                        manifest=manifest,
+                        worker_group="sam3d",
+                        group_manifests=manifests,
+                        trust_reserved=True,
+                        packs=_sam3d_pack_info(manifest) if manifest != fixture else None,
                     )
                 )
             graph = graph_from_wire(
@@ -1072,33 +1137,44 @@ def test_sam3d_ordinary_hosts_twice(tmp_path: Path, in_process: bool, prediction
     module = f"sam3d_fixture_{int(in_process)}_{int(prediction)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_body_torch import Source, Inspect, PredictionSource, PredictionInspect\n"
-        "from dinkster_api.v1 import register_inference_types\n"
+        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-sam3d-body', "
+        "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"
+        "        register_sam3d(registry)\n"
         "NODES = (Source, Inspect, PredictionSource, PredictionInspect)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="sam3d-fixture"\npublisher="dinkster"\nnamespaces=["sam3d-fixture"]\n'
+        '[pack.dependencies]\ndinkster-image=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3d-body=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
 
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
-            }
-        )
+        image, sam3, native = _sam3d_runtime_manifests()
+        manifests = (image, sam3, native, fixture)
+        composer = ServingComposer(worker_env=_sam3d_worker_env(tmp_path))
         try:
-            for manifest in (native, fixture):
+            for manifest in manifests:
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=True,
+                        trust_reserved=True,
+                        packs=_sam3d_pack_info(manifest) if manifest != fixture else None,
+                    )
                     if in_process
                     else PackSpec(
-                        manifest=manifest, worker_group="sam3d", group_manifests=(native, fixture)
+                        manifest=manifest,
+                        worker_group="sam3d",
+                        group_manifests=manifests,
+                        trust_reserved=True,
+                        packs=_sam3d_pack_info(manifest) if manifest != fixture else None,
                     )
                 )
             graph = graph_from_wire(
