@@ -8,6 +8,7 @@ from dinkster_api.v1 import (
     resolver_from_env,
 )
 
+from .loader import LoadMoGeModel
 from .moge import MoGeGeometryToFOV
 from .moge_inference import MoGeInference
 from .moge_mesh import MoGePointMapToMesh
@@ -15,6 +16,7 @@ from .moge_panorama import MoGePanoramaInference
 from .moge_render import MoGeRender
 
 NODES = (
+    LoadMoGeModel,
     MoGeGeometryToFOV,
     MoGeInference,
     MoGePanoramaInference,

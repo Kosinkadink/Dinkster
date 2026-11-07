@@ -7,7 +7,7 @@ namespaces = ["dinkster.vision.moge"]
 requires = ["torch", "dinkster-inference==0.1.1"]
 
 [pack.inference]
-imports = ["ldm.colormap", "ldm.moge.geometry", "ldm.moge.panorama", "model_management"]
+imports = ["ldm.colormap", "ldm.moge.geometry", "ldm.moge.model", "ldm.moge.panorama", "model_management", "utils"]
 tested-version = "0.1.1"
 
 [pack.sandbox]

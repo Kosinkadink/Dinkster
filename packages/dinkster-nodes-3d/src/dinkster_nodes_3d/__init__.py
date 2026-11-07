@@ -28,6 +28,7 @@ from .mesh_weld import WeldVertices
 from .preview3d import Preview3D, Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud
 from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from .splat_files import File3DToSplat, SplatToFile3D
+from .splat_mesh import SplatToMesh
 from .splat_render import RenderSplat
 from .uv_atlas import RenderUVAtlas
 from .voxel_mesh import VoxelToMesh, VoxelToMeshBasic
@@ -68,6 +69,7 @@ NODES = (
     SaveGaussianSplat,
     SavePointCloud,
     SplatToFile3D,
+    SplatToMesh,
     TransformSplat,
     UnwrapMesh,
     VoxelToMesh,
