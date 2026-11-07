@@ -3330,6 +3330,10 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         "variant",
         "missing",
         "local",
+        "selected",
+        "absent-selection",
+        "duplicate-selection",
+        "local-selection",
     ],
 )
 def test_cli_acquires_published_locks_for_exact_sources_and_base(
@@ -3377,12 +3381,16 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             installLocks={} if fault == "missing" else {"linux-cpu": binding},
         )
         files[lock_path + "?baseId=sha256%3A" + "1" * 64] = payload
-    server = _serve_artifacts(files, [])
+    requests: list[tuple[str, str | None]] = []
+    if problem == "selected":
+        files = {path: payload for path, payload in files.items() if "/z-other/" in path}
+        expected.pop("demo")
+    server = _serve_artifacts(files, requests)
     root = tmp_path / "project"
     root.mkdir()
     (root / "current").write_text("7\n")
     source = tmp_path / "dinkster.lock"
-    if problem == "local":
+    if problem in {"local", "local-selection"}:
         entries.append(replace(entries[0], pack="local-only", source="local:/retained"))
     source.write_text(Lockfile.of(entries).record_json())
     original = source.read_bytes()
@@ -3404,11 +3412,28 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     )
     if problem == "local":
         args += ("--registry-only",)
+    if problem == "selected":
+        args += ("--pack", "z-other")
+    elif problem == "absent-selection":
+        args += ("--pack", "absent")
+    elif problem == "duplicate-selection":
+        args += ("--pack", "demo", "--pack", "demo")
+    elif problem == "local-selection":
+        args += ("--pack", "local-only", "--registry-only")
     try:
-        if problem and problem != "local":
+        if problem and problem not in {"local", "selected"}:
             with pytest.raises(SystemExit):
                 run_cli(*args)
-            assert "z-other" in capsys.readouterr().err
+            error = capsys.readouterr().err
+            if problem in {"absent-selection", "duplicate-selection", "local-selection"}:
+                assert {
+                    "absent-selection": "selection is absent",
+                    "duplicate-selection": "must not repeat",
+                    "local-selection": "require registry provenance",
+                }[problem] in error
+                assert requests == []
+            else:
+                assert "z-other" in error
             assert not output.exists()
         else:
             run_cli(*args)
@@ -3418,6 +3443,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 path = output / f"{pack}.pack-lock.json"
                 assert path.read_bytes() == payload
                 assert PackLock.read(path).pack == pack
+            if problem == "selected":
+                assert requests and all("/z-other/" in path for path, _ in requests)
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
         assert sorted(path.name for path in root.iterdir()) == ["current"]

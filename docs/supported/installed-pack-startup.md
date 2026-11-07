@@ -149,6 +149,13 @@
   Repeated or installed pack names, noncanonical selections, incompatible engines,
   third-party manifests and corrupt archives refuse before a candidate lock is
   written. Preparation does not activate a generation or modify project data.
+- `prepare-registry-locks --pack PACK` acquires only the named source's published
+  dependency lock for the exact base; repeat the option to select multiple packs.
+  Other source releases need not remain available in the registry. Duplicate or
+  absent selections refuse before fetching; explicit non-registry selections
+  cannot be silently omitted with `--registry-only`. Supervisor additive source
+  preparation uses these selections, retaining existing source identities and
+  leaving old dependency locks to inheritance from the source generation.
 - Generation source admission checks each declared pack engine range against
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a
