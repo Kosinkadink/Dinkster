@@ -25,6 +25,7 @@ from dinkster_assets import (
 from dinkster_registry.artifact import unpack_artifact
 from dinkster_registry.install import Lockfile
 from dinkster_schema import canonical_name
+from dinkster_store import pack_archive_path
 from dinkster_workers import PackManifest, load_manifest
 
 from .workflow_requirements import (
@@ -178,7 +179,7 @@ def plan_project_requirements(
     if artifacts is not None:
         with TemporaryDirectory(prefix="dinkster-workflow-plan-") as scratch:
             for pack in target.packs:
-                archive = artifacts / f"{pack.artifact_digest.split(':', 1)[1]}.zip"
+                archive = pack_archive_path(artifacts, pack.artifact_digest)
                 extracted = unpack_artifact(
                     archive, Path(scratch) / pack.pack, pack.artifact_digest
                 )

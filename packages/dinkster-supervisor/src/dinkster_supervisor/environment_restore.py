@@ -8,6 +8,8 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
+from dinkster_store import object_path, readable_label
+
 from .environment_artifacts import (
     EnvironmentCatalog,
     acquire,
@@ -177,7 +179,14 @@ def restore_entry(
                     for document in (base, engine):
                         for row in artifact_rows(document.get("wheels"), "filename"):
                             filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
-                            cached = store / "wheels" / sha / filename
+                            cached = (
+                                object_path(
+                                    store / "wheels",
+                                    "sha256:" + sha,
+                                    label=readable_label(Path(filename).stem),
+                                )
+                                / filename
+                            )
                             url = row.get("url")
                             roots = (
                                 (url.rsplit("/", 1)[0],)
@@ -185,9 +194,9 @@ def restore_entry(
                                 else (str(cached.parent),)
                             )
                             fetch_artifact(roots, filename, cached, sha, cast("int", row["size"]))
-                    write_document(store / "bases" / base_id[7:] / "manifest.json", base)
+                    write_document(object_path(store / "bases", base_id) / "manifest.json", base)
                     write_document(
-                        store / "engines" / engine_id[7:] / "release-manifest.json", engine
+                        object_path(store / "engines", engine_id) / "release-manifest.json", engine
                     )
                 else:
                     engine = validate_manifest(engine_bytes, engine_id, None)
@@ -281,13 +290,13 @@ def restore_entry(
                     pack_locks=tuple(sorted((inputs / "packs").glob("*/pack-lock.json"))),
                     own_environment_size=sum(
                         path.stat().st_size
-                        for path in (store / "bases" / base_id[7:] / "python").rglob("*")
+                        for path in (object_path(store / "bases", base_id) / "python").rglob("*")
                         if path.is_file()
                     ),
                     catalog_lock=inputs / "dinkster.lock" if "dinkster.lock" in metadata else None,
-                    artifacts=store
-                    / "engines"
-                    / digest(provenance.get("packSourceRelease", engine_id))[7:]
+                    artifacts=object_path(
+                        store / "engines", digest(provenance.get("packSourceRelease", engine_id))
+                    )
                     / "artifacts"
                     if "dinkster.lock" in metadata
                     else None,

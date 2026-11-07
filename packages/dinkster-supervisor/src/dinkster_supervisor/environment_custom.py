@@ -17,9 +17,10 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 import zstandard
+from dinkster_store import object_path
 from packaging.version import InvalidVersion, Version
 
-from .environment_artifacts import acquire_base, validate_manifest
+from .environment_artifacts import acquire_base, base_label, validate_manifest
 from .environment_constraints import requirement_hashes
 from .environment_local import retain_wheels, run_local_command
 from .environment_state import (
@@ -215,7 +216,7 @@ def build_custom_base(
         (payload / "wheels").mkdir()
         for wheel in wheels:
             shutil.copyfile(
-                store / "wheels" / wheel["sha256"] / wheel["filename"],
+                object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"],
                 payload / "wheels" / wheel["filename"],
             )
         archive = work / "base.tar.zst"
@@ -278,8 +279,8 @@ def build_custom_base(
                 )
         base["archive"]["parts"] = parts
         validate_manifest(json.dumps(base).encode("ascii"), identity, selection["variant"])
-        retained = store / "downloads" / identity[7:]
-        existing = store / "bases" / identity[7:] / "manifest.json"
+        retained = object_path(store / "downloads", identity, label=base_label(base))
+        existing = object_path(store / "bases", identity) / "manifest.json"
         if existing.exists():
             previous = validate_manifest(existing.read_bytes(), identity, selection["variant"])
             acquire_base(previous, (str(retained),), store)
@@ -324,7 +325,11 @@ def prepare_custom_pack_locks(
     wheels = store / "wheels"
     links = [
         wheels,
-        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+        *sorted(
+            path
+            for identity in hashes
+            if (path := object_path(wheels, "sha256:" + identity)).is_dir()
+        ),
     ]
     command = [
         str(interpreter(generation)),

@@ -22,6 +22,7 @@ from dinkster_registry import (
     unpack_artifact,
 )
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.pack_lock import resolve_pack_lock
@@ -220,7 +221,7 @@ def main() -> int:
             )
         lock = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
         artifacts = {
-            entry.pack: args.artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            entry.pack: pack_archive_path(args.artifacts, entry.artifact_digest)
             for entry in lock.packs
         }
         if args.prepare_locks is not None:

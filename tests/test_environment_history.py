@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor.environment_history import (
     activation_entries,
     history,
@@ -223,7 +224,9 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
         shutil.rmtree(mirror / "engine" / missing_snapshot["engine"]["release"][7:])
         for artifact in manifest["artifacts"]:
             if artifact["name"].endswith(".whl"):
-                cached = Path(fixture["store"]) / "wheels" / artifact["sha256"]
+                cached = object_path(
+                    Path(fixture["store"]) / "wheels", "sha256:" + artifact["sha256"]
+                )
                 if cached.exists():
                     shutil.rmtree(cached)
         code, proposal = _run(root, "restore", "2", "--plan")
@@ -534,9 +537,13 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 for entry in entries[:2]:
                     filename = f"{entry.artifact_digest[7:]}.zip"
                     assert (
-                        store / "engines" / current_release[7:] / "artifacts" / filename
-                    ).read_bytes() == (archives / filename).read_bytes()
-                original_archives = store / "engines" / original_release[7:] / "artifacts"
+                        pack_archive_path(
+                            object_path(store / "engines", current_release) / "artifacts",
+                            entry.artifact_digest,
+                        ).read_bytes()
+                        == (archives / filename).read_bytes()
+                    )
+                original_archives = object_path(store / "engines", original_release) / "artifacts"
                 shutil.rmtree(original_archives)
                 corrupt_cache = store / "engines" / ("0" * 64) / "artifacts"
                 corrupt_cache.mkdir(parents=True)
@@ -546,12 +553,9 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     )
                 if reacquire:
                     for entry in entries[:2]:
-                        (
-                            store
-                            / "engines"
-                            / current_release[7:]
-                            / "artifacts"
-                            / f"{entry.artifact_digest[7:]}.zip"
+                        pack_archive_path(
+                            object_path(store / "engines", current_release) / "artifacts",
+                            entry.artifact_digest,
                         ).unlink()
                     preserved_sources = {
                         path: path.read_bytes()
@@ -629,8 +633,8 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                             replacement_id = base["id"]
                     (published.parent / "index.json").write_text(json.dumps(index))
                     shutil.rmtree(published)
-                    shutil.rmtree(store / "bases" / base_id[7:])
-                    shutil.rmtree(store / "downloads" / base_id[7:])
+                    shutil.rmtree(object_path(store / "bases", base_id))
+                    shutil.rmtree(object_path(store / "downloads", base_id))
                 if replace_engine:
                     snapshot = cast("dict", first["snapshot"])
                     base = json.loads(snapshot["metadata"]["base-manifest.json"])
@@ -654,7 +658,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         "artifacts"
                     ]:
                         if row["name"].endswith(".whl"):
-                            shutil.rmtree(store / "wheels" / row["sha256"])
+                            shutil.rmtree(object_path(store / "wheels", "sha256:" + row["sha256"]))
                 if replace_base or replace_engine:
                     preserved = {
                         path.relative_to(root): path.read_bytes()
@@ -751,6 +755,11 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
         (source / "shared-store").write_text(str(shared) + "\n")
         retained = shared / "artifacts" / retained.name
         content = shared
+        retained.unlink()
+        readable = pack_archive_path(content / "artifacts", identity, label="example/1.2.3")
+        readable.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(archive, readable)
+        retained = readable
     locked = LockedPack("example", "1.2.3", identity, "local", (), "local:/unused")
     (source / "current").write_text("3\n")
     (source / "generations/3.json").write_text(Lockfile.of([locked]).record_json())
@@ -767,7 +776,8 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
     sites = [content / "venvs" / identity[7:] / "example/lib/python3.12/site-packages"]
     if shared_store:
         sites = [
-            content / "venvs" / scope / identity[7:] / "example/Lib/site-packages"
+            object_path(content / "venvs" / scope, identity, label="example/1.2.3")
+            / "example/Lib/site-packages"
             for scope in ("cpu", "cuda")
         ]
     for index, site in enumerate(sites):
@@ -1095,7 +1105,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         for path in root.rglob("*")
         if path.is_file() and path.name != ".lock" and "runtime" not in path.relative_to(root).parts
     } == before
-    cached = store / "wheels" / sha / source.name
+    cached = object_path(store / "wheels", "sha256:" + sha) / source.name
     cached.parent.mkdir()
     for content, exact in ((b"x" * len(payload), False), (payload, True)):
         cached.write_bytes(content)
@@ -1211,11 +1221,11 @@ def test_missing_base_offers_minimal_compatible_replacements(
             manifest = json.loads(snapshot["metadata"]["engine-manifest.json"])
             for row in manifest["artifacts"]:
                 if row["name"].endswith(".whl"):
-                    shutil.rmtree(store / "wheels" / row["sha256"])
+                    shutil.rmtree(object_path(store / "wheels", "sha256:" + row["sha256"]))
         preserved = {path.name: path.read_bytes() for path in (root / "history").glob("*.json")}
         shutil.rmtree(published)
-        shutil.rmtree(store / "bases" / base_record["id"][7:])
-        shutil.rmtree(store / "downloads" / base_record["id"][7:])
+        shutil.rmtree(object_path(store / "bases", base_record["id"]))
+        shutil.rmtree(object_path(store / "downloads", base_record["id"]))
         before = {
             path.relative_to(root).as_posix(): path.read_bytes()
             for path in root.rglob("*")
@@ -1269,8 +1279,9 @@ def test_missing_base_offers_minimal_compatible_replacements(
         _run(root, "stop", "--yes")
 
 
+@pytest.mark.parametrize("readable", [False, True], ids=["legacy", "readable"])
 def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, readable: bool
 ):
     from dinkster_supervisor.environment_generations import build_generation
     from dinkster_supervisor.environment_state import content_digest, write_document
@@ -1297,7 +1308,7 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
     assert code == 0, result
     try:
         first = Generation.read(root / "generations/1/generation.json")
-        old_base = store / "bases" / first.base[7:]
+        old_base = object_path(store / "bases", first.base)
         staging = tmp_path / "local-base"
         shutil.copytree(old_base / "python", staging / "python", symlinks=False)
         base = json.loads((old_base / "manifest.json").read_bytes())
@@ -1312,7 +1323,10 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
         base_id = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
         base["id"] = base_id
         write_document(staging / "manifest.json", base)
-        shutil.move(str(staging), store / "bases" / base_id[7:])
+        shutil.move(
+            str(staging),
+            object_path(store / "bases", base_id, label="local-base" if readable else None),
+        )
         published = json.loads((root / "generations/1/engine-manifest.json").read_bytes())
         engine = {
             "format": "dinkster.engine/1",
@@ -1328,7 +1342,11 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
         engine_id = (
             "sha256:" + hashlib.sha256(json.dumps(engine, sort_keys=True).encode()).hexdigest()
         )
-        write_document(store / "engines" / engine_id[7:] / "release-manifest.json", engine)
+        write_document(
+            object_path(store / "engines", engine_id, label="local-engine" if readable else None)
+            / "release-manifest.json",
+            engine,
+        )
         journal = begin_activation(root, 2, "update")
         build_generation(
             root=root,
@@ -1356,11 +1374,12 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
         assert history(root)[:2] == before
         for path, kind in (
             (
-                store / "bases" / base_id[7:] / next(iter(base["interpreter"]["files"])),
+                object_path(store / "bases", base_id) / next(iter(base["interpreter"]["files"])),
                 "local base",
             ),
             (
-                store / "wheels" / engine["wheels"][0]["sha256"] / engine["wheels"][0]["filename"],
+                object_path(store / "wheels", "sha256:" + engine["wheels"][0]["sha256"])
+                / engine["wheels"][0]["filename"],
                 "local wheel",
             ),
         ):
@@ -1428,7 +1447,14 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     target = tmp_path / "user-files"
     target.mkdir()
     (target / "private").write_text("not software")
-    (generation / "packs").symlink_to(target, target_is_directory=True)
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(generation / "packs"), str(target)],
+            capture_output=True,
+            check=True,
+        )
+    else:
+        (generation / "packs").symlink_to(target, target_is_directory=True)
     document = json.loads((generation / "generation.json").read_bytes())
     document["files"]["packs/private/pack-lock.json"] = "sha256:" + "e" * 64
     (generation / "generation.json").write_text(json.dumps(document))
@@ -1613,7 +1639,7 @@ environment.main()
         )
         for artifact in old_manifest["artifacts"]:
             if artifact["name"].endswith(".whl"):
-                cached = store / "wheels" / artifact["sha256"]
+                cached = object_path(store / "wheels", "sha256:" + artifact["sha256"])
                 if cached.exists():
                     shutil.rmtree(cached)
         prior_files = {
