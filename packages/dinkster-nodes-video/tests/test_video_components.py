@@ -194,7 +194,7 @@ family_name, family_mapping = case.input_families[0]
 assert family_name == "videos"
 assert family_mapping.source_family == "videos"
 assert family_mapping.source_template == ("video",)
-assert family_mapping.member_ids == "preserve"
+assert family_mapping.member_ids is None
 assert dict(family_mapping.inputs)["video"].input == "video"
 assert validate_replacement_references({concat.node_type: concat}) == ()
 wire = schema_to_wire(concat)
