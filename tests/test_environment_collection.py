@@ -1325,7 +1325,11 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
             ]
             assert all(path.read_bytes() == data for path, data in preserved.items())
             assert len(history(root)) == number
-            assert all(path.read_bytes() == data for path, data in protected.items())
+            assert not [
+                str(path.relative_to(tmp_path))
+                for path, data in protected.items()
+                if path.read_bytes() != data
+            ]
             assert history(second) == other_history
             assert _run(second, "status")[1]["engines"] == [other_engine]
             with urlopen(f"{other_engine['url']}/api/health", timeout=5) as response:
@@ -1345,7 +1349,11 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         assert code == 0 and restored["current"] == 5 and restored["exact"] is True, restored
         assert sorted(path.name for path in (root / "generations").iterdir()) == ["4", "5"]
         assert all(path.read_bytes() == data for path, data in preserved.items())
-        assert all(path.read_bytes() == data for path, data in protected.items())
+        assert not [
+            str(path.relative_to(tmp_path))
+            for path, data in protected.items()
+            if path.read_bytes() != data
+        ]
         assert history(root)[-1]["restoredFrom"] == 1
         assert history(root)[-1]["snapshot"] == entries[0]["snapshot"]
         assert (
