@@ -100,7 +100,6 @@ import os
 import sys
 import textwrap
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import nullcontext
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, cast
@@ -115,6 +114,7 @@ from dinkster_assets import (
     resolver_from_env,
     verified_local_path,
 )
+from dinkster_inference_wire.process import inference_mode as _comfy_inference_mode
 from dinkster_native.fork_nodes import model_for_attention_route
 from dinkster_schema import (
     AssetWidget,
@@ -804,17 +804,6 @@ def _is_comfy_nested_tensor(value: object) -> bool:
         return False
     module = cast("Any", importlib.import_module(module_name))
     return type(value) is module.NestedTensor
-
-
-def _comfy_inference_mode() -> Any:
-    try:
-        torch = cast("Any", importlib.import_module("torch"))
-    except ModuleNotFoundError as exc:
-        if exc.name != "torch":
-            raise
-        return nullcontext()
-    inference_mode = cast("dict[str, object]", vars(torch)).get("inference_mode")
-    return inference_mode() if callable(inference_mode) else nullcontext()
 
 
 def to_comfy_multistream(value: object) -> object:

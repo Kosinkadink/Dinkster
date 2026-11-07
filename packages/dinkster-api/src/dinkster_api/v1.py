@@ -414,9 +414,11 @@ from dinkster_values import (
     storage_dtype,
     timeline_video,
     validate_bounding_box_encoded,
+    validate_detection_encoded,
     validate_image_encoded,
     validate_model3d_encoded,
     validate_placement_array_encoded,
+    validate_region_encoded,
     validate_splat_encoded,
     validate_video_encoded,
     video_document,
@@ -461,6 +463,7 @@ _PACK_MEDIA_EXPORTS = {
     "empty_document": "dinkster_image_document.document",
     "flatten": "dinkster_image_document.document",
     "raster_png": "dinkster_image_document.document",
+    "validate_image_document_encoded": "dinkster_image_document.document",
     "blend": "dinkster_image_document.blend",
     "dissolve_alpha": "dinkster_image_document.blend",
     "linear_to_srgb": "dinkster_image_document.blend",
@@ -505,10 +508,10 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import types
 
         value = getattr(types, name)
-    elif name == "initialize_inference_process":
-        from dinkster_inference_wire.process import initialize_inference_process
+    elif name in {"inference_nodes", "initialize_inference_process"}:
+        from dinkster_inference_wire import process
 
-        value = initialize_inference_process
+        value = getattr(process, name)
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     globals()[name] = value
@@ -534,6 +537,7 @@ def __dir__() -> list[str]:
             "materialize_splat",
             "materialize_vision_packet",
             "materialize_voxel",
+            "inference_nodes",
             "initialize_inference_process",
         }
     )
@@ -554,6 +558,7 @@ if TYPE_CHECKING:
         empty_document,
         flatten,
         raster_png,
+        validate_image_document_encoded,
     )
     from dinkster_image_document.format import (
         BLEND_MODES,
@@ -563,7 +568,7 @@ if TYPE_CHECKING:
     )
     from dinkster_image_document.interchange import export_ora, export_psd, load_document
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
-    from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.process import inference_nodes, initialize_inference_process
     from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
@@ -595,6 +600,7 @@ __all__ = [
     "current_execution_context",
     "dissolve_alpha",
     "document_meta",
+    "validate_image_document_encoded",
     "empty_document",
     "export_ora",
     "export_psd",
@@ -615,6 +621,7 @@ __all__ = [
     "ExpansionOutput",
     "LatentStream",
     "MultiStreamLatent",
+    "inference_nodes",
     "initialize_inference_process",
     "prepare_sampling_model",
     "materialize_audio",
@@ -916,6 +923,8 @@ __all__ = [
     "decode_splat_file",
     "decode_video",
     "detection_meta",
+    "validate_detection_encoded",
+    "validate_region_encoded",
     "edit_video",
     "effective_video_facts",
     "encode_audio",

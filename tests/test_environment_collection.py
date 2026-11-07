@@ -286,7 +286,8 @@ environment.main()
     for name, digest in retained.items():
         assert content_digest(tmp_path / name) == digest
     code, rollback = _run(tmp_path, "rollback", "--plan")
-    assert code == 0 and "reactivate retained generation 1" in rollback["plan"][0], rollback
+    assert code == 1 and "no previous successful history entry" in rollback["error"], rollback
+    assert (tmp_path / "current").read_bytes() == b"3\n"
 
 
 @pytest.mark.parametrize("numbers", [[1], [2, 2], [0], [True], ["2"]])

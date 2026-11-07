@@ -782,6 +782,15 @@ def video_meta(obj: object) -> Mapping[str, object]:
     resident: dict[str, int] = {"ram": 0}
     byte_size = 0
 
+    def include_reference(ref: dict[str, object]) -> None:
+        nonlocal byte_size
+        digest = str(ref["digest"])
+        previous = refs.get(digest)
+        if previous is not None and previous["size"] != ref["size"]:
+            raise ValueError("VIDEO sources disagree about asset size")
+        refs[digest] = ref
+        byte_size += cast(int, ref["size"])
+
     def visit(video: Mapping[str, object]) -> None:
         nonlocal resident, byte_size
         if "source" in video:
@@ -790,9 +799,7 @@ def video_meta(obj: object) -> Mapping[str, object]:
                 resident["ram"] += len(source)
                 byte_size += len(source)
             else:
-                ref = _asset_wire(source)
-                refs[str(ref["digest"])] = ref
-                byte_size += cast("int", ref["size"])
+                include_reference(_asset_wire(source))
         else:
             components = mapping(video["components"], "components")
             image_cost = cast(
@@ -805,17 +812,13 @@ def video_meta(obj: object) -> Mapping[str, object]:
                 for residency, size in mapping(audio["cost"], "audio cost").items():
                     resident[residency] = resident.get(residency, 0) + cast(int, size)
                 for raw in cast("list[object]", audio["asset_refs"]):
-                    ref = dict(mapping(raw, "audio asset reference"))
-                    refs[str(ref["digest"])] = ref
-                    byte_size += cast("int", ref["size"])
+                    include_reference(dict(mapping(raw, "audio asset reference")))
         if "complete_audio" in video:
             audio = audio_meta(video["complete_audio"])
             for residency, size in mapping(audio["cost"], "complete audio cost").items():
                 resident[residency] = resident.get(residency, 0) + cast(int, size)
             for raw in cast("list[object]", audio["asset_refs"]):
-                ref = dict(mapping(raw, "complete audio asset reference"))
-                refs[str(ref["digest"])] = ref
-                byte_size += cast("int", ref["size"])
+                include_reference(dict(mapping(raw, "complete audio asset reference")))
         for raw in cast("list[object]", video["edits"]):
             edit = mapping(raw, "edit")
             for child in cast("list[object]", edit.get("concat", [])):
@@ -867,6 +870,8 @@ def validate_video_encoded(data: bytes | memoryview, metadata: Mapping[str, obje
             raise ValueError("video metadata byte_size must be an int")
         if size != len(raw):
             raise ValueError("video metadata byte_size does not match encoded bytes")
+        if metadata.get("asset_refs", []) != []:
+            raise ValueError("VIDEO metadata asset_refs does not match encoded bytes")
         return
     expected = video_meta(decode_video(raw))
     for key, value in expected.items():

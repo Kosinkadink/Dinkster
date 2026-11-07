@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,9 +16,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
-from dinkster_store import object_path
+from blake3 import blake3
+from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 
 from .environment_constraints import requirement_hashes
+from .environment_downloads import fetch_artifact
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -24,7 +28,10 @@ from .environment_state import (
     digest,
     generation_number,
     interpreter,
+    read_document,
+    write_document,
 )
+from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
 
 
 def verify_base_inputs(base: Path, expected: dict[str, str], *, operation: str) -> None:
@@ -286,6 +293,110 @@ def project_operation(
     if result.returncode and not errors:
         raise EnvironmentError(f"workflow planning failed: {result.stderr.strip()}")
     return document
+
+
+def retained_pack_archive(store: Path, identity: str, artifacts: Path | None = None) -> Path | None:
+    """Locate selected, digest-verified software bytes without populating any cache."""
+    if re.fullmatch(r"blake3:[0-9a-f]{64}", identity) is None:
+        raise EnvironmentError("restore requires digest-pinned pack sources")
+    if artifacts is not None and any(
+        (path.is_symlink() or path.is_junction())
+        for path in (artifacts, *artifacts.parents)
+        if path == artifacts or path.is_relative_to(store)
+    ):
+        raise EnvironmentError("restore refuses a linked source archive cache")
+    engines = store / "engines"
+    if engines.is_symlink() or engines.is_junction():
+        raise EnvironmentError("restore refuses a linked engine cache")
+    caches = ([artifacts] if artifacts is not None else []) + [
+        path / "artifacts" for _, path in object_entries(engines)
+    ]
+    candidates = [pack_archive_path(cache, identity) for cache in caches]
+    for archive in candidates:
+        if any(
+            (path.is_symlink() or path.is_junction())
+            for path in (archive, *archive.parents)
+            if path in (archive, artifacts) or path.is_relative_to(store)
+        ):
+            raise EnvironmentError("restore refuses linked source archives")
+        if not archive.is_file():
+            continue
+        retained = blake3()
+        with archive.open("rb") as source:
+            for chunk in iter(lambda: source.read(ENVIRONMENT_STREAM_CHUNK_BYTES), b""):
+                retained.update(chunk)
+        if retained.hexdigest() == identity[7:]:
+            return archive
+    return None
+
+
+def restore_pack_sources(
+    generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path, store: Path
+) -> None:
+    """Use the target's exact-pin restore in scratch, never the live pack install."""
+    with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
+        scratch = Path(directory)
+        cache = scratch / "artifacts"
+        cache.mkdir()
+        lock = read_document(catalog_lock)
+        for row in cast("list[dict[str, object]]", lock["packs"]):
+            identity = row.get("artifactDigest")
+            if not isinstance(identity, str):
+                raise EnvironmentError("restore requires digest-pinned pack sources")
+            archive = retained_pack_archive(store, identity, artifacts)
+            if archive is not None:
+                # Older target engines still consume flat digest-named archives.
+                shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
+        snapshot = scratch / "snapshot.json"
+        write_document(
+            snapshot,
+            {
+                "format": "dinkster.snapshot/1",
+                "lockfile": json.loads(catalog_lock.read_bytes()),
+                "venvs": {},
+            },
+        )
+        command = [
+            str(interpreter(generation)),
+            "-I",
+            "-B",
+            "-m",
+            "dinkster.manager",
+            "--root",
+            str(scratch),
+        ]
+        registries = project / "registries.toml"
+        if registries.is_file():
+            command.extend(["--registries", str(registries)])
+        elif not os.environ.get("DINKSTER_REGISTRIES") and not os.environ.get("DINKSTER_REGISTRY"):
+            command.extend(["--registry", "https://registry.dinkster.org"])
+        completed = subprocess.run(
+            [*command, "restore", str(snapshot), "--no-venv", "--yes"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DINKSTER_SHARED_STORE": ""},
+        )
+        if completed.returncode:
+            raise EnvironmentError(
+                "target exact source restore refused: "
+                + (completed.stderr.strip() or completed.stdout.strip())
+            )
+        for row in cast("list[dict[str, object]]", lock["packs"]):
+            identity = cast("str", row["artifactDigest"])
+            archive = pack_archive_path(cache, identity)
+            if archive.is_symlink():
+                raise EnvironmentError("restore refuses linked source archives")
+            fetch_artifact(
+                (str(archive.parent),),
+                archive.name,
+                pack_archive_path(
+                    artifacts,
+                    identity,
+                    label=pack_label(cast("str", row["pack"]), cast("str", row["version"])),
+                ),
+                content_digest(archive)[7:],
+                archive.stat().st_size,
+            )
 
 
 def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path) -> tuple[str, ...]:
@@ -616,9 +727,11 @@ def build_generation(
     artifacts: Path | None = None,
     prepare_packs: Callable[[Path], None] | None = None,
     acquire_pack_wheels: bool = False,
+    acquire_pack_sources: bool = False,
     refresh_cache: bool = False,
     uv: str = "uv",
     source_kind: str = "published",
+    artifact_sources: dict[str, object] | None = None,
 ) -> Generation:
     """Build a target without activating it or touching another generation.
 
@@ -659,7 +772,15 @@ def build_generation(
         else:
             retained = destination / "engine-manifest.json"
             shutil.copyfile(engine_manifest, retained)
-            if content_digest(retained) != engine_release:
+            manifest_identity = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(read_document(retained), sort_keys=True).encode()
+                ).hexdigest()
+                if source_kind == "local"
+                else content_digest(retained)
+            )
+            if manifest_identity != engine_release:
                 raise EnvironmentError("retained engine manifest does not match engine release")
         provisioned: set[str] = set()
         if (
@@ -701,9 +822,40 @@ def build_generation(
                     for row in cast("list[dict[str, object]]", provision["packs"])
                 }
         if catalog_lock is not None and artifacts is not None:
+            if acquire_pack_sources:
+                restore_pack_sources(
+                    destination,
+                    catalog_lock=catalog_lock,
+                    artifacts=artifacts,
+                    project=root,
+                    store=store,
+                )
             selected = stage_pack_sources(
                 destination, catalog_lock=catalog_lock, artifacts=artifacts
             )
+            retained = object_path(store / "engines", engine_release) / "artifacts"
+            if any(
+                path.is_symlink() for path in (retained, retained.parent, retained.parent.parent)
+            ):
+                raise EnvironmentError("source archives require an unlinked engine cache")
+            if artifacts != retained:
+                lock = read_document(catalog_lock)
+                for row in cast("list[dict[str, object]]", lock["packs"]):
+                    identity = cast("str", row["artifactDigest"])
+                    archive = pack_archive_path(artifacts, identity)
+                    if archive.is_symlink():
+                        raise EnvironmentError("source archives must not be linked")
+                    fetch_artifact(
+                        (str(archive.parent),),
+                        archive.name,
+                        pack_archive_path(
+                            retained,
+                            identity,
+                            label=pack_label(cast("str", row["pack"]), cast("str", row["version"])),
+                        ),
+                        content_digest(archive)[7:],
+                        archive.stat().st_size,
+                    )
             missing = set(selected) - provisioned
             if missing:
                 raise EnvironmentError(
@@ -712,6 +864,8 @@ def build_generation(
             prepare_pack_catalogs(destination, in_process_packs)
         if prepare_packs is not None:
             prepare_packs(destination)
+        if artifact_sources is not None:
+            write_document(destination / "artifact-sources.json", artifact_sources)
         files = tuple(
             (path.relative_to(destination).as_posix(), content_digest(path))
             for path in sorted(destination.rglob("*"))

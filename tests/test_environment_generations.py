@@ -546,6 +546,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
     [
         None,
         "update",
+        "restore",
         "extra",
         "missing",
         "variant",
@@ -641,7 +642,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         archive = artifacts / "staging.zip"
         identity = build_artifact(source, archive)
         archive.rename(artifacts / f"{identity.removeprefix('blake3:')}.zip")
-        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,)))
+        entries.append(
+            LockedPack(
+                name, "1.0.0", identity, "registry" if problem == "restore" else "local", (name,)
+            )
+        )
         if name == "healthy" or problem != "missing":
             path = tmp_path / f"{name}-1.0.0-{variant}.pack-lock.json"
             locked_variant = (
@@ -745,7 +750,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         "move-cross-volume-missing-resource",
         "move-cross-volume-corrupt-wheel-cache",
     }
-    if problem is not None and problem not in {"update", "extra", "custom"} | repairs | moves:
+    if (
+        problem is not None
+        and problem not in {"update", "restore", "extra", "custom"} | repairs | moves
+    ):
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -758,6 +766,50 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         generation = invoke()
         target = root / "generations" / str(number)
         assert generation.drift(target) == ()
+        assert {
+            path.name: path.read_bytes()
+            for path in (store / "engines" / ("b" * 64) / "artifacts").glob("*.zip")
+        } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
+        if problem == "restore":
+            from test_installer import _download_ticket, _serve_artifacts
+
+            retained = store / "engines" / ("b" * 64) / "artifacts"
+            responses: dict[str, bytes] = {}
+            for entry in entries:
+                filename = f"{entry.artifact_digest[7:]}.zip"
+                data = (artifacts / filename).read_bytes()
+                assert (retained / filename).read_bytes() == data
+                (retained / filename).unlink()
+                responses[f"/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"] = (
+                    _download_ticket(entry, data)
+                )
+                responses[f"/v1/artifacts/{entry.artifact_digest}"] = data
+            before = (target / "generation.json").read_bytes()
+            requests: list[tuple[str, str | None]] = []
+            server = _serve_artifacts(responses, requests)
+            try:
+                monkeypatch.setenv("DINKSTER_REGISTRY", f"http://127.0.0.1:{server.server_port}")
+                rebuilt = invoke(number=2, artifacts=retained, acquire_pack_sources=True)
+                assert len(requests) == 4
+                assert rebuilt.drift(root / "generations/2") == ()
+                assert (root / "generations/2/dinkster.lock").read_bytes() == (
+                    target / "dinkster.lock"
+                ).read_bytes()
+                assert (target / "generation.json").read_bytes() == before
+                assert read_current(root) is None
+                entry = entries[0]
+                (retained / f"{entry.artifact_digest[7:]}.zip").unlink()
+                url = f"/v1/artifacts/{entry.artifact_digest}"
+                responses[url] = b"x" * len(responses[url])
+                with pytest.raises(EnvironmentError, match="target exact source restore refused"):
+                    invoke(number=3, artifacts=retained, acquire_pack_sources=True)
+                assert not (root / "generations/3").exists()
+                assert (target / "generation.json").read_bytes() == before
+                assert rebuilt.drift(root / "generations/2") == ()
+                assert read_current(root) is None
+            finally:
+                server.shutdown()
+                server.server_close()
         assert not (target / "packs/healthy/bin").exists()
         assert venv_python(target / "packs/other").is_file()
         if problem == "custom":
@@ -824,7 +876,6 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 directory = wheels / hashlib.sha256(cached.read_bytes()).hexdigest()
                 directory.mkdir()
                 cached.rename(directory / cached.name)
-            shutil.copytree(artifacts, store / "engines" / ("b" * 64) / "artifacts")
             (root / "library").mkdir()
             (root / "library/asset").write_bytes(b"preserve this project asset")
             destination = tmp_path / "moved project"
@@ -1073,8 +1124,6 @@ environment.main()
                     "port": 3639,
                 },
             )
-            release = store / "engines" / ("b" * 64)
-            shutil.copytree(artifacts, release / "artifacts")
             code, result = _run(root, "doctor", "--repair", "--yes")
             if problem == "repair":
                 assert code == 0 and result["current"] == 2, result

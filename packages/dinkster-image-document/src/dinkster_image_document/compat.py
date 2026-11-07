@@ -18,7 +18,14 @@ from dinkster_values import (
     media_semantics,
 )
 
-from .document import ImageDocument, append_raster, document_meta, empty_document, raster_png
+from .document import (
+    ImageDocument,
+    append_raster,
+    document_meta,
+    empty_document,
+    raster_png,
+    validate_image_document_encoded,
+)
 from .format import IMAGE_DOCUMENT_MEDIA_TYPE, canonical_json
 
 
@@ -162,6 +169,8 @@ def register_comfy_layers(registry: TypeRegistry) -> None:
                 encode=lambda obj: coerce(obj).data,
                 decode=decode,
                 meta=lambda obj: document_meta(coerce(obj)),
+                validate_encoded=validate_image_document_encoded,
+                asset_references_complete=True,
             )
         registry.register_rendition(
             "comfy.LAYERS",
@@ -193,6 +202,9 @@ def register_comfy_compositor(registry: TypeRegistry) -> None:
             raise ValueError("unknown COMPOSITOR fields")
         return json.loads(canonical_json(value))
 
+    def validate_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+        coerce(json.loads(data))
+
     if "comfy.COMPOSITOR" not in registry:
         with registry.registering_pack(
             "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
@@ -202,6 +214,8 @@ def register_comfy_compositor(registry: TypeRegistry) -> None:
                 coerce=coerce,
                 encode=lambda obj: canonical_json(coerce(obj)).encode("utf-8"),
                 decode=lambda data: coerce(json.loads(data)),
+                validate_encoded=validate_encoded,
+                asset_references_complete=True,
             )
     if COMPOSITOR_TYPE in registry:
         registry.register_type_equivalence(

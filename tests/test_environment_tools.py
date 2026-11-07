@@ -800,7 +800,7 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
     )
     root = Path(fixture["root"])
     try:
-        for operation, current, value in (("setup", 1, 41), ("update", 2, 59), ("rollback", 1, 41)):
+        for operation, current, value in (("setup", 1, 41), ("update", 2, 59), ("rollback", 3, 41)):
             if operation == "update":
                 subprocess.run(
                     fixture["commands"]["advance"],
@@ -829,6 +829,13 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
             )
             assert result.strip() == str(value)
         assert (root / "generations/2/generation.json").is_file()
+        entries = [
+            json.loads(path.read_bytes()) for path in sorted((root / "history").glob("*.json"))
+        ]
+        assert [entry["generation"] for entry in entries] == [1, 2, 3]
+        assert entries[2]["restoredFrom"] == 1
+        assert entries[2]["reason"] == "rollback"
+        assert entries[2]["snapshot"] == entries[0]["snapshot"]
     finally:
         subprocess.run(
             fixture["commands"]["stop"],

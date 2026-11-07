@@ -328,8 +328,11 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         assert code == 0 and published["current"] == 3, published
         assert _run(root, "stop", "--yes")[0] == 0
         code, rolled_back = _run(root, "rollback", "--yes")
-        assert code == 0 and rolled_back["current"] == 2, rolled_back
-        assert json.loads((root / "project.json").read_bytes())["variant"] == "studio-cpu"
+        assert code == 0 and rolled_back["current"] == 4, rolled_back
+        assert json.loads((root / "project.json").read_bytes())["variant"] == "fixture-cpu"
+        assert json.loads((root / "generations/4/generation.json").read_bytes())["variant"] == (
+            "studio-cpu"
+        )
         assert _run(root, "doctor")[1]["status"] == "clean"
     finally:
         _run(root, "stop", "--yes")
@@ -1258,8 +1261,8 @@ environment.main()
         retained_digest = content_digest(python)
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
-        assert (root / "project.json").read_bytes() == initial_settings
-        assert rolled_back["current"] == 1 and first.exists() and second.exists()
+        assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
+        assert rolled_back["current"] == 3 and first.exists() and second.exists()
         after = python.stat()
         assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (
             retained.st_dev,
@@ -1269,6 +1272,7 @@ environment.main()
         )
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
+        current = root / "generations/3"
         source_release, payloads = _release_sources(mirror)
         supplied = acquire_sources(discover((str(mirror),), "main"), store)
         assert supplied is not None
@@ -1289,7 +1293,7 @@ environment.main()
             code == 1 and "pack source staging: invalid admission result" in source_refused["error"]
         )
         # The empty-pack fixture must refuse nonempty explicit sources, not omit them.
-        assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
+        assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
         cached_release = object_path(store / "engines", "sha256:" + source_release.name)
         assert (cached_release / "official-packs.lock").read_bytes() == payloads[
             "official-packs.lock"
@@ -1308,18 +1312,18 @@ environment.main()
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
         before_settings = (root / "project.json").read_bytes()
-        code, refused = _run(root, "update", "--yes")
+        code, refused = _run(root, "update", "--channel", "main", "--yes")
         assert code == 1 and refused["status"] == "error"
-        assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
+        assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         assert {path: path.read_bytes() for path in (root / "journal").glob("*.json")} == (
             before_journals
         )
         assert (root / "project.json").read_bytes() == before_settings
         mirror.rename(tmp_path / "unavailable-mirror")
-        damaged = next(first.rglob("fixture_engine.py"))
+        damaged = next(current.rglob("fixture_engine.py"))
         damaged.write_text("VALUE = 999\n")
-        (first / "constraints.txt").unlink()
+        (current / "constraints.txt").unlink()
         code, drift = _run(root, "doctor")
         assert code == 1 and drift["status"] == "drift"
         assert "missing: constraints.txt" in drift["changes"]
@@ -1373,7 +1377,7 @@ environment.main()
         for flags in ((), ("--plan",)):
             code, repair_plan = _run(root, "doctor", "--repair", *flags)
             assert code == 0 and repair_plan["status"] == "planned", repair_plan
-            assert repair_plan["current"] == 1
+            assert repair_plan["current"] == 3
             assert snapshot() == before
         if os.name != "nt":
             outside_cache.chmod(0)
@@ -1383,13 +1387,13 @@ environment.main()
         cached_wheel.write_bytes(b"corrupt local wheel")
         code, repair_failed = _run(root, "doctor", "--repair", "--yes")
         assert code == 1 and "offline generation sync failed" in repair_failed["error"]
-        assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
+        assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         cached_wheel.write_bytes(verified)
         code, repaired = _run(root, "doctor", "--repair", "--yes")
-        assert code == 0 and repaired["current"] == 3, repaired
+        assert code == 0 and repaired["current"] == 4, repaired
         assert _run(root, "doctor")[1]["status"] == "clean"
-        repaired_root = root / "generations/3"
+        repaired_root = root / "generations/4"
         assert not (repaired_root / "python" / stale_cache.relative_to(base_python)).exists()
         assert not list((repaired_root / "python").rglob("external.pyc"))
         assert not (repaired_root / "python/cache-alias").exists()
@@ -1412,10 +1416,10 @@ environment.main()
             outside_cache.chmod(0o600)
             (stale_cache.parent / "external.pyc").unlink()
             (base_python / "cache-alias").unlink()
-        restored = next((root / "generations/3").rglob("fixture_engine.py"))
+        restored = next((root / "generations/4").rglob("fixture_engine.py"))
         assert restored.read_text() == "VALUE = 41\n"
         assert damaged.read_text() == "VALUE = 999\n"
-        assert not (first / "constraints.txt").exists()
+        assert not (current / "constraints.txt").exists()
         assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).operation == "repair"
         base_module = next(base_python.rglob("antigravity.py"))
         original = base_module.read_bytes()
@@ -1425,7 +1429,7 @@ environment.main()
             code, corrupt_base = _run(root, "doctor", "--repair", "--yes")
             assert code == 1 and "intact local base input" in corrupt_base["error"]
             assert sorted((root / "journal").glob("*.json")) == journals
-            assert (root / "current").read_text() == "3\n"
+            assert (root / "current").read_text() == "4\n"
         finally:
             base_module.write_bytes(original)
         if os.name != "nt":
@@ -1440,7 +1444,7 @@ environment.main()
                 code, linked_base = _run(root, "doctor", "--repair", "--yes")
                 assert code == 1 and "linked local base inputs" in linked_base["error"]
                 assert sorted((root / "journal").glob("*.json")) == journals
-                assert (root / "current").read_text() == "3\n"
+                assert (root / "current").read_text() == "4\n"
             finally:
                 original_directory.unlink()
                 parked.rename(original_directory)
@@ -1554,7 +1558,9 @@ def test_public_fixture_commands_install_update_and_rollback(
         for result in (status, doctor):
             assert result["base"]["label"] == base_label
             assert result["engine"]["version"] == expected["version"]
-            assert result["engine"]["label"] == (engine_label if number == 1 else None)
+            assert result["engine"]["label"] == (
+                engine_label if expected["version"] == "1.0" else None
+            )
             assert result["engine"]["release"] == manifest["engine"]["release"]
         # The offline proxy barrier applies to downloads, not this loopback observation.
         with build_opener(ProxyHandler({})).open(
@@ -1576,8 +1582,8 @@ def test_public_fixture_commands_install_update_and_rollback(
         run("advance")
         assert run("update")["current"] == 2
         check(2, fixture["expected"]["updated"], "update")
-        assert run("rollback")["current"] == 1
-        check(1, fixture["expected"]["initial"], "rollback")
+        assert run("rollback")["current"] == 3
+        check(3, fixture["expected"]["initial"], "rollback")
         assert (root / "generations/2/generation.json").is_file()
         assert len(list((root / "journal").glob("*.json"))) == 3
     finally:

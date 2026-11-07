@@ -41,7 +41,8 @@ def _check(conditioning: Any) -> str:
 def test_lotus_returns_exact_frozen_embedding_with_independent_storage() -> None:
     first = LotusConditioning.execute()["conditioning"]
     assert _check(first) == _EMBEDDING_HASH
-    first[0][0].fill_(12)
+    with torch.inference_mode():
+        first[0][0].fill_(12)
     first[0][1]["changed"] = True
     second = LotusConditioning.execute()["conditioning"]
     assert _check(second) == _EMBEDDING_HASH

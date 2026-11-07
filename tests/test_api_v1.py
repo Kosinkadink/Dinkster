@@ -43,6 +43,7 @@ GOLDEN_V1_SURFACE = (
     "current_execution_context",
     "dissolve_alpha",
     "document_meta",
+    "validate_image_document_encoded",
     "empty_document",
     "export_ora",
     "export_psd",
@@ -58,6 +59,7 @@ GOLDEN_V1_SURFACE = (
     "obtain_resident",
     "LatentStream",
     "MultiStreamLatent",
+    "inference_nodes",
     "initialize_inference_process",
     "prepare_sampling_model",
     "materialize_audio",
@@ -366,6 +368,8 @@ GOLDEN_V1_SURFACE = (
     "encode_detection",
     "encode_region",
     "region_meta",
+    "validate_detection_encoded",
+    "validate_region_encoded",
     # -- model3d codec (dinkster-values.model3d_codec): raw GLB bytes across
     # boundaries, the original container as the browser rendition, and the
     # asset<MODEL3D> file decode provider.
@@ -946,6 +950,7 @@ def test_reexports_are_the_internal_objects() -> None:
         "apply_commands": document,
         "append_raster": document,
         "document_meta": document,
+        "validate_image_document_encoded": document,
         "empty_document": document,
         "flatten": document,
         "raster_png": document,
