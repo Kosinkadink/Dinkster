@@ -99,8 +99,8 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
 
 @pytest.mark.parametrize(
     ("replace_base", "replace_engine"),
-    [(False, False), (True, False), (False, True)],
-    ids=["exact", "missing-base", "missing-engine"],
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["exact", "missing-base", "missing-engine", "missing-engine-and-base"],
 )
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_base: bool, replace_engine: bool
@@ -214,9 +214,10 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     try:
         assert code == 0 and result["current"] == 1, result.get("error", result)
         first = history(root)[0]
+        snapshot = cast("dict", first["snapshot"])
         replacement_id = None
         chosen = None
-        expected_engine = cast("dict", first["snapshot"])["engine"]
+        expected_engine = snapshot["engine"]
         assert (
             "pack-sources/healthy/dinkster-pack.toml" in cast("dict", first["snapshot"])["metadata"]
         )
@@ -322,32 +323,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     shutil.rmtree(published)
                     shutil.rmtree(store / "bases" / base_id[7:])
                     shutil.rmtree(store / "downloads" / base_id[7:])
-                    preserved = {
-                        path.relative_to(root): path.read_bytes()
-                        for path in root.rglob("*")
-                        if path.is_file() and path.name != ".lock"
-                    }
-                    code, proposal = _run(root, "restore", "1", "--yes")
-                    assert code == 0 and proposal["status"] == "approval-required", proposal
-                    alternatives = proposal["restorePlan"]["alternatives"]
-                    assert len(alternatives) == 1, alternatives
-                    chosen = alternatives[0]
-                    assert chosen["substitutions"] == [
-                        {
-                            "field": "base",
-                            "before": snapshot["base"],
-                            "after": {"id": replacement_id, "variant": "fixture-cpu"},
-                        }
-                    ]
-                    assert chosen["snapshot"]["engine"] == snapshot["engine"]
-                    assert chosen["snapshot"]["inProcessPacks"] == ["healthy"]
-                    assert {
-                        path.relative_to(root): path.read_bytes()
-                        for path in root.rglob("*")
-                        if path.is_file() and path.name != ".lock"
-                    } == preserved
-                    approval = ("--approve", chosen["approval"])
-                elif replace_engine:
+                if replace_engine:
                     snapshot = cast("dict", first["snapshot"])
                     base = json.loads(snapshot["metadata"]["base-manifest.json"])
                     channel_path = mirror / "channels/main.json"
@@ -371,6 +347,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     ]:
                         if row["name"].endswith(".whl"):
                             shutil.rmtree(store / "wheels" / row["sha256"])
+                if replace_base or replace_engine:
                     preserved = {
                         path.relative_to(root): path.read_bytes()
                         for path in root.rglob("*")
@@ -381,12 +358,23 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     alternatives = proposal["restorePlan"]["alternatives"]
                     assert len(alternatives) == 1, alternatives
                     chosen = alternatives[0]
-                    assert {row["field"] for row in chosen["substitutions"]} == {
-                        "engine",
-                        "constraints",
-                    }
+                    substitutions = chosen["substitutions"]
+                    expected_fields = {"engine", "constraints"} if replace_engine else set()
+                    if replace_base:
+                        expected_fields.add("base")
+                        assert next(row for row in substitutions if row["field"] == "base") == {
+                            "field": "base",
+                            "before": snapshot["base"],
+                            "after": {"id": replacement_id, "variant": "fixture-cpu"},
+                        }
+                    assert {row["field"] for row in substitutions} == expected_fields
                     assert chosen["snapshot"]["engine"] == expected_engine
-                    assert chosen["snapshot"]["base"] == snapshot["base"]
+                    assert chosen["snapshot"]["base"] == (
+                        {"id": replacement_id, "variant": "fixture-cpu"}
+                        if replace_base
+                        else snapshot["base"]
+                    )
+                    assert chosen["snapshot"]["inProcessPacks"] == ["healthy"]
                     assert {
                         path.relative_to(root): path.read_bytes()
                         for path in root.rglob("*")
