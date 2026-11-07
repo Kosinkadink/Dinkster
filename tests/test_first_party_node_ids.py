@@ -496,3 +496,81 @@ def test_geometry_and_vision_hooks_do_not_register_unrelated_family_codecs(
     specs = {type_id: registry.spec(type_id) for type_id in required}
     hook(registry)
     assert all(registry.spec(type_id) is spec for type_id, spec in specs.items())
+
+
+def test_producer_pack_type_ownership_survives_ordinary_loading() -> None:
+    from dinkster_inference_wire import register_inference_types
+    from dinkster_values import TypeRegistry, register_core_types
+    from dinkster_workers.host import load_pack
+
+    producers = {
+        "wan": {"WAN_CAMERA_EMBEDDING", "TRACKS"},
+        "ltx": {"IC_LORA_PARAMETERS"},
+        "sd": {"PHOTOMAKER"},
+        "video": {"INTERP_MODEL", "OPTICAL_FLOW"},
+        "upscale": {"UPSCALE_MODEL"},
+        "vision-depth-anything-3": {"DA3_MODEL", "DA3_GEOMETRY"},
+        "vision-mediapipe": {"FACE_DETECTION_MODEL", "FACE_LANDMARKS"},
+        "vision-sam3": {"SAM3_TRACK_DATA"},
+        "vision-sam3d-body": {"SAM3D_BODY_MODEL", "MHR_POSE_DATA"},
+    }
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_inference_types(registry)
+    for types in producers.values():
+        for type_id in types:
+            assert registry.owner_of(type_id) is None
+            assert type_id not in registry
+    root = Path(__file__).resolve().parents[1] / "packages"
+    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
+    for name in sorted({row["pack"] for row in inventory["nodes"]}):
+        pack = name.removeprefix("dinkster-")
+        manifest = load_manifest(root / f"dinkster-nodes-{pack}/dinkster-pack.toml")
+        _worker, isolated_registry, _nodes, _arms = load_pack(manifest)
+        for type_id in producers.get(pack, ()):
+            assert isolated_registry.owner_of(type_id) == name
+            assert isolated_registry.spec(type_id).declared_codec
+        if pack == "vision-sam3d-body":
+            assert isolated_registry.owner_of("SAM3_TRACK_DATA") == "dinkster-vision-sam3"
+        if pack == "void":
+            assert isolated_registry.owner_of("OPTICAL_FLOW") == "dinkster-video"
+    for pack, types in producers.items():
+        manifest = load_manifest(root / f"dinkster-nodes-{pack}/dinkster-pack.toml")
+        load_pack(manifest, registry=registry)
+        for type_id in types:
+            assert registry.owner_of(type_id) == manifest.name
+            assert registry.spec(type_id).declared_codec
+            with pytest.raises(ValueError, match="owned by"):
+                registry.claim_types("unrelated", (type_id,))
+    assert registry.owner_of("SAM3_TRACK_DATA") == "dinkster-vision-sam3"
+    registry.remove_pack_types("dinkster-video")
+    assert registry.owner_of("INTERP_MODEL") is None
+    assert "INTERP_MODEL" not in registry
+    assert registry.owner_of("PHOTOMAKER") == "dinkster-sd"
+    assert registry.owner_of("IMAGE") == "core"
+
+    async def compose_all() -> None:
+        from dinkster_server import PackInfo
+
+        from dinkster.compose import PackSpec, ServingComposer
+
+        composer = ServingComposer()
+        try:
+            specs = [
+                PackSpec(
+                    root / f"dinkster-nodes-{name.removeprefix('dinkster-')}/dinkster-pack.toml",
+                    in_process=True,
+                    trust_reserved=True,
+                    packs={name: PackInfo(name, version="0.0.1")},
+                )
+                for name in sorted({row["pack"] for row in inventory["nodes"]})
+            ]
+            for spec in composer.order_pack_entries(specs):
+                await composer.add_pack(spec)
+            assert set(composer.composition.schemas) == {
+                row["nodeType"] for row in inventory["nodes"] + inventory["supportNodes"]
+            }
+        finally:
+            await composer.close()
+
+    run_scenario(compose_all())

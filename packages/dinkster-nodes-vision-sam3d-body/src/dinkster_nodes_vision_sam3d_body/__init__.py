@@ -46,7 +46,10 @@ def register_types(registry: TypeRegistry) -> None:
     if LOAD3D_CAMERA_TYPE not in registry:
         register_load3d_camera_type(registry)
     if SAM3_TRACK_DATA_TYPE not in registry:
-        register_sam3_track_type(registry)
+        with registry.registering_pack(
+            "dinkster-vision-sam3", (SAM3_TRACK_DATA_TYPE,), allow_bare=True
+        ):
+            register_sam3_track_type(registry)
     if SAM3D_BODY_MODEL_TYPE not in registry:
         register_resident_type(
             registry, SAM3D_BODY_MODEL_TYPE, table=default_pool(), meta=comfy_resident_meta

@@ -6,7 +6,7 @@ from dinkster_api.v1 import (
     comfy_resident_meta,
     default_pool,
     register_asset_type,
-    register_media_types,
+    register_inference_types,
     register_resident_type,
     resolver_from_env,
 )
@@ -67,7 +67,7 @@ __all__ = ["NODES"]
 def register_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
-    register_media_types(registry)
+    register_inference_types(registry)
     return (
         registry.spec(PHOTOMAKER_TYPE)
         if PHOTOMAKER_TYPE in registry

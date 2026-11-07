@@ -219,8 +219,21 @@ __all__ = [
     "WEBCAM_TYPE",
 ]
 
-# Pack-owned values do not inherit foundation ownership.
+# Canonical spellings are shared; producer packs own their private value types.
 BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__) - {
+    DA3_GEOMETRY_TYPE,
+    DA3_MODEL_TYPE,
+    FACE_DETECTION_MODEL_TYPE,
+    FACE_LANDMARKS_TYPE,
+    IC_LORA_PARAMETERS_TYPE,
     IMAGE_DOCUMENT_TYPE,
+    INTERP_MODEL_TYPE,
+    MHR_POSE_DATA_TYPE,
+    OPTICAL_FLOW_TYPE,
+    PHOTOMAKER_TYPE,
+    SAM3_TRACK_DATA_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
+    TRACKS_TYPE,
     UPSCALE_MODEL_TYPE,
+    WAN_CAMERA_EMBEDDING_TYPE,
 }

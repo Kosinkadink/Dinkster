@@ -29,6 +29,7 @@ from dinkster_api.v1 import (
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video.interpolation_loader import FrameInterpolationModelLoader
+from dinkster_server import PackInfo
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -253,14 +254,19 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
     (tmp_path / f"{module}.py").write_text(
         "from test_interpolation_loader_torch import (InspectInterpolationModel, "
         "InterpolationImages, InspectInterpolatedImages)\n"
-        "from dinkster_nodes_video import register_types as register_inference_types\n"
+        "from dinkster_nodes_video import register_types as register_video\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-video', "
+        "('INTERP_MODEL', 'OPTICAL_FLOW'), allow_bare=True):\n"
+        "        register_video(registry)\n"
         "NODES = (InspectInterpolationModel, InterpolationImages, InspectInterpolatedImages)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname = "interpolation-fixture"\npublisher = "dinkster"\n'
-        'namespaces = ["interpolation-fixture"]\n[pack.entry]\n'
+        'namespaces = ["interpolation-fixture"]\n'
+        '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
         f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
         encoding="ascii",
     )
@@ -293,6 +299,9 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
                         manifest=manifest,
                         in_process=in_process,
                         trust_reserved=True,
+                        packs={"dinkster-video": PackInfo("Video", version="0.0.1")}
+                        if manifest == native
+                        else None,
                         worker_group=None if in_process else "interpolation-fixture",
                         group_manifests=() if in_process else manifests,
                     )

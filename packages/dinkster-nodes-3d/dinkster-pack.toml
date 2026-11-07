@@ -4,6 +4,7 @@ version = "0.0.1"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.3d"]
+type-namespaces = []
 requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26", "scipy>=1.11", "tqdm>=4", "pillow>=10"]
 
 [pack.inference]

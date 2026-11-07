@@ -24,12 +24,13 @@ from dinkster_api.v1 import (
     TypeExpr,
     TypeRegistry,
     initialize_inference_process,
-    register_inference_types,
 )
 from dinkster_assets import AssetVault
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_vision_sam3 import register_types
 from dinkster_nodes_vision_sam3.sam3_preview import SAM3_TrackPreview
 from dinkster_schema.reporting import capture_preview_artifacts
+from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -44,7 +45,7 @@ def cpu(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _portable(type_id: str, value: Any) -> Any:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(type_id)
     return spec.decode(spec.encode(value))
 
@@ -226,14 +227,19 @@ def test_native_preview_publishes_through_ordinary_hosts_twice(
     module = f"sam3_preview_fixture_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3_preview_torch import PreviewSource\n"
-        "from dinkster_nodes_vision_sam3 import register_types as register_inference_types\n"
+        "from dinkster_nodes_vision_sam3 import register_types as register_sam3\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-sam3', "
+        "('SAM3_TRACK_DATA',), allow_bare=True):\n"
+        "        register_sam3(registry)\n"
         "NODES = (PreviewSource,)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="sam3-preview-fixture"\npublisher="dinkster"\n'
-        'namespaces=["sam3-preview-fixture"]\n[pack.entry]\n'
+        'namespaces=["sam3-preview-fixture"]\n'
+        '[pack.dependencies]\ndinkster-vision-sam3=">=0.0.1"\n[pack.entry]\n'
         f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
@@ -256,11 +262,18 @@ def test_native_preview_publishes_through_ordinary_hosts_twice(
         composer = ServingComposer(worker_env=env)
         try:
             for manifest in (native, fixture):
+                packs = (
+                    {"dinkster-vision-sam3": PackInfo("SAM3", version="0.0.1")}
+                    if manifest == native
+                    else None
+                )
                 await composer.add_pack(
-                    PackSpec(manifest, in_process=True, env=env)
+                    PackSpec(manifest, in_process=True, env=env, trust_reserved=True, packs=packs)
                     if in_process
                     else PackSpec(
                         manifest,
+                        trust_reserved=True,
+                        packs=packs,
                         worker_group="sam3-preview-fixture",
                         group_manifests=(native, fixture),
                         env=env,

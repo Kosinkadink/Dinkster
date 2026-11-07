@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
+    INTERP_MODEL_TYPE,
     NOISE_TYPE,
     OPTICAL_FLOW_TYPE,
     SAMPLER_TYPE,
@@ -39,10 +40,14 @@ def register_types(registry: TypeRegistry) -> None:
         register_conditioning_type(registry, resident_table=default_pool())
     for type_id in (NOISE_TYPE, SAMPLER_TYPE):
         register_sampling_type(registry, type_id)
-    for type_id in (VAE_TYPE, OPTICAL_FLOW_TYPE):
-        if type_id not in registry:
+    if VAE_TYPE not in registry:
+        register_resident_type(registry, VAE_TYPE, table=default_pool(), meta=comfy_resident_meta)
+    if OPTICAL_FLOW_TYPE not in registry:
+        with registry.registering_pack(
+            "dinkster-video", (INTERP_MODEL_TYPE, OPTICAL_FLOW_TYPE), allow_bare=True
+        ):
             register_resident_type(
-                registry, type_id, table=default_pool(), meta=comfy_resident_meta
+                registry, OPTICAL_FLOW_TYPE, table=default_pool(), meta=comfy_resident_meta
             )
 
 
