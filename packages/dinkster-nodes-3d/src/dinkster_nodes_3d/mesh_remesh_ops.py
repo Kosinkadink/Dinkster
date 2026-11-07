@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 
 from dinkster_api.v1 import report_progress
 
-from .mesh_qem import _connected_labels, _kitchen_op, _sorted_edge_halfedges, _split_touching_sheets
+from .mesh_holes import connected_labels as _connected_labels
+from .mesh_qem import _kitchen_op, _sorted_edge_halfedges, _split_touching_sheets
 
 if TYPE_CHECKING:
     import torch
