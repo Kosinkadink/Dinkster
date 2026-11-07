@@ -224,7 +224,9 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
         shutil.rmtree(mirror / "engine" / missing_snapshot["engine"]["release"][7:])
         for artifact in manifest["artifacts"]:
             if artifact["name"].endswith(".whl"):
-                cached = Path(fixture["store"]) / "wheels" / artifact["sha256"]
+                cached = object_path(
+                    Path(fixture["store"]) / "wheels", "sha256:" + artifact["sha256"]
+                )
                 if cached.exists():
                     shutil.rmtree(cached)
         code, proposal = _run(root, "restore", "2", "--plan")
