@@ -256,11 +256,22 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
     assert b"\r\n" not in second[-1].read_bytes()
     lock = Lockfile.from_record_json(first[-1].read_text())
     expected = {
+        "dinkster-audio-models",
+        "dinkster-conditioning",
+        "dinkster-flux",
+        "dinkster-hidream",
+        "dinkster-latent",
+        "dinkster-llm",
+        "dinkster-misc-models",
+        "dinkster-models",
         "dinkster-nodes-comfy",
         "dinkster-nodes-foundation",
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-qwen",
+        "dinkster-sampling",
+        "dinkster-sd",
         "dinkster-text",
         "dinkster-upscale",
         "dinkster-vision-birefnet",
@@ -327,7 +338,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         relative = Path(*module.split(".")) / "__init__.py"
         if pack.pack.startswith("dinkster-vision-"):
             original = Path("packages/dinkster-nodes-vision/src") / relative
-        elif pack.pack in {"dinkster-text", "dinkster-upscale"}:
+        elif not pack.pack.startswith("dinkster-nodes-"):
             original = (
                 Path("packages")
                 / pack.pack.replace("dinkster-", "dinkster-nodes-", 1)
@@ -940,7 +951,7 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         path.name: path.read_bytes() for path in second
     }
     catalog = Lockfile.from_record_json(first[-1].read_text())
-    assert len(catalog.packs) == 16
+    assert len(catalog.packs) == 27
     for pack in catalog.packs:
         archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
         data = archive.read_bytes()
