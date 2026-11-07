@@ -4,17 +4,20 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ASSET_TYPE, CORE_FLOAT, HOOKS_TYPE, AssetWidget, NumberWidget, TypeExpr
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.hook_lora import HOOK_LORA_NODES
+from dinkster_nodes_models import NODES
+from dinkster_nodes_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
 
 
 def test_lora_hook_schemas_and_native_registration() -> None:
-    for node, strengths in zip(
-        HOOK_LORA_NODES, (("strength_model", "strength_clip"), ("strength_model",)), strict=True
+    for node, node_type, strengths in zip(
+        (CreateHookLora, CreateHookLoraModelOnly),
+        ("dinkster.models.create_hook_lora", "dinkster.models.create_hook_lora_model_only"),
+        (("strength_model", "strength_clip"), ("strength_model",)),
+        strict=True,
     ):
         schema = node.schema()
-        assert node in COMFY_NODES
-        assert schema.node_type == node.__name__
+        assert node in NODES
+        assert schema.node_type == node_type
         assert schema.category == "advanced/hooks/create"
         assert tuple(item.id for item in schema.inputs) == ("lora_name", *strengths, "prev_hooks")
         asset = schema.inputs[0]
@@ -33,9 +36,8 @@ def test_lora_hook_schemas_and_native_registration() -> None:
 
     root = Path(__file__).resolve().parents[1]
     manifest = tomllib.loads(
-        (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
+        (root / "packages/dinkster-nodes-models/dinkster-pack.toml").read_text()
     )
-    assert tuple(manifest["pack"]["namespaces"]) == (
-        "devices",
-        *(node.schema().node_type for node in COMFY_NODES),
-    )
+    assert manifest["pack"]["namespaces"] == ["dinkster.models", "devices"]
+    start = NODES.index(CreateHookLora)
+    assert NODES[start : start + 2] == (CreateHookLora, CreateHookLoraModelOnly)
