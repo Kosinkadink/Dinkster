@@ -208,6 +208,8 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     try:
         assert code == 0 and result["current"] == 1, result.get("error", result)
         first = history(root)[0]
+        replacement_id = None
+        chosen = None
         for number in (1, 3):
             generation = root / "generations" / str(number)
             assert json.loads((generation / "dinkster.lock").read_text()) == json.loads(source_lock)
@@ -250,7 +252,6 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     base_id = snapshot["base"]["id"]
                     published = mirror / "base/fixture-cpu" / base_id[7:]
                     index = []
-                    replacement_id = None
                     for compatible in (False, True):
                         base = json.loads(json.dumps(original))
                         base["interpreter"]["release"] = (
@@ -319,6 +320,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         assert records[2]["restoredFrom"] == 1
         assert [entry["exact"] for entry in records] == [True, True, not replace_base]
         if replace_base:
+            assert replacement_id is not None and chosen is not None
             assert cast("dict", records[2]["snapshot"])["base"]["id"] == replacement_id
             assert records[2]["substitutions"] == chosen["substitutions"]
         assert {
