@@ -34,8 +34,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video.video_edits import VideoCrop, VideoSlice, VideoTrim
+from video_pack_fixtures import compose_video_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def test_crop_schema_and_cold_import() -> None:
@@ -342,19 +343,20 @@ def test_edits_cross_public_hosts_twice(tmp_path: Path, in_process: bool, operat
         original = native.read_bytes()
         module = f"video_edit_fixture_{operation.replace(' ', '_')}_{in_process}"
         (tmp_path / f"{module}.py").write_text(
-            "from dinkster_nodes_video import register_types as register_inference_types\n"
             "from test_video_edits import CropSource, CropConsumer, TrimSource, TrimConsumer\n"
+            "from video_pack_fixtures import register_video_types\n"
             "NODES = (CropSource, CropConsumer, TrimSource, TrimConsumer)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "dinkster-pack.toml"
         fixture.write_text(
             '[pack]\nname = "video-crop-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["video-crop-fixture", "video-trim-fixture"]\n[pack.entry]\n'
-            f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
+            'namespaces = ["video-crop-fixture", "video-trim-fixture"]\n'
+            '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
+            f'nodes = "{module}:NODES"\n'
+            f'types = "{module}:register_video_types"\n',
             encoding="ascii",
         )
-        manifests = (native, fixture)
         paths = (tmp_path, package / "tests", checkout / "src", *checkout.glob("packages/*/src"))
         composer = ServingComposer(
             cache_mode="layered",
@@ -366,17 +368,13 @@ def test_edits_cross_public_hosts_twice(tmp_path: Path, in_process: bool, operat
             },
         )
         try:
-            for manifest in manifests:
-                await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
-                    if in_process
-                    else PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        worker_group="video-crop",
-                        group_manifests=manifests,
-                    )
-                )
+            await compose_video_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="video-crop",
+            )
             crop = operation == "VideoCrop"
             prefix = "video-crop-fixture" if crop else "video-trim-fixture"
             edit_inputs: dict[str, object] = {"video": Link("source", "video")}

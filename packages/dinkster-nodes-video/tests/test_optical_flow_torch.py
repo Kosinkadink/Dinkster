@@ -30,8 +30,9 @@ from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video import NODES
 from dinkster_nodes_video.optical_flow import OpticalFlowLoader
+from video_pack_fixtures import compose_video_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 class _TinyRaft(torch.nn.Module):
@@ -277,15 +278,17 @@ def test_loader_crosses_ordinary_hosts_twice_with_resident_optical_flow(
             "from test_optical_flow_torch import (\n"
             "    OpticalFlowFixtureConsumer, OpticalFlowFixtureSource,\n"
             ")\n"
-            "from dinkster_nodes_video import register_types as register_inference_types\n"
+            "from video_pack_fixtures import register_video_types\n"
             "NODES = (OpticalFlowFixtureSource, OpticalFlowFixtureConsumer)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "fixture.toml"
         fixture.write_text(
             '[pack]\nname = "optical-flow-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["optical-flow-fixture"]\n[pack.entry]\n'
-            f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
+            'namespaces = ["optical-flow-fixture"]\n'
+            '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
+            f'nodes = "{module}:NODES"\n'
+            f'types = "{module}:register_video_types"\n',
             encoding="ascii",
         )
         environment = {
@@ -307,17 +310,13 @@ def test_loader_crosses_ordinary_hosts_twice_with_resident_optical_flow(
         }
         composer = ServingComposer(worker_env=environment)
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(manifest, in_process=True, trust_reserved=True)
-                    if in_process
-                    else PackSpec(
-                        manifest,
-                        trust_reserved=True,
-                        worker_group="optical-flow-fixture",
-                        group_manifests=(native, fixture),
-                    )
-                )
+            await compose_video_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="optical-flow-fixture",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("optical-flow-fixture.source"),

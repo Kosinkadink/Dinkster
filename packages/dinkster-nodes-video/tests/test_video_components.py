@@ -36,8 +36,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video.video_components import CreateVideo, GetVideoComponents
+from video_pack_fixtures import compose_video_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -519,12 +520,12 @@ def test_native_concatenate_video_cross_public_hosts_twice(
         (tmp_path / f"{module}.py").write_text(
             "from pathlib import Path\n"
             "import dinkster_nodes_video.video_components as native\n"
-            "from dinkster_nodes_video import register_types as register_inference_types\n"
             "from test_video_components import (\n"
             "    ComponentConsumer, ComponentSource, ConcatenateConsumer, ConcatenateSource,\n"
             ")\n"
             "assert Path(native.__file__).resolve() == "
             f"Path({str(package / 'src/dinkster_nodes_video/video_components.py')!r})\n"
+            "from video_pack_fixtures import register_video_types\n"
             "NODES = (ComponentSource, ComponentConsumer, "
             "ConcatenateSource, ConcatenateConsumer)\n",
             encoding="ascii",
@@ -535,12 +536,12 @@ def test_native_concatenate_video_cross_public_hosts_twice(
             'name = "video-components-public-fixture"\n'
             'publisher = "dinkster"\n'
             'namespaces = ["video-components-public"]\n\n'
+            '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n'
             "[pack.entry]\n"
             f'nodes = "{module}:NODES"\n'
-            f'types = "{module}:register_inference_types"\n',
+            f'types = "{module}:register_video_types"\n',
             encoding="ascii",
         )
-        manifests = (native, fixture)
         paths = (
             tmp_path,
             package / "tests",
@@ -560,16 +561,13 @@ def test_native_concatenate_video_cross_public_hosts_twice(
             },
         )
         try:
-            for manifest in manifests:
-                pack = PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
-                if not in_process:
-                    pack = PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        worker_group="video-components-public",
-                        group_manifests=manifests,
-                    )
-                await composer.add_pack(pack)
+            await compose_video_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="video-components-public",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("video-components-public.concatenate-source"),
@@ -634,10 +632,10 @@ def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_pro
         (tmp_path / f"{module}.py").write_text(
             "from pathlib import Path\n"
             "import dinkster_nodes_video.video_components as native\n"
-            "from dinkster_nodes_video import register_types as register_inference_types\n"
             "from test_video_components import ComponentConsumer, ComponentSource\n"
             "assert Path(native.__file__).resolve() == "
             f"Path({str(package / 'src/dinkster_nodes_video/video_components.py')!r})\n"
+            "from video_pack_fixtures import register_video_types\n"
             "NODES = (ComponentSource, ComponentConsumer)\n",
             encoding="ascii",
         )
@@ -647,12 +645,12 @@ def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_pro
             'name = "video-components-public-fixture"\n'
             'publisher = "dinkster"\n'
             'namespaces = ["video-components-public"]\n\n'
+            '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n'
             "[pack.entry]\n"
             f'nodes = "{module}:NODES"\n'
-            f'types = "{module}:register_inference_types"\n',
+            f'types = "{module}:register_video_types"\n',
             encoding="ascii",
         )
-        manifests = (native, fixture)
         paths = (
             tmp_path,
             package / "tests",
@@ -669,16 +667,13 @@ def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_pro
             },
         )
         try:
-            for manifest in manifests:
-                pack = PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
-                if not in_process:
-                    pack = PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        worker_group="video-components-public",
-                        group_manifests=manifests,
-                    )
-                await composer.add_pack(pack)
+            await compose_video_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="video-components-public",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("video-components-public.source"),

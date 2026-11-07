@@ -24,8 +24,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video.webm_save import SaveWEBM
+from video_pack_fixtures import compose_video_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -277,28 +278,26 @@ def test_save_webm_ordinary_manifest_runs_twice_with_a_cached_source(
             manifest = package / "dinkster-pack.toml"
             (tmp_path / "webm_fixture.py").write_text(
                 "from test_webm_save import ImageSource\n"
-                "from dinkster_nodes_video import register_types as register_inference_types\n"
+                "from video_pack_fixtures import register_video_types\n"
                 "NODES = (ImageSource,)\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "fixture.toml"
             fixture.write_text(
                 '[pack]\nname = "webm-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["webm-fixture"]\n[pack.entry]\n'
-                'nodes = "webm_fixture:NODES"\ntypes = "webm_fixture:register_inference_types"\n',
+                'namespaces = ["webm-fixture"]\n'
+                '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
+                'nodes = "webm_fixture:NODES"\n'
+                'types = "webm_fixture:register_video_types"\n',
                 encoding="ascii",
             )
-            for path in (manifest, fixture):
-                await composer.add_pack(
-                    PackSpec(manifest=path, in_process=True, trust_reserved=True)
-                    if in_process
-                    else PackSpec(
-                        trust_reserved=True,
-                        manifest=path,
-                        worker_group="webm-fixture",
-                        group_manifests=(manifest, fixture),
-                    )
-                )
+            await compose_video_packs(
+                composer,
+                manifest,
+                fixture,
+                in_process=in_process,
+                worker_group="webm-fixture",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("webm-fixture.source"),

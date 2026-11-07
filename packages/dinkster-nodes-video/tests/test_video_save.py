@@ -29,8 +29,9 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video.video_components import CreateVideo
 from dinkster_nodes_video.video_save import SaveVideo
 from dinkster_schema import elaborate
+from video_pack_fixtures import compose_video_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -282,30 +283,27 @@ def test_save_video_ordinary_manifest_runs_twice_in_both_hosts(
         try:
             (tmp_path / f"{module}.py").write_text(
                 "from test_video_save import VideoSource\n"
-                "from dinkster_nodes_video import register_types as register_inference_types\n"
+                "from video_pack_fixtures import register_video_types\n"
                 "NODES = (VideoSource,)\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "fixture.toml"
             fixture.write_text(
                 '[pack]\nname = "video-save-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["video-save-fixture"]\n[pack.entry]\n'
+                'namespaces = ["video-save-fixture"]\n'
+                '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
                 f'nodes = "{module}:NODES"\n'
-                f'types = "{module}:register_inference_types"\n',
+                f'types = "{module}:register_video_types"\n',
                 encoding="ascii",
             )
             native = package / "dinkster-pack.toml"
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
-                    if in_process
-                    else PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        worker_group="video-save-fixture",
-                        group_manifests=(native, fixture),
-                    )
-                )
+            await compose_video_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="video-save-fixture",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("video-save-fixture.source"),

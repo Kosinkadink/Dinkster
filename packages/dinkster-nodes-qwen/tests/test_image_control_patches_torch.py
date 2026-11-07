@@ -101,6 +101,7 @@ def _installed(patcher: Any, name: str) -> Any:
 def test_diffsynth_dispatch_slices_rgb_scales_and_preserves_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    initialize_inference_process()
     import dinkster_inference.ldm.lumina.controlnet as z_runtime
     import dinkster_inference.ldm.qwen_image21.model as qwen_runtime
 

@@ -28,8 +28,9 @@ from dinkster_assets import LocalAssetRef, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_video.video_load import LoadVideo
 from dinkster_values import video_source
+from video_pack_fixtures import compose_video_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def _frames() -> np.ndarray:
@@ -210,18 +211,19 @@ def test_load_video_executes_through_native_and_fixture_packs_with_cache_hits(
             "from pathlib import Path\n"
             "from test_video_load import VideoLoadConsumer\n"
             "import dinkster_nodes_video.video_load as module\n"
-            "from dinkster_nodes_video import register_types as register_inference_types\n"
             "assert Path(module.__file__).resolve() == "
             f"Path({str(package / 'src/dinkster_nodes_video/video_load.py')!r})\n"
+            "from video_pack_fixtures import register_video_types\n"
             "NODES = (VideoLoadConsumer,)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "dinkster-pack.toml"
         fixture.write_text(
             '[pack]\nname="video-load-fixture"\npublisher="dinkster"\n'
-            'namespaces=["video-load-fixture"]\n[pack.entry]\n'
+            'namespaces=["video-load-fixture"]\n'
+            '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
             'nodes="video_load_fixture:NODES"\n'
-            'types="video_load_fixture:register_inference_types"\n',
+            'types = "video_load_fixture:register_video_types"\n',
             encoding="ascii",
         )
         paths = (
@@ -240,16 +242,13 @@ def test_load_video_executes_through_native_and_fixture_packs_with_cache_hits(
         )
         native = package / "dinkster-pack.toml"
         try:
-            for manifest in (native, fixture):
-                pack = PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
-                if not in_process:
-                    pack = PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        worker_group="video-load-fixture",
-                        group_manifests=(native, fixture),
-                    )
-                await composer.add_pack(pack)
+            await compose_video_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="video-load-fixture",
+            )
             graph = Graph(
                 nodes={
                     "load": GraphNode("dinkster.video.load_video", {"file": asset.to_wire()}),

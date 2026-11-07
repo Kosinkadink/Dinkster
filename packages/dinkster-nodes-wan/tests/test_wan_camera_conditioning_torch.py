@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     IMAGE_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
-    register_inference_types,
 )
+from dinkster_nodes_wan import register_types
 from dinkster_nodes_wan.wan_camera import WanCameraEmbedding
 from dinkster_nodes_wan.wan_camera_conditioning import WanCameraImageToVideo
 
@@ -61,7 +61,7 @@ def test_camera_schema_and_absent_inputs_preserve_conditioning() -> None:
 
 def test_camera_and_image_decode_public_values_without_mutating_sources() -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     image = torch.stack([torch.full((16, 24, 4), float(index)) for index in range(6)])
     camera = torch.arange(72, dtype=torch.float16).reshape(1, 3, 4, 2, 3).transpose(-1, -2)
     image_before, camera_before = image.clone(), camera.clone()
