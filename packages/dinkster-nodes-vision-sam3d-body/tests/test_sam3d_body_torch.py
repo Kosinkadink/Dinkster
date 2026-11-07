@@ -24,17 +24,43 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    TypeRegistry,
     initialize_inference_process,
     materialize_vision_packet,
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
+from dinkster_nodes_vision_sam3d_body import register_types
 from dinkster_nodes_vision_sam3d_body.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
 from dinkster_nodes_vision_sam3d_body.sam3d_expression import SAM3DBody_FaceExpression
 from dinkster_nodes_vision_sam3d_body.sam3d_prediction import SAM3DBody_Predict
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_pack_registers_required_pose_packets_and_preserves_existing_authority() -> None:
+    registry = TypeRegistry()
+    resident = registry.register(SAM3D_BODY_MODEL_TYPE)
+    register_types(registry)
+    assert {
+        "MHR_POSE_DATA",
+        "KIMODO_POSE_DATA",
+        "SAM3D_BODY_MODEL",
+        "SAM3_TRACK_DATA",
+        "LOAD3D_CAMERA",
+        "IMAGE",
+        "BOUNDING_BOX",
+        "FILE_3D",
+        "ASSET",
+    } <= set(registry.type_ids())
+    assert not {"DA3_GEOMETRY", "FACE_LANDMARKS", "DA3_MODEL", "FACE_DETECTION_MODEL"} & set(
+        registry.type_ids()
+    )
+    packet = registry.spec(MHR_POSE_DATA_TYPE)
+    register_types(registry)
+    assert registry.spec(MHR_POSE_DATA_TYPE) is packet
+    assert registry.spec(SAM3D_BODY_MODEL_TYPE) is resident
 
 
 class ExpressionDetector:

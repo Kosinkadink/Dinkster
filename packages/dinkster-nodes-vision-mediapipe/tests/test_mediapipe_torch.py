@@ -27,6 +27,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    TypeRegistry,
     digest_bytes,
     materialize_image,
     materialize_latent,
@@ -34,6 +35,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
+from dinkster_nodes_vision_mediapipe import register_types
 from dinkster_nodes_vision_mediapipe.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from dinkster_nodes_vision_mediapipe.mediapipe_detection import (
     LoadMediaPipeFaceLandmarker,
@@ -674,3 +676,29 @@ def test_face_loader_detection_ordinary_hosts_twice(
 
     asyncio.run(scenario())
     assert path.read_bytes() == before
+
+
+def test_pack_registers_only_its_vision_packet_and_preserves_existing_authority() -> None:
+    registry = TypeRegistry()
+    resident = registry.register(FACE_DETECTION_MODEL_TYPE)
+    register_types(registry)
+    assert {
+        "FACE_LANDMARKS",
+        "FACE_DETECTION_MODEL",
+        "IMAGE",
+        "MASK",
+        "BOUNDING_BOX",
+        "COLOR",
+        "ASSET",
+    } <= set(registry.type_ids())
+    assert not {
+        "DA3_GEOMETRY",
+        "MHR_POSE_DATA",
+        "KIMODO_POSE_DATA",
+        "DA3_MODEL",
+        "SAM3D_BODY_MODEL",
+    } & set(registry.type_ids())
+    packet = registry.spec(FACE_LANDMARKS_TYPE)
+    register_types(registry)
+    assert registry.spec(FACE_LANDMARKS_TYPE) is packet
+    assert registry.spec(FACE_DETECTION_MODEL_TYPE) is resident

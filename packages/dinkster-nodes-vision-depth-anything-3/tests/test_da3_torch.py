@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    TypeRegistry,
     initialize_inference_process,
     materialize_image,
     materialize_mesh,
@@ -28,6 +29,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
+from dinkster_nodes_vision_depth_anything_3 import register_types
 from dinkster_nodes_vision_depth_anything_3.depth_anything_3 import (
     DA3GeometryToMesh,
     DA3Inference,
@@ -37,6 +39,26 @@ from dinkster_nodes_vision_depth_anything_3.depth_anything_3 import (
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_pack_registers_only_its_vision_packet_and_preserves_existing_authority() -> None:
+    registry = TypeRegistry()
+    resident = registry.register(DA3_MODEL_TYPE)
+    register_types(registry)
+    assert {"DA3_GEOMETRY", "DA3_MODEL", "IMAGE", "MASK", "MESH", "ASSET"} <= set(
+        registry.type_ids()
+    )
+    assert not {
+        "FACE_LANDMARKS",
+        "MHR_POSE_DATA",
+        "KIMODO_POSE_DATA",
+        "FACE_DETECTION_MODEL",
+        "SAM3D_BODY_MODEL",
+    } & set(registry.type_ids())
+    packet = registry.spec(DA3_GEOMETRY_TYPE)
+    register_types(registry)
+    assert registry.spec(DA3_GEOMETRY_TYPE) is packet
+    assert registry.spec(DA3_MODEL_TYPE) is resident
 
 
 def _extrinsics() -> Any:

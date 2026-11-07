@@ -2,11 +2,18 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    DA3_GEOMETRY_TYPE,
+    DA3_MODEL_TYPE,
     TypeRegistry,
+    comfy_resident_meta,
+    default_pool,
     register_asset_type,
-    register_inference_types,
+    register_media_types,
+    register_resident_type,
+    register_vision_packet_types,
     resolver_from_env,
 )
+from dinkster_inference_wire.geometry_wire import register_mesh_type
 
 from .depth_anything_3 import DA3GeometryToMesh, DA3Inference, DA3Render, LoadDA3Model
 
@@ -21,4 +28,10 @@ NODES = (
 def register_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
-    register_inference_types(registry)
+    register_media_types(registry)
+    register_mesh_type(registry)
+    if DA3_MODEL_TYPE not in registry:
+        register_resident_type(
+            registry, DA3_MODEL_TYPE, table=default_pool(), meta=comfy_resident_meta
+        )
+    register_vision_packet_types(registry, type_ids=(DA3_GEOMETRY_TYPE,))
