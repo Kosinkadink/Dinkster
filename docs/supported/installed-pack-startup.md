@@ -299,7 +299,8 @@
   collecting shared caches, changing history or stopping processes.
   Successful CLI activation, repair, restore, start and stop attempt collection
   after releasing transaction locks. Managed supervisors attempt startup,
-  hourly and acknowledged-shutdown collection, retrying busy locks sooner.
+  hourly collection, retrying busy locks sooner. Acknowledged stops attempt
+  collection after durably recording the stopped engine assignment.
   Cleanup failures remain warnings rather than invalidating a successful
   update. Uncovered legacy trees still defer; Desktop controls are separate.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's

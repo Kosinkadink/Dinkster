@@ -222,6 +222,9 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
             inspected["state"] = "stopped"
             inspected["pid"] = 0
             _write_record(root, name, inspected)
+            from .environment_collection import automatic_generation_collection
+
+            automatic_generation_collection(root)
             return
         time.sleep(_POLL_INTERVAL)
     raise EnvironmentError("authenticated supervisor did not stop")

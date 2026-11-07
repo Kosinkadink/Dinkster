@@ -760,6 +760,45 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
         stop_engine(root, "main", generation=3)
 
 
+@pytest.mark.parametrize("cleanup_project", [True], indirect=True)
+def test_acknowledged_shutdown_collects_without_periodic_maintenance(
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from test_environment_runtime import free_port
+
+    root = cleanup_project
+    launch = subprocess.Popen
+    script = (
+        "from dinkster_supervisor import environment_collection as c, supervisor\n"
+        "async def disabled(root, stopped):\n"
+        "    await stopped.wait()\n"
+        "c.maintain_generations=disabled\n"
+        "supervisor.main()\n"
+    )
+
+    def no_periodic_maintenance(command, **kwargs):
+        return launch([command[0], "-c", script, *command[3:]], **kwargs)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", no_periodic_maintenance)
+    write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False})
+    try:
+        start_engine(root, 2, "old", free_port())
+        assert (root / "generations/2").is_dir()
+        write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": True})
+        stop_engine(root, "old", generation=2)
+        if sys.platform == "linux" or os.name == "nt":
+            assert not (root / "generations/2").exists()
+            assert not (root / "generations/7").exists()
+        else:
+            assert (root / "generations/2").is_dir()
+        assert (root / "generations/1").is_dir()
+        assert (root / "generations/3").is_dir()
+    finally:
+        stop_engine(root, "old", generation=2)
+
+
 def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: Path):
     from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
 

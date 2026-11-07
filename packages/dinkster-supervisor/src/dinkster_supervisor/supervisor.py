@@ -802,7 +802,6 @@ def main() -> None:
             if args.process_state is not None:
                 complete_process(args.process_state, args.instance, descendants=family.proven)
 
-    admitted = False
     with family:
         if args.process_state is None:
             asyncio.run(serve())
@@ -810,10 +809,6 @@ def main() -> None:
             with process_lifetime(args.process_state, args.instance) as admitted:
                 if admitted:
                     asyncio.run(serve())
-    if args.environment_root is not None and admitted:
-        from .environment_collection import automatic_generation_collection
-
-        automatic_generation_collection(args.environment_root)
 
 
 if __name__ == "__main__":
