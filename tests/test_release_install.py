@@ -844,7 +844,10 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             line
             for line in api_metadata.splitlines()
             if line.startswith("Requires-Dist: dinkster-")
-        } == {"Requires-Dist: dinkster-opentimelineio==0.19.0"}
+        } == {
+            "Requires-Dist: dinkster-opentimelineio==0.19.0",
+            f"Requires-Dist: dinkster-supervisor=={supervisor_version}",
+        }
         for member in (
             "api",
             "values",
