@@ -216,7 +216,7 @@ def test_native_manifest_texture_stage_twice(tmp_path: Path, in_process: bool) -
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "trellis_fixture.py").write_text(
             "from test_trellis_torch import TextureSource, ShapeFeatures, TextureInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
             "NODES = (TextureSource, ShapeFeatures, TextureInspect)\n",
             encoding="ascii",
         )

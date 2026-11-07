@@ -25,8 +25,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import LocalAssetRef, MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_nodes_3d import register_types as register_inference_types
 from dinkster_nodes_3d.load3d_captures import Load3D
-from dinkster_nodes_comfy import register_inference_types
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,

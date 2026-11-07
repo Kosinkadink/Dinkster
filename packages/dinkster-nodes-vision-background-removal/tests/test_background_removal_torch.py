@@ -28,7 +28,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy import background_removal
+from dinkster_nodes_vision_background_removal import background_removal
 from dinkster_nodes_vision_background_removal.background_removal import (
     LoadBackgroundRemovalModel,
     RemoveBackground,
@@ -211,7 +211,8 @@ def test_admitted_background_loader_to_mask_through_ordinary_manifest_twice(
         (tmp_path / f"{module}.py").write_text(
             "from test_background_removal_torch import (\n"
             "    BackgroundSource, BackgroundInspect, install_controlled_loader\n)\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_vision_background_removal import (\n"
+            "    register_types as register_inference_types,\n)\n"
             "install_controlled_loader()\n"
             "NODES = (BackgroundSource, BackgroundInspect)\n",
             encoding="ascii",

@@ -94,7 +94,7 @@ def test_voxel_bake_large_sparse_keys_and_many_distant_texels() -> None:
 def test_voxel_bake_oom_fallback_does_not_hide_other_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_nodes_comfy import voxel_texture
+    from dinkster_nodes_3d import voxel_texture
 
     mesh, voxel = fixture()
     voxel["data"] = voxel["data"][:1]
@@ -143,7 +143,8 @@ def test_voxel_bake_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
     module = f"voxel_bake_source_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_voxel_texture_torch import VoxelSource\n"
-        "from dinkster_nodes_comfy import register_inference_types\nNODES=(VoxelSource,)\n",
+        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "NODES=(VoxelSource,)\n",
         encoding="ascii",
     )
     manifest = tmp_path / "source.toml"

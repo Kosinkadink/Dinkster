@@ -3,7 +3,7 @@ name = "dinkster-nodes-vision-sdpose"
 version = "0.0.2"
 description = "ComfyUI-origin vision-sdpose nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "numpy>=1.26"]
+dependencies = ["dinkster-api", "dinkster-nodes-misc-models", "dinkster-nodes-image", "numpy>=1.26"]
 
 [build-system]
 requires = ["hatchling"]
@@ -19,4 +19,5 @@ packages = ["src/dinkster_nodes_vision_sdpose"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-nodes-conditioning = { workspace = true }
+dinkster-nodes-misc-models = { workspace = true }
+dinkster-nodes-image = { workspace = true }

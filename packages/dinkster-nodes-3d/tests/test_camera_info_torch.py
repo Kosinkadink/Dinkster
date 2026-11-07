@@ -163,7 +163,7 @@ def test_camera_info_ordinary_production_manifest_twice(tmp_path: Path, in_proce
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "camera_info_fixture.py").write_text(
             "from test_camera_info_torch import CameraStateSource, CameraInfoInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_3d import register_types as register_inference_types\n"
             "NODES = (CameraStateSource, CameraInfoInspect)\n",
             encoding="ascii",
         )

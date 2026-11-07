@@ -31,7 +31,7 @@ from dinkster_api.v1 import (
     first_party_schema,
     load_file3d,
 )
-from dinkster_nodes_image.image_file_tools import LoadImage
+from dinkster_nodes_image.ported.image_file_tools import LoadImage
 
 
 class Load3D(Node):

@@ -158,10 +158,11 @@ def test_normal_bake_cage_and_backfaces() -> None:
     "node_type", ["dinkster.3d.bake_ambient_occlusion", "dinkster.3d.bake_normal_map_from_mesh"]
 )
 def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool, node_type: str) -> None:
-    module = f"mesh_bake_source_{node_type}_{in_process}"
+    module = f"mesh_bake_source_{node_type.rsplit('.', 1)[-1]}_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_mesh_bake_torch import MeshSource\n"
-        "from dinkster_nodes_comfy import register_inference_types\nNODES=(MeshSource,)\n",
+        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "NODES=(MeshSource,)\n",
         encoding="ascii",
     )
     manifest = tmp_path / "source.toml"

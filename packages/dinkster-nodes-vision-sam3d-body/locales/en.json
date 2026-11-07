@@ -1,26 +1,32 @@
 {
   "nodes": {
     "dinkster.vision.sam3d.body.build_pose_file": {
-      "displayName": "BuildPoseFile"
+      "displayName": "Create 3D Animation File"
     },
     "dinkster.vision.sam3d.body.sam3_d_body_face_expression": {
-      "displayName": "SAM3DBody_FaceExpression"
+      "displayName": "Face Expression to SAM3D Body"
     },
     "dinkster.vision.sam3d.body.sam3_d_body_loader": {
-      "displayName": "SAM3DBody_Loader"
+      "displayName": "Load SAM3D Body Model"
     },
     "dinkster.vision.sam3d.body.sam3_d_body_predict": {
-      "displayName": "SAM3DBody_Predict"
+      "displayName": "Run SAM3D Body Prediction"
     },
     "dinkster.vision.sam3d.body.sam3_d_body_render": {
-      "displayName": "SAM3DBody_Render"
+      "displayName": "Render 3D Body Pose"
     },
     "dinkster.vision.sam3d.body.sam3_d_body_smooth": {
-      "displayName": "SAM3DBody_Smooth"
+      "displayName": "Smooth SAM3D Body Pose Data"
     }
   },
   "searchTerms": {
     "dinkster.vision.sam3d.body.build_pose_file": [
+      "pose animation",
+      "mocap",
+      "glb",
+      "bvh",
+      "build pose file",
+      "save pose file",
       "BuildPoseFile"
     ],
     "dinkster.vision.sam3d.body.sam3_d_body_face_expression": [
@@ -33,6 +39,9 @@
       "SAM3DBody_Predict"
     ],
     "dinkster.vision.sam3d.body.sam3_d_body_render": [
+      "Render SAM3D Body",
+      "sam3d render",
+      "kimodo render",
       "SAM3DBody_Render"
     ],
     "dinkster.vision.sam3d.body.sam3_d_body_smooth": [

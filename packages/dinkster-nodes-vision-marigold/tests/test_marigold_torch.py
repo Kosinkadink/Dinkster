@@ -112,9 +112,9 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
         try:
             (tmp_path / "marigold_fixture.py").write_text(
                 "from test_marigold_torch import PredictionSource, InspectDepth\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, PredictionSource, InspectDepth)\n",
+                "from dinkster_nodes_vision_marigold import NODES as MARIGOLD_NODES\n"
+                "from dinkster_nodes_vision_marigold import register_types\n"
+                "NODES = (*MARIGOLD_NODES, PredictionSource, InspectDepth)\n",
                 encoding="ascii",
             )
             manifest = tmp_path / "dinkster-pack.toml"
@@ -122,14 +122,10 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 (root / "dinkster-pack.toml")
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["marigold-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "marigold_fixture:NODES")
+                .replace("dinkster_nodes_vision_marigold:NODES", "marigold_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "marigold_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "marigold_fixture:register_inference_types",
+                    "dinkster_nodes_vision_marigold:register_types",
+                    "marigold_fixture:register_types",
                 ),
                 encoding="ascii",
             )

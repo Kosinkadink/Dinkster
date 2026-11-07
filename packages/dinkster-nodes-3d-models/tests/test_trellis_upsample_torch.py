@@ -237,7 +237,7 @@ def test_unchanged_native_manifest_cascades_twice(tmp_path: Path, in_process: bo
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "trellis_cascade_fixture.py").write_text(
             "from test_trellis_upsample_torch import CascadeSource, CascadeInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
             "NODES = (CascadeSource, CascadeInspect)\n",
             encoding="ascii",
         )

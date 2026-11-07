@@ -226,7 +226,7 @@ def test_native_preview_publishes_through_ordinary_hosts_twice(
     module = f"sam3_preview_fixture_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3_preview_torch import PreviewSource\n"
-        "from dinkster_nodes_comfy import register_inference_types\n"
+        "from dinkster_nodes_vision_sam3 import register_types as register_inference_types\n"
         "NODES = (PreviewSource,)\n",
         encoding="ascii",
     )

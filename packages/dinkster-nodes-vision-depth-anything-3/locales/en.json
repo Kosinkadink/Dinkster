@@ -1,23 +1,39 @@
 {
   "nodes": {
     "dinkster.vision.depth.anything.3.da3_geometry_to_mesh": {
-      "displayName": "DA3GeometryToMesh"
+      "displayName": "Convert DA3 Geometry to Mesh"
     },
     "dinkster.vision.depth.anything.3.da3_inference": {
-      "displayName": "DA3Inference"
+      "displayName": "Run Depth Anything 3"
     },
     "dinkster.vision.depth.anything.3.da3_render": {
-      "displayName": "DA3Render"
+      "displayName": "Render Depth Anything 3"
     },
     "dinkster.vision.depth.anything.3.load_da3_model": {
-      "displayName": "LoadDA3Model"
+      "displayName": "Load Depth Anything 3"
     }
   },
   "searchTerms": {
     "dinkster.vision.depth.anything.3.da3_geometry_to_mesh": [
+      "da3",
+      "depth anything",
+      "mesh",
+      "geometry",
+      "3d",
+      "triangulate",
       "DA3GeometryToMesh"
     ],
     "dinkster.vision.depth.anything.3.da3_inference": [
+      "depth",
+      "geometry",
+      "da3",
+      "depth anything",
+      "monocular",
+      "pointmap",
+      "sky",
+      "3d",
+      "metric depth",
+      "disparity",
       "DA3Inference"
     ],
     "dinkster.vision.depth.anything.3.da3_render": [
