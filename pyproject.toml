@@ -168,6 +168,15 @@ extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 exclude = [
     "packages/dinkster-native/src/dinkster_native/model3d",
     "packages/dinkster-nodes-comfy/tests",
+    "packages/dinkster-nodes-audio/tests",
+    "packages/dinkster-nodes-video/tests",
+    "packages/dinkster-nodes-sd/tests",
+    "packages/dinkster-nodes-flux/tests",
+    "packages/dinkster-nodes-qwen/tests",
+    "packages/dinkster-nodes-hidream/tests",
+    "packages/dinkster-nodes-audio-models/tests",
+    "packages/dinkster-nodes-misc-models/tests",
+    "packages/dinkster-nodes-llm/tests",
     "packages/dinkster-nodes-upscale/tests",
     "packages/dinkster-nodes-vision",
 ]
