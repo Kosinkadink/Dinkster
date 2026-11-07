@@ -1611,7 +1611,14 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert run("rollback")["current"] == 3
         check(3, fixture["expected"]["initial"], "rollback")
         assert (root / "generations/2/generation.json").is_file()
-        assert len(list((root / "journal").glob("*.json"))) == 3
+        journals = [Journal.read(path) for path in (root / "journal").glob("*.json")]
+        assert sorted((row.operation, row.target) for row in journals if row.operation != "gc") == [
+            ("rollback", 3),
+            ("setup", 1),
+            ("update", 2),
+        ]
+        assert all(row.stage == "complete" and row.error is None for row in journals)
+        assert len(list((root / "history").glob("*.json"))) == 3
     finally:
         if (root / "current").exists():
             run("stop")
