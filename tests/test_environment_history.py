@@ -352,15 +352,16 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
 
 
 @pytest.mark.parametrize(
-    ("replace_base", "replace_engine", "reacquire"),
+    ("replace_base", "replace_engine", "reacquire", "mutation"),
     [
-        (False, False, False),
-        (True, False, False),
-        (False, True, False),
-        (True, True, False),
-        (False, False, True),
+        (False, False, False, "update"),
+        (True, False, False, "update"),
+        (False, True, False, "update"),
+        (True, True, False, "update"),
+        (False, False, True, "update"),
+        (False, False, False, "pack-install"),
     ],
-    ids=["exact", "missing-base", "missing-engine", "missing-engine-and-base", "reacquired-source"],
+    ids=["exact", "missing-base", "missing-engine", "missing-engine-and-base", "reacquired-source", "pack-install"],
 )
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     tmp_path: Path,
@@ -368,14 +369,16 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     replace_base: bool,
     replace_engine: bool,
     reacquire: bool,
+    mutation: str,
 ):
-    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
     from dinkster_supervisor.environment_state import interpreter
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from dinkster_workers.pack_environment import venv_python
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _wheel, _workspace_tree
+    from test_installer import _download_ticket, _release_record, _serve_artifacts
 
     from tests.fixtures.environments import build as publisher
 
@@ -414,7 +417,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
             .replace("healthy", name)
             .replace(f"{name}_nodes:", f"{name}:")
             .replace("numpy>=1.26", "fixture-adopt==1.0")
-            .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n')
+            .replace("[pack]\n", '[pack]\npublisher="dinkster"\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n')
         )
         (pack / name).mkdir()
         (pack / name / "__init__.py").write_text(HEALTHY_NODES.replace("healthy", name))
@@ -457,6 +460,34 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     }
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
     channel = json.loads(Path(fixture["initialChannel"]).read_bytes())
+    extra = entries[-1]
+    release = "/v1/packs/extra/versions/1.0.0"
+    extra_lock = (dependencies / "extra.pack-lock.json").read_bytes()
+    extra_archive = (updated_artifacts / f"{extra.artifact_digest[7:]}.zip").read_bytes()
+    registry = _serve_artifacts(
+        {
+            release: _release_record(
+                extra,
+                state="active",
+                manifest={"dinkster": ">=0"},
+                installLocks={
+                    "fixture-cpu": {
+                        "baseId": channel["base"]["fixture-cpu"]["id"],
+                        "artifactDigest": extra.artifact_digest,
+                        "digest": artifact_digest(extra_lock),
+                        "size": len(extra_lock),
+                        "url": release + "/locks/fixture-cpu",
+                    }
+                },
+            ),
+            release
+            + "/locks/fixture-cpu?baseId="
+            + channel["base"]["fixture-cpu"]["id"].replace(":", "%3A"): extra_lock,
+            release + "/download-tickets": _download_ticket(extra, extra_archive),
+            f"/v1/artifacts/{extra.artifact_digest}": extra_archive,
+        },
+        [],
+    )
     code, result = _run(
         root,
         "setup",
@@ -518,17 +549,79 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 (mirror / "channels/main.json").write_bytes(
                     Path(fixture["updatedChannel"]).read_bytes()
                 )
-                code, updated = _run(
-                    root,
-                    "update",
-                    "--catalog-lock",
-                    str(updated_lock),
-                    "--artifacts",
-                    str(updated_artifacts),
-                    *locks,
-                    "--yes",
-                    timeout=120,
-                )
+                if mutation == "pack-install":
+                    (root / "registries.toml").write_text(
+                        "[registries.official]\n"
+                        f'endpoint="http://127.0.0.1:{registry.server_port}"\ndefault=true\n'
+                    )
+                    review = tmp_path / "review"
+                    journals = sorted((root / "journal").glob("*"))
+                    code, planned = _run(root, "packs-plan", "extra@1.0.0", "--output", str(review))
+                    assert code == 0, planned.get("error", planned)
+                    assert sorted((root / "journal").glob("*")) == journals
+                    approval = planned["approval"]
+                    for folder in ("workflows", "models", "outputs", "user"):
+                        (root / folder).mkdir(exist_ok=True)
+                        (root / folder / "sentinel.bin").write_bytes(
+                            folder.encode() + b"\x00unchanged"
+                        )
+                    data_before = {
+                        folder: (root / folder / "sentinel.bin").read_bytes()
+                        for folder in ("workflows", "models", "outputs", "user")
+                    }
+                    retained_locks = {
+                        path.parent.name: path.read_bytes()
+                        for path in (root / "generations/1/packs").glob("*/pack-lock.json")
+                    }
+                    settings = root / "project.json"
+                    saved = settings.read_bytes()
+                    settings.write_bytes(saved + b"\n")
+                    code, stale = _run(
+                        root, "packs-apply", "--input", str(review), "--approval", approval
+                    )
+                    assert code != 0 and "changed after planning" in stale["error"]
+                    assert sorted((root / "journal").glob("*")) == journals
+                    assert not (root / "generations/2").exists()
+                    settings.write_bytes(saved)
+                    unreviewed = review / "locks/unreviewed.json"
+                    unreviewed.write_bytes(extra_lock)
+                    code, tampered = _run(
+                        root, "packs-apply", "--input", str(review), "--approval", approval
+                    )
+                    assert code != 0 and "reviewed pack inputs changed" in tampered["error"]
+                    assert sorted((root / "journal").glob("*")) == journals
+                    unreviewed.unlink()
+                    code, updated = _run(
+                        root, "packs-apply", "--input", str(review), "--approval", approval
+                    )
+                    assert code == 0, updated.get("error", updated)
+                    assert {
+                        folder: (root / folder / "sentinel.bin").read_bytes()
+                        for folder in data_before
+                    } == data_before
+                    for name, payload in retained_locks.items():
+                        assert (
+                            root / "generations/2/packs" / name / "pack-lock.json"
+                        ).read_bytes() == payload
+                    assert (
+                        root / "generations/2/packs/extra/pack-lock.json"
+                    ).read_bytes() == extra_lock
+                    code_replay, _replayed = _run(
+                        root, "packs-apply", "--input", str(review), "--approval", approval
+                    )
+                    assert code_replay != 0 and not (root / "generations/3").exists()
+                else:
+                    code, updated = _run(
+                        root,
+                        "update",
+                        "--catalog-lock",
+                        str(updated_lock),
+                        "--artifacts",
+                        str(updated_artifacts),
+                        *locks,
+                        "--yes",
+                        timeout=120,
+                    )
                 assert code == 0 and updated["current"] == 2, updated.get("error", updated)
                 assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
                 assert _run(root, "stop", "--yes")[0] == 0
@@ -722,6 +815,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         } == before
     finally:
         _run(root, "stop", "--yes")
+        registry.shutdown()
 
 
 @pytest.mark.parametrize("shared_store", [False, True], ids=["private-store", "shared-store"])

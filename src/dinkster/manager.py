@@ -1155,14 +1155,15 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     )
                     if not cached.exists():
                         cached.parent.mkdir(parents=True, exist_ok=True)
-                        if entry.source == "registry" or entry.source.startswith("registry:"):
-                            cached.write_bytes(fetch(entry))
-                        else:
-                            actual = build_artifact(
-                                args.installed_lock.parent / "pack-sources" / entry.pack, cached
-                            )
+                        retained = args.installed_lock.parent / "pack-sources" / entry.pack
+                        if retained.is_dir() or not (
+                            entry.source == "registry" or entry.source.startswith("registry:")
+                        ):
+                            actual = build_artifact(retained, cached)
                             if actual != entry.artifact_digest:
                                 raise InstallError(f"{entry.pack}: retained source digest differs")
+                        else:
+                            cached.write_bytes(fetch(entry))
                 from .generation_packs import stage_generation_packs
 
                 with tempfile.TemporaryDirectory(
