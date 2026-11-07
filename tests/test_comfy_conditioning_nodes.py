@@ -11,8 +11,10 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.conditioning import (
-    CONDITIONING_NODES,
+from dinkster_nodes_audio_models import NODES as AUDIO_MODEL_NODES
+from dinkster_nodes_audio_models.conditioning import ConditioningStableAudio
+from dinkster_nodes_conditioning import NODES
+from dinkster_nodes_conditioning.conditioning import (
     ConditioningAverage,
     ConditioningCombine,
     ConditioningConcat,
@@ -23,11 +25,11 @@ from dinkster_nodes_comfy.conditioning import (
     ConditioningSetAreaStrength,
     ConditioningSetMask,
     ConditioningSetTimestepRange,
-    ConditioningStableAudio,
     ConditioningZeroOut,
     conditioning_set_values,
     conditioning_set_values_with_timestep_range,
 )
+from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -251,68 +253,93 @@ def inference_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_registered_classes_have_exact_ids_atoms_and_ordered_interfaces() -> None:
+    nodes = (
+        ConditioningAverage,
+        ConditioningCombine,
+        ConditioningConcat,
+        ConditioningMultiply,
+        ConditioningSetArea,
+        ConditioningSetAreaPercentage,
+        ConditioningSetAreaPercentageVideo,
+        ConditioningSetAreaStrength,
+        ConditioningSetMask,
+        ConditioningZeroOut,
+        ConditioningSetTimestepRange,
+        ConditioningStableAudio,
+    )
     expected = (
         (
-            "ConditioningAverage",
+            "dinkster.conditioning.conditioning_average",
             "Conditioning (Average)",
             ("conditioning_to", "conditioning_from", "conditioning_to_strength"),
         ),
-        ("ConditioningCombine", "Conditioning (Combine)", ("conditioning_1", "conditioning_2")),
-        ("ConditioningConcat", "Conditioning (Concat)", ("conditioning_to", "conditioning_from")),
-        ("ConditioningMultiply", "Conditioning (Multiply)", ("conditioning", "multiplier")),
         (
-            "ConditioningSetArea",
+            "dinkster.conditioning.conditioning_combine",
+            "Conditioning (Combine)",
+            ("conditioning_1", "conditioning_2"),
+        ),
+        (
+            "dinkster.conditioning.conditioning_concat",
+            "Conditioning (Concat)",
+            ("conditioning_to", "conditioning_from"),
+        ),
+        (
+            "dinkster.conditioning.conditioning_multiply",
+            "Conditioning (Multiply)",
+            ("conditioning", "multiplier"),
+        ),
+        (
+            "dinkster.conditioning.conditioning_set_area",
             "Conditioning (Set Area)",
             ("conditioning", "width", "height", "x", "y", "strength"),
         ),
         (
-            "ConditioningSetAreaPercentage",
+            "dinkster.conditioning.conditioning_set_area_percentage",
             "Conditioning (Set Area with Percentage)",
             ("conditioning", "width", "height", "x", "y", "strength"),
         ),
         (
-            "ConditioningSetAreaPercentageVideo",
+            "dinkster.conditioning.conditioning_set_area_percentage_video",
             "Conditioning (Set Area with Percentage for Video)",
             ("conditioning", "width", "height", "temporal", "x", "y", "z", "strength"),
         ),
         (
-            "ConditioningSetAreaStrength",
+            "dinkster.conditioning.conditioning_set_area_strength",
             "Conditioning (Set Area Strength)",
             ("conditioning", "strength"),
         ),
         (
-            "ConditioningSetMask",
+            "dinkster.conditioning.conditioning_set_mask",
             "Conditioning (Set Mask)",
             ("conditioning", "mask", "strength", "set_cond_area"),
         ),
-        ("ConditioningZeroOut", "Conditioning Zero Out", ("conditioning",)),
+        ("dinkster.conditioning.conditioning_zero_out", "Conditioning Zero Out", ("conditioning",)),
         (
-            "ConditioningSetTimestepRange",
-            "ConditioningSetTimestepRange",
+            "dinkster.conditioning.conditioning_set_timestep_range",
+            "",
             ("conditioning", "start", "end"),
         ),
         (
-            "ConditioningStableAudio",
-            "ConditioningStableAudio",
+            "dinkster.audio.models.conditioning_stable_audio",
+            "",
             ("positive", "negative", "seconds_start", "seconds_total"),
         ),
     )
-    assert len(CONDITIONING_NODES) == 12
-    for node, (node_type, display_name, inputs) in zip(CONDITIONING_NODES, expected, strict=True):
+    assert len(nodes) == 12
+    for node, (node_type, display_name, inputs) in zip(nodes, expected, strict=True):
+        assert node in (AUDIO_MODEL_NODES if node is ConditioningStableAudio else NODES)
         schema = node.schema()
         assert schema.node_type == node_type
-        assert (schema.display_name or schema.node_type) == display_name
+        assert schema.display_name == display_name
         assert schema.category == (
             "model/conditioning/stable audio"
-            if node_type == "ConditioningStableAudio"
+            if node is ConditioningStableAudio
             else "model/conditioning/transform"
         )
         assert tuple(input_spec.id for input_spec in schema.inputs) == inputs
         assert all(output.type.types == ("CONDITIONING",) for output in schema.outputs)
         assert tuple(output.id for output in schema.outputs) == (
-            ("positive", "negative")
-            if node_type == "ConditioningStableAudio"
-            else ("CONDITIONING",)
+            ("positive", "negative") if node is ConditioningStableAudio else ("CONDITIONING",)
         )
     mask_wire = schema_to_wire(ConditioningSetMask.schema())
     interface = cast(list[dict[str, object]], mask_wire["interface"])
@@ -530,32 +557,39 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
         try:
             manifest = (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+                / "packages/dinkster-nodes-conditioning/dinkster-pack.toml"
             )
             (tmp_path / "conditioning_fixture_sources.py").write_text(
                 "from test_comfy_conditioning_nodes import ConditioningScalarInspector\n"
                 "from test_comfy_conditioning_nodes import ConditioningScalarSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, ConditioningScalarSource, ConditioningScalarInspector)\n",
+                "from dinkster_nodes_conditioning import NODES as CONDITIONING_NODES\n"
+                "from dinkster_nodes_conditioning.types import register_types\n"
+                "NODES = (*CONDITIONING_NODES, ConditioningScalarSource, "
+                "ConditioningScalarInspector)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["conditioning-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "conditioning_fixture_sources:NODES")
+                .replace("dinkster_nodes_conditioning:NODES", "conditioning_fixture_sources:NODES")
                 .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "conditioning_fixture_sources:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "conditioning_fixture_sources:register_inference_types",
+                    "dinkster_nodes_conditioning.types:register_types",
+                    "conditioning_fixture_sources:register_types",
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(
+                    manifest=manifest.parent.parent / "dinkster-nodes-latent/dinkster-pack.toml",
+                    in_process=in_process,
+                    trust_reserved=True,
+                    packs={"dinkster-latent": PackInfo("Latent", version="0.0.1")},
+                )
+            )
+            await composer.add_pack(
+                PackSpec(manifest=source_manifest, in_process=in_process, trust_reserved=True)
+            )
             nodes = {
                 "source": GraphNode("conditioning-fixture.source"),
                 "source_inspect": GraphNode(
@@ -563,7 +597,7 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
                     {"conditioning": Link("source", "conditioning")},
                 ),
                 "strength": GraphNode(
-                    "ConditioningSetAreaStrength",
+                    "dinkster.conditioning.conditioning_set_area_strength",
                     {
                         "conditioning": Link("source", "conditioning"),
                         "strength": 3.5,
@@ -579,7 +613,7 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
                 outputs.append("source")
             else:
                 nodes["low_strength"] = GraphNode(
-                    "ConditioningSetAreaStrength",
+                    "dinkster.conditioning.conditioning_set_area_strength",
                     {
                         "conditioning": Link("source", "conditioning"),
                         "strength": 0.125,
