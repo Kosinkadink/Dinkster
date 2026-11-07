@@ -22,9 +22,9 @@ from tests.test_installer import write_pack
 
 
 @pytest.mark.parametrize("authenticated", [False, True])
-@pytest.mark.parametrize("cancel_apply", [0, 1, 2])
+@pytest.mark.parametrize("cancel_apply", [0, 1, 2, "shutdown"])
 def test_pack_install_confirmations_and_live_activation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authenticated: bool, cancel_apply: int
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authenticated: bool, cancel_apply: int | str
 ) -> None:
     async def scenario() -> None:
         installer = Installer(tmp_path / "root", accelerator="cpu")
@@ -104,10 +104,30 @@ def test_pack_install_confirmations_and_live_activation(
             return await handler(request)
 
         app.middlewares.append(capture_request)
+        cleanup_started = asyncio.Event()
+        composition_stopped = asyncio.Event()
+
+        async def begin_cleanup(_: web.Application) -> None:
+            cleanup_started.set()
+
+        async def stop_composition(_: web.Application) -> None:
+            composition_stopped.set()
+            assert "demo" in composer.pack_specs()
+            assert app[STATE_KEY].schema_epoch > 0
+            await composer.close()
+
+        if cancel_apply == "shutdown":
+            app.on_cleanup.append(stop_composition)
         busy = asyncio.Lock()
         routes.add_pack_install_routes(app, composer, installer, busy=busy, redactor=PathRedactor())
+        if cancel_apply == "shutdown":
+            app.on_cleanup.insert(0, begin_cleanup)
+        server = TestServer(app)
+        # Exhaust the HTTP grace period while publication is held by an event.
+        # The property asserted below is cleanup ordering, not elapsed time.
+        await server.start_server(shutdown_timeout=0.001)
         client = TestClient(
-            TestServer(app),
+            server,
             headers={"Authorization": "Bearer test-operator"} if authenticated else {},
         )
         await client.start_server()
@@ -166,6 +186,19 @@ def test_pack_install_confirmations_and_live_activation(
                 )
                 await asyncio.wait_for(published.wait(), timeout=10)
                 assert request_task is not None
+                if cancel_apply == "shutdown":
+                    cleanup = asyncio.create_task(server.close())
+                    try:
+                        await asyncio.wait_for(cleanup_started.wait(), timeout=10)
+                        assert installer.current_number() == 1
+                        assert not composition_stopped.is_set()
+                    finally:
+                        finish_manager.set()
+                        await cleanup
+                        await asyncio.gather(applying, return_exceptions=True)
+                    assert composition_stopped.is_set()
+                    assert not busy.locked()
+                    return
                 request_task.cancel()
                 if cancel_apply == 2:
                     # The handler resumes from the first cancel before this callback runs.

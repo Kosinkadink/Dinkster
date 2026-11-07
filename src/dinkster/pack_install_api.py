@@ -37,6 +37,14 @@ def add_pack_install_routes(
     # One outstanding review per principal bounds retained plans. A restarted
     # backend deliberately forgets confirmations rather than replaying them.
     pending: dict[str, tuple[str, float, str]] = {}
+    operations: set[asyncio.Task[web.Response]] = set()
+
+    async def drain_installations(_: web.Application) -> None:
+        # Disk publication must reach activation before server state and composition teardown,
+        # even after the HTTP server exhausts its request shutdown grace period.
+        await asyncio.gather(*operations)
+
+    app.on_cleanup.insert(0, drain_installations)
 
     def failure(status: int, error: str, detail: str = "", **extra: object) -> web.Response:
         return web.json_response(
@@ -202,6 +210,8 @@ def add_pack_install_routes(
                 )
 
             operation = asyncio.create_task(install_and_activate())
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
             cancelled = False
             while True:
                 try:
