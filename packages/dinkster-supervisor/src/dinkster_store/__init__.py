@@ -7,7 +7,7 @@ import os
 import re
 import tempfile
 from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import cast
@@ -188,11 +188,13 @@ def object_path(
     *,
     label: str | None = None,
     legacy: str | None = None,
+    reserve: bool = True,
 ) -> Path:
     """Resolve without writes, or reserve a label before downloading under the caller's lock.
 
     A reservation identifies a location, not verified or complete content. Acquisition
     must still verify its bytes. Missing content never releases its allocated name.
+    With reserve=False, preview collision selection without writing or recovering metadata.
     """
     _identity(identity)
     old = relative_path(legacy if legacy is not None else identity.split(":", 1)[1])
@@ -207,12 +209,13 @@ def object_path(
     if label is None:
         return existing(_read(root)) or _unlinked(root, old)
     relative_path(label)
-    root.mkdir(parents=True, exist_ok=True)
-    with _lock(root):
+    if reserve:
+        root.mkdir(parents=True, exist_ok=True)
+    with _lock(root) if reserve else nullcontext():
         objects = _read(root)
         path = existing(objects)
         if path is not None:
-            if _unlinked(root, _JOURNAL).exists():
+            if reserve and _unlinked(root, _JOURNAL).exists():
                 _publish(root, objects)
             return path
         used = {value.casefold() for value in objects.values()}
@@ -246,7 +249,8 @@ def object_path(
             name = name[: 96 - len(suffix)] + suffix
             candidate = f"{parent}/{name}" if parent else name
         objects[identity] = candidate
-        _publish(root, objects)
+        if reserve:
+            _publish(root, objects)
         return path
 
 

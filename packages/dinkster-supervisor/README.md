@@ -234,6 +234,9 @@ selection. An unpublished local output is not a production download pin.
 https://releases.dinkster.org --yes --json` acquires the channel's native ZIP
 using its tools manifest hash and archive size/hash, without acquiring engine
 or base payloads. Omit `--yes` to inspect the selection without creating a cache.
+Local ZIP folders use `<date>-<public-supervisor-version>/`, reserving `--2`,
+`--3` for different manifest identities with the same label. Existing hash8-suffixed
+folders remain reusable. Planning previews collisions without changing the cache.
 Channels must supply an independent `tools` pointer for acquisition. A missing
 or invalid pointer fails without falling back to engine assets; engine
 releases do not carry native tools ZIPs.

@@ -61,6 +61,16 @@ def test_pending_allocation_is_recovered_without_reusing_its_name(tmp_path: Path
     pending.write_text(
         json.dumps({"format": "dinkster.store-paths/1", "objects": {first: "pack/2026-11-03-1.0"}})
     )
+    before = {path: path.read_bytes() for path in tmp_path.iterdir()}
+    assert (
+        object_path(tmp_path, first, label="renamed", reserve=False)
+        == tmp_path / "pack/2026-11-03-1.0"
+    )
+    assert (
+        object_path(tmp_path, "sha256:" + "e" * 64, label="pack/2026-11-03-1.0", reserve=False)
+        == tmp_path / "pack/2026-11-03-1.0--2"
+    )
+    assert {path: path.read_bytes() for path in tmp_path.iterdir()} == before
     assert object_path(tmp_path, first) == tmp_path / "pack/2026-11-03-1.0"
     second = object_path(tmp_path, "sha256:" + "e" * 64, label="pack/2026-11-03-1.0")
     assert second == tmp_path / "pack/2026-11-03-1.0--2"

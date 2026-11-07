@@ -271,6 +271,9 @@
   independently versioned tools publication without engine or base payloads.
   Planning creates no cache; confirmed acquisition checks manifest and archive
   integrity and refuses corrupt tools rather than falling back to engine assets.
+  Local ZIP folders use dated supervisor versions without hashes; different
+  content with the same label receives a numeric suffix. Existing cached tools
+  remain reusable, and planning leaves collision allocations unchanged.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.
