@@ -41,7 +41,7 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
-from .environment_history import attempts, history
+from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -58,6 +58,7 @@ from .environment_state import (
     Journal,
     atomic_write,
     content_digest,
+    generation_number,
     read_current,
     read_document,
     write_document,
@@ -985,6 +986,24 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _import(args: argparse.Namespace, result: dict[str, object]) -> int:
+    number = generation_number(args.generation)
+    root = Path(args.root)
+    plan = [
+        f"preserve generation {number} as an explicit legacy software import",
+        "recover completed history publication; require intact software and completed ancestry",
+        "keep current software and activation chronology; retain unrecorded pack payloads",
+    ]
+    result.update(current=read_current(root), plan=plan, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    _recover_pending(root)
+    with writer_lock(root):
+        entry = import_generation(root, number)
+        result.update(current=read_current(root), entry=entry, status="applied")
+    return 0
+
+
 def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     with writer_lock(root):
@@ -995,7 +1014,7 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
         current = read_current(root)
         if current is None:
             raise EnvironmentError("project has no active generation")
-        entries = history(root)
+        entries = activation_entries(root)
         if len(entries) < 2:
             raise EnvironmentError("project has no previous successful history entry")
         if entries[-1]["generation"] != current:
@@ -1219,6 +1238,8 @@ def main() -> None:
     rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
+    legacy_import = commands.add_parser("import", help="preserve identified legacy software")
+    legacy_import.add_argument("generation", type=int)
     for command in (rollback, restore):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
@@ -1227,7 +1248,19 @@ def main() -> None:
     move.add_argument("--data", type=Path)
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (tools, doctor, setup, update, start, stop, rollback, restore, gc, move):
+    for command in (
+        tools,
+        doctor,
+        setup,
+        update,
+        start,
+        stop,
+        rollback,
+        restore,
+        legacy_import,
+        gc,
+        move,
+    ):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
@@ -1242,6 +1275,7 @@ def main() -> None:
         stop,
         rollback,
         restore,
+        legacy_import,
         gc,
         move,
     ):
@@ -1287,6 +1321,8 @@ def main() -> None:
             code = _rollback(args, result)
         elif args.operation == "restore":
             code = _restore(args, result, args.entry)
+        elif args.operation == "import":
+            code = _import(args, result)
         elif args.operation == "gc":
             code = _gc(args, result)
         elif args.operation == "move":

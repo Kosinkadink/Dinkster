@@ -116,6 +116,23 @@ jobs:
       - run: uv sync --locked --all-packages
       - run: uv run --no-sync python -m pytest -q --durations=5 "tests/test_environment_history.py::test_adoption_materializes_pack_dependencies_and_restores_after_pruning[${{ matrix.case }}]"
 
+  windows-imports:
+    name: Windows legacy snapshot imports
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+      - run: uv sync --locked --all-packages
+      - run: uv run --no-sync python -m pytest -q --durations=5 tests/test_environment_history.py::test_legacy_import_preserves_activation_selection_and_refuses_conflicting_capture tests/test_environment_history.py::test_imported_software_restores_after_pruning_without_becoming_rollback_predecessor tests/test_environment_history.py::test_restore_plan_reports_only_required_pack_wheels_without_writing
+
   fast:
     needs: [changes, torch-cpu]
     if: always()
