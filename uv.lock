@@ -1621,6 +1621,7 @@ dependencies = [
     { name = "dinkster-inference-wire" },
     { name = "dinkster-nodes-conditioning" },
     { name = "dinkster-nodes-latent" },
+    { name = "dinkster-values" },
 ]
 
 [package.metadata]
@@ -1629,6 +1630,7 @@ requires-dist = [
     { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
     { name = "dinkster-nodes-latent", editable = "packages/dinkster-nodes-latent" },
+    { name = "dinkster-values", editable = "packages/dinkster-values" },
 ]
 
 [[package]]
