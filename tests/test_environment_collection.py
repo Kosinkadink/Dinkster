@@ -501,10 +501,15 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
         pending = threads.submit(activation)
         try:
             assert entered.wait(20), "activation did not reach validation"
-            before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+            lock = tmp_path / ".lock"
+            assert lock.is_file()
+            before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and p != lock}
             code, refused = _run(tmp_path, "gc", "--yes")
             assert code == 1 and "another environment writer holds" in refused["error"], refused
-            assert {p: p.read_bytes() for p in before} == before
+            assert {
+                p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and p != lock
+            } == before
+            assert lock.is_file()
             assert not list((tmp_path / ".garbage").glob("*"))
         finally:
             release.set()
@@ -550,10 +555,15 @@ def test_collection_defers_during_move_without_touching_source_generations(
         pending = threads.submit(move.execute_move, plan)
         try:
             assert entered.wait(20), "move did not reach destination preparation"
-            before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            lock = root / ".lock"
+            assert lock.is_file()
+            before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file() and p != lock}
             code, refused = _run(root, "gc", "--yes")
             assert code == 1 and "another environment writer holds" in refused["error"], refused
-            assert {p: p.read_bytes() for p in before} == before
+            assert {
+                p: p.read_bytes() for p in root.rglob("*") if p.is_file() and p != lock
+            } == before
+            assert lock.is_file()
             assert not list((root / ".garbage").glob("*"))
         finally:
             release.set()
