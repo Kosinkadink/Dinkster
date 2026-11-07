@@ -15,7 +15,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.request import (
+    HTTPDefaultErrorHandler,
+    HTTPErrorProcessor,
+    HTTPHandler,
+    HTTPRedirectHandler,
+    OpenerDirector,
+    Request,
+    UnknownHandler,
+)
 
 from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import (
@@ -584,9 +592,18 @@ def _public_row(record: dict[str, object]) -> dict[str, object]:
 
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> object:
     request = Request(url, method=method, headers=headers or {})
-    # Supervisor identity and shutdown credentials must never traverse an ambient proxy.
+    # Loopback HTTP needs neither ambient proxies nor the Windows TLS certificate store.
+    opener = OpenerDirector()
+    for handler in (
+        HTTPHandler(),
+        HTTPDefaultErrorHandler(),
+        HTTPRedirectHandler(),
+        HTTPErrorProcessor(),
+        UnknownHandler(),
+    ):
+        opener.add_handler(handler)
     try:
-        with build_opener(ProxyHandler({})).open(request, timeout=2) as response:
+        with opener.open(request, timeout=2) as response:
             return json.loads(response.read().decode("utf-8"))
     except TimeoutError as exc:
         # urllib wraps connection timeouts, but response-body reads can raise directly.

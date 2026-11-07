@@ -56,10 +56,12 @@ def test_latent_guide_preserves_timeline_conditioning_and_sources(index, time_bo
     assert positive[0][1] == {"guide_attention_entries": [old_positive], "keep": "p"}
     assert negative[0][1] == {"guide_attention_entries": [old_negative], "keep": "n"}
     negative_coordinates = output["negative"][0][1]["keyframe_idxs"].clone()
-    output["positive"][0][1]["keyframe_idxs"].zero_()
+    with torch.inference_mode():
+        output["positive"][0][1]["keyframe_idxs"].zero_()
     assert torch.equal(output["negative"][0][1]["keyframe_idxs"], negative_coordinates)
-    latent["samples"].zero_()
-    latent["noise_mask"].zero_()
+    with torch.inference_mode():
+        latent["samples"].zero_()
+        latent["noise_mask"].zero_()
     assert torch.equal(samples, before) and torch.equal(guide, guide_before)
     assert torch.equal(mask, mask_before)
 

@@ -87,6 +87,7 @@ def test_hunyuan_720p_dispatch_derives_the_reference_config(monkeypatch, tmp_pat
             captured["state"] = received
 
     modules = {
+        "torch": torch,
         "dinkster_inference.utils": SimpleNamespace(
             load_torch_file=lambda *args, **kwargs: (state, {})
         ),

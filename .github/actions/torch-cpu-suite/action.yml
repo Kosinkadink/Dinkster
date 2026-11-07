@@ -35,7 +35,7 @@ runs:
     - name: Test CPU comfy contracts
       if: inputs.suite != 'vision'
       shell: bash
-      run: .venv/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests ${{ inputs.comfy-pytest-args }}
+      run: .venv/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests tests/test_comfy_vae_nodes.py ${{ inputs.comfy-pytest-args }}
     - name: Check vision types
       if: inputs.suite != 'comfy'
       shell: bash
