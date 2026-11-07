@@ -46,6 +46,11 @@ __all__ = [
     "_embedding_roots",
     "_clip_options",
     "_combo",
+    "asset_input",
+    "asset_path",
+    "embedding_roots",
+    "clip_options",
+    "combo_input",
 ]
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -198,6 +203,13 @@ def _combo(
         advanced=advanced,
         widget=ComboWidget(tuple(ComboOption(option) for option in options)),
     )
+
+
+asset_input = _asset
+asset_path = _path
+embedding_roots = _embedding_roots
+clip_options = _clip_options
+combo_input = _combo
 
 
 class CheckpointLoaderSimple(Node):
