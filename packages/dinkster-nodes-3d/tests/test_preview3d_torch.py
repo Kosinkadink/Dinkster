@@ -34,8 +34,9 @@ from dinkster_nodes_3d.preview3d import Preview3D
 from dinkster_server.library import ServerLibrary
 from dinkster_server.preflight import bind_model_names
 from dinkster_values import ABSENT_REASON_META_KEY, TypeRegistry, register_core_types
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 class PreviewMetadata(Node):
@@ -145,12 +146,8 @@ def test_deprecated_preview_preserves_granted_file_and_optional_metadata(
             },
         )
         try:
-            await composer.add_pack(
-                PackSpec(
-                    manifest=Path(__file__).parents[1] / "dinkster-pack.toml", in_process=in_process
-                )
-            )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(manifest, in_process=in_process):
+                await composer.add_pack(spec)
             result = await composer.composition.make_engine(lambda _event: None).run(
                 graph, ["preview"]
             )

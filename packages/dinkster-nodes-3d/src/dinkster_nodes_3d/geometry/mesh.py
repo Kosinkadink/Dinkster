@@ -6,7 +6,7 @@ import json
 import logging
 import struct
 from io import BytesIO
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -28,8 +28,8 @@ def mesh_info(mesh: TriangleMeshBatch[torch.Tensor]) -> str:
     batch = mesh.vertices.shape[0]
     if mesh.vertex_counts is not None:
         assert mesh.face_counts is not None
-        v_counts = [int(x) for x in mesh.vertex_counts.tolist()]
-        f_counts = [int(x) for x in mesh.face_counts.tolist()]
+        v_counts = [int(x) for x in cast(Any, mesh.vertex_counts).tolist()]
+        f_counts = [int(x) for x in cast(Any, mesh.face_counts).tolist()]
     else:
         v_counts = [int(mesh.vertices.shape[1])] * batch
         f_counts = [int(mesh.faces.shape[1])] * batch
@@ -267,7 +267,7 @@ def mesh_item_to_glb_bytes(
             pbr["metallicRoughnessTexture"] = {"index": mr_texture_index, "texCoord": 0}
             pbr["metallicFactor"] = 1.0
             pbr["roughnessFactor"] = 1.0
-        mat: dict[str, Any] = mesh.material if isinstance(mesh.material, dict) else {}
+        mat: dict[str, Any] = cast(Any, mesh).material if isinstance(mesh.material, dict) else {}
         if mat.get("base_color_factor") is not None:
             pbr["baseColorFactor"] = [float(x) for x in mat["base_color_factor"]]
         if mat.get("metallic_factor", -1.0) >= 0.0:

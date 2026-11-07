@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.mesh_holes import FillHoles
 from dinkster_nodes_3d.mesh_weld import WeldVertices
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def source() -> Any:
@@ -150,8 +151,8 @@ def test_ordinary_weld_hosts_twice(tmp_path: Path, in_process: bool) -> None:
             }
         )
         try:
-            for manifest in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", fixture):
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 {
@@ -312,8 +313,8 @@ def test_ordinary_hole_hosts_twice(tmp_path: Path, in_process: bool) -> None:
             }
         )
         try:
-            for manifest in (Path(__file__).resolve().parents[1] / "dinkster-pack.toml", fixture):
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 {

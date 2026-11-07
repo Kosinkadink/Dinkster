@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_vision_sdpose.sdpose import SDPoseDrawKeypoints
+from sdpose_pack_fixtures import sdpose_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 OPTIONS = dict(
     draw_body=False,
@@ -156,7 +157,6 @@ class PoseObserver(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 def test_draw_through_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "pose_drawing_fixture.py").write_text(
             "from test_sdpose_drawing_torch import PoseSource, PoseObserver\n"
             "from dinkster_api.v1 import register_inference_types\n"
@@ -179,15 +179,8 @@ def test_draw_through_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else manifest.stem,
-                        group_manifests=() if in_process else (manifest,),
-                    )
-                )
+            for spec in sdpose_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "source": GraphNode("sdpose-drawing-fixture.source"),

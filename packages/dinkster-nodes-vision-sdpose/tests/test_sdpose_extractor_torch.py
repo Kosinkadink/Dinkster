@@ -26,8 +26,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_vision_sdpose.sdpose_extract import SDPoseKeypointExtractor
+from sdpose_pack_fixtures import sdpose_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 class ControlledHead:
@@ -262,7 +263,6 @@ def test_ordinary_grouped_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     original = sampler.sample
 
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "extract_fixture.py").write_text(
             "from test_sdpose_extractor_torch import ExtractionSource, ExtractionObserver\n"
             "from dinkster_api.v1 import register_inference_types\n"
@@ -284,16 +284,8 @@ def test_ordinary_grouped_hosts_twice(tmp_path: Path, in_process: bool) -> None:
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest,
-                        worker_group="sdpose-extract",
-                        group_manifests=(native, fixture),
-                    )
-                )
+            for spec in sdpose_pack_specs(fixture, in_process=in_process):
+                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "source": GraphNode("sdpose-extract-fixture.source"),

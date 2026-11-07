@@ -9,6 +9,7 @@ Adapted from ComfyUI commit 6338e4bd428247a4a8843496aa98fb7f2a9d3632,
 from __future__ import annotations
 
 import warnings
+from typing import cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -563,7 +564,7 @@ def lscm_chart(
 
     A_pinned = A_full[:, pin_cols]
     A_free = A_full[:, free_cols]
-    b = -(A_pinned @ pin_vals)
+    b = cast(np.ndarray, -(A_pinned @ pin_vals))
 
     # Singular system (under-constrained chart) falls back to ortho.
     fallback_to_ortho = False

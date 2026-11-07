@@ -34,9 +34,10 @@ from dinkster_values import (
     is_absent,
     register_core_types,
 )
+from geometry_pack_fixtures import geometry_pack_specs
 from PIL import Image
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 @pytest.fixture
@@ -160,8 +161,8 @@ def test_load3d_empty_model_and_recording_through_ordinary_hosts(
         register_inference_types(registry)
         composer = ServingComposer(registry=registry)
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for spec in geometry_pack_specs(in_process=in_process):
+                await composer.add_pack(spec)
             wire = {
                 key: value.to_wire() if isinstance(value, AssetRef) else value
                 for key, value in state.items()

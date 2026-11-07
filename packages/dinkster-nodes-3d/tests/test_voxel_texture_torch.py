@@ -12,9 +12,10 @@ import torch
 from dinkster_api.v1 import MESH_TYPE, VOXEL_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.voxel_texture import BakeTextureFromVoxel
+from geometry_pack_fixtures import geometry_pack_specs
 from test_mesh_bake_torch import plane
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def fixture() -> tuple[Any, dict]:
@@ -165,8 +166,8 @@ def test_voxel_bake_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
             }
         )
         try:
-            for path in (Path(__file__).parents[1] / "dinkster-pack.toml", manifest):
-                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
+            for spec in geometry_pack_specs(manifest, in_process=in_process):
+                await composer.add_pack(spec)
             graph = Graph(
                 {
                     "source": GraphNode("voxel-bake-source.make"),

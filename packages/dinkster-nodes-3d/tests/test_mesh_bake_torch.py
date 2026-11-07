@@ -11,8 +11,9 @@ import torch
 from dinkster_api.v1 import MESH_TYPE, Node, NodeSchema, OutputSpec, TriangleMeshBatch, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
+from geometry_pack_fixtures import geometry_pack_specs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def plane(z: float = 0.0, extent: float = 1.0) -> TriangleMeshBatch:
@@ -184,8 +185,8 @@ def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool, node
             }
         )
         try:
-            for path in (Path(__file__).parents[1] / "dinkster-pack.toml", manifest):
-                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
+            for spec in geometry_pack_specs(manifest, in_process=in_process):
+                await composer.add_pack(spec)
             graph = Graph(
                 {
                     "source": GraphNode("ambient-occlusion-source.make"),
