@@ -281,8 +281,10 @@
   Candidate status requires matching sealed software in published history and
   unique completed activation provenance. Missing, damaged, unpublished or
   ambiguous coverage defers the tree. Host and tools observations do not change
-  software identity. Preview never launches an interpreter, publishes or repairs
-  history; candidate status is advisory rather than deletion authorization.
+  software identity. Explicit legacy imports provide coverage only after their
+  completed journal provenance and sealed software are revalidated. Preview
+  never launches an interpreter, publishes or repairs history; candidate status
+  is advisory rather than deletion authorization.
   Pack environments containing runtime payloads not represented in software
   history defer rather than treating unchanged dependency locks as payload proof.
   Managed interpreter acquisition is serialized against generation collection;

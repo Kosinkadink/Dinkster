@@ -652,6 +652,70 @@ def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     return tmp_path
 
 
+@pytest.mark.parametrize("fault", [None, "provenance", "payload"])
+def test_cleanup_uses_validated_imports_without_capturing_uncovered_software(
+    cleanup_project: Path, fault: str | None
+):
+    root = cleanup_project
+    for path in (root / "history").glob("*.json"):
+        path.unlink()
+    for path in (root / "journal").glob("*.json"):
+        replace(Journal.read(path), history_entry=None).write(path)
+    code, imported = _run(root, "import", "2", "--yes")
+    assert code == 0 and imported["entry"]["kind"] == "import", imported
+    receipt = root / "history/00000000000000000001.json"
+    original = receipt.read_bytes()
+    payload = root / "generations/2/packs/fixture/runtime.py"
+    if fault == "provenance":
+        entry = json.loads(original)
+        entry["provenance"]["digest"] = "sha256:" + "0" * 64
+        write_document(receipt, entry)
+    elif fault == "payload":
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"unrecorded runtime is not covered by an import")
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    code, preview = _run(root, "cleanup", "--plan")
+    assert code == 0, preview
+    rows = {row["generation"]: row for row in preview["cleanup"]["generations"]}
+    assert rows[2]["status"] == ("deferred" if fault else "candidate"), rows[2]
+    assert rows[7]["status"] == "deferred", rows[7]
+    assert rows[1]["reasons"] == ["previous successful activation"]
+    assert rows[3]["reasons"] == ["current activation"]
+    if fault:
+        assert "history coverage required" in rows[2]["reasons"][0], rows[2]
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    code, result = _run(root, "cleanup", "--yes")
+    assert code == 0 and result["status"] == "deferred", result
+    assert (root / "generations/2").exists() == bool(fault)
+    assert (root / "generations/7").is_dir()
+    protected = {
+        p: data for p, data in before.items() if not p.is_relative_to(root / "generations/2")
+    }
+    assert {p: p.read_bytes() for p in protected} == protected
+    if fault:
+        assert {p: p.read_bytes() for p in before if p.is_relative_to(root / "generations/2")} == {
+            p: data for p, data in before.items() if p.is_relative_to(root / "generations/2")
+        }
+        receipt.write_bytes(original)
+        if fault == "payload":
+            payload.unlink()
+        code, result = _run(root, "cleanup", "--yes")
+        assert code == 0 and result["status"] == "deferred", result
+        assert not (root / "generations/2").exists()
+        protected[receipt] = original
+    code, imported = _run(root, "import", "7", "--yes")
+    assert code == 0 and imported["entry"]["kind"] == "import", imported
+    second = root / "history/00000000000000000002.json"
+    protected[second] = second.read_bytes()
+    protected = {
+        p: data for p, data in protected.items() if not p.is_relative_to(root / "generations/7")
+    }
+    code, result = _run(root, "cleanup", "--yes")
+    assert code == 0 and result["status"] == "complete", result
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    assert {p: p.read_bytes() for p in protected} == protected
+
+
 @pytest.mark.parametrize(
     "blocked",
     [None, "history", "unreadable-history", "generation", "runtime", "payload", "disabled", "busy"],

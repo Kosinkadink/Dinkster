@@ -334,6 +334,9 @@ def generation_history_coverage(root: Path, number: int) -> int:
         snapshot = cast("dict[str, object]", entry["snapshot"])
         if snapshot.get("format") != "dinkster.install-snapshot/1":
             raise EnvironmentError("history coverage requires supported software snapshots")
+        if entry.get("kind") == "import":
+            validate_import(root, entry)
+            continue
         operation = entry.get("operation")
         journal = journals.get(operation) if isinstance(operation, str) else None
         if (
