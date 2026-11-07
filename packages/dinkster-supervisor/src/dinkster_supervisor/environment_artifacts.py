@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from http.client import HTTPException
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import cast
 from urllib.parse import quote, unquote, urljoin, urlparse
 
 from blake3 import blake3
+from dinkster_store import object_path, pack_archive_path, pack_label, readable_label
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
@@ -289,6 +291,37 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     )
 
 
+def acquisition_date(manifest: dict[str, object]) -> str:
+    """Prefer producer build time; an allocation records the fallback date once."""
+    built = manifest.get("builtAt")
+    if isinstance(built, str):
+        try:
+            timestamp = datetime.fromisoformat(built)
+            if timestamp.tzinfo is not None:
+                return timestamp.astimezone(UTC).date().isoformat()
+        except ValueError:
+            pass
+    return datetime.now(UTC).date().isoformat()
+
+
+def base_label(base: dict[str, object]) -> str:
+    wheels = artifact_rows(base["wheels"], "filename")
+    torch = next((row["version"] for row in wheels if row.get("name") == "torch"), None)
+    torch_version = Version(str(torch)).public if torch is not None else "none"
+    return readable_label(
+        str(base["variant"]),
+        f"{acquisition_date(base)}-py{base['python']}-torch{torch_version}",
+    )
+
+
+def engine_label(engine: dict[str, object]) -> str:
+    version = Version(str(engine["version"])).public
+    label = engine.get("label")
+    if isinstance(label, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}-" + re.escape(version), label):
+        return readable_label(label)
+    return readable_label(f"{acquisition_date(engine)}-{version}")
+
+
 def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path) -> Path:
     """Acquire a validated base under a held store writer lock, without an engine release."""
     base_id = cast("str", base["id"])
@@ -300,7 +333,8 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
     architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
     if platform["arch"] != architecture:
         raise EnvironmentError("selected variant does not run on this architecture")
-    base_root = store / "bases" / base_id[7:]
+    label = base_label(base)
+    base_root = object_path(store / "bases", base_id, label=label)
     created = not base_root.exists()
     if created:
         parts = artifact_rows(cast("dict[str, object]", base["archive"])["parts"], "filename")
@@ -312,7 +346,8 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
             fetch_artifact(
                 sources,
                 cast("str", row["filename"]),
-                store / "downloads" / base_id[7:] / cast("str", row["filename"]),
+                object_path(store / "downloads", base_id, label=label)
+                / cast("str", row["filename"]),
                 cast("str", row["sha256"]),
                 cast("int", row["size"]),
             )
@@ -336,7 +371,10 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
                 or content_digest(source) != "sha256:" + sha
             ):
                 raise EnvironmentError("extracted base wheel differs from its manifest")
-            destination = store / "wheels" / sha / source.name
+            destination = (
+                object_path(store / "wheels", "sha256:" + sha, label=readable_label(source.stem))
+                / source.name
+            )
             fetch_artifact(
                 (str(source.parent),), source.name, destination, sha, cast("int", row["size"])
             )
@@ -498,7 +536,9 @@ def acquire(
         selected = dependency_wheels(selection)
     assert base_sources is not None
     acquire_base(base, base_sources, store)
-    release_root = store / "engines" / catalog.channel.engine_release[7:]
+    release_root = object_path(
+        store / "engines", catalog.channel.engine_release, label=engine_label(catalog.engine)
+    )
     owned = set(cast("list[str]", base["replaces"]))
     if custom:
         owned.update(cast("list[str]", published_base["replaces"]))
@@ -512,7 +552,12 @@ def acquire(
                 raise EnvironmentError("engine artifact has an invalid wheel filename") from exc
             if distribution in owned:
                 continue
-            destination = store / "wheels" / sha / name
+            destination = (
+                object_path(
+                    store / "wheels", "sha256:" + sha, label=readable_label(Path(name).stem)
+                )
+                / name
+            )
             nonbase_wheels.append(destination)
         elif name == "constraints.txt":
             destination = release_root / name
@@ -524,7 +569,12 @@ def acquire(
         for row in selected:
             name, sha = cast("str", row["filename"]), cast("str", row["sha256"])
             if row["name"] not in owned:
-                destination = store / "wheels" / sha / name
+                destination = (
+                    object_path(
+                        store / "wheels", "sha256:" + sha, label=readable_label(Path(name).stem)
+                    )
+                    / name
+                )
                 nonbase_wheels.append(destination)
                 if (
                     not destination.is_file()
@@ -557,7 +607,9 @@ def acquire_pack_locks(catalog: EnvironmentCatalog, variant: str, store: Path) -
     catalog.channel.base_for(variant)
     version = Version(cast("str", catalog.engine["version"])).public
     suffix = f"-{version}-{variant}.pack-lock.json"
-    release = store / "engines" / catalog.channel.engine_release[7:]
+    release = object_path(
+        store / "engines", catalog.channel.engine_release, label=engine_label(catalog.engine)
+    )
     return tuple(
         fetch_artifact(
             catalog.engine_sources,
@@ -578,7 +630,11 @@ def acquire_sources(
     rows = artifact_rows(catalog.engine["artifacts"], "name")
     if not any(row["name"] == "official-packs.lock" for row in rows):
         return None
-    release = store / "engines" / catalog.channel.engine_release[7:]
+    release = object_path(
+        store / "engines",
+        catalog.channel.engine_release,
+        label=engine_label(catalog.engine) if download else None,
+    )
     artifacts = release / "artifacts"
     if download:
         artifacts.mkdir(parents=True, exist_ok=True)
@@ -605,7 +661,11 @@ def acquire_sources(
             with downloaded.open("rb") as source:
                 for chunk in iter(lambda: source.read(ENVIRONMENT_STREAM_CHUNK_BYTES), b""):
                     identity.update(chunk)
-            cached = artifacts / f"{identity.hexdigest()}.zip"
+            pack, separator, version = name.removesuffix(".zip").rpartition("-")
+            label = pack_label(pack if separator else version, version if separator else "0.0.0")
+            cached = pack_archive_path(
+                artifacts, "blake3:" + identity.hexdigest(), label=label if download else None
+            )
             if download:
                 fetch_artifact((str(release),), name, cached, sha, size)
             elif (

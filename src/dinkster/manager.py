@@ -69,6 +69,7 @@ from dinkster_registry import (
 )
 from dinkster_registry.artifact import build_artifact
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_store import pack_archive_path, pack_label
 from dinkster_workers import (
     KNOWN_ACCELERATORS,
     AcceleratorError,
@@ -1108,8 +1109,13 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     config, select_registry(config, args.registry) if args.registry else None
                 )
                 for entry in lock.packs:
-                    cached = args.artifacts / f"{entry.artifact_digest[7:]}.zip"
+                    cached = pack_archive_path(
+                        args.artifacts,
+                        entry.artifact_digest,
+                        label=pack_label(entry.pack, entry.version),
+                    )
                     if not cached.exists():
+                        cached.parent.mkdir(parents=True, exist_ok=True)
                         if entry.source == "registry" or entry.source.startswith("registry:"):
                             cached.write_bytes(fetch(entry))
                         else:
@@ -1127,7 +1133,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                         Path(directory),
                         lock,
                         {
-                            entry.pack: args.artifacts / f"{entry.artifact_digest[7:]}.zip"
+                            entry.pack: pack_archive_path(args.artifacts, entry.artifact_digest)
                             for entry in lock.packs
                         },
                     )

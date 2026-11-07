@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from dinkster_store import object_path, readable_label
 from dinkster_values import MEBIBYTE
 from packaging.utils import canonicalize_name
 
@@ -72,7 +73,14 @@ def _verify(path: Path, wheel: LockedWheel) -> bool:
 
 def fetch_wheel(wheel: LockedWheel, store: Path, *, offline: bool = False) -> Path:
     """Admit bytes only after size and digest verification; prefer stored bytes."""
-    target = store / wheel.sha256 / wheel.filename
+    target = (
+        object_path(
+            store,
+            "sha256:" + wheel.sha256,
+            label=None if offline else readable_label(Path(wheel.filename).stem),
+        )
+        / wheel.filename
+    )
     for candidate in (target, store / wheel.filename):
         if _verify(candidate, wheel):
             return candidate

@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
 
 from dinkster.compose import _installed_pack_digest
@@ -130,7 +131,7 @@ def run_selected_tests(
             else:
                 package = checkout / "packages" / pack.pack
                 destination = work / "packs" / pack.pack
-            archive = artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip"
+            archive = pack_archive_path(artifacts, pack.artifact_digest)
             unpack_artifact(archive, destination, pack.artifact_digest)
             manifest = load_manifest(destination / "dinkster-pack.toml")
             if manifest.name != pack.pack:

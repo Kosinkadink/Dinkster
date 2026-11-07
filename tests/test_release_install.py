@@ -64,7 +64,9 @@ def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
     return next(direct.glob("*.whl")), next(rebuilt.glob("*.whl"))
 
 
-@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+@pytest.mark.parametrize(
+    "project", ["dinkster", "dinkster-api", "dinkster-supervisor", "dinkster-workers"]
+)
 def test_source_distribution_rebuilds_the_complete_direct_wheel(
     tmp_path: Path, project: str
 ) -> None:
@@ -76,6 +78,24 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+    if project != "dinkster":
+        subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                f"import sys; sys.path.insert(0, {str(rebuilt)!r}); "
+                "from pathlib import Path; from dinkster_store import object_path; "
+                f"root = Path({str(tmp_path / 'store')!r}); "
+                "first = object_path(root, 'sha256:' + 'a' * 64, label='same-label'); "
+                "second = object_path(root, 'sha256:' + 'b' * 64, label='same-label'); "
+                "assert first == root / 'same-label'; "
+                "assert second == root / 'same-label--2'; "
+                "assert object_path(root, 'sha256:' + 'a' * 64, label='renamed') == first",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
 
 
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")
@@ -694,6 +714,7 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     [
         ("supervisor", False),
         ("supervisor-lock", False),
+        ("packages/dinkster-supervisor/shared/dinkster_store/__init__.py", True),
         ("engine-lock", True),
         ("engine", True),
         ("scripts/build_native_tools.py", False),
@@ -844,7 +865,10 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             line
             for line in api_metadata.splitlines()
             if line.startswith("Requires-Dist: dinkster-")
-        } == {"Requires-Dist: dinkster-opentimelineio==0.19.0"}
+        } == {
+            "Requires-Dist: dinkster-opentimelineio==0.19.0",
+        }
+        assert "dinkster_store/__init__.py" in archive.namelist()
         for member in (
             "api",
             "values",

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from blake3 import blake3
+from dinkster_store import object_path, pack_archive_path
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
@@ -172,7 +173,7 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
     dependencies: dict[str, object] = {}
     for row in packs:
         identity = cast("str", row["artifactDigest"])
-        path = archives / f"{identity[7:]}.zip"
+        path = pack_archive_path(archives, identity)
         if _linked(path) or not path.is_file():
             raise EnvironmentError(
                 f"standalone pack archive is missing: {row['pack']} ({identity})"
@@ -183,7 +184,7 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
                 actual.update(chunk)
         if "blake3:" + actual.hexdigest() != identity:
             raise EnvironmentError(f"standalone pack archive digest differs: {row['pack']}")
-        payloads[path.name] = content_digest(path)
+        payloads[path.relative_to(archives).as_posix()] = content_digest(path)
         if row["pack"] in in_process:
             dependencies[cast("str", row["pack"])] = {
                 "status": "ambient-not-recorded",
@@ -215,7 +216,7 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
         dependencies[cast("str", row["pack"])] = {
             "scopes": {
                 scope.name if pointer_text is not None else "private": _installed_dependencies(
-                    scope / identity[7:] / manifest_name, content
+                    object_path(scope, identity) / manifest_name, content
                 )
                 for scope in scopes
             },

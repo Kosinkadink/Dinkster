@@ -89,13 +89,18 @@ version = "6.0"
     assert build_tools_release.inputs_changed(tmp_path, before, snapshot()) is expected
 
 
-@pytest.mark.parametrize("damage", [None, "manifest", "archive", "missing-pointer"])
+@pytest.mark.parametrize(
+    ("damage", "layout"),
+    [(None, "fresh"), (None, "collision"), (None, "legacy")]
+    + [(damage, "fresh") for damage in ("manifest", "archive", "missing-pointer")],
+)
 def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     tools_publication: tuple[Path, dict[str, bytes]],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     damage: str | None,
+    layout: str,
 ) -> None:
     from dinkster_supervisor import environment, environment_tools
 
@@ -117,6 +122,20 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     shutil.rmtree(mirror / "engine")
     shutil.rmtree(mirror / "base")
     destination = tmp_path / "acquired"
+    local_label = json.loads(data)["label"]
+    name = "dinkster-tools-linux-x86_64.zip"
+    if layout == "collision":
+        from dinkster_store import object_path
+
+        occupied = object_path(destination, "sha256:" + "1" * 64, label=local_label)
+        occupied.mkdir()
+        (occupied / name).write_bytes(b"previous tools")
+        local_label += "--2"
+    elif layout == "legacy":
+        local_label = label
+        (destination / label).mkdir(parents=True)
+        (destination / label / name).write_bytes(payloads[name])
+    before = {path: path.read_bytes() for path in destination.rglob("*") if path.is_file()}
     monkeypatch.setattr(environment_tools, "machine", lambda: "x86_64")
     monkeypatch.setattr(environment_tools, "sys", SimpleNamespace(platform="linux"))
     arguments = [
@@ -132,9 +151,13 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     with pytest.raises(SystemExit) as planned:
         environment.main()
     assert planned.value.code == 0
-    assert json.loads(capsys.readouterr().out)["status"] == "planned"
-    assert not destination.exists()
-    name = "dinkster-tools-linux-x86_64.zip"
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["status"] == "planned"
+    archive = destination / local_label / name
+    assert plan["tools"]["archive"] == str(archive)
+    assert {path: path.read_bytes() for path in destination.rglob("*") if path.is_file()} == before
+    if layout == "fresh":
+        assert not destination.exists()
     if damage == "missing-pointer":
         del channel["tools"]
         (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
@@ -144,7 +167,6 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     with pytest.raises(SystemExit) as applied:
         environment.main()
     result = json.loads(capsys.readouterr().out)
-    archive = destination / label / name
     if damage:
         assert applied.value.code == 1
         assert result["status"] == "error"
@@ -154,8 +176,12 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     else:
         assert applied.value.code == 0
         assert result["tools"]["release"] == str(release)
-        assert result["tools"]["label"] == label
+        assert result["tools"]["label"] == local_label
         assert archive.read_bytes() == payloads[name]
+        if layout == "collision":
+            assert (
+                destination / json.loads(data)["label"] / name
+            ).read_bytes() == b"previous tools"
         assert not (destination / "project.json").exists()
 
 
