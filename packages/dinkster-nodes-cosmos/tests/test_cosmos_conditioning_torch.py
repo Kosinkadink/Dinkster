@@ -267,10 +267,7 @@ def test_ordinary_manifest_executes_both_cosmos_nodes_twice(
                 .replace("namespaces = [", 'namespaces = ["cosmos-conditioning-fixture",')
                 .replace(
                     "dinkster_nodes_cosmos:NODES",
-                    (
-                        'cosmos_conditioning_fixture:NODES"\ntypes = '
-                        '"cosmos_conditioning_fixture:register_inference_types'
-                    ),
+                    "cosmos_conditioning_fixture:NODES",
                 )
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",

@@ -24,7 +24,10 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
 from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import (
+    ServingComposer,
+    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+)
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 
@@ -135,7 +138,7 @@ class LTXAudioInspect(Node):
         return cls.outputs(summary="ltx-audio")
 
 
-@pytest.mark.parametrize("in_process", (True,))
+@pytest.mark.parametrize("in_process", (True, False))
 def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -153,19 +156,23 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
             (tmp_path / "ltx_audio_fixture.py").write_text(
                 "from test_ltx_audio_torch import LTXAudioInspect, LTXAudioSource\n"
                 "from dinkster_nodes_ltx import NODES as COMFY_NODES\n"
-                "from dinkster_api.v1 import register_inference_types\n"
+                "from dinkster_nodes_ltx import register_types as register_ltx_types\n"
                 "from dinkster_nodes_models.device_routing import device_choices\n"
-                "from dinkster_nodes_media_io import register_media_types\n"
+                "from dinkster_nodes_audio import register_types as register_audio_types\n"
                 "NODES = (*COMFY_NODES, LTXAudioSource, LTXAudioInspect)\n"
                 "\ndef register_types(registry):\n"
-                "    register_inference_types(registry)\n"
-                "    register_media_types(registry)\n",
+                "    register_ltx_types(registry)\n"
+                "    register_audio_types(registry)\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "dinkster-pack.toml"
             fixture.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["ltx-audio-fixture",')
+                .replace(
+                    "[pack.dependencies]",
+                    '[pack.dependencies]\n"dinkster-audio" = ">=0.0.1"',
+                )
                 .replace("dinkster_nodes_ltx:NODES", "ltx_audio_fixture:NODES")
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",
@@ -177,9 +184,10 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
                 ),
                 encoding="ascii",
             )
-            media_manifest = manifest.parent.parent / "dinkster-nodes-media-io/dinkster-pack.toml"
             await composer.add_pack(
-                PackSpec(manifest=media_manifest, in_process=in_process, trust_reserved=True)
+                _installed_pack_spec(
+                    "dinkster-audio", "dinkster_nodes_audio", in_process=in_process
+                )
             )
             await compose_ltx_packs(composer, fixture, in_process=in_process)
             graph = Graph(

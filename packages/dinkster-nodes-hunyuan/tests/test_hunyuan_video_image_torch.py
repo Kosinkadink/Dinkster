@@ -509,10 +509,7 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                 .replace("namespaces = [", 'namespaces = ["hunyuan-video-image-fixture",')
                 .replace(
                     "dinkster_nodes_hunyuan:NODES",
-                    (
-                        'hunyuan_video_image_fixture:NODES"\ntypes = '
-                        '"hunyuan_video_image_fixture:register_inference_types'
-                    ),
+                    "hunyuan_video_image_fixture:NODES",
                 )
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",

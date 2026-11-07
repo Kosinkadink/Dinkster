@@ -150,10 +150,7 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
                 .replace(
                     "dinkster_nodes_hunyuan:NODES",
-                    (
-                        'hunyuan_latent_fixture:NODES"\ntypes = '
-                        '"hunyuan_latent_fixture:register_inference_types'
-                    ),
+                    "hunyuan_latent_fixture:NODES",
                 )
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",

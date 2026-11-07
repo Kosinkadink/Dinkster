@@ -139,7 +139,7 @@ def test_hunyuan_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
                 .replace(
                     "dinkster_nodes_hunyuan:NODES",
-                    ('hunyuan_fixture:NODES"\ntypes = "hunyuan_fixture:register_inference_types'),
+                    "hunyuan_fixture:NODES",
                 )
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",

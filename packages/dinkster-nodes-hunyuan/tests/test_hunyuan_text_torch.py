@@ -168,10 +168,7 @@ def test_hunyuan_text_both_production_hosts_twice(tmp_path: Path, in_process: bo
                 .replace("namespaces = [", 'namespaces = ["hunyuan-text-fixture",')
                 .replace(
                     "dinkster_nodes_hunyuan:NODES",
-                    (
-                        'hunyuan_text_fixture:NODES"\ntypes = '
-                        '"hunyuan_text_fixture:register_inference_types'
-                    ),
+                    "hunyuan_text_fixture:NODES",
                 )
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",
