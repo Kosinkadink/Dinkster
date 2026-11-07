@@ -26,6 +26,7 @@ members = [
     "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-native",
+    "dinkster-nodes-audio",
     "dinkster-nodes-audio-models",
     "dinkster-nodes-comfy",
     "dinkster-nodes-conditioning",
@@ -46,6 +47,7 @@ members = [
     "dinkster-nodes-sd",
     "dinkster-nodes-text",
     "dinkster-nodes-upscale",
+    "dinkster-nodes-video",
     "dinkster-nodes-vision",
     "dinkster-protocol",
     "dinkster-registry",
@@ -1241,6 +1243,27 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-nodes-audio"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-audio" }
+dependencies = [
+    { name = "av" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=14" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-nodes-audio-models"
 version = "0.0.2"
 source = { editable = "packages/dinkster-nodes-audio-models" }
@@ -1569,6 +1592,29 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
+
+[[package]]
+name = "dinkster-nodes-video"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-video" }
+dependencies = [
+    { name = "av" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=14" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
 
 [[package]]
 name = "dinkster-nodes-vision"
