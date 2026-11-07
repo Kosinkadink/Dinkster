@@ -7,8 +7,9 @@ import os
 import stat
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 from dinkster_assets import (
     KIND_MEDIA_AUDIO,
@@ -25,7 +26,17 @@ from dinkster_assets.integrity import verification_record
 from dinkster_assets.library import append_write_record
 from dinkster_protocol import SavedArtifact, SavedArtifactCandidate
 from dinkster_schema.reporting import attach_saved_artifact, capture_saved_artifacts
-from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_LIMIT_BYTES
+from dinkster_values import (
+    ASSET_TYPE,
+    MEBIBYTE,
+    SAVED_ARTIFACT_LIMIT_BYTES,
+    Rendition,
+    TypeRegistry,
+    Value,
+    ValueMeta,
+)
+
+from .produced_assets import DOCUMENT_RENDITION_MIME, rendition_values
 
 MAX_SAVED_ARTIFACTS = 64
 MAX_SAVED_ARTIFACT_BYTES = SAVED_ARTIFACT_LIMIT_BYTES
@@ -149,45 +160,94 @@ class SavedArtifactAuthority:
             for claim in claims:
                 attach_saved_artifact(claim)
         artifacts: dict[str, SavedArtifact] = {}
-        writer = MountSnapshotWriter(self._snapshot)
         for claim in validated:
-            ref = AssetRef.from_wire(claim)
-            _, mount_id, relative = ref.virtual_path.split("/", 2)
-            parts = tuple(relative.split("/"))
-            root = writer.writable_root(mount_id).resolve(strict=True)
-            record = writer.publication_record(mount_id, relative)
-            if (
-                record is None
-                or record.get("digest") != ref.digest
-                or record.get("size") != ref.size
-            ):
-                raise AssetError("saved artifact has no matching writer publication record")
-            published = record.get("publishedAtNs")
-            if type(published) is not int or published < started_at_ns:
-                raise AssetError("saved artifact has no fresh writer publication")
-            try:
-                with _open_candidate(root, parts[:-1], parts[-1]) as (handle, restat_path):
-                    before = os.fstat(handle.fileno())
-                    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-                        raise AssetError("saved artifact must be a regular nonlinked file")
-                    if before.st_size != ref.size or before.st_mtime_ns != record.get("mtimeNs"):
-                        raise AssetError("saved artifact differs from writer publication")
-                    if _digest_handle(handle) != ref.digest:
-                        raise AssetError("saved artifact digest does not match file bytes")
-                    after = os.fstat(handle.fileno())
-                    path_stat = restat_path()
-            except OSError as exc:
-                raise AssetError(f"saved artifact could not be opened safely: {exc}") from exc
-            if any(getattr(before, key) != getattr(after, key) for key in _HANDLE_STABLE_FIELDS):
-                raise AssetError("saved artifact changed while it was being validated")
-            if any(getattr(after, key) != getattr(path_stat, key) for key in _PATH_STABLE_FIELDS):
-                raise AssetError("saved artifact path changed while it was being validated")
-            if writer.writable_root(mount_id).resolve(strict=True) != root:
-                raise AssetError("saved artifact mount changed during validation")
-            artifacts[ref.virtual_path] = SavedArtifact(
-                node_id, ref.digest, ref.name, ref.size, ref.media_type, ref.virtual_path
-            )
+            with self._open_mounted(claim, started_at_ns) as (ref, _handle):
+                artifacts[ref.virtual_path] = SavedArtifact(
+                    node_id, ref.digest, ref.name, ref.size, ref.media_type, ref.virtual_path
+                )
         return tuple(artifacts.values())
+
+    @contextmanager
+    def _open_mounted(
+        self, claim: Mapping[str, object], started_at_ns: int
+    ) -> Generator[tuple[AssetRef, BinaryIO]]:
+        """Read an exact fresh publication under its existing mounted-save authority."""
+        with capture_saved_artifacts() as validated:
+            attach_saved_artifact(claim)
+        ref = AssetRef.from_wire(validated[0])
+        writer = MountSnapshotWriter(self._snapshot)
+        _, mount_id, relative = ref.virtual_path.split("/", 2)
+        parts = tuple(relative.split("/"))
+        root = writer.writable_root(mount_id).resolve(strict=True)
+        record = writer.publication_record(mount_id, relative)
+        if record is None or record.get("digest") != ref.digest or record.get("size") != ref.size:
+            raise AssetError("saved artifact has no matching writer publication record")
+        published = record.get("publishedAtNs")
+        if type(published) is not int or published < started_at_ns:
+            raise AssetError("saved artifact has no fresh writer publication")
+        try:
+            with _open_candidate(root, parts[:-1], parts[-1]) as (handle, restat_path):
+                before = os.fstat(handle.fileno())
+                if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                    raise AssetError("saved artifact must be a regular nonlinked file")
+                if before.st_size != ref.size or before.st_mtime_ns != record.get("mtimeNs"):
+                    raise AssetError("saved artifact differs from writer publication")
+                if _digest_handle(handle) != ref.digest:
+                    raise AssetError("saved artifact digest does not match file bytes")
+                handle.seek(0)
+                yield ref, handle
+                after = os.fstat(handle.fileno())
+                path_stat = restat_path()
+        except OSError as exc:
+            raise AssetError(f"saved artifact could not be opened safely: {exc}") from exc
+        if any(getattr(before, key) != getattr(after, key) for key in _HANDLE_STABLE_FIELDS):
+            raise AssetError("saved artifact changed while it was being validated")
+        if any(getattr(after, key) != getattr(path_stat, key) for key in _PATH_STABLE_FIELDS):
+            raise AssetError("saved artifact path changed while it was being validated")
+        if writer.writable_root(mount_id).resolve(strict=True) != root:
+            raise AssetError("saved artifact mount changed during validation")
+
+    def document_outputs(
+        self,
+        registry: TypeRegistry,
+        outputs: Mapping[str, Value],
+        claims: Sequence[Mapping[str, object]],
+        started_at_ns: int,
+    ) -> dict[str, Value]:
+        """Declare native-save dependencies through the registered closed document codec."""
+        result = dict(outputs)
+        for claim in claims:
+            if claim.get("mediaType") != DOCUMENT_RENDITION_MIME:
+                continue
+            with self._open_mounted(claim, started_at_ns) as (ref, handle):
+                # The closed document format admits at most 16 MiB of JSON.
+                data = handle.read(16 * MEBIBYTE + 1)
+                if len(data) != ref.size:
+                    raise AssetError("saved document byte size changed or exceeds its schema limit")
+                projection = rendition_values(registry, Rendition("document", ref.media_type, data))
+            for name, value in outputs.items():
+                if value.type_id != ASSET_TYPE or value.fingerprint != ref.digest:
+                    continue
+                if value.resolve() != ref:
+                    raise AssetError("saved document output does not match its attachment")
+                result[name] = replace(
+                    value,
+                    meta=ValueMeta(
+                        {
+                            **value.meta.entries,
+                            "asset_refs": list(
+                                cast("list[object]", value.meta.get("asset_refs", []))
+                            )
+                            + list(
+                                cast(
+                                    "list[object]",
+                                    projection["document"].meta.get("asset_refs", []),
+                                )
+                            ),
+                        }
+                    ),
+                )
+        return result
 
     def capture(
         self,

@@ -9,11 +9,13 @@ import sys
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from urllib.request import urlopen
 
 import pytest
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_supervisor.environment_history import history
 from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
@@ -177,6 +179,13 @@ else:
             with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
                 assert json.loads(response.read()) == {"cuda": "GPU-aB12"}
             assert Journal.read(path).stage == "complete"
+            entries = history(tmp_path)
+            assert len(entries) == 1
+            assert entries[0]["reason"] == "setup"
+            assert entries[0]["generation"] == 1
+            software = cast("dict[str, object]", entries[0]["snapshot"])
+            metadata = cast("dict[str, object]", software["metadata"])
+            assert metadata["constraints.txt"] == "test\n"
             with pytest.raises(EnvironmentError, match="already has an active"):
                 begin_setup(tmp_path, 2, free_port())
         else:
@@ -200,6 +209,7 @@ else:
             )
             assert not (tmp_path / "generations/1").exists()
             assert Journal.read(path).stage == "rolled-back"
+            assert history(tmp_path) == []
             recover_activation(tmp_path, path)
             next_path = begin_setup(tmp_path, 1, port)
             assert Journal.read(next_path).incomplete
@@ -208,8 +218,46 @@ else:
         stop_engine(tmp_path, "compute", generation=1)
 
 
+def test_completed_activation_recovers_history_publication_once_after_process_exit(tmp_path: Path):
+    from dinkster_supervisor.environment import _recover_pending
+
+    path = begin_setup(tmp_path, 1, free_port())
+    _target(tmp_path, 1)
+    (tmp_path / "current").unlink()
+    script = """
+import os, sys
+from pathlib import Path
+from dinkster_supervisor import environment_transactions as transactions
+def interrupt(*args):
+    os._exit(74)
+transactions.publish_entry = interrupt
+transactions.activate(Path(sys.argv[1]), Path(sys.argv[2]), revalidate=lambda: None)
+"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path), str(path)],
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+        assert completed.returncode == 74, completed.stderr
+        assert Journal.read(path).stage == "complete"
+        assert read_current(tmp_path) == 1
+        assert history(tmp_path) == []
+        _recover_pending(tmp_path)
+        first = (tmp_path / "history/00000000000000000001.json").read_bytes()
+        _recover_pending(tmp_path)
+        assert (tmp_path / "history/00000000000000000001.json").read_bytes() == first
+        assert len(history(tmp_path)) == 1
+        assert history(tmp_path)[0]["operation"] == path.stem
+        assert read_current(tmp_path) == 1
+        assert engine_status(tmp_path)[0]["state"] == "ready"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+
+
 @pytest.mark.parametrize("migration", [False, True])
-def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
+def test_update_preserves_previous_tree_and_publishes_selected_settings(
     tmp_path: Path, migration: bool
 ) -> None:
     retained = _target(tmp_path, 1)
@@ -268,36 +316,6 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
         code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
         assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
         assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
-        journals = sorted((tmp_path / "journal").glob("*.json"))
-        code, preference = _run(tmp_path, "cleanup", "--automatic", "off", "--yes")
-        assert code == 0 and preference["cleanup"]["policy"]["automatic"] is False, preference
-        if migration:
-            (tmp_path / "project.json").write_text(json.dumps({**selected, "custom": "later edit"}))
-            edited = (tmp_path / "project.json").read_bytes()
-            code, refused = _run(tmp_path, "rollback", "--yes")
-            assert code == 1 and "settings changed since selection" in refused["error"]
-            assert (tmp_path / "project.json").read_bytes() == edited
-            assert read_current(tmp_path) == 2
-            assert sorted((tmp_path / "journal").glob("*.json")) == journals
-            (tmp_path / "project.json").write_bytes(next_settings.encode("utf-8"))
-        code, planned = _run(tmp_path, "rollback", "--plan")
-        assert code == 0 and planned["status"] == "planned"
-        assert read_current(tmp_path) == 2
-        assert sorted((tmp_path / "journal").glob("*.json")) == journals
-        code, applied = _run(tmp_path, "rollback", "--yes")
-        assert code == 0, applied
-        assert applied["status"] == "applied"
-        assert read_current(tmp_path) == 1
-        assert (tmp_path / "project.json").read_text() == previous_settings
-        assert engine_status(tmp_path)[0]["state"] == "ready"
-        assert engine_status(tmp_path)[1]["state"] == "stopped"
-        code, status = _run(tmp_path, "status")
-        assert code == 0 and status["cleanup"]["policy"]["automatic"] is False, status
-        code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
-        assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
-        assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
-        with urlopen(str(applied["engines"][0]["url"]) + "/api/generation") as response:  # noqa: S310
-            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
         assert (retained / "generation.json").read_bytes() == before
         after = interpreter(retained).stat()
         assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
@@ -305,12 +323,6 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
             identity.st_size,
             identity.st_mtime_ns,
         )
-        assert (tmp_path / "generations/2").is_dir()
-        (tmp_path / "generations/2/constraints.txt").write_text("changed\n")
-        code, refused = _run(tmp_path, "rollback", "--yes")
-        assert code == 1 and "drift" in refused["error"]
-        assert read_current(tmp_path) == 1
-        assert engine_status(tmp_path)[0]["state"] == "ready"
         assert (tmp_path / "generations/2").is_dir()
     finally:
         stop_engine(tmp_path, "main", generation=1)

@@ -16,7 +16,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .limits import ENVIRONMENT_METADATA_LIMIT_BYTES, ENVIRONMENT_STREAM_CHUNK_BYTES
 
-__all__ = ["DownloadError", "fetch_artifact", "read_metadata"]
+__all__ = ["DownloadError", "artifact_available", "fetch_artifact", "read_metadata"]
 
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CONTENT_RANGE_PATTERN = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z")
@@ -86,6 +86,41 @@ def read_metadata(mirror: str, relative_path: str) -> bytes:
     if len(data) > maximum:
         raise DownloadError("metadata exceeds eight MiB")
     return data
+
+
+def artifact_available(
+    mirrors: tuple[str, ...],
+    relative_path: str,
+    cached: Path,
+    sha256: str,
+    size: int,
+    *,
+    source_url: str | None = None,
+) -> bool:
+    """Probe without writing; acquisition must still verify remote bytes before use."""
+    _validate_request(mirrors, relative_path, sha256, size)
+    if not cached.is_symlink() and _matches(cached, sha256, size):
+        return True
+    for mirror in mirrors:
+        try:
+            parsed = urlparse(mirror)
+            if not parsed.scheme or Path(mirror).is_absolute():
+                root = Path(mirror).resolve(strict=True)
+                source = (root / relative_path).resolve(strict=True)
+                if source.is_relative_to(root) and _matches(source, sha256, size):
+                    return True
+                continue
+            url = source_url or mirror.rstrip("/") + "/" + quote(relative_path, safe="/")
+            _validate_remote_url(url, allow_query=source_url is not None)
+            request = Request(url, method="HEAD", headers={"User-Agent": _USER_AGENT})
+            with build_opener(_SafeRedirects()).open(
+                request, timeout=_SOCKET_TIMEOUT_SECONDS
+            ) as response:
+                if response.status == 200 and response.headers.get("Content-Length") == str(size):
+                    return True
+        except (HTTPError, HTTPException, URLError, OSError, ValueError):
+            continue
+    return False
 
 
 def fetch_artifact(

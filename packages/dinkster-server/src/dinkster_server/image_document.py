@@ -4,6 +4,7 @@ import asyncio
 import json
 import mmap
 import sqlite3
+from contextlib import ExitStack, closing
 from typing import Any, cast
 
 from aiohttp import web
@@ -17,6 +18,7 @@ from dinkster_assets import (
     open_verified,
     raster_image_facts,
 )
+from dinkster_assets.scratch import hold_produced_vault
 from dinkster_image_document import (
     IMAGE_DOCUMENT_MEDIA_TYPE,
     OUTPUT_ENCODING,
@@ -404,7 +406,9 @@ async def handle_render(request: web.Request) -> web.Response:
         return _error(400, "invalid_selector", str(error))
     library = request.app[LIBRARY_KEY]
     cache_key, contract = _render_cache_key(document_digest, selector_text)
+    ownership = ExitStack()
     try:
+        ownership.enter_context(closing(hold_produced_vault(library.vault.root)))
         dependencies = await asyncio.to_thread(library.store.get_dependencies, document_digest)
         if dependencies is None:
             return _error(409, "not_adopted", "image document must be adopted before rendering")
@@ -415,8 +419,8 @@ async def handle_render(request: web.Request) -> web.Response:
         ]
         existing = await asyncio.to_thread(library.store.get_derivation, cache_key)
         if existing is not None:
-            cached = await asyncio.to_thread(
-                _cached_response, library, scope, cache_key, existing, source_references
+            cached = await run_owned_thread(
+                lambda: _cached_response(library, scope, cache_key, existing, source_references)
             )
             if cached is not None:
                 return cached
@@ -471,6 +475,8 @@ async def handle_render(request: web.Request) -> web.Response:
         return _error(409, "resource_integrity", "a held resource failed digest verification")
     except (AssetError, OSError, sqlite3.Error):
         return _error(503, "storage_unavailable", "image document rendering is unavailable")
+    finally:
+        ownership.close()
     return web.json_response(
         {
             "cacheKey": cache_key,

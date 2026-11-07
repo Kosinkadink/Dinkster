@@ -508,11 +508,12 @@ downloads it first and shows the size before starting. Downloads are ranged
 and resumable, hashed while streaming, and retried across the configured
 mirror list.
 
-Rollback is `dinkster-env rollback`: start the previous generation's
-supervisor, repoint `current`, stop the newer one. Nothing is rebuilt. The
-newer generation stays on disk until garbage collection, which keeps the
-active and previous generation of each project, and keeps every wheel and
-base in the store that any retained generation references.
+Rollback is `dinkster-env rollback`: rebuild the preceding successful software
+snapshot as a fresh generation under the restore approval contract, preserving
+project settings and user data. The replaced generation stays on disk until
+garbage collection, which keeps the active and previous generation of each
+project, and keeps every wheel and base in the store that any retained
+generation references.
 
 Generation collection uses the last successful activation journal to find the
 previous generation, not numeric order. A gc journal carries optional
@@ -542,10 +543,10 @@ object reports `automatic` (default true), `previousSuccessfulActivations`
 (1), and `minimumAgeSeconds` (0). These are retention preferences, not proof
 of history coverage or deletion eligibility. Changing the preference does not
 collect, recover operations, or capture history. The preference lives in
-`cleanup.json`, outside activation settings and software history, so rollback
-does not undo an opt-out. Invalid or linked policy files refuse policy changes
-and preview rather than falling back to automatic deletion. No automatic
-collection trigger is enabled by this preference command.
+`cleanup.json`, outside activation settings and software history, so restore
+and rollback do not undo an opt-out. Invalid or linked policy files refuse
+policy changes and preview rather than falling back to automatic deletion.
+No automatic collection trigger is enabled by this preference command.
 
 Interpreter acquisition and collection share a runtime admission lock in
 addition to the existing project transaction lock. A pending launch protects
