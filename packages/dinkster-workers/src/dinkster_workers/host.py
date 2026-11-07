@@ -187,16 +187,16 @@ def _legacy_checkpoint_conversion_capable() -> bool:
     try:
         return all(
             importlib.util.find_spec(module) is not None
-            for module in ("dinkster_compat_comfy", "torch", "safetensors.torch")
+            for module in ("dinkster_native", "torch", "safetensors.torch")
         )
     except Exception:  # noqa: BLE001 - unavailable optional components omit capability
         return False
 
 
 def _convert_legacy_checkpoint(path: Path, logical_name: str) -> tuple[str, str | None]:
-    """Run the canonical compat converter and classify its stable result."""
+    """Run the native weight converter and classify its stable result."""
     try:
-        legacy_sources = importlib.import_module("dinkster_compat_comfy.legacy_sources")
+        legacy_sources = importlib.import_module("dinkster_native.legacy_sources")
     except Exception as exc:  # noqa: BLE001 - unavailable worker runtime is retryable
         return "error", f"{type(exc).__name__}: {exc}"
     try:

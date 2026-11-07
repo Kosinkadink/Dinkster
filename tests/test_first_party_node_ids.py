@@ -24,6 +24,7 @@ from dinkster_workers import load_manifest
 from dinkster_workers.manifest import resolve_entry, validate_registration_claims
 
 from dinkster.comfy_translations_api import add_comfy_translation_routes
+from dinkster.compose import default_pack_specs
 from tests.async_scenarios import run_scenario
 from tools.compare_nodes import SCOPE_RULES, compare_registry
 from tools.gen_comfy_translations import OUTPUT, generate
@@ -59,6 +60,10 @@ def test_default_install_set_contains_every_comfy_origin_pack() -> None:
         if (manifest := load_manifest(path)).compatibility is not None and manifest.name in expected
     }
     assert defaults == declarations
+    specs = default_pack_specs()
+    assert {load_manifest(spec.manifest).name for spec in specs} == expected
+    assert len(specs) == len(expected)
+    assert all(not spec.in_process for spec in specs)
 
 
 @pytest.mark.parametrize("authenticated", [False, True])

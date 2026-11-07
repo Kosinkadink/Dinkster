@@ -300,14 +300,6 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
 _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
     {pack: distribution for pack, (_, distribution) in _FIRST_PARTY_PACK_METADATA.items()}
 )
-_ISOLATED_FIRST_PARTY_PACKS = frozenset(
-    pack_id
-    for pack_id in _FIRST_PARTY_PACK_MODULES
-    if pack_id.startswith("dinkster-vision-") or pack_id == "dinkster-upscale"
-)
-_ENGINE_CARRIED_PACKS = frozenset(
-    {"dinkster-native", "dinkster-compat-comfy", "dinkster-nodes-generation"}
-)
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _CHECKOUT_PACKS_LOCK = Path(__file__).with_name("checkout-packs.lock")
 _MODEL_PACK_IDS: tuple[str, ...] = ()
@@ -1189,10 +1181,8 @@ def _default_pack_lock() -> Lockfile:
 
 
 def default_pack_ids() -> tuple[str, ...]:
-    """Return defaults other than the separately configured core worker."""
-    return tuple(
-        entry.pack for entry in _default_pack_lock().packs if entry.pack != "dinkster-nodes-comfy"
-    )
+    """Return every pack selected by the checkout development catalog."""
+    return tuple(entry.pack for entry in _default_pack_lock().packs)
 
 
 def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
@@ -1261,11 +1251,7 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
-    distribution_id = (
-        "dinkster"
-        if pack_id in _ENGINE_CARRIED_PACKS
-        else _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
-    )
+    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
     sidecar = pack_id.replace("-", "_")
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
@@ -1289,11 +1275,7 @@ def _installed_pack_spec(
             None,
         )
     declaration = load_manifest(source_manifest) if source_manifest is not None else None
-    if (
-        declaration is not None
-        and declaration.compatibility is not None
-        and pack_id not in _ENGINE_CARRIED_PACKS
-    ):
+    if declaration is not None and declaration.compatibility is not None:
         version = declaration.compatibility.version
         bundled = None
     else:
@@ -1394,9 +1376,7 @@ def default_pack_spec(pack_id: str) -> PackSpec:
     return _installed_pack_spec(
         pack_id,
         module_name,
-        in_process=(
-            pack_id not in _ISOLATED_FIRST_PARTY_PACKS and pack_id != "dinkster-nodes-remote"
-        ),
+        in_process=False,
         env=(
             {"DINKSTER_REMOTE_CATALOG_BASE": "", "DINKSTER_REMOTE_GATEWAY_BASE": ""}
             if pack_id == "dinkster-nodes-remote"

@@ -21,9 +21,7 @@ dependencies = [
     "scipy>=1.11",
     "simpleeval==1.0.8",
     "zeroconf>=0.147",
-    # The comfy compat host registration (comfy_compose.register_comfy_host_types)
-    # decodes and renders comfy.IMAGE values with numpy; dinkster-values itself
-    # stays dependency-free (its image codec needs numpy at call time only).
+    # Image codecs use numpy at call time; dinkster-values stays dependency-free.
     "numpy>=1.26",
     # Image-file asset decoding (typed assets: decode_image_file) opens files
     # with Pillow, imported at call time only - same pattern as numpy above.
@@ -35,7 +33,6 @@ dinkster = "dinkster.cli:main"
 dinkster-serve = "dinkster.serve:main"
 dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
-dinkster-port = "dinkster.port:main"
 
 [project.optional-dependencies]
 default = [
@@ -96,10 +93,7 @@ dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
 dinkster-memory = { workspace = true }
 dinkster-native = { workspace = true }
-dinkster-compat-comfy = { workspace = true }
 dinkster-nodes-remote = { workspace = true }
-dinkster-nodes-comfy = { workspace = true }
-dinkster-nodes-generation = { workspace = true }
 dinkster-nodes-image = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
@@ -114,8 +108,6 @@ build-backend = "hatchling.build"
 packages = [
     "src/dinkster",
     "packages/dinkster-native/src/dinkster_native",
-    "packages/dinkster-compat-comfy/src/dinkster_compat_comfy",
-    "packages/dinkster-nodes-generation/src/dinkster_nodes_generation",
 ]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
@@ -126,12 +118,6 @@ path = "hatch_build.py"
 "packages/dinkster-engine/src/dinkster_engine" = "dinkster_engine"
 "packages/dinkster-server/src/dinkster_server" = "dinkster_server"
 "packages/dinkster-collab/src/dinkster_collab" = "dinkster_collab"
-"packages/dinkster-native/dinkster-pack.toml" = "dinkster_native_pack/dinkster-pack.toml"
-"packages/dinkster-native/src/dinkster_native" = "dinkster_native_pack/dinkster_native"
-"packages/dinkster-compat-comfy/dinkster-pack.toml" = "dinkster_compat_comfy_pack/dinkster-pack.toml"
-"packages/dinkster-compat-comfy/src/dinkster_compat_comfy" = "dinkster_compat_comfy_pack/dinkster_compat_comfy"
-"packages/dinkster-nodes-generation/dinkster-pack.toml" = "dinkster_nodes_generation_pack/dinkster-pack.toml"
-"packages/dinkster-nodes-generation/src/dinkster_nodes_generation" = "dinkster_nodes_generation_pack/dinkster_nodes_generation"
 
 [tool.ruff]
 line-length = 100
@@ -167,7 +153,7 @@ extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 # Torch execution modules are checked in their isolated worker environment.
 exclude = [
     "packages/dinkster-native/src/dinkster_native/model3d",
-    "packages/dinkster-nodes-comfy/tests",
+    "tests/first_party_runtime",
     "packages/dinkster-nodes-sampling/tests",
     "packages/dinkster-nodes-models/tests",
     "packages/dinkster-nodes-conditioning/tests",
@@ -202,7 +188,6 @@ exclude = [
     "packages/dinkster-nodes-vision-sam3/tests",
     "packages/dinkster-nodes-vision-sam3d-body/tests",
     "packages/dinkster-nodes-vision-sdpose/tests",
-    "packages/dinkster-nodes-vision",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo
 # CLI stay on standard - useful checking without annotation ceremony.

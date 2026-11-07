@@ -1187,15 +1187,10 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
 
 
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
-    from .comfy_compose import comfy_compat_specs
     from .compose import default_pack_specs
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
-    specs = (
-        (*default_pack_specs(), *comfy_compat_specs())
-        if args.defaults
-        else _installer(args).packs_for_serving()
-    )
+    specs = default_pack_specs() if args.defaults else _installer(args).packs_for_serving()
     default_count = len(specs)
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):

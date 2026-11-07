@@ -1,5 +1,8 @@
 ## Installed pack startup
 
+- The default install selection contains all 35 ComfyUI-origin first-party
+  packs plus the remote pack. Checkout serving verifies their locked sources
+  and isolates every selected pack. The engine carries no draft node packs.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.
@@ -28,8 +31,7 @@
   an existing registry artifact lock from committed sources, preserving the
   manifest-declared pack identities and node entry points without importing node
   code. New node-pack directories are discovered without a family allowlist.
-  Development scaffolding stays unpublished; generation schemas remain
-  engine-carried rather than separate official packs.
+  Development scaffolding stays unpublished.
 - First-party source resolution reads runtime IDs and node entry modules from
   manifests and distribution names from project metadata or installed wheel
   records. Runtime, distribution and import names need not match. Discovery
@@ -47,15 +49,15 @@
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
 - Prepared official source catalogs preserve dependency-owned codecs without
-  claiming them as pack-owned declarations. Existing comfy and image node IDs
-  execute from these archives without rewriting saved workflows or pack bytes.
+  claiming them as pack-owned declarations. First-party pack node IDs execute
+  from these archives without rewriting their source bytes.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
 - Pack manifests can declare an independent public pack version and a PEP 440
   engine compatibility range. Invalid or incomplete declarations are rejected
   without importing pack code. Every first-party node pack declares both,
-  including development and engine-carried generation packs.
+  including the development pack.
 - The registry client can select the newest active pack version meeting a
   minimum version and target engine range across paginated results. Active
   prereleases inside those bounds remain eligible. Historical releases without

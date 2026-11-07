@@ -294,6 +294,7 @@ GOLDEN_V1_SURFACE = (
     "VIDEO_DOCUMENT_TYPE",
     "VIDEO_EDIT_TYPE",
     "VIDEO_TYPE",
+    "WEBCAM_TYPE",
     "VOXEL_TYPE",
     "COST_META_KEY",
     "CURVE_TYPE",
@@ -644,11 +645,16 @@ assert "torch" not in sys.modules
 def test_model_registration_preserves_resident_identity_without_torch(
     native_first: bool, type_name: str, preexisting: bool
 ) -> None:
+    producer = {
+        "GLIGEN": "dinkster_nodes_sd",
+        "PHOTOMAKER": "dinkster_nodes_sd",
+        "BACKGROUND_REMOVAL": "dinkster_nodes_vision_background_removal",
+    }[type_name]
     script = f"""
 import sys
 from dinkster_api.v1 import {type_name}_TYPE, TypeRegistry, register_inference_types
 from dinkster_memory.resident import ResidentPool, default_pool
-from dinkster_native.native import register_native_types
+from {producer} import register_types as register_native_types
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, register_resident_type
 
 model_type = {type_name}_TYPE
@@ -662,6 +668,9 @@ registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
+if model_type == "PHOTOMAKER" and not {native_first!r} and not {preexisting!r}:
+    assert model_type not in registry
+    registrations[1](registry)
 spec = registry.spec(model_type)
 if original is not None:
     assert spec is original
@@ -704,20 +713,23 @@ sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import {type_name}_TYPE as model_type, TypeRegistry, register_inference_types
 from dinkster_memory.resident import ResidentPool, default_pool
-from dinkster_native.native import register_native_types
+from dinkster_nodes_video import register_types as register_native_types
 from dinkster_values import ResidentLookupError, register_resident_type
 from dinkster_values.builtin_types import {type_name}_TYPE as builtin_type, BUILTIN_TYPE_IDS
 from dinkster_values import {type_name}_TYPE as values_type
 from dinkster_workers.boundary import ValueCodec
 
 assert model_type == values_type == builtin_type == {type_name!r}
-assert model_type in BUILTIN_TYPE_IDS
+assert model_type not in BUILTIN_TYPE_IDS
 holding_pool = default_pool()
 registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
+if not {native_first!r}:
+    assert model_type not in registry
+    registrations[1](registry)
 spec = registry.spec(model_type)
 for registration in (*registrations, *registrations):
     registration(registry)
@@ -739,10 +751,12 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import TypeRegistry, register_inference_types
+from dinkster_nodes_video import register_types
 from dinkster_values import ResidentLookupError
 from dinkster_workers.boundary import ValueCodec
 registry = TypeRegistry()
 register_inference_types(registry)
+register_types(registry)
 wire, blob_hex = json.loads(sys.stdin.read())
 codec = ValueCodec(registry)
 value, _ = codec.decode(wire, [bytes.fromhex(blob) for blob in blob_hex], [])
@@ -832,7 +846,7 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import BOUNDING_BOX_TYPE, TypeRegistry, register_inference_types
-from dinkster_nodes_comfy import register_inference_types as register_pack_types
+from dinkster_nodes_vision_rtdetr import register_types as register_pack_types
 
 # Hand-derived plain JSON values: an optional default, one frame, and
 # multiple frames including an empty frame must retain structure and order.
