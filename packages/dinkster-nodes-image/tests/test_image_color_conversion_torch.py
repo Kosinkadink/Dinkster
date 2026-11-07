@@ -169,8 +169,8 @@ def test_color_conversion_ordinary_manifest_twice(tmp_path: Path, in_process: bo
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "color_fixture.py").write_text(
                 "from test_image_color_conversion_torch import ColorSource, ColorInspect\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_image.ported.device_routing import device_choices\n"
+                "from dinkster_nodes_image import NODES as COMFY_NODES\n"
+                "from dinkster_nodes_image import register_types as register_inference_types\n"
                 "NODES = (*COMFY_NODES, ColorSource, ColorInspect)\n",
                 encoding="ascii",
             )
@@ -178,18 +178,20 @@ def test_color_conversion_ordinary_manifest_twice(tmp_path: Path, in_process: bo
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["color-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "color_fixture:NODES")
+                .replace("dinkster_nodes_image:NODES", "color_fixture:NODES")
                 .replace(
                     "dinkster_nodes_image.ported.device_routing:device_choices",
                     "color_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
+                    "dinkster_nodes_image:register_types",
                     "color_fixture:register_inference_types",
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(trust_reserved=True, manifest=fixture_manifest, in_process=in_process)
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("color-fixture.source"),

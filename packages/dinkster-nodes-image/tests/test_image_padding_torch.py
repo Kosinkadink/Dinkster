@@ -167,7 +167,7 @@ def test_padding_crosses_ordinary_manifest_hosts_and_caches(
         native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "padding_fixture.py").write_text(
             "from test_image_padding_torch import PaddingSource, PaddingInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_image import register_types as register_inference_types\n"
             "NODES = (PaddingSource, PaddingInspect)\n",
             encoding="ascii",
         )
@@ -195,7 +195,7 @@ def test_padding_crosses_ordinary_manifest_hosts_and_caches(
         )
         try:
             for pack in (native_manifest, manifest):
-                await composer.add_pack(PackSpec(pack, in_process=in_process))
+                await composer.add_pack(PackSpec(pack, trust_reserved=True, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("padding-fixture.source"),

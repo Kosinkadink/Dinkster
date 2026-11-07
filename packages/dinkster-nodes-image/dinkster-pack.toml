@@ -1,9 +1,6 @@
-# Pack manifest (DESIGN 3.6): what this pack is, declared as data.
-# Loading the manifest never imports pack code.
-
 [pack]
-name = "dinkster-nodes-image"
-version = "0.0.5"
+name = "dinkster-image"
+version = "0.0.1"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
@@ -12,11 +9,20 @@ requires = [
     "opencv-contrib-python-headless>=5.0,<5.1",
     "pillow>=10",
     "PyOpenGL>=3.1.8,<4",
+    "av==18.1.0",
+    "torch",
+    "torchvision",
+    "scipy",
+    "kornia",
+    "dinkster-inference==0.1.1",
+    "dinkster-native",
+    "dinkster-values",
 ]
-# dinkster is reserved. This first-party pack receives explicit host trust but
-# otherwise follows the same composition path as every pack.
-namespaces = ["dinkster", "ImageCompare", "GLSLShader"]
-type-namespaces = ["dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"]
+namespaces = ["dinkster.image"]
+
+[pack.inference]
+imports = ["cli_args", "model_management", "utils"]
+tested-version = "0.1.1"
 
 [pack.sandbox]
 writable-mounts = true
@@ -25,11 +31,6 @@ writable-mounts = true
 host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
-[pack.dependencies]
-dinkster-nodes-foundation = ">=0.0.1,<1"
-dinkster-nodes-media-io = ">=0.0.1,<1"
-
 [pack.entry]
-nodes = "dinkster_nodes_image:IMAGE_NODES"
-types = "dinkster_nodes_image:register_image_types"
-choices = "dinkster_nodes_image:image_choices"
+nodes = "dinkster_nodes_image:NODES"
+types = "dinkster_nodes_image:register_types"

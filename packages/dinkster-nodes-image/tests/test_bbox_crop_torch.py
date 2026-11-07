@@ -153,7 +153,7 @@ def test_ordinary_manifest_crops_twice_in_both_hosts(tmp_path: Path, in_process:
         module = f"bbox_crop_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_bbox_crop_torch import CropSource, CropInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_image import register_types as register_inference_types\n"
             "NODES = (CropSource, CropInspect)\n",
             encoding="ascii",
         )
@@ -174,9 +174,10 @@ def test_ordinary_manifest_crops_twice_in_both_hosts(tmp_path: Path, in_process:
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(trust_reserved=True, manifest=manifest, in_process=True)
                     if in_process
                     else PackSpec(
+                        trust_reserved=True,
                         manifest=manifest,
                         worker_group="bbox-crop-fixture",
                         group_manifests=(native, fixture),

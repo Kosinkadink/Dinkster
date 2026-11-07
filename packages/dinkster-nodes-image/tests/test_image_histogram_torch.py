@@ -108,7 +108,7 @@ def test_histogram_outputs_execute_and_cache_in_ordinary_hosts(
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "histogram_fixture.py").write_text(
             "from test_image_histogram_torch import HistogramSource, HistogramConsumer\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_image import register_types as register_inference_types\n"
             "NODES = (HistogramSource, HistogramConsumer)\n",
             encoding="ascii",
         )
@@ -132,10 +132,13 @@ def test_histogram_outputs_execute_and_cache_in_ordinary_hosts(
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest, in_process=True)
+                    PackSpec(manifest, trust_reserved=True, in_process=True)
                     if in_process
                     else PackSpec(
-                        manifest, worker_group="histogram", group_manifests=(native, fixture)
+                        manifest,
+                        trust_reserved=True,
+                        worker_group="histogram",
+                        group_manifests=(native, fixture),
                     )
                 )
             graph = Graph(

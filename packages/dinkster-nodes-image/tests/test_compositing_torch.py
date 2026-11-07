@@ -110,8 +110,8 @@ def test_manifest_links_decoded_masks_to_compositing_nodes(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "compositing_fixture_sources.py").write_text(
                 "from test_compositing_torch import CompositingInspect, CompositingSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_image.ported.device_routing import device_choices\n"
+                "from dinkster_nodes_image import NODES as COMFY_NODES\n"
+                "from dinkster_nodes_image import register_types as register_inference_types\n"
                 "NODES = (*COMFY_NODES, CompositingSource, CompositingInspect)\n",
                 encoding="ascii",
             )
@@ -119,18 +119,20 @@ def test_manifest_links_decoded_masks_to_compositing_nodes(
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["compositing-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "compositing_fixture_sources:NODES")
+                .replace("dinkster_nodes_image:NODES", "compositing_fixture_sources:NODES")
                 .replace(
                     "dinkster_nodes_image.ported.device_routing:device_choices",
                     "compositing_fixture_sources:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
+                    "dinkster_nodes_image:register_types",
                     "compositing_fixture_sources:register_inference_types",
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(trust_reserved=True, manifest=source_manifest, in_process=in_process)
+            )
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={

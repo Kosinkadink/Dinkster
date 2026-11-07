@@ -171,7 +171,7 @@ def test_registered_image_and_list_tools_execute_twice_in_ordinary_hosts(
         manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "image_tools_consumer_entry.py").write_text(
             "from test_image_tiles_torch import ToolSource, ToolObserver\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_image import register_types as register_inference_types\n"
             "NODES = (ToolSource, ToolObserver)\n",
             encoding="ascii",
         )
@@ -195,7 +195,9 @@ def test_registered_image_and_list_tools_execute_twice_in_ordinary_hosts(
             await composer.add_pack(
                 PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
             )
-            await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(trust_reserved=True, manifest=fixture, in_process=in_process)
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("image-tools-fixture.source"),
@@ -297,7 +299,7 @@ def test_native_mixed_lists_cross_hosts_and_persistent_cache(
         )
         packs = [
             PackSpec(manifest, in_process=in_process, trust_reserved=True, **group_options),
-            PackSpec(fixture, in_process=in_process, **group_options),
+            PackSpec(fixture, trust_reserved=True, in_process=in_process, **group_options),
         ]
         graph = Graph(
             nodes={
