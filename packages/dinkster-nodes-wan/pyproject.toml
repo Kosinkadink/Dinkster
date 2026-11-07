@@ -3,7 +3,7 @@ name = "dinkster-nodes-wan"
 version = "0.0.2"
 description = "Dinkster wan model nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-nodes-sampling", "dinkster-inference-wire"]
+dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-nodes-models", "dinkster-inference-wire"]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,5 +20,5 @@ packages = ["src/dinkster_nodes_wan"]
 [tool.uv.sources]
 dinkster-api = { workspace = true }
 dinkster-nodes-conditioning = { workspace = true }
-dinkster-nodes-sampling = { workspace = true }
+dinkster-nodes-models = { workspace = true }
 dinkster-inference-wire = { workspace = true }
