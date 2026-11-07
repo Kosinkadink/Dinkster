@@ -16,6 +16,7 @@ import pickle
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
@@ -175,6 +176,13 @@ class TypeSpec:
     """Convert storage to the ordinary input form at invocation, without
     mutating the stored object. None preserves it; accepts_storage bypasses
     this hook. Unlike coerce, this never changes output storage or identity."""
+
+    asset_references_complete: bool = False
+    """Whether metadata exhaustively declares this atom's external asset roots.
+
+    This is independent of declaring a codec. False means unknown, not empty.
+    Structural containers require separate traversal of every typed child.
+    """
 
 
 @dataclass(frozen=True)
@@ -456,7 +464,10 @@ class TypeRegistry:
         inline: InlineFn | None = None,
         validate_encoded: ValidateEncodedFn | None = None,
         validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
+        asset_references_complete: bool = False,
     ) -> TypeSpec:
+        if type(asset_references_complete) is not bool:
+            raise ValueError("asset reference completeness must be a boolean")
         if (encode is None) != (decode is None):
             raise ValueError(f"{type_id}: encode and decode must be declared together")
         if prepare_buffer_encoding is not None and encode is None:
@@ -501,6 +512,7 @@ class TypeRegistry:
             inline=inline,
             validate_encoded=validate_encoded,
             validate_encoded_buffer=validate_encoded_buffer,
+            asset_references_complete=asset_references_complete,
         )
         self._types[type_id] = spec
         if owner is not None:
@@ -1036,13 +1048,22 @@ def _coerce_combo(obj: object) -> str | bool | int | float:
     return cast("str | bool | int | float", obj)
 
 
-def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+def _validate_primitive_encoded(
+    data: bytes,
+    _metadata: Mapping[str, object],
+    *,
+    type_id: str,
+    coerce: CoerceFn,
+) -> None:
     if not data.startswith(b"json:"):
-        raise ValueError("COMBO expects canonical JSON encoding")
-    obj = default_decode(data)
-    _coerce_combo(obj)
+        raise ValueError(f"{type_id} expects canonical JSON encoding")
+    obj = coerce(default_decode(data))
     if default_encode(obj) != data:
-        raise ValueError("COMBO expects canonical JSON encoding")
+        raise ValueError(f"{type_id} expects canonical JSON encoding")
+
+
+def _validate_combo_encoded(data: bytes, metadata: Mapping[str, object]) -> None:
+    _validate_primitive_encoded(data, metadata, type_id=CORE_COMBO, coerce=_coerce_combo)
 
 
 def _coerce_histogram(obj: object) -> list[int]:
@@ -1054,12 +1075,8 @@ def _coerce_histogram(obj: object) -> list[int]:
     return cast("list[int]", values)
 
 
-def _validate_histogram_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
-    if not data.startswith(b"json:"):
-        raise ValueError("HISTOGRAM expects canonical JSON encoding")
-    value = _coerce_histogram(default_decode(data))
-    if default_encode(value) != data:
-        raise ValueError("HISTOGRAM expects canonical JSON encoding")
+def _validate_histogram_encoded(data: bytes, metadata: Mapping[str, object]) -> None:
+    _validate_primitive_encoded(data, metadata, type_id=HISTOGRAM_TYPE, coerce=_coerce_histogram)
 
 
 def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
@@ -1070,7 +1087,43 @@ def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
         HISTOGRAM_TYPE,
         coerce=_coerce_histogram,
         validate_encoded=_validate_histogram_encoded,
+        asset_references_complete=True,
     )
+
+
+def _coerce_string(obj: object) -> str:
+    if type(obj) is not str:
+        raise TypeError("STRING expects a string")
+    return obj
+
+
+def _validate_string_encoded(data: bytes, metadata: Mapping[str, object]) -> None:
+    _validate_primitive_encoded(data, metadata, type_id=CORE_STRING, coerce=_coerce_string)
+
+
+def _coerce_int(obj: object) -> int:
+    if type(obj) is not int:
+        raise TypeError("INT expects an integer")
+    return obj
+
+
+def _coerce_float(obj: object) -> int | float:
+    if type(obj) not in (int, float):
+        raise TypeError("FLOAT expects a number")
+    if type(obj) is float and not math.isfinite(obj):
+        raise ValueError("FLOAT expects a finite number")
+    return cast("int | float", obj)
+
+
+def _coerce_boolean(obj: object) -> bool:
+    if type(obj) is not bool:
+        raise TypeError("BOOLEAN expects a boolean")
+    return obj
+
+
+def _coerce_absent(obj: object) -> None:
+    if obj is not None:
+        raise TypeError("core.absent expects None")
 
 
 def register_core_types(registry: TypeRegistry) -> None:
@@ -1081,8 +1134,25 @@ def register_core_types(registry: TypeRegistry) -> None:
     # Core scalars inline as themselves (DESIGN 3.5): peeking an int or a
     # short string never needs a payload round trip. core.absent does NOT
     # inline - absence has its own channel, never a smuggled null.
-    for type_id in (CORE_INT, CORE_FLOAT, CORE_STRING):
-        registry.register(type_id, inline=lambda obj: obj)
+    for type_id, coerce in (
+        (CORE_INT, _coerce_int),
+        (CORE_FLOAT, _coerce_float),
+        (CORE_BOOLEAN, _coerce_boolean),
+    ):
+        registry.register(
+            type_id,
+            coerce=coerce,
+            inline=lambda obj: obj,
+            validate_encoded=partial(_validate_primitive_encoded, type_id=type_id, coerce=coerce),
+            asset_references_complete=True,
+        )
+    registry.register(
+        CORE_STRING,
+        coerce=_coerce_string,
+        inline=lambda obj: obj,
+        validate_encoded=_validate_string_encoded,
+        asset_references_complete=True,
+    )
     registry.register_rendition(
         CORE_STRING,
         "text",
@@ -1094,12 +1164,19 @@ def register_core_types(registry: TypeRegistry) -> None:
         coerce=_coerce_combo,
         inline=lambda obj: obj,
         validate_encoded=_validate_combo_encoded,
+        asset_references_complete=True,
     )
-    registry.register(CORE_BOOLEAN, inline=lambda obj: obj)
     registry.register(DICT_TYPE)
     registry.register(ARRAY_TYPE)
     register_histogram_type(registry)
     register_curve_type(registry)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
-    registry.register(CORE_ABSENT)
+    registry.register(
+        CORE_ABSENT,
+        coerce=_coerce_absent,
+        validate_encoded=partial(
+            _validate_primitive_encoded, type_id=CORE_ABSENT, coerce=_coerce_absent
+        ),
+        asset_references_complete=True,
+    )

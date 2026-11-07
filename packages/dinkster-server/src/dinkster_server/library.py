@@ -112,6 +112,7 @@ from dinkster_assets import (
     valid_vae_hint,
 )
 from dinkster_assets.model import LocalAssetResolver
+from dinkster_image_document import decode_document
 from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
@@ -1091,6 +1092,25 @@ def recover_asset_observations(
                 isinstance(origin, dict)
                 and cast("dict[str, object]", origin).get("kind") == "produced"
             ):
+                if _base_media_type(ref.media_type) == IMAGE_DOCUMENT_MEDIA_TYPE:
+                    from dinkster_image_document.format import MAX_DOCUMENT_BYTES
+
+                    with open_verified(path, ref.digest) as handle:
+                        data = handle.read(MAX_DOCUMENT_BYTES + 1)
+                        if len(data) != ref.size:
+                            raise AssetError("saved document byte size changed")
+                    dependencies = list(decode_document(data).dependencies)
+                    for dependency in dependencies:
+                        digest = cast(str, dependency["digest"])
+                        resource = library.vault.resolve(digest)
+                        if resource is None and library.local_resolver is not None:
+                            resource = library.local_resolver.resolve(digest)
+                        if resource is None:
+                            raise AssetError("saved document resource is unavailable")
+                        with open_verified(resource, digest) as source:
+                            if os.fstat(source.fileno()).st_size != dependency["byteSize"]:
+                                raise AssetError("saved document resource byte size changed")
+                    library.store.put_dependencies(ref.digest, dependencies)
                 try:
                     classification = classify_media_file(path)
                 except AssetError:
@@ -1660,6 +1680,44 @@ async def handle_library_delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def handle_result_asset_offer(request: web.Request) -> web.Response:
+    """Read a persisted source snapshot, never regenerate it from a cache."""
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    try:
+        offer = await asyncio.to_thread(
+            request.app[LIBRARY_KEY].store.result_asset_offer,
+            scope,
+            request.match_info["token"],
+        )
+    except AssetError as exc:
+        return _json_error(400, str(exc))
+    except sqlite3.Error:
+        return _json_error(503, "result offer state is unavailable")
+    if offer is None:
+        return _json_error(404, "no such result offer")
+    return web.json_response(offer.to_wire(), headers={"Cache-Control": "no-store"})
+
+
+async def handle_terminal_result(request: web.Request) -> web.Response:
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    resolve_scope(principal_for(request), "history:read", scope)
+    try:
+        result = await asyncio.to_thread(
+            request.app[LIBRARY_KEY].store.terminal_result,
+            scope,
+            request.match_info["job_ref"],
+        )
+    except (AssetError, sqlite3.Error):
+        return _json_error(503, "terminal result state is unavailable")
+    if result is None:
+        return web.json_response(
+            {"available": False, "reason": "publication-unavailable"},
+            status=404,
+            headers={"Cache-Control": "no-store"},
+        )
+    return web.json_response(result, headers={"Cache-Control": "no-store"})
+
+
 async def handle_retained_assets(request: web.Request) -> web.Response:
     """Explicit scoped reference manifests; document contents remain opaque."""
     scope = resolve_scope(
@@ -1674,24 +1732,47 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
             retained = await asyncio.to_thread(store.retained_assets, *key)
         elif request.method == "PUT":
             body = await _json_body(request)
-            if not {"revision", "digests"} <= set(body) or set(body) - {
-                "revision",
-                "digests",
-                "complete",
-            }:
-                return _json_error(
-                    400, "retained values require revision, digests and optional complete"
+            if "sourceToken" in body:
+                if (
+                    set(body) != {"revision", "sourceToken"}
+                    or type(body["revision"]) is not int
+                    or body["revision"] != 0
+                ):
+                    return _json_error(400, "result claims require revision 0 and sourceToken only")
+                retained = await asyncio.to_thread(
+                    store.claim_result_assets, scope, body["sourceToken"], key[1], key[2]
                 )
-            revision, digests = body["revision"], body["digests"]
-            if type(revision) is not int or not isinstance(digests, list):
-                return _json_error(400, "revision must be an integer and digests must be a list")
-            retained = await asyncio.to_thread(
-                store.retain_assets,
-                *key,
-                cast(list[str], digests),
-                revision=revision,
-                complete=body.get("complete", False),
-            )
+                if retained is None:
+                    return web.json_response(
+                        {
+                            "available": False,
+                            "reason": "source-unavailable",
+                            "error": "result source is no longer protected or is not held here",
+                        },
+                        status=409,
+                        headers={"Cache-Control": "no-store"},
+                    )
+            else:
+                if not {"revision", "digests"} <= set(body) or set(body) - {
+                    "revision",
+                    "digests",
+                    "complete",
+                }:
+                    return _json_error(
+                        400, "retained values require revision, digests and optional complete"
+                    )
+                revision, digests = body["revision"], body["digests"]
+                if type(revision) is not int or not isinstance(digests, list):
+                    return _json_error(
+                        400, "revision must be an integer and digests must be a list"
+                    )
+                retained = await asyncio.to_thread(
+                    store.retain_assets,
+                    *key,
+                    cast(list[str], digests),
+                    revision=revision,
+                    complete=body.get("complete", False),
+                )
         else:
             try:
                 revision = int(request.query.get("revision", ""))
@@ -1706,7 +1787,7 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
         return _json_error(503, "retained asset state is unavailable")
     if retained is None:
         return _json_error(404, "no such retained asset owner")
-    return web.json_response(retained.to_wire())
+    return web.json_response(retained.to_wire(), headers={"Cache-Control": "no-store"})
 
 
 async def handle_cleanup_policy(request: web.Request) -> web.Response:
@@ -1757,6 +1838,7 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
             library.store,
             state.history,
             state.engine.cache,
+            registry=state.engine.registry,
             scratch_root=library.scratch_root,
             collect=True,
         )
@@ -1835,6 +1917,8 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_get("/api/library/storage", handle_cleanup_status)
     app.router.add_put("/api/library/storage/policy", handle_cleanup_policy)
     app.router.add_post("/api/library/storage/clear", handle_cleanup_clear)
+    app.router.add_get("/api/library/result-offers/{token}", handle_result_asset_offer)
+    app.router.add_get("/api/library/terminal-results/{job_ref}", handle_terminal_result)
     retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
     app.router.add_get(retention_path, handle_retained_assets)
     app.router.add_put(retention_path, handle_retained_assets)

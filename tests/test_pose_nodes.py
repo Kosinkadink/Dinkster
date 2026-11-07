@@ -111,6 +111,107 @@ def test_pose_codec_rejects_malformed_payloads() -> None:
         spec.decode(b"[" * 10_000 + b"]" * 10_000)
 
 
+def test_pose_boundary_preserves_values_and_declared_dependencies() -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_values import default_encode
+    from dinkster_workers.boundary import ValueCodec
+
+    registry = TypeRegistry()
+    register_image_types(registry)
+    pose = Pose(
+        16_384,
+        1,
+        (
+            _skeleton(
+                normalized=False,
+                keypoints=(PoseKeypoint(-32_767, 12.5, 0.25), None),
+                edges=((0, 1),),
+            ),
+        ),
+    )
+    wrapped = registry.wrap(POSE_TYPE, pose)
+    assert value_asset_references({"pose": wrapped}, complete_registry=registry) == {}
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    reference = AssetRef(digest_bytes(b"pose-source"), "pose.json", 11)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [reference.to_wire()]}
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == pose
+    assert received.fingerprint == wrapped.fingerprint
+    assert registry.spec(POSE_TYPE).encode(received.resolve()) == (
+        b'{"canvas_height":1,"canvas_width":16384,"skeletons":[{"edges":[[0,1]],'
+        b'"keypoints":[{"confidence":0.25,"x":-32767.0,"y":12.5},null],'
+        b'"kind":"person","layout":"test","normalized":false,"subject":0}]}'
+    )
+    assert value_asset_references({"pose": received}, complete_registry=registry) == {
+        reference.digest: reference
+    }
+    payload = cast("dict[str, object]", wire["payload"])
+    blobs[cast(int, payload["blob"])] = (
+        b'{ "skeletons": [], "canvas_width": 1, "canvas_height": 16384 }'
+    )
+    empty, _ = codec.decode(wire, blobs, [])
+    assert empty.resolve() == Pose(1, 16_384, ())
+    first = TypeRegistry()
+    first_spec = first.register(POSE_TYPE)
+    register_image_types(first)
+    assert first.spec(POSE_TYPE) is first_spec
+    assert not first.spec(POSE_TYPE).asset_references_complete
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        b"not json",
+        b"[" * 10_000 + b"]" * 10_000,
+        b'{"canvas_width":true,"canvas_height":1,"skeletons":[]}',
+        b'{"canvas_width":16385,"canvas_height":1,"skeletons":[]}',
+        b'{"canvas_width":1,"canvas_height":0,"skeletons":[]}',
+        b'{"canvas_width":1,"canvas_height":1,"skeletons":[],"asset":{"digest":"hidden"}}',
+        b'{"canvas_width":1,"canvas_height":1,"skeletons":[{"kind":"person",'
+        b'"layout":"test","subject":0,"normalized":false,"edges":[],"keypoints":['
+        b'{"x":{"digest":"hidden"},"y":0,"confidence":1}]}]}',
+        b'{"canvas_width":1,"canvas_height":1,"skeletons":[{"kind":"person",'
+        b'"layout":"test","subject":0,"normalized":false,"edges":[],"keypoints":['
+        b'{"x":32768,"y":0,"confidence":1}]}]}',
+        b'{"canvas_width":1,"canvas_height":1,"skeletons":[{"kind":"person",'
+        b'"layout":"test","subject":0,"normalized":false,"edges":[],"keypoints":['
+        b'{"x":0,"y":0,"confidence":0}]}]}',
+        b'{"canvas_width":1,"canvas_height":1,"skeletons":[{"kind":"person",'
+        b'"layout":"test","subject":0,"normalized":false,"edges":[],"keypoints":['
+        b'{"x":NaN,"y":0,"confidence":1}]}]}',
+    ],
+    ids=[
+        "json",
+        "depth",
+        "bool",
+        "width",
+        "height",
+        "extra",
+        "asset",
+        "coordinate",
+        "confidence",
+        "nan",
+    ],
+)
+def test_pose_boundary_refuses_invalid_payload_before_exposure(invalid: bytes) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    register_image_types(registry)
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap(POSE_TYPE, Pose(1, 1, ())), blobs, segments)
+    payload = cast("dict[str, object]", wire["payload"])
+    blobs[cast(int, payload["blob"])] = invalid
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
+
+
 def test_pose_json_import_preserves_human_animal_and_coordinate_metadata() -> None:
     human_source = GOLDEN_CASES["human"]["source"]
     animal_source = GOLDEN_CASES["animal"]["source"]
