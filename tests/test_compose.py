@@ -1356,13 +1356,13 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "0.0.2",
-            "blake3:7950186a3c84cc7e5b2894d5223bb1d09099fcc0d24dc7c532490ade6647db2b",
+            "0.0.3",
+            "blake3:9c3b0c9d3d5ceab2568e86d17538a4d1380adbdfaa1db1931b0e3b5f310d025e",
         ),
         (
             "dinkster-nodes-image",
-            "0.0.4",
-            "blake3:3ad0c94e78b5b3037db4a0f45b4a7df5bafe7b24008248f9bf8ec613e91b4a70",
+            "0.0.5",
+            "blake3:8d9f65db6c7a3a6b39cba378afe9686da1967319b94ea914e86f89d0815bab1a",
         ),
         (
             "dinkster-nodes-remote",
@@ -1748,9 +1748,9 @@ def test_shared_distribution_pack_uses_manifest_version(
     lock = compose._default_pack_lock()
     pack = lock.get("dinkster-vision-birefnet")
     assert pack is not None
-    assert pack.version == "0.0.3"
+    assert pack.version == "0.0.4"
     assert pack.artifact_digest == (
-        "blake3:2c53612b623d2632c3ee55240d758781c344181eabdcb644448f7330b0c26c6b"
+        "blake3:8d786a9df8cd6dc959358ca39b48bea2e6b5c2d8f3d02fd0fa118a9e493e518f"
     )
     if mismatch == "pack":
         pack = replace(pack, version="0.0.2")
@@ -1777,9 +1777,9 @@ def test_shared_distribution_pack_uses_manifest_version(
     sibling = default_pack_spec("dinkster-vision-hed")
     assert spec.packs is not None
     assert sibling.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.3"
+    assert spec.packs[pack.pack].version == "0.0.4"
     assert spec.packs[pack.pack].source == "python:dinkster-nodes-vision==0.0.2"
-    assert sibling.packs["dinkster-vision-hed"].version == "0.0.2"
+    assert sibling.packs["dinkster-vision-hed"].version == "0.0.3"
     assert sibling.packs["dinkster-vision-hed"].source == "python:dinkster-nodes-vision==0.0.2"
 
 
