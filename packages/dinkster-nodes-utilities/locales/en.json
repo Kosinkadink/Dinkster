@@ -1,5 +1,11 @@
 {
   "nodes": {
+    "dinkster.utilities.make_list": {
+      "displayName": "Create List"
+    },
+    "dinkster.utilities.list_element": {
+      "displayName": "List Element"
+    },
     "dinkster.utilities.color_to_rgb_int": {
       "displayName": "Color Picker"
     },

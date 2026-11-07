@@ -186,8 +186,7 @@ def test_registered_image_and_list_tools_execute_twice_in_ordinary_hosts(
         try:
             await composer.add_pack(
                 PackSpec(
-                    manifest=manifest.parent.parent
-                    / "dinkster-nodes-foundation/dinkster-pack.toml",
+                    manifest=manifest.parent.parent / "dinkster-nodes-utilities/dinkster-pack.toml",
                     in_process=in_process,
                     trust_reserved=True,
                 )
@@ -291,7 +290,8 @@ def test_native_mixed_lists_cross_hosts_and_persistent_cache(
             'nodes="mixed_list_entry:NODES"\n',
             encoding="ascii",
         )
-        manifests = (manifest, fixture)
+        utilities = manifest.parent.parent / "dinkster-nodes-utilities/dinkster-pack.toml"
+        manifests = (manifest, utilities, fixture)
         group_options = (
             {}
             if in_process
@@ -299,6 +299,7 @@ def test_native_mixed_lists_cross_hosts_and_persistent_cache(
         )
         packs = [
             PackSpec(manifest, in_process=in_process, trust_reserved=True, **group_options),
+            PackSpec(utilities, in_process=in_process, trust_reserved=True, **group_options),
             PackSpec(fixture, trust_reserved=True, in_process=in_process, **group_options),
         ]
         graph = Graph(

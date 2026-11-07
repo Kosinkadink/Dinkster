@@ -27,6 +27,7 @@ from .logic import (
     ComfyOrNode,
     CustomCombo,
 )
+from .loop_lists import ListElement, MakeList
 from .loops import (
     EndLoop,
     LoopIteration,
@@ -79,6 +80,8 @@ NODES = (
     ComfyNumberConvert,
     SeedNode,
     PreviewAny,
+    MakeList,
+    ListElement,
 )
 
 
