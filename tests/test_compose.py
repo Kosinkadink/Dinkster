@@ -1407,13 +1407,13 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "0.0.2",
-            "blake3:c24231f8757beccad2cc20b186ddf11fb4eb7bb1d3faea636466fb3cb992f1fd",
+            "0.0.3",
+            "blake3:9c3b0c9d3d5ceab2568e86d17538a4d1380adbdfaa1db1931b0e3b5f310d025e",
         ),
         (
             "dinkster-nodes-image",
-            "0.0.4",
-            "blake3:9a8933b56a6d999da9bb1d3eaf767adfbbd52b34bb69fd0ab7424f8c2306c157",
+            "0.0.5",
+            "blake3:8d9f65db6c7a3a6b39cba378afe9686da1967319b94ea914e86f89d0815bab1a",
         ),
         (
             "dinkster-nodes-remote",
@@ -1750,7 +1750,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:17abaff653c06945f694f46e185d28db12f4a54dd68a20b4af173a635b0c5dc9")
+    assert expected == ("blake3:c9bc906f97e7ea168dc04dcf10a51d7aa33523ce8a0b3e204b2df846603aedc9")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1799,9 +1799,9 @@ def test_shared_distribution_pack_uses_manifest_version(
     lock = compose._default_pack_lock()
     pack = lock.get("dinkster-vision-birefnet")
     assert pack is not None
-    assert pack.version == "0.0.3"
+    assert pack.version == "0.0.4"
     assert pack.artifact_digest == (
-        "blake3:921320363e6f14e9075e469eedb8491365835a9b1c23a4a925e1a7bf82207cf5"
+        "blake3:8d786a9df8cd6dc959358ca39b48bea2e6b5c2d8f3d02fd0fa118a9e493e518f"
     )
     if mismatch == "pack":
         pack = replace(pack, version="0.0.2")
@@ -1828,9 +1828,9 @@ def test_shared_distribution_pack_uses_manifest_version(
     sibling = default_pack_spec("dinkster-vision-hed")
     assert spec.packs is not None
     assert sibling.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.3"
+    assert spec.packs[pack.pack].version == "0.0.4"
     assert spec.packs[pack.pack].source == "python:dinkster-nodes-vision==0.0.2"
-    assert sibling.packs["dinkster-vision-hed"].version == "0.0.2"
+    assert sibling.packs["dinkster-vision-hed"].version == "0.0.3"
     assert sibling.packs["dinkster-vision-hed"].source == "python:dinkster-nodes-vision==0.0.2"
 
 

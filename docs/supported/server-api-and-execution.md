@@ -38,6 +38,17 @@
 - String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
   Long paths and documents can be read in full without the status descriptor's
   256-character inline preview limit. Retrieval retains job/scope authority.
+- Library-backed completed-value renditions retain vault read ownership until
+  rendering settles, including after request cancellation and before a source
+  descriptor opens. Independent readers keep their own lifetime. This does not
+  certify legacy migration references or enable cleanup.
+- Completed image-document responses retain all declared external resources
+  under their exact original result source before returning, including cache
+  revalidation. Associations survive library restart and remain protected while
+  the source is unclaimed or any source-bound consumer survives. Final release
+  or replacement ends that protection; stale requests cannot revive it.
+  Original offers and completeness remain unchanged. Durable document copies
+  still require their own resource declarations; cleanup remains disabled.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
@@ -47,6 +58,26 @@
   release prevent stale clients from removing newer associations, including
   after restart or owner reuse. Association registration is explicit, not
   automatic history or preview integration; it does not enable cleanup.
+- Clients can read immutable scoped result offers and claim their exact
+  server-selected roots into fresh shown-result or preview owners. Durable
+  source bindings permit reconciliation after a lost acknowledgment; a claim
+  cannot overwrite an existing owner or revive a source after its last
+  protecting owner releases it. Library-backed jobs persist source offers
+  before fresh, cached and coalesced output events and terminal targets;
+  events, status and completed-value discovery expose the exact runtime
+  node/output binding. Selecting a nested element retains the complete
+  parent-output source rather than narrowing its roots. Unknown
+  codecs remain incomplete. This does not cover live previews or restored
+  history, certify frontend coverage, or enable cleanup.
+- Scoped terminal publication discovery retains original output tokens,
+  execution identity and provenance independently of process restart,
+  queue/cache retirement and ordinary history deletion. It never substitutes
+  a newer publication or reconstructs tokens for legacy rows. Terminal saved
+  artifacts carry original offers bound to the exact saved-file descriptor,
+  terminal index and optional published preview, retaining both identities.
+  Failed, cancelled and unknown-codec sets remain incomplete. This is source
+  discovery, not stored output payloads or completed frontend restoration;
+  cleanup remains disabled.
 - Durable terminal history retains external asset identities from target
   values, saved artifacts and their optional published previews independently
   of execution-cache entries, without storing output payloads or changing
@@ -60,7 +91,9 @@
   cleanup remains disabled.
 - Operators can inspect vault/adoption byte observations and held known asset
   references without exposing filesystem paths. Unknown accounting is null,
-  with explicit blocked reasons. Recognized inactive job scratch reports its
+  with explicit blocked reasons. Cache atoms without exhaustive registered
+  reference declarations refuse inspection, including inside nested containers
+  and after disk-cache restart. Recognized inactive job scratch reports its
   bytes while host-job and store ownership are exclusively held; live, unsafe
   or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
   cleanup remains disabled regardless of individual complete registrations.
