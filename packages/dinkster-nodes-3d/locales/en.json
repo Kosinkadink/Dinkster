@@ -1,0 +1,240 @@
+{
+  "nodes": {
+    "dinkster.3d.apply_texture_to_mesh": {
+      "displayName": "ApplyTextureToMesh"
+    },
+    "dinkster.3d.bake_ambient_occlusion": {
+      "displayName": "BakeAmbientOcclusion"
+    },
+    "dinkster.3d.bake_normal_map_from_mesh": {
+      "displayName": "BakeNormalMapFromMesh"
+    },
+    "dinkster.3d.bake_texture_from_voxel": {
+      "displayName": "BakeTextureFromVoxel"
+    },
+    "dinkster.3d.camera_angle": {
+      "displayName": "CameraAngle"
+    },
+    "dinkster.3d.create_camera_info": {
+      "displayName": "CreateCameraInfo"
+    },
+    "dinkster.3d.decimate_mesh": {
+      "displayName": "DecimateMesh"
+    },
+    "dinkster.3d.file3_d_to_splat": {
+      "displayName": "File3DToSplat"
+    },
+    "dinkster.3d.fill_holes": {
+      "displayName": "FillHoles"
+    },
+    "dinkster.3d.get3_d_components": {
+      "displayName": "Get3DComponents"
+    },
+    "dinkster.3d.get_mesh_info": {
+      "displayName": "GetMeshInfo"
+    },
+    "dinkster.3d.get_splat_count": {
+      "displayName": "GetSplatCount"
+    },
+    "dinkster.3d.load3_d": {
+      "displayName": "Load3D"
+    },
+    "dinkster.3d.load3_d_advanced": {
+      "displayName": "Load3DAdvanced"
+    },
+    "dinkster.3d.merge_meshes": {
+      "displayName": "MergeMeshes"
+    },
+    "dinkster.3d.merge_splat": {
+      "displayName": "MergeSplat"
+    },
+    "dinkster.3d.mesh_smooth_normals": {
+      "displayName": "MeshSmoothNormals"
+    },
+    "dinkster.3d.mesh_texture_to_image": {
+      "displayName": "MeshTextureToImage"
+    },
+    "dinkster.3d.mesh_to_file3_d": {
+      "displayName": "MeshToFile3D"
+    },
+    "dinkster.3d.paint_mesh": {
+      "displayName": "PaintMesh"
+    },
+    "dinkster.3d.preview3_d": {
+      "displayName": "Preview3D"
+    },
+    "dinkster.3d.preview3_d_advanced": {
+      "displayName": "Preview3DAdvanced"
+    },
+    "dinkster.3d.preview_gaussian_splat": {
+      "displayName": "PreviewGaussianSplat"
+    },
+    "dinkster.3d.preview_point_cloud": {
+      "displayName": "PreviewPointCloud"
+    },
+    "dinkster.3d.remesh_mesh": {
+      "displayName": "RemeshMesh"
+    },
+    "dinkster.3d.render_mesh": {
+      "displayName": "RenderMesh"
+    },
+    "dinkster.3d.render_splat": {
+      "displayName": "RenderSplat"
+    },
+    "dinkster.3d.render_uv_atlas": {
+      "displayName": "RenderUVAtlas"
+    },
+    "dinkster.3d.rotate_mesh": {
+      "displayName": "RotateMesh"
+    },
+    "dinkster.3d.save3_d_advanced": {
+      "displayName": "Save3DAdvanced"
+    },
+    "dinkster.3d.save_glb": {
+      "displayName": "SaveGLB"
+    },
+    "dinkster.3d.save_gaussian_splat": {
+      "displayName": "SaveGaussianSplat"
+    },
+    "dinkster.3d.save_point_cloud": {
+      "displayName": "SavePointCloud"
+    },
+    "dinkster.3d.splat_to_file3_d": {
+      "displayName": "SplatToFile3D"
+    },
+    "dinkster.3d.transform_splat": {
+      "displayName": "TransformSplat"
+    },
+    "dinkster.3d.unwrap_mesh": {
+      "displayName": "UnwrapMesh"
+    },
+    "dinkster.3d.voxel_to_mesh": {
+      "displayName": "VoxelToMesh"
+    },
+    "dinkster.3d.voxel_to_mesh_basic": {
+      "displayName": "VoxelToMeshBasic"
+    },
+    "dinkster.3d.weld_vertices": {
+      "displayName": "WeldVertices"
+    }
+  },
+  "searchTerms": {
+    "dinkster.3d.apply_texture_to_mesh": [
+      "ApplyTextureToMesh"
+    ],
+    "dinkster.3d.bake_ambient_occlusion": [
+      "BakeAmbientOcclusion"
+    ],
+    "dinkster.3d.bake_normal_map_from_mesh": [
+      "BakeNormalMapFromMesh"
+    ],
+    "dinkster.3d.bake_texture_from_voxel": [
+      "BakeTextureFromVoxel"
+    ],
+    "dinkster.3d.camera_angle": [
+      "CameraAngle"
+    ],
+    "dinkster.3d.create_camera_info": [
+      "CreateCameraInfo"
+    ],
+    "dinkster.3d.decimate_mesh": [
+      "DecimateMesh"
+    ],
+    "dinkster.3d.file3_d_to_splat": [
+      "File3DToSplat"
+    ],
+    "dinkster.3d.fill_holes": [
+      "FillHoles"
+    ],
+    "dinkster.3d.get3_d_components": [
+      "Get3DComponents"
+    ],
+    "dinkster.3d.get_mesh_info": [
+      "GetMeshInfo"
+    ],
+    "dinkster.3d.get_splat_count": [
+      "GetSplatCount"
+    ],
+    "dinkster.3d.load3_d": [
+      "Load3D"
+    ],
+    "dinkster.3d.load3_d_advanced": [
+      "Load3DAdvanced"
+    ],
+    "dinkster.3d.merge_meshes": [
+      "MergeMeshes"
+    ],
+    "dinkster.3d.merge_splat": [
+      "MergeSplat"
+    ],
+    "dinkster.3d.mesh_smooth_normals": [
+      "MeshSmoothNormals"
+    ],
+    "dinkster.3d.mesh_texture_to_image": [
+      "MeshTextureToImage"
+    ],
+    "dinkster.3d.mesh_to_file3_d": [
+      "MeshToFile3D"
+    ],
+    "dinkster.3d.paint_mesh": [
+      "PaintMesh"
+    ],
+    "dinkster.3d.preview3_d": [
+      "Preview3D"
+    ],
+    "dinkster.3d.preview3_d_advanced": [
+      "Preview3DAdvanced"
+    ],
+    "dinkster.3d.preview_gaussian_splat": [
+      "PreviewGaussianSplat"
+    ],
+    "dinkster.3d.preview_point_cloud": [
+      "PreviewPointCloud"
+    ],
+    "dinkster.3d.remesh_mesh": [
+      "RemeshMesh"
+    ],
+    "dinkster.3d.render_mesh": [
+      "RenderMesh"
+    ],
+    "dinkster.3d.render_splat": [
+      "RenderSplat"
+    ],
+    "dinkster.3d.render_uv_atlas": [
+      "RenderUVAtlas"
+    ],
+    "dinkster.3d.rotate_mesh": [
+      "RotateMesh"
+    ],
+    "dinkster.3d.save3_d_advanced": [
+      "Save3DAdvanced"
+    ],
+    "dinkster.3d.save_glb": [
+      "SaveGLB"
+    ],
+    "dinkster.3d.save_gaussian_splat": [
+      "SaveGaussianSplat"
+    ],
+    "dinkster.3d.save_point_cloud": [
+      "SavePointCloud"
+    ],
+    "dinkster.3d.splat_to_file3_d": [
+      "SplatToFile3D"
+    ],
+    "dinkster.3d.transform_splat": [
+      "TransformSplat"
+    ],
+    "dinkster.3d.unwrap_mesh": [
+      "UnwrapMesh"
+    ],
+    "dinkster.3d.voxel_to_mesh": [
+      "VoxelToMesh"
+    ],
+    "dinkster.3d.voxel_to_mesh_basic": [
+      "VoxelToMeshBasic"
+    ],
+    "dinkster.3d.weld_vertices": [
+      "WeldVertices"
+    ]
+  }
+}

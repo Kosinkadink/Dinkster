@@ -1,0 +1,18 @@
+{
+  "nodes": {
+    "dinkster.vision.rtdetr.draw_b_boxes": {
+      "displayName": "DrawBBoxes"
+    },
+    "dinkster.vision.rtdetr.rtdetr_detect": {
+      "displayName": "RTDETR_detect"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.rtdetr.draw_b_boxes": [
+      "DrawBBoxes"
+    ],
+    "dinkster.vision.rtdetr.rtdetr_detect": [
+      "RTDETR_detect"
+    ]
+  }
+}

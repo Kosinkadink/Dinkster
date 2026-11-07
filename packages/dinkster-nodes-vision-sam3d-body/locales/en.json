@@ -1,0 +1,42 @@
+{
+  "nodes": {
+    "dinkster.vision.sam3d.body.build_pose_file": {
+      "displayName": "BuildPoseFile"
+    },
+    "dinkster.vision.sam3d.body.sam3_d_body_face_expression": {
+      "displayName": "SAM3DBody_FaceExpression"
+    },
+    "dinkster.vision.sam3d.body.sam3_d_body_loader": {
+      "displayName": "SAM3DBody_Loader"
+    },
+    "dinkster.vision.sam3d.body.sam3_d_body_predict": {
+      "displayName": "SAM3DBody_Predict"
+    },
+    "dinkster.vision.sam3d.body.sam3_d_body_render": {
+      "displayName": "SAM3DBody_Render"
+    },
+    "dinkster.vision.sam3d.body.sam3_d_body_smooth": {
+      "displayName": "SAM3DBody_Smooth"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.sam3d.body.build_pose_file": [
+      "BuildPoseFile"
+    ],
+    "dinkster.vision.sam3d.body.sam3_d_body_face_expression": [
+      "SAM3DBody_FaceExpression"
+    ],
+    "dinkster.vision.sam3d.body.sam3_d_body_loader": [
+      "SAM3DBody_Loader"
+    ],
+    "dinkster.vision.sam3d.body.sam3_d_body_predict": [
+      "SAM3DBody_Predict"
+    ],
+    "dinkster.vision.sam3d.body.sam3_d_body_render": [
+      "SAM3DBody_Render"
+    ],
+    "dinkster.vision.sam3d.body.sam3_d_body_smooth": [
+      "SAM3DBody_Smooth"
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "nodes": {
+    "dinkster.vision.sam3.sam3_detect": {
+      "displayName": "SAM3_Detect"
+    },
+    "dinkster.vision.sam3.sam3_track_preview": {
+      "displayName": "SAM3_TrackPreview"
+    },
+    "dinkster.vision.sam3.sam3_track_to_mask": {
+      "displayName": "SAM3_TrackToMask"
+    },
+    "dinkster.vision.sam3.sam3_video_track": {
+      "displayName": "SAM3_VideoTrack"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.sam3.sam3_detect": [
+      "SAM3_Detect"
+    ],
+    "dinkster.vision.sam3.sam3_track_preview": [
+      "SAM3_TrackPreview"
+    ],
+    "dinkster.vision.sam3.sam3_track_to_mask": [
+      "SAM3_TrackToMask"
+    ],
+    "dinkster.vision.sam3.sam3_video_track": [
+      "SAM3_VideoTrack"
+    ]
+  }
+}

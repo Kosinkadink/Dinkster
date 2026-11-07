@@ -1,0 +1,23 @@
+[pack]
+name = "dinkster-vision-sam3d-body"
+version = "0.0.1"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.vision.sam3d.body"]
+type-namespaces = ["SAM3D_BODY_MODEL", "MHR_POSE_DATA"]
+requires = ["torch", "dinkster-inference==0.1.1"]
+
+[pack.inference]
+imports = ["ldm.sam3.tracker", "ldm.sam3d_body.model.model", "ldm.sam3d_body.utils", "model_management", "model_patcher", "ops", "storage", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_vision_sam3d_body:NODES"
+types = "dinkster_nodes_vision_sam3d_body:register_types"

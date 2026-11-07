@@ -1,0 +1,12 @@
+{
+  "nodes": {
+    "dinkster.vision.marigold.marigold_v2_post_process": {
+      "displayName": "MarigoldV2PostProcess"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.marigold.marigold_v2_post_process": [
+      "MarigoldV2PostProcess"
+    ]
+  }
+}
