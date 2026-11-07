@@ -24,6 +24,7 @@ from dinkster_nodes_hunyuan.hunyuan3d import (
     Hunyuan3Dv2Conditioning,
     Hunyuan3Dv2ConditioningMultiView,
 )
+from hunyuan_pack_fixtures import hunyuan_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -150,6 +151,8 @@ def test_hunyuan_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 ),
                 encoding="ascii",
             )
+            for provider in hunyuan_providers(in_process):
+                await composer.add_pack(provider)
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=manifest, in_process=in_process)
             )

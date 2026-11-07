@@ -158,8 +158,9 @@ def test_uni3c_rejects_incompatible_model_width(dim: int | None) -> None:
 @pytest.mark.parametrize("in_process", (True,))
 def test_uni3c_runs_on_both_ordinary_hosts(in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
+    from wan_pack_fixtures import compose_wan_packs
 
-    from dinkster.compose import PackSpec, ServingComposer
+    from dinkster.compose import ServingComposer
 
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
@@ -175,16 +176,9 @@ def test_uni3c_runs_on_both_ordinary_hosts(in_process: bool) -> None:
             }
         )
         try:
-            for manifest in manifests:
-                pack = PackSpec(trust_reserved=True, manifest=manifest, in_process=True)
-                if not in_process:
-                    pack = PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        worker_group="wan-uni3c-fixture",
-                        group_manifests=manifests,
-                    )
-                await composer.add_pack(pack)
+            await compose_wan_packs(
+                composer, *manifests, in_process=in_process, worker_group="wan-uni3c-fixture"
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("wan-uni3c-fixture.source", {}),

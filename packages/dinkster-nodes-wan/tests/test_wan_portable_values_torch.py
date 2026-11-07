@@ -25,8 +25,9 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from wan_pack_fixtures import compose_wan_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 _CAMERA = TypeExpr.concrete(WAN_CAMERA_EMBEDDING_TYPE)
 _TRACKS = TypeExpr.concrete(TRACKS_TYPE)
@@ -277,29 +278,13 @@ def test_wan_portable_values_cross_ordinary_hosts_twice_with_cache(
             },
         )
         try:
-            if in_process:
-                specs = (
-                    PackSpec(trust_reserved=True, manifest=native_manifest, in_process=True),
-                    PackSpec(trust_reserved=True, manifest=fixture_manifest, in_process=True),
-                )
-            else:
-                manifests = (native_manifest, fixture_manifest)
-                specs = (
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=native_manifest,
-                        worker_group="wan-portable-values",
-                        group_manifests=manifests,
-                    ),
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=fixture_manifest,
-                        worker_group="wan-portable-values",
-                        group_manifests=manifests,
-                    ),
-                )
-            for spec in specs:
-                await composer.add_pack(spec)
+            await compose_wan_packs(
+                composer,
+                native_manifest,
+                fixture_manifest,
+                in_process=in_process,
+                worker_group="wan-portable-values",
+            )
             engine = composer.composition.make_engine(lambda _event: None)
             for visibility, layers_as_tuple in ((False, False), (True, True)):
                 graph = Graph(

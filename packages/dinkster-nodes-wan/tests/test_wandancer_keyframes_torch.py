@@ -27,8 +27,9 @@ from dinkster_nodes_wan.wandancer_keyframes import (
     WanDancerPadKeyframes,
     WanDancerPadKeyframesList,
 )
+from wan_pack_fixtures import compose_wan_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def images() -> torch.Tensor:
@@ -194,16 +195,13 @@ def test_keyframes_run_twice_through_ordinary_hosts(tmp_path: Path, in_process: 
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "wandancer-keyframe-fixture",
-                        group_manifests=() if in_process else (native, fixture),
-                    )
-                )
+            await compose_wan_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="wandancer-keyframe-fixture",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("wandancer-keyframe-fixture.source", {}),

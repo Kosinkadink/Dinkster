@@ -29,7 +29,11 @@ from dinkster_nodes_cosmos.cosmos_conditioning import (
     CosmosPredict2ImageToVideoLatent,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import (
+    PackSpec,
+    ServingComposer,
+    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 class VAE:
@@ -277,6 +281,11 @@ def test_ordinary_manifest_executes_both_cosmos_nodes_twice(
                     "cosmos_conditioning_fixture:register_inference_types",
                 ),
                 encoding="ascii",
+            )
+            await composer.add_pack(
+                _installed_pack_spec(
+                    "dinkster-video", "dinkster_nodes_video", in_process=in_process
+                )
             )
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=fixture, in_process=in_process)

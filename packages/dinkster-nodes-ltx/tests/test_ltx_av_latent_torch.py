@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx.ltx_av_latent import LTXVConcatAVLatent, LTXVSeparateAVLatent
+from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 def _latent(samples: object, **metadata: object) -> dict[str, object]:
@@ -220,12 +221,7 @@ def test_manifest_round_trips_av_latent_roles_and_values_twice(
             worker_env={"PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), *sys.path))}
         )
         try:
-            await composer.add_pack(
-                PackSpec(trust_reserved=True, manifest=manifest, in_process=in_process)
-            )
-            await composer.add_pack(
-                PackSpec(trust_reserved=True, manifest=fixture_manifest, in_process=in_process)
-            )
+            await compose_ltx_packs(composer, manifest, fixture_manifest, in_process=in_process)
             graph = Graph(
                 nodes={
                     "source": GraphNode("ltx-av-fixture.source"),

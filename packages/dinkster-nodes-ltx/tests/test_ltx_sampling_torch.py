@@ -24,8 +24,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx.ltx_sampling import LTXVScheduler, ModelSamplingLTXV
+from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 class Patcher:
@@ -174,16 +175,13 @@ def test_sampling_nodes_compose_twice_in_both_ordinary_hosts(
                 'types = "ltx_sampling_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            for path in (manifest, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=path,
-                        in_process=in_process,
-                        worker_group=None if in_process else "ltx-sampling-fixture",
-                        group_manifests=() if in_process else (manifest, fixture),
-                    )
-                )
+            await compose_ltx_packs(
+                composer,
+                manifest,
+                fixture,
+                in_process=in_process,
+                worker_group="ltx-sampling-fixture",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("ltx-sampling-fixture.source"),

@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-from dinkster.compose import PackSpec, _installed_pack_spec
+from dinkster.compose import (
+    PackSpec,
+    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 def conditioning_providers(in_process: bool) -> dict[Path, PackSpec]:

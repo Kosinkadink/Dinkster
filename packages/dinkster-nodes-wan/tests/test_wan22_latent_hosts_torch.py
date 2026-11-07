@@ -25,8 +25,9 @@ from dinkster_api.v1 import (
     register_inference_types as register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from wan_pack_fixtures import compose_wan_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 class VideoEncoder:
@@ -111,16 +112,13 @@ def test_wan22_runs_twice_in_ordinary_hosts(tmp_path: Path, in_process: bool) ->
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "wan22-latent-fixture",
-                        group_manifests=() if in_process else (native, fixture),
-                    )
-                )
+            await compose_wan_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="wan22-latent-fixture",
+            )
             inputs = {
                 "vae": Link("source", "vae"),
                 "width": 48,

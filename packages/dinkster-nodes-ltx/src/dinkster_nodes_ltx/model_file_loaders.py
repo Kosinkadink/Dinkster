@@ -14,11 +14,19 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_nodes_models.model_file_loaders import (
-    _asset,
-    _clip_options,
-    _combo,
-    _embedding_roots,
-    _path,
+    asset_input as _asset,
+)
+from dinkster_nodes_models.model_file_loaders import (
+    asset_path as _path,
+)
+from dinkster_nodes_models.model_file_loaders import (
+    clip_options as _clip_options,
+)
+from dinkster_nodes_models.model_file_loaders import (
+    combo_input as _combo,
+)
+from dinkster_nodes_models.model_file_loaders import (
+    embedding_roots as _embedding_roots,
 )
 
 _CLIP = TypeExpr.concrete(CLIP_TYPE)

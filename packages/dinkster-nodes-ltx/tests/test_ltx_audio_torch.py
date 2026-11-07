@@ -22,6 +22,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
+from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -180,9 +181,7 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
             await composer.add_pack(
                 PackSpec(manifest=media_manifest, in_process=in_process, trust_reserved=True)
             )
-            await composer.add_pack(
-                PackSpec(trust_reserved=True, manifest=fixture, in_process=in_process)
-            )
+            await compose_ltx_packs(composer, fixture, in_process=in_process)
             graph = Graph(
                 nodes={
                     "source": GraphNode("ltx-audio-fixture.source"),
