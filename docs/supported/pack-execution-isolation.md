@@ -1,5 +1,10 @@
 ## Pack execution isolation
 
+- Doctor permits public `dinkster_nodes_<name>` helpers when the consumer
+  declares the corresponding `dinkster-<name>` runtime pack dependency.
+  Hyphenated pack names use underscores in Python modules. Private symbols,
+  private modules and undeclared provider imports remain errors; wheel
+  dependencies must still supply the imported code in the worker environment.
 - Packs can use image-document construction, editing, rendering, import/export
   and blend helpers through `dinkster_api.v1`, alongside VIDEO values and
   streaming helpers. Remote clients can read host invocation cancellation
