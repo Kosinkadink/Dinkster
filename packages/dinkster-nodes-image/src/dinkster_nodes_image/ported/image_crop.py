@@ -107,7 +107,7 @@ class ImageCropToMask(Node):
     ) -> Mapping[str, object]:
         initialize_inference_process()
         model_management = importlib.import_module("dinkster_inference.model_management")
-        image_crop = importlib.import_module("dinkster_native.model3d.image_crop")
+        image_crop = importlib.import_module("dinkster_nodes_image.mask_crop")
 
         result = image_crop.crop_images_to_masks(
             materialize_image(images),

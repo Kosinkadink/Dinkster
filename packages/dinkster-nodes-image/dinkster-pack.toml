@@ -15,8 +15,6 @@ requires = [
     "scipy",
     "kornia",
     "dinkster-inference==0.1.1",
-    "dinkster-native",
-    "dinkster-values",
 ]
 namespaces = ["dinkster.image"]
 
