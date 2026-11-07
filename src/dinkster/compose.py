@@ -251,7 +251,7 @@ from dinkster_workers.session import WorkerDied
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
 from .native_policy import NativeDispatchPolicy, select_resident_producer
-from .packs import pack_info_from_manifest
+from .packs import first_party_pack_metadata, pack_info_from_manifest
 from .remotes import RemoteSpec
 
 T = TypeVar("T")
@@ -293,34 +293,17 @@ _PACK_SCRATCH_ENV = "DINKSTER_PACK_SCRATCH"
 _ATTENTION_POLICY_ENV = "DINKSTER_ATTENTION_POLICY"
 
 
+_FIRST_PARTY_PACK_METADATA = first_party_pack_metadata(Path(__file__).resolve().parents[2])
 _FIRST_PARTY_PACK_MODULES = MappingProxyType(
-    {
-        "dinkster-nodes-foundation": "dinkster_nodes_foundation",
-        "dinkster-nodes-media-io": "dinkster_nodes_media_io",
-        "dinkster-nodes-image": "dinkster_nodes_image",
-        "dinkster-nodes-remote": "dinkster_nodes_remote",
-        "dinkster-nodes-generation": "dinkster_nodes_generation",
-        "dinkster-nodes-comfy": "dinkster_nodes_comfy",
-        "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
-        "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
-        "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
-        "dinkster-vision-detr": "dinkster_nodes_vision.detr",
-        "dinkster-vision-efficient-sam": "dinkster_nodes_vision.efficient_sam",
-        "dinkster-vision-hed": "dinkster_nodes_vision.hed",
-        "dinkster-vision-rtdetr": "dinkster_nodes_vision.rtdetr",
-        "dinkster-vision-sam31": "dinkster_nodes_vision.sam31",
-        "dinkster-vision-upscale": "dinkster_nodes_vision.upscale",
-    }
+    {pack: module for pack, (module, _) in _FIRST_PARTY_PACK_METADATA.items()}
 )
 _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
-    {
-        pack_id: "dinkster-nodes-vision"
-        for pack_id in _FIRST_PARTY_PACK_MODULES
-        if pack_id.startswith("dinkster-vision-")
-    }
+    {pack: distribution for pack, (_, distribution) in _FIRST_PARTY_PACK_METADATA.items()}
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
-    pack_id for pack_id in _FIRST_PARTY_PACK_MODULES if pack_id.startswith("dinkster-vision-")
+    pack_id
+    for pack_id in _FIRST_PARTY_PACK_MODULES
+    if pack_id.startswith("dinkster-vision-") or pack_id == "dinkster-upscale"
 )
 _ENGINE_CARRIED_PACKS = frozenset(
     {"dinkster-native", "dinkster-compat-comfy", "dinkster-nodes-generation"}

@@ -1,0 +1,30 @@
+{
+  "nodes": {
+    "dinkster.video.concatenate_video": {"displayName": "Concatenate Video"},
+    "dinkster.video.create_video": {"displayName": "Create Video"},
+    "dinkster.video.frame_interpolate": {"displayName": "Run Frame Interpolation Model"},
+    "dinkster.video.frame_interpolation_model_loader": {"displayName": "Load Frame Interpolation Model"},
+    "dinkster.video.get_video_components": {"displayName": "Get Video Components"},
+    "dinkster.video.load_video": {"displayName": "Load Video"},
+    "dinkster.video.optical_flow_loader": {"displayName": "Load Optical Flow Model"},
+    "dinkster.video.save_video": {"displayName": "Save Video"},
+    "dinkster.video.save_webm": {"displayName": "Save WEBM"},
+    "dinkster.video.video_crop": {"displayName": "Crop Video"},
+    "dinkster.video.video_slice": {"displayName": "Trim Video"},
+    "dinkster.video.video_trim": {"displayName": "Trim Video (Advanced)"}
+  },
+  "searchTerms": {
+    "dinkster.video.concatenate_video": ["ConcatenateVideo"],
+    "dinkster.video.create_video": ["CreateVideo"],
+    "dinkster.video.frame_interpolate": ["FrameInterpolate"],
+    "dinkster.video.frame_interpolation_model_loader": ["FrameInterpolationModelLoader"],
+    "dinkster.video.get_video_components": ["GetVideoComponents"],
+    "dinkster.video.load_video": ["LoadVideo"],
+    "dinkster.video.optical_flow_loader": ["OpticalFlowLoader"],
+    "dinkster.video.save_video": ["SaveVideo"],
+    "dinkster.video.save_webm": ["SaveWEBM"],
+    "dinkster.video.video_crop": ["VideoCrop"],
+    "dinkster.video.video_slice": ["Video Slice"],
+    "dinkster.video.video_trim": ["VideoTrim"]
+  }
+}

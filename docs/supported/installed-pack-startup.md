@@ -69,8 +69,14 @@
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
-  fourteen pack identities and node entry points without importing node code.
-  Generation schemas remain engine-carried rather than separate official packs.
+  manifest-declared pack identities and node entry points without importing node
+  code. New node-pack directories are discovered without a family allowlist.
+  Development scaffolding stays unpublished; generation schemas remain
+  engine-carried rather than separate official packs.
+- First-party source resolution reads runtime IDs and node entry modules from
+  manifests and distribution names from project metadata or installed wheel
+  records. Runtime, distribution and import names need not match. Discovery
+  does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
   Engine-only pushes select no pack. PR, fork and tag events build and

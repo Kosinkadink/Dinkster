@@ -1,0 +1,2340 @@
+{
+  "items": [
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "mode": {
+                "input": "mode",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.case_converter"
+          }
+        ],
+        "from": "CaseConverter"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Convert Text Case",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "mode",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "COMBO"
+              ]
+            },
+            "widget": {
+              "options": [
+                "UPPERCASE",
+                "lowercase",
+                "Capitalize",
+                "Title Case"
+              ],
+              "type": "COMBO"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.case_converter",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "mode": {
+                    "input": "mode",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.case_converter"
+              }
+            ],
+            "from": "CaseConverter"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "CaseConverter"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "array": {
+                "input": "array",
+                "kind": "copy"
+              },
+              "indent": {
+                "input": "indent",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.convert_array_to_string"
+          }
+        ],
+        "from": "ConvertArrayToString"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Convert Array to String",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "array",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "ARRAY"
+              ]
+            }
+          },
+          {
+            "default": 2,
+            "id": "indent",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            },
+            "widget": {
+              "max": 8,
+              "min": 0,
+              "type": "NUMBER"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.convert_array_to_string",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "array": {
+                    "input": "array",
+                    "kind": "copy"
+                  },
+                  "indent": {
+                    "input": "indent",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.convert_array_to_string"
+              }
+            ],
+            "from": "ConvertArrayToString"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "ConvertArrayToString"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "dictionary": {
+                "input": "dictionary",
+                "kind": "copy"
+              },
+              "indent": {
+                "input": "indent",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.convert_dictionary_to_string"
+          }
+        ],
+        "from": "ConvertDictionaryToString"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Convert Dictionary to String",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "dictionary",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "DICT"
+              ]
+            }
+          },
+          {
+            "default": 2,
+            "id": "indent",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            },
+            "widget": {
+              "max": 8,
+              "min": 0,
+              "type": "NUMBER"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.convert_dictionary_to_string",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "dictionary": {
+                    "input": "dictionary",
+                    "kind": "copy"
+                  },
+                  "indent": {
+                    "input": "indent",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.convert_dictionary_to_string"
+              }
+            ],
+            "from": "ConvertDictionaryToString"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "ConvertDictionaryToString"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-upscale",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "image": {
+                "input": "image",
+                "kind": "copy"
+              },
+              "upscale_model": {
+                "input": "upscale_model",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "IMAGE": "IMAGE"
+            },
+            "to": "dinkster.upscale.image_upscale_with_model"
+          }
+        ],
+        "from": "ImageUpscaleWithModel"
+      },
+      "schema": {
+        "category": "image/upscaling",
+        "description": "",
+        "displayName": "Upscale Image (using Model)",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "upscale_model",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "UPSCALE_MODEL"
+              ]
+            }
+          },
+          {
+            "id": "image",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "IMAGE"
+              ]
+            }
+          },
+          {
+            "id": "IMAGE",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "IMAGE"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.upscale.image_upscale_with_model",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "image": {
+                    "input": "image",
+                    "kind": "copy"
+                  },
+                  "upscale_model": {
+                    "input": "upscale_model",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "IMAGE": "IMAGE"
+                },
+                "to": "dinkster.upscale.image_upscale_with_model"
+              }
+            ],
+            "from": "ImageUpscaleWithModel"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "upscale",
+          "upscaler",
+          "upsc",
+          "enlarge image",
+          "super resolution",
+          "hires",
+          "superres",
+          "increase resolution",
+          "ImageUpscaleWithModel"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "json_string": {
+                "input": "json_string",
+                "kind": "copy"
+              },
+              "key": {
+                "input": "key",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.json_extract_string"
+          }
+        ],
+        "from": "JsonExtractString"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Extract Text from JSON",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "json_string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "key",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": false,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.json_extract_string",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "json_string": {
+                    "input": "json_string",
+                    "kind": "copy"
+                  },
+                  "key": {
+                    "input": "key",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.json_extract_string"
+              }
+            ],
+            "from": "JsonExtractString"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "JsonExtractString"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "case_insensitive": {
+                "input": "case_insensitive",
+                "kind": "copy"
+              },
+              "dotall": {
+                "input": "dotall",
+                "kind": "copy"
+              },
+              "group_index": {
+                "input": "group_index",
+                "kind": "copy"
+              },
+              "mode": {
+                "input": "mode",
+                "kind": "copy"
+              },
+              "multiline": {
+                "input": "multiline",
+                "kind": "copy"
+              },
+              "regex_pattern": {
+                "input": "regex_pattern",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.regex_extract"
+          }
+        ],
+        "from": "RegexExtract"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Extract Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "regex_pattern",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "mode",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "COMBO"
+              ]
+            },
+            "widget": {
+              "options": [
+                "First Match",
+                "All Matches",
+                "First Group",
+                "All Groups"
+              ],
+              "type": "COMBO"
+            }
+          },
+          {
+            "advanced": true,
+            "default": true,
+            "id": "case_insensitive",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": false,
+            "id": "multiline",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": false,
+            "id": "dotall",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": 1,
+            "id": "group_index",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            },
+            "widget": {
+              "max": 100,
+              "min": 0,
+              "type": "NUMBER"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.regex_extract",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "case_insensitive": {
+                    "input": "case_insensitive",
+                    "kind": "copy"
+                  },
+                  "dotall": {
+                    "input": "dotall",
+                    "kind": "copy"
+                  },
+                  "group_index": {
+                    "input": "group_index",
+                    "kind": "copy"
+                  },
+                  "mode": {
+                    "input": "mode",
+                    "kind": "copy"
+                  },
+                  "multiline": {
+                    "input": "multiline",
+                    "kind": "copy"
+                  },
+                  "regex_pattern": {
+                    "input": "regex_pattern",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.regex_extract"
+              }
+            ],
+            "from": "RegexExtract"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "RegexExtract"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "case_insensitive": {
+                "input": "case_insensitive",
+                "kind": "copy"
+              },
+              "dotall": {
+                "input": "dotall",
+                "kind": "copy"
+              },
+              "multiline": {
+                "input": "multiline",
+                "kind": "copy"
+              },
+              "regex_pattern": {
+                "input": "regex_pattern",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "matches": "matches"
+            },
+            "to": "dinkster.text.regex_match"
+          }
+        ],
+        "from": "RegexMatch"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Match Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "regex_pattern",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "advanced": true,
+            "default": true,
+            "id": "case_insensitive",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": false,
+            "id": "multiline",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": false,
+            "id": "dotall",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "id": "matches",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.regex_match",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "case_insensitive": {
+                    "input": "case_insensitive",
+                    "kind": "copy"
+                  },
+                  "dotall": {
+                    "input": "dotall",
+                    "kind": "copy"
+                  },
+                  "multiline": {
+                    "input": "multiline",
+                    "kind": "copy"
+                  },
+                  "regex_pattern": {
+                    "input": "regex_pattern",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "matches": "matches"
+                },
+                "to": "dinkster.text.regex_match"
+              }
+            ],
+            "from": "RegexMatch"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "RegexMatch"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "case_insensitive": {
+                "input": "case_insensitive",
+                "kind": "copy"
+              },
+              "count": {
+                "input": "count",
+                "kind": "copy"
+              },
+              "dotall": {
+                "input": "dotall",
+                "kind": "copy"
+              },
+              "multiline": {
+                "input": "multiline",
+                "kind": "copy"
+              },
+              "regex_pattern": {
+                "input": "regex_pattern",
+                "kind": "copy"
+              },
+              "replace": {
+                "input": "replace",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.regex_replace"
+          }
+        ],
+        "from": "RegexReplace"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Replace Text (Regex)",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "regex_pattern",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "replace",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "advanced": true,
+            "default": true,
+            "id": "case_insensitive",
+            "required": false,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": false,
+            "id": "multiline",
+            "required": false,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": false,
+            "id": "dotall",
+            "required": false,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "advanced": true,
+            "default": 0,
+            "id": "count",
+            "required": false,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            },
+            "widget": {
+              "max": 100,
+              "min": 0,
+              "type": "NUMBER"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.regex_replace",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "case_insensitive": {
+                    "input": "case_insensitive",
+                    "kind": "copy"
+                  },
+                  "count": {
+                    "input": "count",
+                    "kind": "copy"
+                  },
+                  "dotall": {
+                    "input": "dotall",
+                    "kind": "copy"
+                  },
+                  "multiline": {
+                    "input": "multiline",
+                    "kind": "copy"
+                  },
+                  "regex_pattern": {
+                    "input": "regex_pattern",
+                    "kind": "copy"
+                  },
+                  "replace": {
+                    "input": "replace",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.regex_replace"
+              }
+            ],
+            "from": "RegexReplace"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "RegexReplace"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "filename_prefix": {
+                "input": "filename_prefix",
+                "kind": "copy"
+              },
+              "format": {
+                "input": "format",
+                "kind": "copy"
+              },
+              "mount": {
+                "input": "mount",
+                "kind": "copy"
+              },
+              "text": {
+                "input": "text",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "text": "text"
+            },
+            "to": "dinkster.text.save_text"
+          }
+        ],
+        "from": "SaveText"
+      },
+      "schema": {
+        "category": "text",
+        "description": "Save text content to a file in the output directory.",
+        "displayName": "Save Text",
+        "idempotent": false,
+        "interface": [
+          {
+            "forceInput": true,
+            "id": "text",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": false,
+              "type": "STRING"
+            }
+          },
+          {
+            "default": "ComfyUI",
+            "id": "filename_prefix",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": false,
+              "type": "STRING"
+            }
+          },
+          {
+            "default": "txt",
+            "id": "format",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "COMBO"
+              ]
+            },
+            "widget": {
+              "options": [
+                "txt",
+                "csv",
+                "md",
+                "json"
+              ],
+              "type": "COMBO"
+            }
+          },
+          {
+            "id": "mount",
+            "required": false,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": false,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "text",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.save_text",
+        "outputNode": true,
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "filename_prefix": {
+                    "input": "filename_prefix",
+                    "kind": "copy"
+                  },
+                  "format": {
+                    "input": "format",
+                    "kind": "copy"
+                  },
+                  "mount": {
+                    "input": "mount",
+                    "kind": "copy"
+                  },
+                  "text": {
+                    "input": "text",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "text": "text"
+                },
+                "to": "dinkster.text.save_text"
+              }
+            ],
+            "from": "SaveText"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "save text",
+          "write text",
+          "export text",
+          "SaveText"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "case_sensitive": {
+                "input": "case_sensitive",
+                "kind": "copy"
+              },
+              "mode": {
+                "input": "mode",
+                "kind": "copy"
+              },
+              "string_a": {
+                "input": "string_a",
+                "kind": "copy"
+              },
+              "string_b": {
+                "input": "string_b",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "BOOLEAN": "BOOLEAN"
+            },
+            "to": "dinkster.text.string_compare"
+          }
+        ],
+        "from": "StringCompare"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Compare Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string_a",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "string_b",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "mode",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "COMBO"
+              ]
+            },
+            "widget": {
+              "options": [
+                "Starts With",
+                "Ends With",
+                "Equal"
+              ],
+              "type": "COMBO"
+            }
+          },
+          {
+            "advanced": true,
+            "default": true,
+            "id": "case_sensitive",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "id": "BOOLEAN",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_compare",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "case_sensitive": {
+                    "input": "case_sensitive",
+                    "kind": "copy"
+                  },
+                  "mode": {
+                    "input": "mode",
+                    "kind": "copy"
+                  },
+                  "string_a": {
+                    "input": "string_a",
+                    "kind": "copy"
+                  },
+                  "string_b": {
+                    "input": "string_b",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "BOOLEAN": "BOOLEAN"
+                },
+                "to": "dinkster.text.string_compare"
+              }
+            ],
+            "from": "StringCompare"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringCompare"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "delimiter": {
+                "input": "delimiter",
+                "kind": "copy"
+              },
+              "string_a": {
+                "input": "string_a",
+                "kind": "copy"
+              },
+              "string_b": {
+                "input": "string_b",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.string_concatenate"
+          }
+        ],
+        "from": "StringConcatenate"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Concatenate Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string_a",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "string_b",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "default": "",
+            "id": "delimiter",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": false,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_concatenate",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "delimiter": {
+                    "input": "delimiter",
+                    "kind": "copy"
+                  },
+                  "string_a": {
+                    "input": "string_a",
+                    "kind": "copy"
+                  },
+                  "string_b": {
+                    "input": "string_b",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.string_concatenate"
+              }
+            ],
+            "from": "StringConcatenate"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringConcatenate"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "case_sensitive": {
+                "input": "case_sensitive",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              },
+              "substring": {
+                "input": "substring",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "contains": "contains"
+            },
+            "to": "dinkster.text.string_contains"
+          }
+        ],
+        "from": "StringContains"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Contains Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "substring",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "advanced": true,
+            "default": true,
+            "id": "case_sensitive",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          },
+          {
+            "id": "contains",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "BOOLEAN"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_contains",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "case_sensitive": {
+                    "input": "case_sensitive",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  },
+                  "substring": {
+                    "input": "substring",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "contains": "contains"
+                },
+                "to": "dinkster.text.string_contains"
+              }
+            ],
+            "from": "StringContains"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringContains"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputFamilies": {
+              "values": {
+                "inputs": {
+                  "value": {
+                    "input": "value",
+                    "kind": "copy"
+                  }
+                },
+                "kind": "copy",
+                "sourceFamily": "values",
+                "sourceTemplate": {
+                  "inputs": [
+                    "value"
+                  ]
+                }
+              }
+            },
+            "inputs": {
+              "f_string": {
+                "input": "f_string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.string_format"
+          }
+        ],
+        "from": "StringFormat"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Format Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "values",
+            "memberNames": [
+              "a",
+              "b",
+              "c",
+              "d",
+              "e",
+              "f",
+              "g",
+              "h",
+              "i",
+              "j",
+              "k",
+              "l",
+              "m",
+              "n",
+              "o",
+              "p",
+              "q",
+              "r",
+              "s",
+              "t",
+              "u",
+              "v",
+              "w",
+              "x",
+              "y",
+              "z"
+            ],
+            "minMembers": 0,
+            "required": true,
+            "role": "inputFamily",
+            "template": [
+              {
+                "id": "value",
+                "required": false,
+                "role": "input",
+                "type": {
+                  "kind": "wildcard"
+                }
+              }
+            ]
+          },
+          {
+            "default": "{a}",
+            "id": "f_string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_format",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputFamilies": {
+                  "values": {
+                    "inputs": {
+                      "value": {
+                        "input": "value",
+                        "kind": "copy"
+                      }
+                    },
+                    "kind": "copy",
+                    "sourceFamily": "values",
+                    "sourceTemplate": {
+                      "inputs": [
+                        "value"
+                      ]
+                    }
+                  }
+                },
+                "inputs": {
+                  "f_string": {
+                    "input": "f_string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.string_format"
+              }
+            ],
+            "from": "StringFormat"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringFormat"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "length": "length"
+            },
+            "to": "dinkster.text.string_length"
+          }
+        ],
+        "from": "StringLength"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Text Length",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "length",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_length",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "length": "length"
+                },
+                "to": "dinkster.text.string_length"
+              }
+            ],
+            "from": "StringLength"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringLength"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "find": {
+                "input": "find",
+                "kind": "copy"
+              },
+              "replace": {
+                "input": "replace",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.string_replace"
+          }
+        ],
+        "from": "StringReplace"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Replace Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "find",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "replace",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_replace",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "find": {
+                    "input": "find",
+                    "kind": "copy"
+                  },
+                  "replace": {
+                    "input": "replace",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.string_replace"
+              }
+            ],
+            "from": "StringReplace"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringReplace"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "end": {
+                "input": "end",
+                "kind": "copy"
+              },
+              "start": {
+                "input": "start",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.string_substring"
+          }
+        ],
+        "from": "StringSubstring"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Substring",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "start",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            }
+          },
+          {
+            "id": "end",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "INT"
+              ]
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_substring",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "end": {
+                    "input": "end",
+                    "kind": "copy"
+                  },
+                  "start": {
+                    "input": "start",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.string_substring"
+              }
+            ],
+            "from": "StringSubstring"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringSubstring"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-text",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "mode": {
+                "input": "mode",
+                "kind": "copy"
+              },
+              "string": {
+                "input": "string",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "STRING": "STRING"
+            },
+            "to": "dinkster.text.string_trim"
+          }
+        ],
+        "from": "StringTrim"
+      },
+      "schema": {
+        "category": "text",
+        "description": "",
+        "displayName": "Trim Text",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "string",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            },
+            "widget": {
+              "multiline": true,
+              "type": "STRING"
+            }
+          },
+          {
+            "id": "mode",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "COMBO"
+              ]
+            },
+            "widget": {
+              "options": [
+                "Both",
+                "Left",
+                "Right"
+              ],
+              "type": "COMBO"
+            }
+          },
+          {
+            "id": "STRING",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "STRING"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.text.string_trim",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "mode": {
+                    "input": "mode",
+                    "kind": "copy"
+                  },
+                  "string": {
+                    "input": "string",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "STRING": "STRING"
+                },
+                "to": "dinkster.text.string_trim"
+              }
+            ],
+            "from": "StringTrim"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "StringTrim"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    },
+    {
+      "pack": "dinkster-upscale",
+      "rule": {
+        "cases": [
+          {
+            "inputs": {
+              "model_name": {
+                "input": "model_name",
+                "kind": "copy"
+              }
+            },
+            "outputs": {
+              "UPSCALE_MODEL": "UPSCALE_MODEL"
+            },
+            "to": "dinkster.upscale.upscale_model_loader"
+          }
+        ],
+        "from": "UpscaleModelLoader"
+      },
+      "schema": {
+        "category": "model/loaders",
+        "description": "",
+        "displayName": "Load Upscale Model",
+        "idempotent": true,
+        "interface": [
+          {
+            "id": "model_name",
+            "required": true,
+            "role": "input",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "ASSET"
+              ]
+            },
+            "widget": {
+              "accept": [
+                "application/octet-stream"
+              ],
+              "kind": "model/upscaler",
+              "type": "ASSET"
+            }
+          },
+          {
+            "id": "UPSCALE_MODEL",
+            "role": "output",
+            "type": {
+              "kind": "concrete",
+              "types": [
+                "UPSCALE_MODEL"
+              ]
+            }
+          }
+        ],
+        "nodeType": "dinkster.upscale.upscale_model_loader",
+        "replacements": [
+          {
+            "cases": [
+              {
+                "inputs": {
+                  "model_name": {
+                    "input": "model_name",
+                    "kind": "copy"
+                  }
+                },
+                "outputs": {
+                  "UPSCALE_MODEL": "UPSCALE_MODEL"
+                },
+                "to": "dinkster.upscale.upscale_model_loader"
+              }
+            ],
+            "from": "UpscaleModelLoader"
+          }
+        ],
+        "schemaVersion": 1,
+        "searchTerms": [
+          "UpscaleModelLoader"
+        ],
+        "version": 1
+      },
+      "version": "0.0.1"
+    }
+  ],
+  "schemaVersion": 1
+}

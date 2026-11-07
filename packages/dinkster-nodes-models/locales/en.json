@@ -1,0 +1,675 @@
+{
+  "nodes": {
+    "dinkster.models.u_net_self_attention_multiply": {
+      "displayName": "UNetSelfAttentionMultiply"
+    },
+    "dinkster.models.u_net_cross_attention_multiply": {
+      "displayName": "UNetCrossAttentionMultiply"
+    },
+    "dinkster.models.clip_attention_multiply": {
+      "displayName": "CLIPAttentionMultiply"
+    },
+    "dinkster.models.u_net_temporal_attention_multiply": {
+      "displayName": "UNetTemporalAttentionMultiply"
+    },
+    "dinkster.models.easy_cache": {
+      "displayName": "EasyCache"
+    },
+    "dinkster.models.lazy_cache": {
+      "displayName": "LazyCache"
+    },
+    "dinkster.models.triple_clip_loader": {
+      "displayName": "Load CLIP (Triple)"
+    },
+    "dinkster.models.quadruple_clip_loader": {
+      "displayName": "Load CLIP (Quadruple)"
+    },
+    "dinkster.models.model_merge_simple": {
+      "displayName": "ModelMergeSimple"
+    },
+    "dinkster.models.model_merge_subtract": {
+      "displayName": "ModelMergeSubtract"
+    },
+    "dinkster.models.model_merge_add": {
+      "displayName": "ModelMergeAdd"
+    },
+    "dinkster.models.clip_merge_simple": {
+      "displayName": "CLIPMergeSimple"
+    },
+    "dinkster.models.clip_merge_subtract": {
+      "displayName": "CLIPMergeSubtract"
+    },
+    "dinkster.models.clip_merge_add": {
+      "displayName": "CLIPMergeAdd"
+    },
+    "dinkster.models.model_merge_blocks": {
+      "displayName": "ModelMergeBlocks"
+    },
+    "dinkster.models.model_merge_sd1": {
+      "displayName": "ModelMergeSD1"
+    },
+    "dinkster.models.model_merge_sd2": {
+      "displayName": "ModelMergeSD2"
+    },
+    "dinkster.models.model_merge_sdxl": {
+      "displayName": "ModelMergeSDXL"
+    },
+    "dinkster.models.model_merge_sd3_2_b": {
+      "displayName": "ModelMergeSD3_2B"
+    },
+    "dinkster.models.model_merge_auraflow": {
+      "displayName": "ModelMergeAuraflow"
+    },
+    "dinkster.models.model_merge_flux1": {
+      "displayName": "ModelMergeFlux1"
+    },
+    "dinkster.models.model_merge_sd35_large": {
+      "displayName": "ModelMergeSD35_Large"
+    },
+    "dinkster.models.model_merge_mochi_preview": {
+      "displayName": "ModelMergeMochiPreview"
+    },
+    "dinkster.models.model_merge_ltxv": {
+      "displayName": "ModelMergeLTXV"
+    },
+    "dinkster.models.model_merge_cosmos7_b": {
+      "displayName": "ModelMergeCosmos7B"
+    },
+    "dinkster.models.model_merge_cosmos14_b": {
+      "displayName": "ModelMergeCosmos14B"
+    },
+    "dinkster.models.model_merge_wan2_1": {
+      "displayName": "ModelMergeWAN2_1"
+    },
+    "dinkster.models.model_merge_cosmos_predict2_2_b": {
+      "displayName": "ModelMergeCosmosPredict2_2B"
+    },
+    "dinkster.models.model_merge_cosmos_predict2_14_b": {
+      "displayName": "ModelMergeCosmosPredict2_14B"
+    },
+    "dinkster.models.model_merge_qwen_image": {
+      "displayName": "ModelMergeQwenImage"
+    },
+    "dinkster.models.model_merge_krea2": {
+      "displayName": "ModelMergeKrea2"
+    },
+    "dinkster.models.model_sampling_discrete": {
+      "displayName": "ModelSamplingDiscrete"
+    },
+    "dinkster.models.model_sampling_continuous_edm": {
+      "displayName": "ModelSamplingContinuousEDM"
+    },
+    "dinkster.models.model_sampling_continuous_v": {
+      "displayName": "ModelSamplingContinuousV"
+    },
+    "dinkster.models.model_sampling_stable_cascade": {
+      "displayName": "ModelSamplingStableCascade"
+    },
+    "dinkster.models.model_sampling_sd3": {
+      "displayName": "ModelSamplingSD3"
+    },
+    "dinkster.models.model_sampling_aura_flow": {
+      "displayName": "ModelSamplingAuraFlow"
+    },
+    "dinkster.models.model_sampling_flux": {
+      "displayName": "ModelSamplingFlux"
+    },
+    "dinkster.models.model_noise_scale": {
+      "displayName": "ModelNoiseScale"
+    },
+    "dinkster.models.rescale_cfg": {
+      "displayName": "RescaleCFG"
+    },
+    "dinkster.models.model_compute_dtype": {
+      "displayName": "ModelComputeDtype"
+    },
+    "dinkster.models.model_attention_backend": {
+      "displayName": "Model Attention Backend"
+    },
+    "dinkster.models.hypernetwork_loader": {
+      "displayName": "Load Hypernetwork"
+    },
+    "dinkster.models.model_patch_loader": {
+      "displayName": "Load Model Patch"
+    },
+    "dinkster.models.multi_gpu_work_units": {
+      "displayName": "MultiGPU CFG Split"
+    },
+    "dinkster.models.select_model_device": {
+      "displayName": "Select Model Device"
+    },
+    "dinkster.models.select_clip_device": {
+      "displayName": "Select CLIP Device"
+    },
+    "dinkster.models.select_vae_device": {
+      "displayName": "Select VAE Device"
+    },
+    "dinkster.models.torch_compile_model": {
+      "displayName": "TorchCompileModel"
+    },
+    "dinkster.models.free_u": {
+      "displayName": "FreeU"
+    },
+    "dinkster.models.free_u_v2": {
+      "displayName": "FreeU_V2"
+    },
+    "dinkster.models.tome_patch_model": {
+      "displayName": "TomePatchModel"
+    },
+    "dinkster.models.hyper_tile": {
+      "displayName": "HyperTile"
+    },
+    "dinkster.models.patch_model_add_downscale": {
+      "displayName": "PatchModelAddDownscale (Kohya Deep Shrink)"
+    },
+    "dinkster.models.scale_rope": {
+      "displayName": "ScaleROPE"
+    },
+    "dinkster.models.differential_diffusion": {
+      "displayName": "Differential Diffusion"
+    },
+    "dinkster.models.block_sparse_attention": {
+      "displayName": "Model Sparse Attention"
+    },
+    "dinkster.models.set_hook_keyframes": {
+      "displayName": "Set Hook Keyframes"
+    },
+    "dinkster.models.create_hook_keyframe": {
+      "displayName": "Create Hook Keyframe"
+    },
+    "dinkster.models.create_hook_keyframes_interpolated": {
+      "displayName": "Create Hook Keyframes Interp."
+    },
+    "dinkster.models.create_hook_keyframes_from_floats": {
+      "displayName": "Create Hook Keyframes From Floats"
+    },
+    "dinkster.models.combine_hooks2": {
+      "displayName": "Combine Hooks [2]"
+    },
+    "dinkster.models.combine_hooks4": {
+      "displayName": "Combine Hooks [4]"
+    },
+    "dinkster.models.combine_hooks8": {
+      "displayName": "Combine Hooks [8]"
+    },
+    "dinkster.models.latent_upscale_model_loader": {
+      "displayName": "Load Latent Upscale Model"
+    },
+    "dinkster.models.create_hook_model_as_lora": {
+      "displayName": "Create Hook Model as LoRA"
+    },
+    "dinkster.models.create_hook_model_as_lora_model_only": {
+      "displayName": "Create Hook Model as LoRA (MO)"
+    },
+    "dinkster.models.create_hook_lora": {
+      "displayName": "Create Hook LoRA"
+    },
+    "dinkster.models.create_hook_lora_model_only": {
+      "displayName": "Create Hook LoRA (MO)"
+    },
+    "dinkster.models.context_windows_manual": {
+      "displayName": "Context Windows (Manual)"
+    },
+    "dinkster.models.conditioning_set_properties": {
+      "displayName": "Cond Set Props"
+    },
+    "dinkster.models.conditioning_set_properties_and_combine": {
+      "displayName": "Cond Set Props Combine"
+    },
+    "dinkster.models.pair_conditioning_set_properties": {
+      "displayName": "Cond Pair Set Props"
+    },
+    "dinkster.models.pair_conditioning_set_properties_and_combine": {
+      "displayName": "Cond Pair Set Props Combine"
+    },
+    "dinkster.models.conditioning_set_default_combine": {
+      "displayName": "Cond Set Default Combine"
+    },
+    "dinkster.models.pair_conditioning_set_default_combine": {
+      "displayName": "Cond Pair Set Default Combine"
+    },
+    "dinkster.models.pair_conditioning_combine": {
+      "displayName": "Cond Pair Combine"
+    },
+    "dinkster.models.set_clip_hooks": {
+      "displayName": "Set CLIP Hooks"
+    },
+    "dinkster.models.conditioning_timesteps_range": {
+      "displayName": "Timesteps Range"
+    },
+    "dinkster.models.vae_loader": {
+      "displayName": "Load VAE"
+    },
+    "dinkster.models.diffusers_loader": {
+      "displayName": "Load Diffusers Model (DEPRECATED)"
+    },
+    "dinkster.models.checkpoint_loader_simple": {
+      "displayName": "Load Checkpoint"
+    },
+    "dinkster.models.checkpoint_loader": {
+      "displayName": "Load Checkpoint With Config (DEPRECATED)"
+    },
+    "dinkster.models.control_net_loader": {
+      "displayName": "Load ControlNet Model"
+    },
+    "dinkster.models.diff_control_net_loader": {
+      "displayName": "Load ControlNet Model (diff)"
+    },
+    "dinkster.models.unet_loader": {
+      "displayName": "Load Diffusion Model"
+    },
+    "dinkster.models.clip_loader": {
+      "displayName": "Load CLIP"
+    },
+    "dinkster.models.dual_clip_loader": {
+      "displayName": "Load CLIP (Dual)"
+    },
+    "dinkster.models.clip_vision_loader": {
+      "displayName": "Load CLIP Vision"
+    },
+    "dinkster.models.style_model_loader": {
+      "displayName": "Load Style Model"
+    },
+    "dinkster.models.lora_loader": {
+      "displayName": "Load LoRA (Model and CLIP)"
+    },
+    "dinkster.models.lora_loader_model_only": {
+      "displayName": "Load LoRA"
+    },
+    "dinkster.models.load_lora_model": {
+      "displayName": "Load LoRA (Model)"
+    },
+    "dinkster.models.load_lora_text_encoder": {
+      "displayName": "Load LoRA (Text Encoder)"
+    },
+    "dinkster.models.lora_loader_bypass": {
+      "displayName": "Load LoRA (Bypass) (For debugging)"
+    },
+    "dinkster.models.lora_loader_bypass_model_only": {
+      "displayName": "Load LoRA (Bypass, Model Only) (for debugging)"
+    },
+    "dinkster.models.clip_save": {
+      "displayName": "CLIPSave"
+    },
+    "dinkster.models.vae_save": {
+      "displayName": "VAESave"
+    },
+    "dinkster.models.lora_save": {
+      "displayName": "Extract and Save Lora"
+    },
+    "dinkster.models.checkpoint_save": {
+      "displayName": "Save Checkpoint"
+    },
+    "dinkster.models.model_save": {
+      "displayName": "ModelSave"
+    }
+  },
+  "searchTerms": {
+    "dinkster.models.u_net_self_attention_multiply": [
+      "UNetSelfAttentionMultiply"
+    ],
+    "dinkster.models.u_net_cross_attention_multiply": [
+      "UNetCrossAttentionMultiply"
+    ],
+    "dinkster.models.clip_attention_multiply": [
+      "clip attention scale",
+      "text encoder attention",
+      "CLIPAttentionMultiply"
+    ],
+    "dinkster.models.u_net_temporal_attention_multiply": [
+      "UNetTemporalAttentionMultiply"
+    ],
+    "dinkster.models.easy_cache": [
+      "EasyCache"
+    ],
+    "dinkster.models.lazy_cache": [
+      "LazyCache"
+    ],
+    "dinkster.models.triple_clip_loader": [
+      "TripleCLIPLoader"
+    ],
+    "dinkster.models.quadruple_clip_loader": [
+      "QuadrupleCLIPLoader"
+    ],
+    "dinkster.models.model_merge_simple": [
+      "ModelMergeSimple"
+    ],
+    "dinkster.models.model_merge_subtract": [
+      "ModelMergeSubtract"
+    ],
+    "dinkster.models.model_merge_add": [
+      "ModelMergeAdd"
+    ],
+    "dinkster.models.clip_merge_simple": [
+      "CLIPMergeSimple"
+    ],
+    "dinkster.models.clip_merge_subtract": [
+      "CLIPMergeSubtract"
+    ],
+    "dinkster.models.clip_merge_add": [
+      "CLIPMergeAdd"
+    ],
+    "dinkster.models.model_merge_blocks": [
+      "ModelMergeBlocks"
+    ],
+    "dinkster.models.model_merge_sd1": [
+      "ModelMergeSD1"
+    ],
+    "dinkster.models.model_merge_sd2": [
+      "ModelMergeSD2"
+    ],
+    "dinkster.models.model_merge_sdxl": [
+      "ModelMergeSDXL"
+    ],
+    "dinkster.models.model_merge_sd3_2_b": [
+      "ModelMergeSD3_2B"
+    ],
+    "dinkster.models.model_merge_auraflow": [
+      "ModelMergeAuraflow"
+    ],
+    "dinkster.models.model_merge_flux1": [
+      "ModelMergeFlux1"
+    ],
+    "dinkster.models.model_merge_sd35_large": [
+      "ModelMergeSD35_Large"
+    ],
+    "dinkster.models.model_merge_mochi_preview": [
+      "ModelMergeMochiPreview"
+    ],
+    "dinkster.models.model_merge_ltxv": [
+      "ModelMergeLTXV"
+    ],
+    "dinkster.models.model_merge_cosmos7_b": [
+      "ModelMergeCosmos7B"
+    ],
+    "dinkster.models.model_merge_cosmos14_b": [
+      "ModelMergeCosmos14B"
+    ],
+    "dinkster.models.model_merge_wan2_1": [
+      "ModelMergeWAN2_1"
+    ],
+    "dinkster.models.model_merge_cosmos_predict2_2_b": [
+      "ModelMergeCosmosPredict2_2B"
+    ],
+    "dinkster.models.model_merge_cosmos_predict2_14_b": [
+      "ModelMergeCosmosPredict2_14B"
+    ],
+    "dinkster.models.model_merge_qwen_image": [
+      "ModelMergeQwenImage"
+    ],
+    "dinkster.models.model_merge_krea2": [
+      "ModelMergeKrea2"
+    ],
+    "dinkster.models.model_sampling_discrete": [
+      "ModelSamplingDiscrete"
+    ],
+    "dinkster.models.model_sampling_continuous_edm": [
+      "ModelSamplingContinuousEDM"
+    ],
+    "dinkster.models.model_sampling_continuous_v": [
+      "ModelSamplingContinuousV"
+    ],
+    "dinkster.models.model_sampling_stable_cascade": [
+      "ModelSamplingStableCascade"
+    ],
+    "dinkster.models.model_sampling_sd3": [
+      "ModelSamplingSD3"
+    ],
+    "dinkster.models.model_sampling_aura_flow": [
+      "ModelSamplingAuraFlow"
+    ],
+    "dinkster.models.model_sampling_flux": [
+      "ModelSamplingFlux"
+    ],
+    "dinkster.models.model_noise_scale": [
+      "ModelNoiseScale"
+    ],
+    "dinkster.models.rescale_cfg": [
+      "RescaleCFG"
+    ],
+    "dinkster.models.model_compute_dtype": [
+      "model precision",
+      "change dtype",
+      "ModelComputeDtype"
+    ],
+    "dinkster.models.model_attention_backend": [
+      "comfy kitchen",
+      "attention",
+      "pytorch",
+      "kitchen attention",
+      "ModelAttentionBackend"
+    ],
+    "dinkster.models.hypernetwork_loader": [
+      "HypernetworkLoader"
+    ],
+    "dinkster.models.model_patch_loader": [
+      "ModelPatchLoader"
+    ],
+    "dinkster.models.multi_gpu_work_units": [
+      "MultiGPU_WorkUnits"
+    ],
+    "dinkster.models.select_model_device": [
+      "SelectModelDevice"
+    ],
+    "dinkster.models.select_clip_device": [
+      "SelectCLIPDevice"
+    ],
+    "dinkster.models.select_vae_device": [
+      "SelectVAEDevice"
+    ],
+    "dinkster.models.torch_compile_model": [
+      "TorchCompileModel"
+    ],
+    "dinkster.models.free_u": [
+      "FreeU"
+    ],
+    "dinkster.models.free_u_v2": [
+      "FreeU_V2"
+    ],
+    "dinkster.models.tome_patch_model": [
+      "TomePatchModel"
+    ],
+    "dinkster.models.hyper_tile": [
+      "HyperTile"
+    ],
+    "dinkster.models.patch_model_add_downscale": [
+      "PatchModelAddDownscale"
+    ],
+    "dinkster.models.scale_rope": [
+      "ScaleROPE"
+    ],
+    "dinkster.models.differential_diffusion": [
+      "inpaint gradient",
+      "variable denoise strength",
+      "DifferentialDiffusion"
+    ],
+    "dinkster.models.block_sparse_attention": [
+      "Block Sparse Attention",
+      "sol-attn",
+      "SLA",
+      "FastVideo",
+      "BlockSparseAttention"
+    ],
+    "dinkster.models.set_hook_keyframes": [
+      "SetHookKeyframes"
+    ],
+    "dinkster.models.create_hook_keyframe": [
+      "hook scheduling",
+      "strength animation",
+      "timed hook",
+      "CreateHookKeyframe"
+    ],
+    "dinkster.models.create_hook_keyframes_interpolated": [
+      "ease hook strength",
+      "smooth hook transition",
+      "interpolate keyframes",
+      "CreateHookKeyframesInterpolated"
+    ],
+    "dinkster.models.create_hook_keyframes_from_floats": [
+      "batch keyframes",
+      "strength list to keyframes",
+      "CreateHookKeyframesFromFloats"
+    ],
+    "dinkster.models.combine_hooks2": [
+      "merge hooks",
+      "CombineHooks2"
+    ],
+    "dinkster.models.combine_hooks4": [
+      "CombineHooks4"
+    ],
+    "dinkster.models.combine_hooks8": [
+      "CombineHooks8"
+    ],
+    "dinkster.models.latent_upscale_model_loader": [
+      "LatentUpscaleModelLoader"
+    ],
+    "dinkster.models.create_hook_model_as_lora": [
+      "CreateHookModelAsLora"
+    ],
+    "dinkster.models.create_hook_model_as_lora_model_only": [
+      "CreateHookModelAsLoraModelOnly"
+    ],
+    "dinkster.models.create_hook_lora": [
+      "CreateHookLora"
+    ],
+    "dinkster.models.create_hook_lora_model_only": [
+      "CreateHookLoraModelOnly"
+    ],
+    "dinkster.models.context_windows_manual": [
+      "ContextWindowsManual"
+    ],
+    "dinkster.models.conditioning_set_properties": [
+      "ConditioningSetProperties"
+    ],
+    "dinkster.models.conditioning_set_properties_and_combine": [
+      "ConditioningSetPropertiesAndCombine"
+    ],
+    "dinkster.models.pair_conditioning_set_properties": [
+      "PairConditioningSetProperties"
+    ],
+    "dinkster.models.pair_conditioning_set_properties_and_combine": [
+      "PairConditioningSetPropertiesAndCombine"
+    ],
+    "dinkster.models.conditioning_set_default_combine": [
+      "ConditioningSetDefaultCombine"
+    ],
+    "dinkster.models.pair_conditioning_set_default_combine": [
+      "PairConditioningSetDefaultCombine"
+    ],
+    "dinkster.models.pair_conditioning_combine": [
+      "PairConditioningCombine"
+    ],
+    "dinkster.models.set_clip_hooks": [
+      "SetClipHooks"
+    ],
+    "dinkster.models.conditioning_timesteps_range": [
+      "ConditioningTimestepsRange"
+    ],
+    "dinkster.models.vae_loader": [
+      "VAELoader"
+    ],
+    "dinkster.models.diffusers_loader": [
+      "load diffusers model",
+      "DiffusersLoader"
+    ],
+    "dinkster.models.checkpoint_loader_simple": [
+      "load model",
+      "checkpoint",
+      "model loader",
+      "load checkpoint",
+      "ckpt",
+      "model",
+      "CheckpointLoaderSimple"
+    ],
+    "dinkster.models.checkpoint_loader": [
+      "load model",
+      "model loader",
+      "CheckpointLoader"
+    ],
+    "dinkster.models.control_net_loader": [
+      "controlnet",
+      "control net",
+      "cn",
+      "load controlnet",
+      "controlnet loader",
+      "ControlNetLoader"
+    ],
+    "dinkster.models.diff_control_net_loader": [
+      "DiffControlNetLoader"
+    ],
+    "dinkster.models.unet_loader": [
+      "UNETLoader"
+    ],
+    "dinkster.models.clip_loader": [
+      "CLIPLoader"
+    ],
+    "dinkster.models.dual_clip_loader": [
+      "DualCLIPLoader"
+    ],
+    "dinkster.models.clip_vision_loader": [
+      "CLIPVisionLoader"
+    ],
+    "dinkster.models.style_model_loader": [
+      "StyleModelLoader"
+    ],
+    "dinkster.models.lora_loader": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora loader",
+      "lora model",
+      "LoraLoader"
+    ],
+    "dinkster.models.lora_loader_model_only": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora loader",
+      "lora model",
+      "LoraLoaderModelOnly"
+    ],
+    "dinkster.models.load_lora_model": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora model",
+      "lora stack",
+      "LoadLoraModel"
+    ],
+    "dinkster.models.load_lora_text_encoder": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "clip lora",
+      "lora stack",
+      "LoadLoraTextEncoder"
+    ],
+    "dinkster.models.lora_loader_bypass": [
+      "LoraLoaderBypass"
+    ],
+    "dinkster.models.lora_loader_bypass_model_only": [
+      "LoraLoaderBypassModelOnly"
+    ],
+    "dinkster.models.clip_save": [
+      "CLIPSave"
+    ],
+    "dinkster.models.vae_save": [
+      "VAESave"
+    ],
+    "dinkster.models.lora_save": [
+      "export lora",
+      "LoraSave"
+    ],
+    "dinkster.models.checkpoint_save": [
+      "save model",
+      "export checkpoint",
+      "merge save",
+      "CheckpointSave"
+    ],
+    "dinkster.models.model_save": [
+      "export model",
+      "checkpoint save",
+      "ModelSave"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+[pack]
+name = "dinkster-audio"
+version = "0.0.1"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.audio"]
+requires = ["av>=14", "numpy>=1.26", "torch", "dinkster-inference==0.1.1"]
+
+[pack.inference]
+imports = ["audio"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_audio:NODES"
+types = "dinkster_nodes_audio:register_types"

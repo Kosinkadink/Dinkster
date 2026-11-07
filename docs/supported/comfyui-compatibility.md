@@ -1,5 +1,10 @@
 ## ComfyUI compatibility
 
+- The offline ComfyUI import index includes the 16 text and two upscale
+  classes with their pack versions, replacement rules and ordinary interfaces.
+  It is available without installing those packs at `GET /api/comfy-translations`,
+  with conditional ETag responses. This metadata does not install or register
+  executable nodes; other pack groups are not included yet.
 - ImageScaleToMaxDimension declares the deprecated ResizeImagesByLongerEdge
   replacement, preserving the image connection and requested longer edge,
   selecting lanczos and forwarding the image output. The retired training
@@ -104,9 +109,16 @@
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
   Empty image and Mochi latents honor CPU-only process policy without requiring
   attention discovery or command-line initialization first.
-- Save Text preserves its core text, filename prefix, and format inputs while
+- The independent `dinkster-text` pack exposes sixteen text nodes under
+  `dinkster.text` IDs. Schema replacement rules preserve old flat graph names;
+  dynamic String Format inputs require the frontend replacement planner.
+  Save Text preserves its core text, filename prefix, and format inputs while
   writing UTF-8 output through the configured mounted output target. Filename
   variables use 1-by-1 dimensions and local time; unknown variables stay literal.
+- The independent `dinkster-upscale` pack loads single-image upscale checkpoints
+  and applies them with tiled execution under `dinkster.upscale` IDs. The pack
+  owns the resident UPSCALE_MODEL value; old flat graph names migrate through
+  schema replacement rules.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type

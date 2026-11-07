@@ -1,0 +1,66 @@
+{
+  "nodes": {
+    "dinkster.flux.clip_text_encode_flux": {
+      "displayName": "dinkster.flux.clip_text_encode_flux"
+    },
+    "dinkster.flux.empty_flux2_latent_image": {
+      "displayName": "Empty Flux 2 Latent"
+    },
+    "dinkster.flux.flux2_scheduler": {
+      "displayName": "dinkster.flux.flux2_scheduler"
+    },
+    "dinkster.flux.flux3_layout_prompt": {
+      "displayName": "FLUX 3 Image Layout Prompt"
+    },
+    "dinkster.flux.flux_disable_guidance": {
+      "displayName": "dinkster.flux.flux_disable_guidance"
+    },
+    "dinkster.flux.flux_guidance": {
+      "displayName": "dinkster.flux.flux_guidance"
+    },
+    "dinkster.flux.flux_kv_cache": {
+      "displayName": "Flux KV Cache"
+    },
+    "dinkster.flux.flux_kontext_image_scale": {
+      "displayName": "dinkster.flux.flux_kontext_image_scale"
+    },
+    "dinkster.flux.flux_kontext_multi_reference_latent_method": {
+      "displayName": "Edit Model Reference Method"
+    },
+    "dinkster.flux.uso_style_reference": {
+      "displayName": "Apply USO Style Reference"
+    }
+  },
+  "searchTerms": {
+    "dinkster.flux.clip_text_encode_flux": [
+      "CLIPTextEncodeFlux"
+    ],
+    "dinkster.flux.empty_flux2_latent_image": [
+      "EmptyFlux2LatentImage"
+    ],
+    "dinkster.flux.flux2_scheduler": [
+      "Flux2Scheduler"
+    ],
+    "dinkster.flux.flux3_layout_prompt": [
+      "Flux3LayoutPrompt"
+    ],
+    "dinkster.flux.flux_disable_guidance": [
+      "FluxDisableGuidance"
+    ],
+    "dinkster.flux.flux_guidance": [
+      "FluxGuidance"
+    ],
+    "dinkster.flux.flux_kv_cache": [
+      "FluxKVCache"
+    ],
+    "dinkster.flux.flux_kontext_image_scale": [
+      "FluxKontextImageScale"
+    ],
+    "dinkster.flux.flux_kontext_multi_reference_latent_method": [
+      "FluxKontextMultiReferenceLatentMethod"
+    ],
+    "dinkster.flux.uso_style_reference": [
+      "USOStyleReference"
+    ]
+  }
+}

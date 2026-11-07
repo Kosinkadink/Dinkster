@@ -1,0 +1,145 @@
+{
+  "nodes": {
+    "dinkster.sd.clip_text_encode_sd3": {
+      "displayName": "CLIP Text Encode (SD3)"
+    },
+    "dinkster.sd.clip_text_encode_sdxl": {
+      "displayName": "CLIP Text Encode (SDXL)"
+    },
+    "dinkster.sd.clip_text_encode_sdxl_refiner": {
+      "displayName": "CLIP Text Encode (SDXL Refiner)"
+    },
+    "dinkster.sd.control_net_apply_sd3": {
+      "displayName": "Apply Controlnet with VAE"
+    },
+    "dinkster.sd.empty_sd3_latent_image": {
+      "displayName": "EmptySD3LatentImage"
+    },
+    "dinkster.sd.gligen_loader": {
+      "displayName": "Load GLIGEN Model"
+    },
+    "dinkster.sd.gligen_text_box_apply": {
+      "displayName": "Apply GLIGEN Text Box"
+    },
+    "dinkster.sd.image_only_checkpoint_loader": {
+      "displayName": "Load Checkpoint Image Only (img2vid model)"
+    },
+    "dinkster.sd.image_only_checkpoint_save": {
+      "displayName": "dinkster.sd.image_only_checkpoint_save"
+    },
+    "dinkster.sd.photo_maker_encode": {
+      "displayName": "PhotoMaker Encode"
+    },
+    "dinkster.sd.photo_maker_loader": {
+      "displayName": "Load PhotoMaker Model"
+    },
+    "dinkster.sd.sd_4_x_upscale_conditioning": {
+      "displayName": "SD_4XUpscale_Conditioning"
+    },
+    "dinkster.sd.sv3_d_conditioning": {
+      "displayName": "dinkster.sd.sv3_d_conditioning"
+    },
+    "dinkster.sd.svd_img2vid_conditioning": {
+      "displayName": "dinkster.sd.svd_img2vid_conditioning"
+    },
+    "dinkster.sd.skip_layer_guidance_sd3": {
+      "displayName": "dinkster.sd.skip_layer_guidance_sd3"
+    },
+    "dinkster.sd.stable_cascade_empty_latent_image": {
+      "displayName": "Empty Stable Cascade Latent Image"
+    },
+    "dinkster.sd.stable_cascade_stage_b_conditioning": {
+      "displayName": "dinkster.sd.stable_cascade_stage_b_conditioning"
+    },
+    "dinkster.sd.stable_cascade_stage_c_vae_encode": {
+      "displayName": "Stable Cascade Stage C VAE Encode"
+    },
+    "dinkster.sd.stable_cascade_super_resolution_controlnet": {
+      "displayName": "dinkster.sd.stable_cascade_super_resolution_controlnet"
+    },
+    "dinkster.sd.stable_zero123_conditioning": {
+      "displayName": "dinkster.sd.stable_zero123_conditioning"
+    },
+    "dinkster.sd.stable_zero123_conditioning_batched": {
+      "displayName": "dinkster.sd.stable_zero123_conditioning_batched"
+    },
+    "dinkster.sd.un_clip_checkpoint_loader": {
+      "displayName": "Load unCLIP Checkpoint"
+    },
+    "dinkster.sd.un_clip_conditioning": {
+      "displayName": "unCLIPConditioning"
+    }
+  },
+  "searchTerms": {
+    "dinkster.sd.clip_text_encode_sd3": [
+      "sd3 prompt",
+      "CLIPTextEncodeSD3"
+    ],
+    "dinkster.sd.clip_text_encode_sdxl": [
+      "CLIPTextEncodeSDXL"
+    ],
+    "dinkster.sd.clip_text_encode_sdxl_refiner": [
+      "CLIPTextEncodeSDXLRefiner"
+    ],
+    "dinkster.sd.control_net_apply_sd3": [
+      "ControlNetApplySD3"
+    ],
+    "dinkster.sd.empty_sd3_latent_image": [
+      "EmptySD3LatentImage"
+    ],
+    "dinkster.sd.gligen_loader": [
+      "GLIGENLoader"
+    ],
+    "dinkster.sd.gligen_text_box_apply": [
+      "GLIGENTextBoxApply"
+    ],
+    "dinkster.sd.image_only_checkpoint_loader": [
+      "ImageOnlyCheckpointLoader"
+    ],
+    "dinkster.sd.image_only_checkpoint_save": [
+      "ImageOnlyCheckpointSave"
+    ],
+    "dinkster.sd.photo_maker_encode": [
+      "PhotoMakerEncode"
+    ],
+    "dinkster.sd.photo_maker_loader": [
+      "PhotoMakerLoader"
+    ],
+    "dinkster.sd.sd_4_x_upscale_conditioning": [
+      "SD_4XUpscale_Conditioning"
+    ],
+    "dinkster.sd.sv3_d_conditioning": [
+      "SV3D_Conditioning"
+    ],
+    "dinkster.sd.svd_img2vid_conditioning": [
+      "SVD_img2vid_Conditioning"
+    ],
+    "dinkster.sd.skip_layer_guidance_sd3": [
+      "SkipLayerGuidanceSD3"
+    ],
+    "dinkster.sd.stable_cascade_empty_latent_image": [
+      "StableCascade_EmptyLatentImage"
+    ],
+    "dinkster.sd.stable_cascade_stage_b_conditioning": [
+      "StableCascade_StageB_Conditioning"
+    ],
+    "dinkster.sd.stable_cascade_stage_c_vae_encode": [
+      "StableCascade_StageC_VAEEncode"
+    ],
+    "dinkster.sd.stable_cascade_super_resolution_controlnet": [
+      "StableCascade_SuperResolutionControlnet"
+    ],
+    "dinkster.sd.stable_zero123_conditioning": [
+      "StableZero123_Conditioning"
+    ],
+    "dinkster.sd.stable_zero123_conditioning_batched": [
+      "StableZero123_Conditioning_Batched"
+    ],
+    "dinkster.sd.un_clip_checkpoint_loader": [
+      "unCLIPCheckpointLoader"
+    ],
+    "dinkster.sd.un_clip_conditioning": [
+      "unCLIPConditioning"
+    ]
+  }
+}

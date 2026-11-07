@@ -303,9 +303,7 @@ class TypeRegistry:
         self._batch_merges: dict[TypeId, BatchMergeSpec] = {}
         self._type_equivalences: dict[TypeId, tuple[TypeId, str]] = {}
         self._claims: dict[str, tuple[str, ...]] = {}
-        self._owners: dict[TypeId, str] = dict.fromkeys(
-            BUILTIN_TYPE_IDS, "dinkster-nodes-foundation"
-        )
+        self._owners: dict[TypeId, str] = dict.fromkeys(BUILTIN_TYPE_IDS, "core")
         self._registering_pack: str | None = None
         self._allow_bare = False
         self._resident_tables: list[ResidencyTable] = []
@@ -495,7 +493,7 @@ class TypeRegistry:
         ):
             raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
         if builtin:
-            owner = "dinkster-nodes-foundation"
+            owner = "core"
         held_owner = self.owner_of(type_id)
         if owner is not None and held_owner is not None and held_owner != owner:
             raise ValueError(f"type {type_id!r} is owned by {held_owner!r}, not {owner!r}")

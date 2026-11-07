@@ -294,7 +294,16 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
     source = tmp_path / "source"
     source.mkdir()
-    for family in ("comfy", "foundation", "image", "media-io", "remote", "generation"):
+    for family in (
+        "comfy",
+        "foundation",
+        "image",
+        "media-io",
+        "remote",
+        "generation",
+        "text",
+        "upscale",
+    ):
         root = source / "packages" / f"dinkster-nodes-{family}"
         root.mkdir(parents=True)
         (root / "dinkster-pack.toml").write_text(
@@ -355,7 +364,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     assert (cli_output / "official-packs.lock").read_bytes() == (
         output / "official-packs.lock"
     ).read_bytes()
-    assert len(payloads) == 11
+    assert len(payloads) == 15
     assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
     assert {entry.pack for entry in inventory.packs} == {
@@ -364,6 +373,8 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-nodes-text",
+        "dinkster-nodes-upscale",
     }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"

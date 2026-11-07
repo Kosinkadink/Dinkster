@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
-version = "0.0.13"
+version = "0.0.14"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 requires = [
@@ -24,22 +24,6 @@ namespaces = [
     "AudioEncoderLoader",
     "AudioEncoderEncode",
     "SheetSage2AudioToABC",
-    "StringFormat",
-    "StringConcatenate",
-    "StringSubstring",
-    "StringLength",
-    "CaseConverter",
-    "StringTrim",
-    "StringReplace",
-    "StringContains",
-    "StringCompare",
-    "RegexMatch",
-    "RegexExtract",
-    "RegexReplace",
-    "JsonExtractString",
-    "ConvertDictionaryToString",
-    "ConvertArrayToString",
-    "SaveText",
     "PrimitiveString",
     "PrimitiveStringMultiline",
     "PrimitiveInt",
@@ -568,7 +552,6 @@ namespaces = [
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
     "MoGeGeometryToFOV",
-    "UpscaleModelLoader",
     "ImageOnlyCheckpointSave",
     "VOIDSampler",
     "VOIDQuadmaskPreprocess",
@@ -650,7 +633,6 @@ namespaces = [
     "PreviewPointCloud",
     "SplatToFile3D",
     "File3DToSplat",
-    "ImageUpscaleWithModel",
     "ImageHistogram",
     "TextOverlay",
     "SAM3DBody_Render",

@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_shape_subdivides,
     register_inference_types,
+    register_vision_packet_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import EncodedLatentTensor, encode_latent, register_core_types
@@ -35,6 +36,28 @@ from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
+
+
+def test_selected_vision_packet_registration_leaves_other_codecs_unregistered() -> None:
+    registry = TypeRegistry()
+    first = register_vision_packet_types(registry, type_ids=("FACE_LANDMARKS",))
+    assert len(first) == 1
+    assert first[0] is registry.spec("FACE_LANDMARKS")
+    assert "DA3_GEOMETRY" not in registry
+    assert "MHR_POSE_DATA" not in registry
+    assert "KIMODO_POSE_DATA" not in registry
+    packet = {
+        "frames": [[], []],
+        "image_size": (113, 197),
+        "connection_sets": {"outline": frozenset({(9, 2), (3, 7)})},
+    }
+    assert first[0].decode(first[0].encode(packet)) == packet
+    assert register_vision_packet_types(registry, type_ids=("FACE_LANDMARKS",)) == first
+    with pytest.raises(ValueError, match="unknown vision packet types"):
+        register_vision_packet_types(registry, type_ids=("DA3_GEOMETRY", "not-a-packet"))
+    assert "DA3_GEOMETRY" not in registry
+    assert register_vision_packet_types(registry, type_ids=()) == ()
+    assert len(register_vision_packet_types(registry)) == 4
 
 
 @pytest.mark.parametrize("type_id", ("DA3_MODEL", "FACE_DETECTION_MODEL", "SAM3D_BODY_MODEL"))

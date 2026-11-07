@@ -17,7 +17,7 @@ from pathlib import Path
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_workers import load_manifest
 
-from dinkster.compose import _installed_pack_digest
+from dinkster.compose import _FIRST_PARTY_PACK_DISTRIBUTIONS, _installed_pack_digest
 
 _SUITES = {
     "dinkster-nodes-foundation": (
@@ -64,6 +64,8 @@ _SUITES = {
     ),
     "dinkster-nodes-comfy": ("packages/dinkster-nodes-comfy/tests/test_*.py",),
     "dinkster-nodes-remote": ("packages/dinkster-nodes-remote/tests/test_*.py",),
+    "dinkster-text": ("tests/test_comfy_text_nodes.py", "tests/test_save_text.py"),
+    "dinkster-upscale": ("packages/dinkster-nodes-upscale/tests/test_*.py",),
     **{
         f"dinkster-vision-{name.replace('_', '-')}": (
             f"packages/dinkster-nodes-vision/tests/test_{name}.py",
@@ -96,25 +98,27 @@ def run_selected_tests(
         raise ValueError("selected pack tests require a nonempty catalog")
     if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
         raise ValueError(f"requested test packs are not in the selected catalog: {sorted(missing)}")
+    distributions = {_FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack, pack) for pack in _SUITES}
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
         work = Path(directory)
         checkout = work / "engine"
         tracked = subprocess.check_output(
             ["git", "-C", str(root), "ls-files", "-z"], text=True
         ).split("\0")
-        # Tests retain their checkout-relative manifests and helpers, but no
-        # official implementation or manifest is copied from the engine tree.
+        # Retain tests and distribution metadata for multi-pack projects, but
+        # never copy official implementations or manifests from the engine tree.
         for name in filter(None, tracked):
             relative = Path(name)
-            official = len(relative.parts) > 1 and relative.parts[1] in {
-                "dinkster-nodes-comfy",
-                "dinkster-nodes-foundation",
-                "dinkster-nodes-image",
-                "dinkster-nodes-media-io",
-                "dinkster-nodes-remote",
-                "dinkster-nodes-vision",
-            }
-            if official and "tests" not in relative.parts:
+            official = len(relative.parts) > 1 and relative.parts[1] in distributions
+            if (
+                official
+                and "tests" not in relative.parts
+                and not (
+                    len(relative.parts) == 3
+                    and relative.name == "pyproject.toml"
+                    and not (root / relative.parent / "dinkster-pack.toml").is_file()
+                )
+            ):
                 continue
             source = root / relative
             destination = checkout / relative
@@ -128,7 +132,8 @@ def run_selected_tests(
                 package = checkout / "packages/dinkster-nodes-vision"
                 destination = package / (pack.pack.replace("-", "_") + "_pack")
             else:
-                package = checkout / "packages" / pack.pack
+                distribution = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack.pack, pack.pack)
+                package = checkout / "packages" / distribution
                 destination = work / "packs" / pack.pack
             archive = artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip"
             unpack_artifact(archive, destination, pack.artifact_digest)
@@ -200,9 +205,7 @@ def run_selected_tests(
                         continue
                     if candidate.is_relative_to(root):
                         candidate = checkout / candidate.relative_to(root)
-                    elif any(
-                        part in {*_SUITES, "dinkster-nodes-vision"} for part in candidate.parts
-                    ):
+                    elif any(part in distributions for part in candidate.parts):
                         continue
                     if candidate.exists():
                         paths.append(str(candidate))

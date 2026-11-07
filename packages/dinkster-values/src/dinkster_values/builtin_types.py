@@ -17,6 +17,7 @@ CAMERA_INFO_STATE_TYPE = "CAMERA_INFO_STATE"
 
 IMAGE_TYPE = "IMAGE"
 IMAGECOMPARE_TYPE = "IMAGECOMPARE"
+WEBCAM_TYPE = "WEBCAM"
 MASK_TYPE = "MASK"
 LATENT_TYPE = "LATENT"
 MODEL_TYPE = "MODEL"
@@ -215,9 +216,11 @@ __all__ = [
     "VIDEO_TYPE",
     "VOXEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
+    "WEBCAM_TYPE",
 ]
 
-# Image documents remain owned by the image pack, not foundation.
+# Pack-owned values do not inherit foundation ownership.
 BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__) - {
     IMAGE_DOCUMENT_TYPE,
+    UPSCALE_MODEL_TYPE,
 }

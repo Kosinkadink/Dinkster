@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "legacyPack": "dinkster-nodes-comfy",
+  "migratedPacks": ["dinkster-text", "dinkster-upscale"],
+  "extraOwners": {
+    "ImageCompare": "dinkster-nodes-image",
+    "GLSLShader": "dinkster-nodes-image"
+  },
+  "exclusions": [
+    {
+      "reason": "API node",
+      "flags": ["api_node"],
+      "filePrefixes": ["comfy_api_nodes/"],
+      "mustBeAbsent": false
+    },
+    {
+      "reason": "training-origin node",
+      "files": ["comfy_extras/nodes_train.py", "comfy_extras/nodes_dataset.py"],
+      "mustBeAbsent": true
+    }
+  ]
+}

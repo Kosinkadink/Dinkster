@@ -1,0 +1,60 @@
+{
+  "nodes": {
+    "dinkster.seedvr.seed_vr2_conditioning": {
+      "displayName": "Apply SeedVR2 Conditioning"
+    },
+    "dinkster.seedvr.seed_vr2_post_processing": {
+      "displayName": "Post-Process SeedVR2 Output"
+    },
+    "dinkster.seedvr.seed_vr2_preprocess": {
+      "displayName": "Pre-Process SeedVR2 Input"
+    },
+    "dinkster.seedvr.seed_vr2_temporal_chunk": {
+      "displayName": "Split SeedVR2 Latent"
+    },
+    "dinkster.seedvr.seed_vr2_temporal_merge": {
+      "displayName": "Merge SeedVR2 Latents"
+    }
+  },
+  "searchTerms": {
+    "dinkster.seedvr.seed_vr2_conditioning": [
+      "seedvr2",
+      "upscale",
+      "conditioning",
+      "SeedVR2Conditioning"
+    ],
+    "dinkster.seedvr.seed_vr2_post_processing": [
+      "seedvr2",
+      "upscale",
+      "color correction",
+      "color match",
+      "postprocess",
+      "SeedVR2PostProcessing"
+    ],
+    "dinkster.seedvr.seed_vr2_preprocess": [
+      "seedvr2",
+      "upscale",
+      "video upscale",
+      "pad",
+      "preprocess",
+      "SeedVR2Preprocess"
+    ],
+    "dinkster.seedvr.seed_vr2_temporal_chunk": [
+      "seedvr2",
+      "split",
+      "chunk",
+      "temporal",
+      "video upscale",
+      "rebatch",
+      "SeedVR2TemporalChunk"
+    ],
+    "dinkster.seedvr.seed_vr2_temporal_merge": [
+      "seedvr2",
+      "merge",
+      "temporal",
+      "hann",
+      "crossfade",
+      "SeedVR2TemporalMerge"
+    ]
+  }
+}

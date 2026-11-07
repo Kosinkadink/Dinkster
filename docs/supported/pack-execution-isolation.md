@@ -1,5 +1,10 @@
 ## Pack execution isolation
 
+- Doctor permits public `dinkster_nodes_<name>` helpers when the consumer
+  declares the corresponding `dinkster-<name>` runtime pack dependency.
+  Hyphenated pack names use underscores in Python modules. Private symbols,
+  private modules and undeclared provider imports remain errors; wheel
+  dependencies must still supply the imported code in the worker environment.
 - Packs can use image-document construction, editing, rendering, import/export
   and blend helpers through `dinkster_api.v1`, alongside VIDEO values and
   streaming helpers. Remote clients can read host invocation cancellation
@@ -10,7 +15,7 @@
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
-  Built-in identities remain owned by foundation independently of the
+  Built-in identities remain owned by the engine (`core`) independently of the
   official pack that provides their codec and survive pack removal.
 - Typed asset references can target a type declared by an isolated pack without
   loading its codec in the engine. Envelope-aware nodes can forward values

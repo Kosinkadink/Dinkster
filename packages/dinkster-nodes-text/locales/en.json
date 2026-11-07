@@ -1,0 +1,38 @@
+{
+  "nodes": {
+    "dinkster.text.string_format": {"displayName": "Format Text"},
+    "dinkster.text.string_concatenate": {"displayName": "Concatenate Text"},
+    "dinkster.text.string_substring": {"displayName": "Substring"},
+    "dinkster.text.string_length": {"displayName": "Text Length"},
+    "dinkster.text.case_converter": {"displayName": "Convert Text Case"},
+    "dinkster.text.string_trim": {"displayName": "Trim Text"},
+    "dinkster.text.string_replace": {"displayName": "Replace Text"},
+    "dinkster.text.string_contains": {"displayName": "Contains Text"},
+    "dinkster.text.string_compare": {"displayName": "Compare Text"},
+    "dinkster.text.regex_match": {"displayName": "Match Text"},
+    "dinkster.text.regex_extract": {"displayName": "Extract Text"},
+    "dinkster.text.regex_replace": {"displayName": "Replace Text (Regex)"},
+    "dinkster.text.json_extract_string": {"displayName": "Extract Text from JSON"},
+    "dinkster.text.convert_dictionary_to_string": {"displayName": "Convert Dictionary to String"},
+    "dinkster.text.convert_array_to_string": {"displayName": "Convert Array to String"},
+    "dinkster.text.save_text": {"displayName": "Save Text"}
+  },
+  "searchTerms": {
+    "dinkster.text.string_format": ["StringFormat"],
+    "dinkster.text.string_concatenate": ["StringConcatenate"],
+    "dinkster.text.string_substring": ["StringSubstring"],
+    "dinkster.text.string_length": ["StringLength"],
+    "dinkster.text.case_converter": ["CaseConverter"],
+    "dinkster.text.string_trim": ["StringTrim"],
+    "dinkster.text.string_replace": ["StringReplace"],
+    "dinkster.text.string_contains": ["StringContains"],
+    "dinkster.text.string_compare": ["StringCompare"],
+    "dinkster.text.regex_match": ["RegexMatch"],
+    "dinkster.text.regex_extract": ["RegexExtract"],
+    "dinkster.text.regex_replace": ["RegexReplace"],
+    "dinkster.text.json_extract_string": ["JsonExtractString"],
+    "dinkster.text.convert_dictionary_to_string": ["ConvertDictionaryToString"],
+    "dinkster.text.convert_array_to_string": ["ConvertArrayToString"],
+    "dinkster.text.save_text": ["save text", "write text", "export text", "SaveText"]
+  }
+}

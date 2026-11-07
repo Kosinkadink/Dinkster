@@ -1393,6 +1393,82 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
         assert "invalid conditional option declaration" in result["rows"][0]["differences"]
 
 
+def test_moved_pack_census_requires_frozen_ids_and_preserves_interface_drift() -> None:
+    from tools.compare_nodes import SCOPE_RULES, compare_registry
+
+    scope = json.loads(SCOPE_RULES.read_text())
+    scope["migratedPacks"] = ["dinkster-text"]
+    reference = {
+        "nodes": [
+            {"class_name": "StringConcatenate", "input_types": {}, "return_types": ["STRING"]},
+            {"class_name": "UpscaleModelLoader", "input_types": {}, "return_types": []},
+        ]
+    }
+    moved = {
+        "nodeType": "dinkster.text.string_concatenate",
+        "pack": "dinkster-text",
+        "displayName": "StringConcatenate",
+        "interface": [
+            {"role": "output", "id": "result", "type": {"kind": "concrete", "types": ["STRING"]}}
+        ],
+    }
+    served = {
+        "dinkster.text.string_concatenate": moved,
+        "UpscaleModelLoader": {"nodeType": "UpscaleModelLoader", "interface": []},
+    }
+    result = compare_registry(reference, {"nodes": served}, scope=scope)
+    assert result["passed"]
+    assert result["counts"] == {"identical": 2}
+    assert result["pack_counts"] == {
+        "dinkster-text": {"identical": 1},
+        "dinkster-nodes-comfy": {"identical": 1},
+    }
+    assert result["rows"][0]["node_type"] == "dinkster.text.string_concatenate"
+    assert not compare_registry(reference, {"nodes": served}, scope={**scope, "migratedPacks": []})[
+        "passed"
+    ]
+
+    for owner in ("dinkster-upscale", None):
+        moved["pack"] = owner
+        result = compare_registry(reference, {"nodes": served}, scope=scope)
+        assert not result["passed"]
+        assert result["registry_errors"] == [
+            f"core class id 'dinkster.text.string_concatenate' is claimed by pack {owner!r}"
+        ]
+    moved["pack"] = "dinkster-text"
+    moved["interface"][0]["type"]["types"] = ["INT"]
+    result = compare_registry(reference, {"nodes": served}, scope=scope)
+    assert result["counts"] == {"differs": 1, "identical": 1}
+    assert "STRING" in result["rows"][0]["differences"]
+    moved["interface"][0]["type"]["types"] = ["STRING"]
+
+    served["StringConcatenate"] = {**moved, "nodeType": "StringConcatenate"}
+    result = compare_registry(reference, {"nodes": served}, scope=scope)
+    assert not result["passed"]
+    assert "retired class id remains registered: StringConcatenate" in result["registry_errors"]
+    del served["dinkster.text.string_concatenate"]
+    result = compare_registry(reference, {"nodes": served}, scope=scope)
+    assert result["rows"][0]["status"] == "absent"
+
+
+def test_census_rejects_ambiguous_table_and_unknown_pack_selection() -> None:
+    from tools.compare_nodes import ID_TABLE, SCOPE_RULES, compare_registry
+
+    table = json.loads(ID_TABLE.read_text())
+    scope = json.loads(SCOPE_RULES.read_text())
+    reference = {"nodes": [{"class_name": "StringConcatenate", "input_types": {}}]}
+    scope["migratedPacks"] = ["dinkster-typo"]
+    with pytest.raises(ValueError, match="scope selects unknown packs"):
+        compare_registry(reference, {"nodes": {}}, scope=scope)
+    table["nodes"].append(table["nodes"][0])
+    with pytest.raises(ValueError, match="duplicate source class"):
+        compare_registry(reference, {"nodes": {}}, id_table=table)
+    table["nodes"].pop()
+    table["nodes"][1]["nodeType"] = table["nodes"][0]["nodeType"]
+    with pytest.raises(ValueError, match="duplicate target id"):
+        compare_registry(reference, {"nodes": {}}, id_table=table)
+
+
 def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
     from tools.compare_nodes import compare_registry
 

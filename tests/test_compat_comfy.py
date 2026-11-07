@@ -396,8 +396,8 @@ def test_compat_worker_type_ownership_preserves_image_dependency(
     assert published.owner_of("comfy.AUDIO_ENCODER") == manifest.name
     assert published.owner_of("comfy.LAYERS") == image.name
     assert published.owner_of("comfy.COMPOSITOR") == image.name
-    assert published.owner_of(CONTROL_NET_TYPE) == "dinkster-nodes-foundation"
-    assert published.owner_of(GLIGEN_TYPE) == "dinkster-nodes-foundation"
+    assert published.owner_of(CONTROL_NET_TYPE) == "core"
+    assert published.owner_of(GLIGEN_TYPE) == "core"
     with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
         with pytest.raises(ValueError, match="outside its declared type claims"):
             registry.register("comfy.UNDECLARED")

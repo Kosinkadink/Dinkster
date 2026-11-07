@@ -162,8 +162,13 @@ def _fingerprint(type_id: str, value: object) -> str:
     return stable_hash([type_id.encode("ascii"), _encode(type_id, value)])
 
 
-def register_vision_packet_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
-    for type_id in _PACKET_TYPES:
+def register_vision_packet_types(
+    registry: TypeRegistry, *, type_ids: tuple[str, ...] = _PACKET_TYPES
+) -> tuple[TypeSpec, ...]:
+    unknown = set(type_ids) - set(_PACKET_TYPES)
+    if unknown:
+        raise ValueError(f"unknown vision packet types: {sorted(unknown)}")
+    for type_id in type_ids:
         if type_id not in registry:
             registry.register(
                 type_id,
@@ -172,7 +177,7 @@ def register_vision_packet_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]
                 fingerprint=partial(_fingerprint, type_id),
                 validate_encoded=partial(_validate_encoded, type_id),
             )
-    return tuple(registry.spec(type_id) for type_id in _PACKET_TYPES)
+    return tuple(registry.spec(type_id) for type_id in type_ids)
 
 
 def materialize_vision_packet(value: object) -> Any:

@@ -57,6 +57,9 @@ GOLDEN_V1_SURFACE = (
     "register_comfy_layers",
     "srgb_to_linear",
     "obtain_resident",
+    "default_pool",
+    "comfy_resident_meta",
+    "register_resident_type",
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
@@ -71,6 +74,8 @@ GOLDEN_V1_SURFACE = (
     "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
+    "register_media_types",
+    "register_vision_packet_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -177,6 +182,7 @@ GOLDEN_V1_SURFACE = (
     "schema_from_wire",
     "schema_signature",
     "schema_to_wire",
+    "first_party_schema",
     # -- reporting and logging (dinkster-schema)
     "LOG_EVENT",
     "PREVIEW_EVENT",
@@ -600,14 +606,17 @@ def test_upscale_model_registration_preserves_resident_identity_without_torch() 
     script = """
 import sys
 from dinkster_api.v1 import UPSCALE_MODEL_TYPE, TypeRegistry, register_inference_types
+from dinkster_nodes_upscale import register_types
 from dinkster_memory.resident import default_pool
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
 
 assert UPSCALE_MODEL_TYPE == "UPSCALE_MODEL"
 registry = TypeRegistry()
 register_inference_types(registry)
+assert UPSCALE_MODEL_TYPE not in registry
+register_types(registry)
 spec = registry.spec(UPSCALE_MODEL_TYPE)
-register_inference_types(registry)
+register_types(registry)
 assert registry.spec(UPSCALE_MODEL_TYPE) is spec
 descriptor = object()
 encoded = spec.encode(descriptor)
@@ -934,13 +943,19 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_inference_wire.sparse as sparse_values
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
+    import dinkster_memory.resident as resident_pool
     import dinkster_protocol
     import dinkster_schema
+    import dinkster_schema.first_party as first_party
     import dinkster_values
+    import dinkster_values.resident as resident_codec
     import dinkster_video
     import dinkster_workers.execution as worker_execution
 
     document_sources = {
+        "first_party_schema": first_party,
+        "default_pool": resident_pool,
+        "comfy_resident_meta": resident_codec,
         "IMAGE_DOCUMENT_MEDIA_TYPE": document_format,
         "BLEND_MODES": document_format,
         "canonical_json": document_format,

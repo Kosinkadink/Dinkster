@@ -1,5 +1,9 @@
 ## Image operations
 
+- `WebcamCapture` decodes a granted browser-captured PNG into a single image
+  batch. Its `WEBCAM` input retains the uploaded asset identity across worker
+  transport; filesystem path literals are not accepted. Width, height and
+  capture-on-queue configure browser capture, not resizing of the saved frame.
 - Native `ImageCompare` previews each nonempty image batch independently without
   adding graph outputs. The existing two-output image comparison remains available.
 - Native `GLSLShader` renders four ordered image outputs with bounded image and
@@ -151,6 +155,9 @@
   gaussian splat previews during sampling without replacing the sampler callback.
 - Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
   with density selection and seeded point sampling.
+- First-party `dinkster.3d.splat_to_mesh` constructs density and color grids on
+  CPU when those buffers exceed reported accelerator headroom. Otherwise it
+  retains accelerator construction and the separate extraction-headroom fallback.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `MoGeRender` visualizes geometry as normalized inverse depth, Turbo-colored

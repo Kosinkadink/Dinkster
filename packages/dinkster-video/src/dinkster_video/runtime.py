@@ -1329,7 +1329,9 @@ def save_video_stream(
                 setattr(video.codec_context, attr, color[key])
             if pixel.is_rgb:
                 video.codec_context.colorspace, video.codec_context.color_range = 0, 2
-            default_crf = (24 if name == "av1" else 18) if source_components else 23
+            default_crf = 23
+            if source_components or name in ("h264", "av1"):
+                default_crf = 24 if name == "av1" else 18
             video.options = (
                 {"crf": str(crf if crf is not None else default_crf)} if name in _ENCODERS else {}
             )
@@ -1338,8 +1340,6 @@ def save_video_stream(
                     video.options["preset"] = preset
                 if name == "av1" and crf == 0:
                     video.options = {"svtav1-params": "lossless=1"}
-            elif name == "h264":
-                video.options.update({"preset": "fast", "tune": "zerolatency"})
             elif name == "hevc":
                 video.codec_context.codec_tag = "hvc1"
                 video.options.update(
@@ -1363,9 +1363,7 @@ def save_video_stream(
             elif name in ("vp8", "vp9"):
                 video.options["lag-in-frames"] = "0"
             elif name == "av1":
-                parameters = "lp=1:pred-struct=1:lookahead=0:enable-tf=0" + (
-                    ":crf=0" if crf == 0 else ""
-                )
+                parameters = "lp=1" + (":crf=0" if crf == 0 else "")
                 video.options.update({"preset": "8", "svtav1-params": parameters})
             video_items = readers.enter_context(
                 closing(timeline_stream[1] if timeline_stream else _video_frames(plan))

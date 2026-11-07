@@ -1,0 +1,56 @@
+{
+  "nodes": {
+    "dinkster.vision.moge.mo_ge_geometry_to_fov": {
+      "displayName": "Get FoV from MoGe Geometry"
+    },
+    "dinkster.vision.moge.mo_ge_inference": {
+      "displayName": "Run MoGe Inference"
+    },
+    "dinkster.vision.moge.mo_ge_panorama_inference": {
+      "displayName": "Run MoGe Panorama Inference"
+    },
+    "dinkster.vision.moge.mo_ge_point_map_to_mesh": {
+      "displayName": "Convert MoGe Point Map to Mesh"
+    },
+    "dinkster.vision.moge.mo_ge_render": {
+      "displayName": "Render MoGe Geometry"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.moge.mo_ge_geometry_to_fov": [
+      "MoGeGeometryToFOV"
+    ],
+    "dinkster.vision.moge.mo_ge_inference": [
+      "moge",
+      "depth",
+      "geometry",
+      "depth estimation",
+      "geometry estimation",
+      "MoGeInference"
+    ],
+    "dinkster.vision.moge.mo_ge_panorama_inference": [
+      "moge",
+      "panorama",
+      "depth",
+      "geometry",
+      "depth estimation",
+      "geometry estimation",
+      "MoGePanoramaInference"
+    ],
+    "dinkster.vision.moge.mo_ge_point_map_to_mesh": [
+      "moge",
+      "mesh",
+      "geometry",
+      "point map",
+      "MoGePointMapToMesh"
+    ],
+    "dinkster.vision.moge.mo_ge_render": [
+      "moge",
+      "render",
+      "geometry",
+      "depth",
+      "normal",
+      "MoGeRender"
+    ]
+  }
+}

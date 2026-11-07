@@ -1,0 +1,28 @@
+{
+  "nodes": {
+    "dinkster.vision.rtdetr.draw_b_boxes": {
+      "displayName": "Draw BBoxes"
+    },
+    "dinkster.vision.rtdetr.rtdetr_detect": {
+      "displayName": "Run Real-Time Detection (RT-DETR)"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.rtdetr.draw_b_boxes": [
+      "bbox",
+      "bounding box",
+      "object detection",
+      "rt_detr",
+      "visualize detections",
+      "coco",
+      "DrawBBoxes"
+    ],
+    "dinkster.vision.rtdetr.rtdetr_detect": [
+      "bbox",
+      "bounding box",
+      "object detection",
+      "coco",
+      "RTDETR_detect"
+    ]
+  }
+}

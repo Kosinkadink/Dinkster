@@ -256,11 +256,31 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
     assert b"\r\n" not in second[-1].read_bytes()
     lock = Lockfile.from_record_json(first[-1].read_text())
     expected = {
+        "dinkster-audio",
+        "dinkster-audio-models",
+        "dinkster-conditioning",
+        "dinkster-cosmos",
+        "dinkster-flux",
+        "dinkster-hidream",
+        "dinkster-hunyuan",
+        "dinkster-latent",
+        "dinkster-llm",
+        "dinkster-ltx",
+        "dinkster-minimax",
+        "dinkster-misc-models",
+        "dinkster-models",
         "dinkster-nodes-comfy",
         "dinkster-nodes-foundation",
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-qwen",
+        "dinkster-sampling",
+        "dinkster-sd",
+        "dinkster-seedvr",
+        "dinkster-text",
+        "dinkster-upscale",
+        "dinkster-video",
         "dinkster-vision-birefnet",
         "dinkster-vision-depth-anything-v2",
         "dinkster-vision-depth-anything-v3",
@@ -270,6 +290,8 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-vision-rtdetr",
         "dinkster-vision-sam31",
         "dinkster-vision-upscale",
+        "dinkster-void",
+        "dinkster-wan",
     }
     assert {pack.pack for pack in lock.packs} == expected
     core_requirements = {
@@ -325,6 +347,13 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         relative = Path(*module.split(".")) / "__init__.py"
         if pack.pack.startswith("dinkster-vision-"):
             original = Path("packages/dinkster-nodes-vision/src") / relative
+        elif not pack.pack.startswith("dinkster-nodes-"):
+            original = (
+                Path("packages")
+                / pack.pack.replace("dinkster-", "dinkster-nodes-", 1)
+                / "src"
+                / relative
+            )
         else:
             original = Path("packages") / pack.pack / "src" / relative
         expected_source = subprocess.check_output(
@@ -384,6 +413,9 @@ def test_official_publication_uses_selected_manifest_versions(
         "dinkster-nodes-image": "0.8.0",
         "dinkster-nodes-media-io": "3.0.0rc1",
         "dinkster-nodes-remote": "1.2.4",
+        "dinkster-text": "0.1.0",
+        "dinkster-upscale": "0.2.1",
+        "dinkster-nodes-unlisted-family": "4.2.1",
     }
     tracked = io.BytesIO()
     with tarfile.open(fileobj=tracked, mode="w") as archive:
@@ -404,7 +436,12 @@ def test_official_publication_uses_selected_manifest_versions(
             }
             for name, text in files.items():
                 data = text.encode()
-                entry = tarfile.TarInfo(f"packages/{pack}/{name}")
+                directory = (
+                    pack.replace("dinkster-", "dinkster-nodes-", 1)
+                    if pack in {"dinkster-text", "dinkster-upscale"}
+                    else pack
+                )
+                entry = tarfile.TarInfo(f"packages/{directory}/{name}")
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
 
@@ -453,6 +490,7 @@ def test_official_publication_uses_selected_manifest_versions(
         (("src/dinkster/serve.py", "pyproject.toml"), ()),
         (("packages/dinkster-nodes-foundation/src/nodes.py",), ("foundation",)),
         (("packages/dinkster-nodes-image/deleted.py",), ("image",)),
+        (("packages/dinkster-nodes-unlisted-family/src/nodes.py",), ("unlisted",)),
         (("packages/dinkster-nodes-dev/src/nodes.py",), ()),
         (("packages/dinkster-nodes-generation/dinkster-pack.toml",), ()),
         (("packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",), ("first",)),
@@ -479,6 +517,7 @@ def test_official_publication_selects_only_changed_committed_packs(
         "image": "packages/dinkster-nodes-image/dinkster-pack.toml",
         "first": "packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",
         "second": "packages/dinkster-nodes-vision/second_pack/dinkster-pack.toml",
+        "unlisted": "packages/dinkster-nodes-unlisted-family/dinkster-pack.toml",
     }
     committed = {
         path: (
@@ -487,7 +526,7 @@ def test_official_publication_selects_only_changed_committed_packs(
             f'[pack.entry]\nnodes = "vision.{name}:NODES"\n'
         ).encode()
         for (name, path), version in zip(
-            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5"), strict=True
+            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5", "4.2.1"), strict=True
         )
     }
 
@@ -507,7 +546,14 @@ def test_official_publication_selects_only_changed_committed_packs(
     monkeypatch.setattr("scripts.select_official_packs.subprocess.check_output", git)
     (tmp_path / "dinkster-pack.toml").write_text("invalid uncommitted data")
     assert select_packs(tmp_path, before="b" * 40) == expected
-    assert select_packs(tmp_path, before="0" * 40) == ("first", "foundation", "image", "second")
+    assert select_packs(tmp_path, before="0" * 40) == (
+        "first",
+        "foundation",
+        "image",
+        "second",
+        "unlisted",
+    )
+    assert select_packs(tmp_path, tag="pack/unlisted/v4.2.1") == ("unlisted",)
     assert select_packs(tmp_path, tag="pack/first/v3.4rc1") == ("first",)
     for tag in ("v3.4rc1", "pack/first/v3.4", "pack/unknown/v3.4rc1", "pack/first/v3.4rc1/extra"):
         with pytest.raises(ValueError, match="pack tag"):
@@ -914,7 +960,7 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         path.name: path.read_bytes() for path in second
     }
     catalog = Lockfile.from_record_json(first[-1].read_text())
-    assert len(catalog.packs) == 14
+    assert len(catalog.packs) == 36
     for pack in catalog.packs:
         archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
         data = archive.read_bytes()
@@ -1424,6 +1470,80 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     elif problem == "missing":
         with pytest.raises(ValueError, match="archive is missing declared module"):
             run_selected_tests(engine, catalog, artifacts)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            run_selected_tests(engine, catalog, artifacts)
+
+
+@pytest.mark.parametrize("selected_value", [17, 29])
+@pytest.mark.parametrize("vision", [False, True])
+def test_selected_pack_runtime_id_uses_distribution_layout(
+    tmp_path: Path, selected_value: int, vision: bool
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    engine = tmp_path / "engine"
+    distribution = "dinkster-nodes-vision" if vision else "dinkster-nodes-text"
+    pack_id = "dinkster-vision-hed" if vision else "dinkster-text"
+    entry = "dinkster_nodes_vision.hed" if vision else "dinkster_nodes_text"
+    tests = engine / "tests"
+    tests.mkdir(parents=True)
+    (engine / "pyproject.toml").write_text("")
+    shutil.copytree(
+        Path(__file__).resolve().parents[1] / "src/dinkster",
+        engine / "src/dinkster",
+        ignore=shutil.ignore_patterns("__pycache__", "official_packs"),
+    )
+    checkout_module = engine / "packages" / distribution / "src" / entry.replace(".", "/")
+    checkout_module.mkdir(parents=True)
+    (checkout_module / "__init__.py").write_text("VALUE = 17\n")
+    if vision:
+        (engine / "packages" / distribution / "pyproject.toml").write_text(
+            f'[project]\nname = "{distribution}"\n'
+        )
+        tests = engine / "packages" / distribution / "tests"
+        tests.mkdir()
+    (tests / ("test_hed.py" if vision else "test_comfy_text_nodes.py")).write_text(
+        f"from pathlib import Path\nimport {entry} as pack\n"
+        "def test_selected_archive():\n"
+        "    assert pack.VALUE == 17\n"
+        + (
+            "    root = Path(__file__).parents[1]\n"
+            if vision
+            else "    root = Path(__file__).parents[1] / 'packages/dinkster-nodes-text'\n"
+        )
+        + "    assert Path(pack.__file__).resolve().is_relative_to(root / 'src')\n"
+        "    from dinkster.compose import default_pack_spec\n"
+        f"    info = default_pack_spec('{pack_id}').packs['{pack_id}']\n"
+        + (f"    root = root / '{pack_id.replace('-', '_')}_pack'\n" if vision else "")
+        + "    assert info.source == f'local:{root}'\n"
+    )
+    subprocess.run(["git", "init", "-q", str(engine)], check=True)
+    subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+    source = tmp_path / "selected"
+    module = source / entry.replace(".", "/")
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text(f"VALUE = {selected_value}\nNODES = []\n")
+    if vision:
+        (source / "dinkster_nodes_vision/__init__.py").write_text("")
+    else:
+        (source / "pyproject.toml").write_text(f'[project]\nname = "{distribution}"\n')
+    (source / "dinkster-pack.toml").write_text(
+        f'[pack]\nname = "{pack_id}"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        f'namespaces = ["{pack_id}"]\n'
+        f'[pack.entry]\nnodes = "{entry}:NODES"\n'
+    )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "pack.zip"
+    digest = build_artifact(source, archive)
+    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of([LockedPack(pack_id, "1.2.3", digest, "dinkster", (pack_id,))])
+    if selected_value == 17:
+        run_selected_tests(engine, catalog, artifacts)
     else:
         with pytest.raises(subprocess.CalledProcessError):
             run_selected_tests(engine, catalog, artifacts)
