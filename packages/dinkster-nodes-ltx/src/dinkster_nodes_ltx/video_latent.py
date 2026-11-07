@@ -7,7 +7,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     first_party_schema,
 )
-from dinkster_nodes_video.video_latent import _empty_video_latent, _schema
+from dinkster_nodes_video.video_latent import empty_video_latent as _empty_video_latent
+from dinkster_nodes_video.video_latent import video_latent_schema as _schema
 
 
 class EmptyLTXVLatentVideo(Node):
