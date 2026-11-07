@@ -91,6 +91,7 @@ import aiohttp
 from aiohttp import WSMsgType, web
 
 from .environment_process import complete_process, process_lifetime
+from .process_family import ProcessFamily
 
 __all__ = [
     "PROTOCOL_VERSION",
@@ -347,6 +348,7 @@ class EngineProcess:
         host: str = "127.0.0.1",
         probe_interval: float = 0.25,
         startup_timeout: float = 600.0,
+        process_family: ProcessFamily | None = None,
     ) -> None:
         self.command = list(command)
         self.link = link
@@ -357,6 +359,7 @@ class EngineProcess:
         self._watch_task: asyncio.Task[None] | None = None
         self._closing = False
         self._lifecycle_lock = asyncio.Lock()
+        self._process_family = process_family
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
@@ -475,6 +478,8 @@ class EngineProcess:
             except TimeoutError:
                 process.kill()
                 await process.wait()
+        if self._process_family is not None:
+            await asyncio.to_thread(self._process_family.stop_children)
         self._process = None
         self.link.state = "stopped"
         self.link.pid = None
@@ -690,6 +695,11 @@ def main() -> None:
         help="private launcher lifecycle directory; requires --instance",
     )
     parser.add_argument(
+        "--environment-root",
+        type=Path,
+        help="managed project for generation maintenance; requires --process-state",
+    )
+    parser.add_argument(
         "--engine-host",
         default="127.0.0.1",
         metavar="HOST",
@@ -720,6 +730,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.process_state is not None and not args.instance:
         parser.error("--process-state requires --instance")
+    if args.environment_root is not None and (
+        args.process_state is None or not args.environment_root.is_absolute()
+    ):
+        parser.error("--environment-root requires --process-state and an absolute project path")
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
     command = list(args.engine)
@@ -728,9 +742,14 @@ def main() -> None:
     if not command:
         command = [sys.executable, "-m", "dinkster.serve"]
 
+    family = ProcessFamily()
     link = EngineLink()
     engine = EngineProcess(
-        command, link, host=args.engine_host, startup_timeout=args.startup_timeout
+        command,
+        link,
+        host=args.engine_host,
+        startup_timeout=args.startup_timeout,
+        process_family=family,
     )
 
     async def serve() -> None:
@@ -758,25 +777,38 @@ def main() -> None:
         app.on_startup.append(start_engine)
         app.on_cleanup.append(stop_engine)
         runner = web.AppRunner(app)
+        maintenance: asyncio.Task[None] | None = None
         try:
             await runner.setup()
             site = web.TCPSite(runner, args.host, args.port)
             await site.start()
+            if args.environment_root is not None:
+                from .environment_collection import maintain_generations
+
+                maintenance = asyncio.create_task(
+                    maintain_generations(args.environment_root, stopped)
+                )
             await stopped.wait()
         finally:
+            stopped.set()
             try:
-                await runner.cleanup()
+                if maintenance is not None:
+                    await maintenance
             finally:
-                await engine.close()
+                try:
+                    await runner.cleanup()
+                finally:
+                    await engine.close()
             if args.process_state is not None:
-                complete_process(args.process_state, args.instance)
+                complete_process(args.process_state, args.instance, descendants=family.proven)
 
-    if args.process_state is None:
-        asyncio.run(serve())
-    else:
-        with process_lifetime(args.process_state, args.instance) as admitted:
-            if admitted:
-                asyncio.run(serve())
+    with family:
+        if args.process_state is None:
+            asyncio.run(serve())
+        else:
+            with process_lifetime(args.process_state, args.instance) as admitted:
+                if admitted:
+                    asyncio.run(serve())
 
 
 if __name__ == "__main__":

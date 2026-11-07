@@ -24,6 +24,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
+  tests/test_environment_collection.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \

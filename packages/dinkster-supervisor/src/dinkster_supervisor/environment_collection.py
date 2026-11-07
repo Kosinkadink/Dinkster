@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import shutil
 import time
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 from .environment_constraints import requirement_hashes
 from .environment_generations import pack_operation
-from .environment_runtime import engine_assignments
+from .environment_history import (
+    generation_history_coverage,
+    history,
+    import_generation,
+    publish_entry,
+)
+from .environment_runtime import generation_runtime_lock, generation_runtime_reason
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -21,8 +30,11 @@ from .environment_state import (
     digest,
     durable_rename,
     durable_unlink,
+    generation_number,
     read_current,
+    read_document,
     store_cache_path,
+    write_document,
     writer_lock,
 )
 from .environment_stores import store_projects
@@ -204,17 +216,267 @@ def collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
             raise EnvironmentError("collection refuses linked or non-directory generation trees")
         number = int(path.name)
         if number not in retained:
-            if any(binding["running"] for binding in engine_assignments(root, number)):
-                raise EnvironmentError(f"generation {number} has a live engine; stop it before gc")
+            reason = generation_runtime_reason(root, number)
+            if reason is not None:
+                raise EnvironmentError(f"generation {number} retained: {reason}")
             collected.append(number)
     return current, tuple(sorted(retained)), tuple(sorted(collected))
+
+
+def collection_policy(root: Path) -> dict[str, object]:
+    """Keep cleanup preferences independent of software activation and rollback."""
+    path = root / "cleanup.json"
+    if path.is_symlink() or path.is_junction():
+        raise EnvironmentError("cleanup policy must not be linked")
+    automatic = True
+    if path.exists():
+        document = read_document(path)
+        if (
+            document.get("format") != "dinkster.cleanup/1"
+            or type(document.get("automatic")) is not bool
+        ):
+            raise EnvironmentError("invalid cleanup policy")
+        automatic = cast("bool", document["automatic"])
+    return {
+        "automatic": automatic,
+        "previousSuccessfulActivations": 1,
+        "minimumAgeSeconds": 0,
+    }
+
+
+def collection_preview(root: Path) -> dict[str, object]:
+    """Observe generation safety without locking, recovering or authorizing deletion."""
+    policy = collection_policy(root)
+    directory = root / "generations"
+    if directory.is_symlink() or directory.is_junction():
+        raise EnvironmentError("collection refuses a linked generations directory")
+    current = read_current(root)
+    if current is None:
+        raise EnvironmentError("project has no active generation")
+    journal_directory = root / "journal"
+    if journal_directory.is_symlink() or journal_directory.is_junction():
+        raise EnvironmentError("collection refuses linked journals")
+    journals: list[tuple[Path, Journal]] = []
+    for path in sorted(journal_directory.glob("*.json")):
+        if path.is_symlink():
+            raise EnvironmentError("collection refuses linked journals")
+        journals.append((path, Journal.read(path)))
+    previous = previous_activation(root, current)
+    predecessor = previous.previous if previous is not None else None
+    warnings: list[str] = []
+    if any(journal.incomplete for _, journal in journals):
+        warnings.append("pending environment operation requires recovery")
+    if not any(
+        journal.stage == "complete"
+        and journal.operation in {"setup", "update", "rollback", "repair", "restore"}
+        and journal.target == current
+        for _, journal in journals
+    ):
+        warnings.append("current generation has no committed activation record")
+    quarantine: list[dict[str, object]] = []
+    for path, journal in journals:
+        if journal.operation == "gc" and journal.stage in {"complete", "planned", "building"}:
+            parked = _quarantine(root, path)
+            numbers = [
+                number
+                for number in journal.collected_generations
+                if (parked / str(number)).exists()
+            ]
+            if numbers:
+                quarantine.append(
+                    {"journal": path.name, "stage": journal.stage, "generations": numbers}
+                )
+                warnings.append(
+                    f"collection {path.stem} has quarantined generations "
+                    "awaiting recovery or cleanup"
+                )
+    rows: list[dict[str, object]] = []
+    present: set[int] = set()
+    for tree in sorted(directory.iterdir()):
+        if not tree.name.isdecimal() or str(int(tree.name)) != tree.name or int(tree.name) < 1:
+            raise EnvironmentError("generation directory must have a positive canonical number")
+        number = int(tree.name)
+        present.add(number)
+        reasons: list[str] = []
+        state = "candidate"
+        if number == current:
+            state, reasons = "retained", ["current activation"]
+        elif number == predecessor:
+            state, reasons = "retained", ["previous successful activation"]
+        try:
+            if tree.is_symlink() or tree.is_junction() or not tree.is_dir():
+                raise EnvironmentError("generation tree must be an unlinked directory")
+            if Generation.read(tree / "generation.json").number != number:
+                raise EnvironmentError("generation directory and recorded number disagree")
+            reason = generation_runtime_reason(root, number)
+            if reason is not None:
+                state = "retained"
+                reasons.append(reason)
+        except (OSError, ValueError) as exc:
+            state = "deferred"
+            reasons.append(str(exc))
+        if warnings and state == "candidate":
+            state = "deferred"
+            reasons.extend(warnings)
+        if state == "candidate":
+            try:
+                entry_id = generation_history_coverage(root, number)
+                reasons.append(f"outside current and previous; covered by history entry {entry_id}")
+            except (OSError, ValueError) as exc:
+                state = "deferred"
+                reasons.append(f"durable history coverage required: {exc}")
+        rows.append({"generation": number, "status": state, "reasons": reasons})
+    if current not in present or (predecessor is not None and predecessor not in present):
+        raise EnvironmentError("current or previous generation tree is missing")
+    result: dict[str, object] = {
+        "policy": policy,
+        "current": current,
+        "generations": rows,
+        "quarantine": quarantine,
+        "warnings": warnings,
+    }
+    runtime = root / "runtime"
+    maintenance = runtime / "maintenance"
+    state = maintenance / "cleanup"
+    if any(p.is_symlink() or p.is_junction() for p in (runtime, maintenance, state)):
+        warnings.append("cleanup attempt status must not be linked")
+    elif state.exists():
+        try:
+            attempt = read_document(state)
+            if attempt.get("format") != "dinkster.cleanup-attempt/1":
+                raise EnvironmentError("invalid cleanup attempt status")
+            result["lastAttempt"] = attempt
+        except (OSError, ValueError) as exc:
+            warnings.append(str(exc))
+    return result
+
+
+def retry_generation_collection(root: Path) -> dict[str, object]:
+    """Retry only history-covered generation deletion, never shared-store GC or process stops."""
+    runtime = root / "runtime"
+    maintenance = runtime / "maintenance"
+    if any(p.is_symlink() or p.is_junction() for p in (runtime, maintenance)):
+        raise EnvironmentError("cleanup maintenance directory must not be linked")
+    runtime.mkdir(exist_ok=True)
+    maintenance.mkdir(exist_ok=True)
+    with ExitStack() as locks:
+        result: dict[str, object] = {
+            "format": "dinkster.cleanup-attempt/1",
+            "attemptedAt": time.time_ns(),
+            "status": "complete",
+            "warnings": [],
+        }
+        try:
+            locks.enter_context(writer_lock(maintenance))
+        except EnvironmentError:
+            result.update(status="coalesced", warnings=["generation cleanup is already running"])
+            return result
+        acquiring = True
+        try:
+            with writer_lock(root), generation_runtime_lock(root):
+                acquiring = False
+                if not collection_policy(root)["automatic"]:
+                    result["status"] = "disabled"
+                    write_document(maintenance / "cleanup", result)
+                    return result
+                journals = root / "journal"
+                if journals.is_symlink() or journals.is_junction():
+                    raise EnvironmentError("collection refuses linked journals")
+                for path in sorted(journals.glob("*.json")):
+                    if path.is_symlink():
+                        raise EnvironmentError("collection refuses linked journals")
+                    journal = Journal.read(path)
+                    if journal.operation == "gc" and journal.collection_store is None:
+                        if journal.incomplete:
+                            recover_collection(root, path)
+                        elif journal.stage == "complete":
+                            cleanup_collection(root, path)
+                    elif journal.incomplete:
+                        raise EnvironmentError("pending environment operation requires recovery")
+                    elif journal.stage == "complete" and journal.error is None:
+                        if journal.history_entry is not None:
+                            publish_entry(root, journal.history_entry)
+                published = {generation_number(entry.get("generation")) for entry in history(root)}
+                backlog = collection_preview(root)
+                for row in cast("list[dict[str, object]]", backlog["generations"]):
+                    number = cast("int", row["generation"])
+                    if number in published:
+                        continue
+                    try:
+                        reason = generation_runtime_reason(root, number)
+                        if reason is not None:
+                            raise EnvironmentError(reason)
+                        import_generation(root, number)
+                    except (OSError, ValueError) as exc:
+                        cast("list[str]", result["warnings"]).append(
+                            f"generation {number} history capture deferred: {exc}"
+                        )
+                        result["status"] = "deferred"
+                approved = _covered_collection_plan(root)
+                _collect_generations(
+                    root, approved, store=None, store_paths=(), preserve_history=True
+                )
+                result["collectedGenerations"] = list(approved[2])
+                preview = collection_preview(root)
+                deferred = [
+                    row
+                    for row in cast("list[dict[str, object]]", preview["generations"])
+                    if row["status"] == "deferred"
+                ]
+                if deferred:
+                    result.update(status="deferred", deferred=deferred)
+        except (OSError, ValueError) as exc:
+            result.update(status="deferred", warnings=[str(exc)])
+            if acquiring:
+                result["busy"] = True
+        write_document(maintenance / "cleanup", result)
+        return result
+
+
+def automatic_generation_collection(root: Path) -> dict[str, object]:
+    """Maintenance failure must not invalidate a successful activation or engine lifecycle."""
+    result: dict[str, object]
+    try:
+        result = retry_generation_collection(root)
+    except (OSError, ValueError) as exc:
+        result = {"status": "deferred", "warnings": [str(exc)]}
+    for warning in cast("list[str]", result.get("warnings", [])):
+        logging.getLogger(__name__).warning("generation cleanup: %s", warning)
+    return result
+
+
+async def maintain_generations(
+    root: Path, stopped: asyncio.Event, *, interval: float = 3600.0
+) -> None:
+    """One managed supervisor supplies startup and hourly maintenance without a service."""
+    while not stopped.is_set():
+        result = await asyncio.to_thread(automatic_generation_collection, root)
+        delay = (
+            min(interval, 30.0)
+            if result.get("busy") or result["status"] == "coalesced"
+            else interval
+        )
+        try:
+            await asyncio.wait_for(stopped.wait(), timeout=delay)
+        except TimeoutError:
+            pass
+
+
+def _covered_collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
+    preview = collection_preview(root)
+    retained: list[int] = []
+    collected: list[int] = []
+    for row in cast("list[dict[str, object]]", preview["generations"]):
+        target = collected if row["status"] == "candidate" else retained
+        target.append(cast("int", row["generation"]))
+    return cast("int", preview["current"]), tuple(sorted(retained)), tuple(sorted(collected))
 
 
 def _quarantine(root: Path, path: Path) -> Path:
     if not path.stem.isdecimal():
         raise EnvironmentError("collection journal must have a numeric timestamp name")
     directory = root / ".garbage" / path.stem
-    if (root / ".garbage").is_symlink() or directory.is_symlink():
+    if any(p.is_symlink() or p.is_junction() for p in (directory.parent, directory)):
         raise EnvironmentError("collection refuses linked quarantine directories")
     return directory
 
@@ -226,7 +488,7 @@ def cleanup_collection(root: Path, path: Path) -> None:
     directory = _quarantine(root, path)
     for number in journal.collected_generations:
         tree = directory / str(number)
-        if tree.is_symlink():
+        if tree.is_symlink() or tree.is_junction():
             raise EnvironmentError("collection refuses linked quarantine trees")
         if tree.exists():
             shutil.rmtree(tree)
@@ -242,12 +504,12 @@ def recover_collection(root: Path, path: Path) -> None:
         return
     if read_current(root) != journal.target:
         raise EnvironmentError("current changed during generation collection")
-    if (root / "generations").is_symlink():
+    if (root / "generations").is_symlink() or (root / "generations").is_junction():
         raise EnvironmentError("collection refuses a linked generations directory")
     directory = _quarantine(root, path)
     for number in journal.collected_generations:
         original, parked = root / "generations" / str(number), directory / str(number)
-        if original.is_symlink() or parked.is_symlink():
+        if any(p.is_symlink() or p.is_junction() for p in (original, parked)):
             raise EnvironmentError("collection recovery refuses linked generation trees")
         if parked.exists():
             if original.exists():
@@ -274,7 +536,20 @@ def collect_generations(
     store_paths: tuple[str, ...] = (),
 ) -> None:
     """Caller holds the project lock and has recovered all pending operations."""
-    if collection_plan(root) != approved:
+    with generation_runtime_lock(root):
+        _collect_generations(root, approved, store=store, store_paths=store_paths)
+
+
+def _collect_generations(
+    root: Path,
+    approved: tuple[int, tuple[int, ...], tuple[int, ...]],
+    *,
+    store: Path | None,
+    store_paths: tuple[str, ...],
+    preserve_history: bool = False,
+) -> None:
+    actual = _covered_collection_plan(root) if preserve_history else collection_plan(root)
+    if actual != approved:
         raise EnvironmentError("generation collection changed after planning; request a new plan")
     if store is not None and store_collection_plan(root, store, approved[2]) != store_paths:
         raise EnvironmentError("store collection changed after planning; request a new plan")
@@ -282,7 +557,11 @@ def collect_generations(
         record = Journal.read(old)
         if record.incomplete:
             raise EnvironmentError("incomplete environment operation requires recovery first")
-        if record.operation == "gc" and record.stage == "complete":
+        if (
+            record.operation == "gc"
+            and record.stage == "complete"
+            and (not preserve_history or record.collection_store is None)
+        ):
             cleanup_collection(root, old)
     current, _, numbers = approved
     if not numbers and not store_paths:

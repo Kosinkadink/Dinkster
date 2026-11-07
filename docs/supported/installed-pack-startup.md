@@ -275,6 +275,43 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env cleanup --plan` reports retained, candidate and deferred
+  generation numbers with reasons without recovering or modifying the project.
+  Status includes the same preview and visible pending quarantine warnings.
+  Candidate status requires matching sealed software in published history and
+  unique completed activation provenance. Missing, damaged, unpublished or
+  ambiguous coverage defers the tree. Host and tools observations do not change
+  software identity. Explicit legacy imports provide coverage only after their
+  completed journal provenance and sealed software are revalidated. Preview
+  never launches an interpreter, publishes or repairs history; candidate status
+  is advisory rather than deletion authorization.
+  Pack environments containing runtime payloads not represented in software
+  history defer rather than treating unchanged dependency locks as payload proof.
+  Managed interpreter acquisition is serialized against generation collection;
+  pending launches and unproven child cleanup retain the generation.
+  Stopped assignments carried across updates remain stopped and do not by
+  themselves prevent collection after leaving the retained rollback set.
+  `cleanup --automatic off --yes` persists an opt-out without collecting;
+  `--automatic on` restores the default preference. Preview and status expose
+  the same policy. Policy commands do not collect synchronously.
+  `cleanup --yes` retries generation-only collection for history-covered unused
+  trees when the policy is enabled. Busy projects defer, overlapping retries
+  coalesce, and status preserves the last attempt and retryable failures.
+  Before selecting trees, retries publish completed activation receipts and
+  capture eligible legacy software as marked imports under the project and
+  runtime locks. Existing receipts are never replaced. Live, uncertain or
+  invalid legacy trees retain their software and expose capture warnings;
+  stopped trees can be captured on a later retry. Imports do not change the
+  activation chronology, and capture never runs a retained interpreter.
+  Interrupted quarantine recovers and committed deletion retries without
+  collecting shared caches, rewriting history or stopping processes.
+  Successful CLI activation, repair, restore, start and stop attempt collection
+  after releasing transaction locks. Managed supervisors attempt startup,
+  hourly collection, retrying busy locks sooner. Acknowledged stops attempt
+  collection after durably recording the stopped engine assignment.
+  Cleanup failures remain warnings rather than invalidating a successful
+  update. Legacy trees without provable coverage still defer; Desktop controls
+  are separate.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
@@ -406,6 +443,10 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+  Linux and Windows managed shutdown drains worker descendants before proving
+  exit, including isolated and grouped workers blocked during pack import.
+  Collection retains legacy or unsupported-platform stopped generations when
+  descendant exit is unproven; it never stops processes to make them collectible.
 - `dinkster-env history` lists successful software activations in order, and
   `history show ID` displays the recorded software and changes. History survives
   generation-directory collection. Snapshots exclude workflows, models, outputs,
