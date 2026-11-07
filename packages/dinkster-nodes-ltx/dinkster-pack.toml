@@ -19,11 +19,10 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.dependencies]
-"dinkster-audio" = ">=0.0.1"
 "dinkster-conditioning" = ">=0.0.1"
+"dinkster-latent" = ">=0.0.1"
 "dinkster-llm" = ">=0.0.1"
 "dinkster-models" = ">=0.0.1"
-"dinkster-sampling" = ">=0.0.1"
 "dinkster-video" = ">=0.0.1"
 
 [pack.entry]

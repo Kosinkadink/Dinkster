@@ -3,7 +3,7 @@ name = "dinkster-nodes-ltx"
 version = "0.0.2"
 description = "Dinkster ltx model nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-audio", "dinkster-nodes-conditioning", "dinkster-nodes-llm", "dinkster-nodes-models", "dinkster-nodes-sampling", "dinkster-nodes-video", "dinkster-inference-wire"]
+dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-nodes-latent", "dinkster-nodes-llm", "dinkster-nodes-models", "dinkster-nodes-video", "dinkster-inference-wire"]
 
 [build-system]
 requires = ["hatchling"]
@@ -19,10 +19,9 @@ packages = ["src/dinkster_nodes_ltx"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-nodes-audio = { workspace = true }
 dinkster-nodes-conditioning = { workspace = true }
+dinkster-nodes-latent = { workspace = true }
 dinkster-nodes-llm = { workspace = true }
 dinkster-nodes-models = { workspace = true }
-dinkster-nodes-sampling = { workspace = true }
 dinkster-nodes-video = { workspace = true }
 dinkster-inference-wire = { workspace = true }

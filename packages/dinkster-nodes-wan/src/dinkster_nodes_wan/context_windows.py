@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     first_party_schema,
 )
-from dinkster_nodes_sampling.context_windows import ContextWindowsManual
+from dinkster_nodes_models.context_windows import ContextWindowsManual
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 

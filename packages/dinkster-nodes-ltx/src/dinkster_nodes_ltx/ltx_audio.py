@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_latent,
 )
-from dinkster_nodes_audio.audio_vae import VAEEncodeAudio
+from dinkster_nodes_latent.audio_vae import VAEEncodeAudio
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 
