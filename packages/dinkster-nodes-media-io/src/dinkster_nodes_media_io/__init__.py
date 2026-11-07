@@ -169,6 +169,7 @@ def register_media_types(registry: TypeRegistry) -> None:
                 input_convert=image_input,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
+                asset_references_complete=True,
             )
             registry.register_rendition(
                 type_id,
