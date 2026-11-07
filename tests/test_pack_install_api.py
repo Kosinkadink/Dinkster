@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp import ServerDisconnectedError, web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from dinkster_registry import InstallError, Lockfile, PlanRecord
 from dinkster_server import STATE_KEY, PathRedactor, create_app
-from dinkster_server.auth import Principal, StaticBearerAuthenticator
+from dinkster_server.auth import PRINCIPAL_KEY, Principal, StaticBearerAuthenticator
 
 import dinkster.pack_install_api as routes
 from dinkster.compose import ServingComposer
@@ -22,9 +22,9 @@ from tests.test_installer import write_pack
 
 
 @pytest.mark.parametrize("authenticated", [False, True])
-@pytest.mark.parametrize("cancel_apply", [False, True])
+@pytest.mark.parametrize("cancel_apply", [0, 1, 2])
 def test_pack_install_confirmations_and_live_activation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authenticated: bool, cancel_apply: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authenticated: bool, cancel_apply: int
 ) -> None:
     async def scenario() -> None:
         installer = Installer(tmp_path / "root", accelerator="cpu")
@@ -79,7 +79,16 @@ def test_pack_install_confirmations_and_live_activation(
                 {
                     "test-operator": Principal(
                         "operator", grants={"local": frozenset({"settings:write"})}
-                    )
+                    ),
+                    "test-reader": Principal("reader", grants={"local": frozenset({"nodes:read"})}),
+                    "test-agent": Principal(
+                        "agent", kind="agent", grants={"local": frozenset({"settings:write"})}
+                    ),
+                    "test-delegate": Principal(
+                        "delegate",
+                        delegation_id="untrusted-delegation",
+                        grants={"local": frozenset({"settings:write"})},
+                    ),
                 }
             )
             if authenticated
@@ -104,6 +113,19 @@ def test_pack_install_confirmations_and_live_activation(
         await client.start_server()
         try:
             selection = {"packs": [{"pack": "demo", "version": "1.0.0"}]}
+            if authenticated:
+                for token in ("test-reader", "test-agent", "test-delegate"):
+                    for endpoint, body in (
+                        ("plan", selection),
+                        ("apply", {"confirmation": "untrusted"}),
+                    ):
+                        denied = await client.post(
+                            f"/api/packs/install/{endpoint}",
+                            json=body,
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        assert denied.status == 403
+                assert installer.current_number() is None
             for invalid in (
                 {"packs": []},
                 {"packs": [{"pack": "./demo", "version": "1.0.0"}]},
@@ -145,6 +167,9 @@ def test_pack_install_confirmations_and_live_activation(
                 await asyncio.wait_for(published.wait(), timeout=10)
                 assert request_task is not None
                 request_task.cancel()
+                if cancel_apply == 2:
+                    # The handler resumes from the first cancel before this callback runs.
+                    asyncio.get_running_loop().call_soon(request_task.cancel)
                 assert busy.locked()
                 finish_manager.set()
                 with pytest.raises(ServerDisconnectedError):
@@ -178,6 +203,43 @@ def test_pack_install_confirmations_and_live_activation(
             assert "demo" in composer.pack_specs()
         finally:
             await client.close()
+            await composer.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("peer", ["203.0.113.12", "::ffff:203.0.113.12"])
+def test_pack_install_refuses_nonlocal_transport_even_with_operator_and_forwarded_headers(
+    tmp_path: Path, peer: str
+) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer()
+        composition = composer.composition
+        app = create_app(composition.make_engine, composition.schemas)
+        installer = Installer(tmp_path / "root", accelerator="cpu")
+        routes.add_pack_install_routes(
+            app, composer, installer, busy=asyncio.Lock(), redactor=PathRedactor()
+        )
+        transport = Mock()
+        transport.get_extra_info.return_value = (peer, 12345)
+        try:
+            for action in ("plan", "apply"):
+                request = make_mocked_request(
+                    "POST",
+                    f"/api/packs/install/{action}",
+                    app=app,
+                    transport=transport,
+                    headers={"X-Forwarded-For": "127.0.0.1"},
+                )
+                request[PRINCIPAL_KEY] = Principal(
+                    "operator", local=True, grants={"local": frozenset({"settings:write"})}
+                )
+                resolved = await app.router.resolve(request)
+                with pytest.raises(web.HTTPForbidden) as denied:
+                    await resolved.handler(request)
+                assert denied.value.text == '{"error":"local-operator-required"}'
+            assert installer.current_number() is None
+        finally:
             await composer.close()
 
     run_scenario(scenario())

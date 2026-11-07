@@ -9,8 +9,8 @@
   delegated callers cannot use the routes. Sealed `--generation` hosts do not
   support this managed-root installation surface.
   Authenticated loopback callers require a nondelegated human identity with
-  settings-write authority. Cancellation after confirmation does not interrupt
-  the disk-apply/live-activation operation; reconnect and refresh the registry
+  settings-write authority. Repeated cancellations after confirmation do not
+  interrupt the disk-apply/live-activation operation; reconnect and refresh the registry
   before deciding whether another installation is needed.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python

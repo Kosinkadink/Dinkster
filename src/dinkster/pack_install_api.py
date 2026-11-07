@@ -202,15 +202,22 @@ def add_pack_install_routes(
                 )
 
             operation = asyncio.create_task(install_and_activate())
-            try:
-                return await asyncio.shield(operation)
-            except asyncio.CancelledError:
-                # Keep the writer lock through live activation, not only disk publication.
-                result = await operation
+            cancelled = False
+            while True:
+                try:
+                    result = await asyncio.shield(operation)
+                    break
+                except asyncio.CancelledError:
+                    if operation.cancelled():
+                        raise
+                    # Repeated request cancellations must not reach the mutation task.
+                    cancelled = True
+            if cancelled:
                 _log.info(
                     "pack installation finished after request cancellation: HTTP %s", result.status
                 )
-                raise
+                raise asyncio.CancelledError
+            return result
 
     app.router.add_post("/api/packs/install/plan", handle_plan)
     app.router.add_post("/api/packs/install/apply", handle_apply)
