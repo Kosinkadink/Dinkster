@@ -1258,10 +1258,18 @@ environment.main()
         )
         retained = python.stat()
         retained_digest = content_digest(python)
+        retained_history = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
-        assert rolled_back["current"] == 3 and first.exists() and second.exists()
+        assert rolled_back["current"] == 3 and second.exists()
+        if sys.platform == "linux" or os.name == "nt":
+            assert not first.exists()
+        else:
+            assert first.exists()
+        assert retained_history and all(
+            path.read_bytes() == data for path, data in retained_history.items()
+        )
         after = python.stat()
         assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (
             retained.st_dev,
@@ -1272,6 +1280,18 @@ environment.main()
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
         current = root / "generations/3"
+        restored_python = current / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
+        assert (
+            subprocess.check_output(
+                [
+                    str(restored_python),
+                    "-B",
+                    "-c",
+                    "import fixture_engine; print(fixture_engine.VALUE)",
+                ]
+            ).strip()
+            == b"41"
+        )
         source_release, payloads = _release_sources(mirror)
         supplied = acquire_sources(discover((str(mirror),), "main"), store)
         assert supplied is not None
