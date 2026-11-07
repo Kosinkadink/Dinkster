@@ -2388,7 +2388,7 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["dinkster"]["mergeableTypes"] == []
-            assert data["typeOwners"]["INT"] == "dinkster-nodes-foundation"
+            assert data["typeOwners"]["INT"] == "core"
             with registry.registering_pack("mypack", ("mypack",)):
                 registry.register("mypack.thing")
             # Post-startup registration, deliberately in non-sorted order
@@ -5448,8 +5448,8 @@ def test_pack_resident_device_and_cost_reach_memory_status(
 ) -> None:
     from types import SimpleNamespace
 
+    from dinkster_api.v1 import register_inference_types
     from dinkster_memory.resident import default_pool
-    from dinkster_nodes_comfy import register_inference_types
 
     async def scenario() -> None:
         registry = TypeRegistry()
