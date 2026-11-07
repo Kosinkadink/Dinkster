@@ -1,5 +1,12 @@
 """First-party ComfyUI-origin utilities nodes."""
 
+from dinkster_api.v1 import (
+    COLOR_TYPE,
+    RESOLUTION_PREVIEW_TYPE,
+    TypeRegistry,
+    register_box_types,
+)
+
 from .color_resolution import (
     ColorToRGBInt,
     ResolutionSelector,
@@ -74,4 +81,12 @@ NODES = (
     PreviewAny,
 )
 
-__all__ = ["NODES"]
+
+def register_types(registry: TypeRegistry) -> None:
+    register_box_types(registry)
+    for type_id in (COLOR_TYPE, RESOLUTION_PREVIEW_TYPE):
+        if type_id not in registry:
+            registry.register(type_id)
+
+
+__all__ = ["NODES", "register_types"]

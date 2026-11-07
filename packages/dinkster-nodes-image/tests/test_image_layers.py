@@ -199,7 +199,7 @@ def test_add_layer_uses_native_manifest_hosts_and_persistent_cache(
         module = f"layer_host_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_image_layers import _LayerHostSource, _LayerHostInspect\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_image import register_types as register_inference_types\n"
             "NODES = (_LayerHostSource, _LayerHostInspect)\n",
             encoding="ascii",
         )
@@ -253,6 +253,7 @@ def test_add_layer_uses_native_manifest_hosts_and_persistent_cache(
                 for manifest in manifests:
                     await composer.add_pack(
                         PackSpec(
+                            trust_reserved=True,
                             manifest=manifest,
                             in_process=in_process,
                             worker_group=None if in_process else "layer-host-fixture",

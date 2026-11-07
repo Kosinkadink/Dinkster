@@ -175,7 +175,7 @@ def test_text_overlay_ordinary_native_hosts_consume_image_and_cache(
         native = package / "dinkster-pack.toml"
         (tmp_path / "overlay_fixture.py").write_text(
             "from test_text_overlay_torch import OverlaySource, OverlayConsumer\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_image import register_types as register_inference_types\n"
             "NODES = (OverlaySource, OverlayConsumer)\n",
             encoding="ascii",
         )
@@ -203,10 +203,13 @@ def test_text_overlay_ordinary_native_hosts_consume_image_and_cache(
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest, in_process=True)
+                    PackSpec(manifest, trust_reserved=True, in_process=True)
                     if in_process
                     else PackSpec(
-                        manifest, worker_group="overlay", group_manifests=(native, fixture)
+                        manifest,
+                        trust_reserved=True,
+                        worker_group="overlay",
+                        group_manifests=(native, fixture),
                     )
                 )
             graph = Graph(
