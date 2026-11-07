@@ -414,6 +414,10 @@ GOLDEN_V1_SURFACE = (
     "video_fingerprint",
     "video_meta",
     "video_rendition_mime",
+    "decode_latent",
+    "encode_latent",
+    "latent_fingerprint",
+    "validate_latent_encoded",
     # -- memory policy (dinkster-memory)
     "ConsumerItem",
     "FullReleaseResult",

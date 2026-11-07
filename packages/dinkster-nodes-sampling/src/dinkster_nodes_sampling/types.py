@@ -11,17 +11,15 @@ from dinkster_api.v1 import (
     TypeRegistry,
     TypeSpec,
     comfy_resident_meta,
+    decode_latent,
     default_pool,
+    encode_latent,
+    latent_fingerprint,
     register_resident_type,
+    validate_latent_encoded,
 )
 from dinkster_inference_wire.conditioning_wire import register_conditioning_type
 from dinkster_inference_wire.sampling_wire import register_sampling_type
-from dinkster_values import (
-    decode_latent,
-    encode_latent,
-    latent_fingerprint,
-    validate_latent_encoded,
-)
 
 
 def register_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:

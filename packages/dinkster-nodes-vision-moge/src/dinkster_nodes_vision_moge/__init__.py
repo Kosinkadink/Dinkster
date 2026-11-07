@@ -8,19 +8,17 @@ from dinkster_api.v1 import (
     MOGE_MODEL_TYPE,
     TypeRegistry,
     comfy_resident_meta,
+    decode_latent,
     default_pool,
+    encode_latent,
+    latent_fingerprint,
     register_asset_type,
     register_media_types,
     register_resident_type,
     resolver_from_env,
-)
-from dinkster_inference_wire.geometry_wire import register_mesh_type
-from dinkster_values import (
-    decode_latent,
-    encode_latent,
-    latent_fingerprint,
     validate_latent_encoded,
 )
+from dinkster_inference_wire.geometry_wire import register_mesh_type
 
 from .loader import LoadMoGeModel
 from .moge import MoGeGeometryToFOV

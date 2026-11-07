@@ -11,15 +11,13 @@ from dinkster_api.v1 import (
     LAYERS_TYPE,
     WEBCAM_TYPE,
     TypeRegistry,
+    decode_latent,
+    encode_latent,
+    latent_fingerprint,
     register_asset_type,
     register_box_types,
     register_media_types,
     resolver_from_env,
-)
-from dinkster_values import (
-    decode_latent,
-    encode_latent,
-    latent_fingerprint,
     validate_latent_encoded,
 )
 

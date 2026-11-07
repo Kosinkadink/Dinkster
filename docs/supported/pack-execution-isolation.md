@@ -9,6 +9,8 @@
   and blend helpers through `dinkster_api.v1`, alongside VIDEO values and
   streaming helpers. Remote clients can read host invocation cancellation
   through that API without importing worker internals.
+- Packs can register latent-based transport codecs through `dinkster_api.v1`
+  using the canonical encoder, decoder, fingerprint and encoded-value validator.
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.
