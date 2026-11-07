@@ -65,6 +65,7 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-caches",
     "packages/dinkster-assets",
     "packages/dinkster-memory",
+    "packages/dinkster-supervisor",
     "packages/dinkster-workers",
     "packages/dinkster-inference-wire",
     "packages/dinkster-image-document",
