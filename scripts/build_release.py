@@ -66,7 +66,10 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     if any(
         name != "uv.lock"
         and name not in tools_inputs
-        and not name.startswith("packages/dinkster-supervisor/")
+        and (
+            not name.startswith("packages/dinkster-supervisor/")
+            or name.startswith("packages/dinkster-supervisor/shared/")
+        )
         for name in changed
     ):
         return True

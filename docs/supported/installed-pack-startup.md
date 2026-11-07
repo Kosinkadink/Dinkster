@@ -224,8 +224,11 @@
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
 - Published engine and base locations can carry readable dated labels alongside
-  their hash prefix. Existing hash-only locations remain installable, and local
-  stores keep full-hash directory names for both forms. Contributor setup can
+  their hash prefix. Local base, engine, pack and wheel downloads use readable
+  names while retaining full content identity. Different contents with the same
+  label stay separate, and relabeling identical bytes reuses the existing copy.
+  Existing hash-only local installs remain usable without renaming their
+  interpreters or environments. Contributor setup can
   locate an absent legacy base directory through the variant index, matching
   only its pinned full content id and verifying the manifest before installation.
 - Status and doctor show installed base and engine labels from identity-matched
@@ -348,6 +351,9 @@
   independently versioned tools publication without engine or base payloads.
   Planning creates no cache; confirmed acquisition checks manifest and archive
   integrity and refuses corrupt tools rather than falling back to engine assets.
+  Local ZIP folders use dated supervisor versions without hashes; different
+  content with the same label receives a numeric suffix. Existing cached tools
+  remain reusable, and planning leaves collision allocations unchanged.
 - Confirmed published setup/update acquires non-base wheels by exact locked
   filename, size and SHA256 from their recorded origins or `--package-index`.
   The package index is saved for updates, independently of channel `--mirror`.
@@ -392,7 +398,7 @@
   --variant linux-cpu --json`.
   This reads registered scoped workflow records and explicit additions from
   project.json, the source generation's dinkster.lock, and an admitted target
-  registry lock. Cached `<artifact-digest-hex>.zip` archives are hash-verified
+  registry lock. Cached source archives, in readable or legacy locations, are hash-verified
   before their manifests are read in disposable scratch. It returns requirements,
   a missing-item plan and input revision/digest snapshots without creating a
   generation, fetching content or changing project/vault bytes or logical library

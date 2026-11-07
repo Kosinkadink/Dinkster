@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import cast
 
 from blake3 import blake3
+from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 
 from .environment_constraints import requirement_hashes
 from .environment_downloads import fetch_artifact
@@ -304,13 +305,13 @@ def retained_pack_archive(store: Path, identity: str, artifacts: Path | None = N
         if path == artifacts or path.is_relative_to(store)
     ):
         raise EnvironmentError("restore refuses a linked source archive cache")
-    filename = f"{identity[7:]}.zip"
     engines = store / "engines"
     if engines.is_symlink() or engines.is_junction():
         raise EnvironmentError("restore refuses a linked engine cache")
-    candidates = ([artifacts / filename] if artifacts is not None else []) + sorted(
-        engines.glob(f"*/artifacts/{filename}")
-    )
+    caches = ([artifacts] if artifacts is not None else []) + [
+        path / "artifacts" for _, path in object_entries(engines)
+    ]
+    candidates = [pack_archive_path(cache, identity) for cache in caches]
     for archive in candidates:
         if any(
             (path.is_symlink() or path.is_junction())
@@ -344,7 +345,8 @@ def restore_pack_sources(
                 raise EnvironmentError("restore requires digest-pinned pack sources")
             archive = retained_pack_archive(store, identity, artifacts)
             if archive is not None:
-                shutil.copyfile(archive, cache / archive.name)
+                # Older target engines still consume flat digest-named archives.
+                shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
         snapshot = scratch / "snapshot.json"
         write_document(
             snapshot,
@@ -379,13 +381,19 @@ def restore_pack_sources(
                 "target exact source restore refused: "
                 + (completed.stderr.strip() or completed.stdout.strip())
             )
-        for archive in cache.glob("*.zip"):
+        for row in cast("list[dict[str, object]]", lock["packs"]):
+            identity = cast("str", row["artifactDigest"])
+            archive = pack_archive_path(cache, identity)
             if archive.is_symlink():
                 raise EnvironmentError("restore refuses linked source archives")
             fetch_artifact(
-                (str(cache),),
+                (str(archive.parent),),
                 archive.name,
-                artifacts / archive.name,
+                pack_archive_path(
+                    artifacts,
+                    identity,
+                    label=pack_label(cast("str", row["pack"]), cast("str", row["version"])),
+                ),
                 content_digest(archive)[7:],
                 archive.stat().st_size,
             )
@@ -482,7 +490,7 @@ def prepare_engine_interpreter(
     success and failure. No project, journal, pack or generation record is written.
     """
     digest(base)
-    source = store / "bases" / base.removeprefix("sha256:") / "python"
+    source = object_path(store / "bases", base) / "python"
     if destination.exists():
         raise EnvironmentError(f"interpreter destination already exists: {destination}")
     if not source.is_dir():
@@ -521,7 +529,11 @@ def prepare_engine_interpreter(
     hashes = requirement_hashes(constraints.read_text(encoding="utf-8"))
     links = [
         wheels,
-        *sorted({path.parent for path in wheels.glob("*/*.whl") if path.parent.name in hashes}),
+        *sorted(
+            path
+            for identity in hashes
+            if (path := object_path(wheels, "sha256:" + identity)).is_dir()
+        ),
     ]
     command = [
         uv,
@@ -736,7 +748,7 @@ def build_generation(
     digest(engine_release)
     if (catalog_lock is None) != (artifacts is None):
         raise EnvironmentError("source staging requires both catalog lock and artifact cache")
-    source = store / "bases" / base.removeprefix("sha256:") / "python"
+    source = object_path(store / "bases", base) / "python"
     destination = root / "generations" / str(number)
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
@@ -751,9 +763,7 @@ def build_generation(
         )
         if source_kind == "local" or (source.parent / "manifest.json").is_file():
             shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
-        engine_manifest = (
-            store / "engines" / engine_release.removeprefix("sha256:") / "release-manifest.json"
-        )
+        engine_manifest = object_path(store / "engines", engine_release) / "release-manifest.json"
         try:
             engine_manifest.lstat()
         except FileNotFoundError:
@@ -823,19 +833,26 @@ def build_generation(
             selected = stage_pack_sources(
                 destination, catalog_lock=catalog_lock, artifacts=artifacts
             )
-            retained = store / "engines" / engine_release[7:] / "artifacts"
+            retained = object_path(store / "engines", engine_release) / "artifacts"
             if any(
                 path.is_symlink() for path in (retained, retained.parent, retained.parent.parent)
             ):
                 raise EnvironmentError("source archives require an unlinked engine cache")
             if artifacts != retained:
-                for archive in artifacts.glob("*.zip"):
+                lock = read_document(catalog_lock)
+                for row in cast("list[dict[str, object]]", lock["packs"]):
+                    identity = cast("str", row["artifactDigest"])
+                    archive = pack_archive_path(artifacts, identity)
                     if archive.is_symlink():
                         raise EnvironmentError("source archives must not be linked")
                     fetch_artifact(
-                        (str(artifacts),),
+                        (str(archive.parent),),
                         archive.name,
-                        retained / archive.name,
+                        pack_archive_path(
+                            retained,
+                            identity,
+                            label=pack_label(cast("str", row["pack"]), cast("str", row["version"])),
+                        ),
                         content_digest(archive)[7:],
                         archive.stat().st_size,
                     )

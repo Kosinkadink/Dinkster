@@ -1398,7 +1398,16 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     artifacts.mkdir()
     archive = artifacts / "pack.zip"
     digest = build_artifact(source, archive)
-    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    if problem == "broken":
+        archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    else:
+        from dinkster_store import pack_archive_path
+
+        selected = pack_archive_path(
+            artifacts, digest, label="dinkster-nodes-image/2026-11-03-1.2.3"
+        )
+        selected.parent.mkdir(parents=True)
+        archive.rename(selected)
     catalog = Lockfile.of(
         [
             LockedPack(

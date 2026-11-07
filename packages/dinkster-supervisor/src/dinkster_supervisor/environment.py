@@ -14,6 +14,8 @@ from pathlib import Path
 from platform import machine
 from typing import cast
 
+from dinkster_store import object_path, pack_archive_path
+
 from .environment_adoption import dependency_comparison, standalone_inputs
 from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
@@ -143,7 +145,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             store = Path((root / "store").read_text(encoding="utf-8").strip())
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
-            manifest = store / "bases" / generation.base[7:] / "manifest.json"
+            manifest = object_path(store / "bases", generation.base) / "manifest.json"
             if manifest.is_file():
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
                 result["base"] = base_details(base)
@@ -572,7 +574,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     "base=json.load(sys.stdin)\n"
                     "row=next(row for row in base['wheels'] if row['name']=='torch')\n"
                     "print(acquired_base_device(base,Path(sys.argv[1])/row['filename']))\n",
-                    str(store / "bases" / cast("str", custom["id"])[7:] / "wheels"),
+                    str(object_path(store / "bases", cast("str", custom["id"])) / "wheels"),
                 ],
                 cwd=engine,
                 input=json.dumps(custom),
@@ -654,11 +656,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 catalog_lock, source_artifacts = scratch / "dinkster.lock", scratch / "artifacts"
                 atomic_write(catalog_lock, cast("str", adoption["sourceLock"]))
                 source_artifacts.mkdir()
-                for filename, expected in cast(
-                    "dict[str, str]", adoption["archiveDigests"]
-                ).items():
-                    copied = source_artifacts / filename
-                    shutil.copyfile(Path(cast("str", adoption["artifacts"])) / filename, copied)
+                archives = Path(cast("str", adoption["artifacts"]))
+                archive_digests = cast("dict[str, str]", adoption["archiveDigests"])
+                for row in cast("list[dict[str, object]]", adoption["packs"]):
+                    identity = cast("str", row["artifactDigest"])
+                    archive = pack_archive_path(archives, identity)
+                    expected = archive_digests[archive.relative_to(archives).as_posix()]
+                    copied = source_artifacts / f"{identity[7:]}.zip"
+                    shutil.copyfile(archive, copied)
                     if content_digest(copied) != expected:
                         raise EnvironmentError("standalone archive changed during adoption")
             if local is None:
@@ -676,7 +681,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     store,
                     package_index=cast("str | None", package_index),
                     base=custom,
-                    base_sources=(str(store / "downloads" / base_id[7:]),)
+                    base_sources=(str(object_path(store / "downloads", base_id)),)
                     if custom is not None
                     else None,
                 )
@@ -808,7 +813,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     worker_protocol = cast("int", base["workerProtocol"])
                 measured = sum(
                     path.stat().st_size
-                    for path in (store / "bases" / base_id[7:] / "python").rglob("*")
+                    for path in (object_path(store / "bases", base_id) / "python").rglob("*")
                     if path.is_file()
                 )
                 build_generation(
@@ -838,7 +843,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     artifact_sources={
                         "channel": catalog.document,
                         "engine": list(catalog.engine_sources),
-                        "base": [str(store / "downloads" / base_id[7:])]
+                        "base": [str(object_path(store / "downloads", base_id))]
                         if custom is not None
                         else list(catalog.base_sources[dependency_variant]),
                         "dependencyVariant": dependency_variant,
@@ -899,8 +904,8 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     select_store(root, store)
     settings = (root / "project.json").read_bytes()
     expected = dict(generation.files)
-    base = store / "bases" / generation.base[7:] / "python"
-    release = store / "engines" / generation.engine_release[7:]
+    base = object_path(store / "bases", generation.base) / "python"
+    release = object_path(store / "engines", generation.engine_release)
     constraints = previous / "constraints.txt"
     if (
         not constraints.is_file()

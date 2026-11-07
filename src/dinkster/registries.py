@@ -80,6 +80,7 @@ from dinkster_registry import (
 )
 from dinkster_schema import PackCompatibility, canonical_claim, canonical_name, validate_name
 from dinkster_schema.units import MEBIBYTE
+from dinkster_store import pack_archive_path, pack_label
 from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.pack_lock import PackLock
 from dinkster_workers.provision import ProvisionError
@@ -703,7 +704,7 @@ def prepare_registry_sources(
     for pack, minimum in minimums.items():
         try:
             selected = resolve_compatible_release(registry, pack, minimum, engine_version)
-            cached = artifacts / f"{selected.artifact_digest.removeprefix('blake3:')}.zip"
+            cached = pack_archive_path(artifacts, selected.artifact_digest)
             if cached.exists():
                 entry = registry_source_lock(selected, cached, engine_version=engine_version)
             else:
@@ -711,6 +712,12 @@ def prepare_registry_sources(
                     staged = Path(directory) / "pack.zip"
                     staged.write_bytes(fetch(selected))
                     entry = registry_source_lock(selected, staged, engine_version=engine_version)
+                    cached = pack_archive_path(
+                        artifacts,
+                        selected.artifact_digest,
+                        label=pack_label(selected.pack, selected.version),
+                    )
+                    cached.parent.mkdir(parents=True, exist_ok=True)
                     staged.replace(cached)
             entries.append(entry)
         except (InstallError, OSError) as exc:

@@ -17,7 +17,7 @@ import pytest
 from scripts import setup_envs
 
 
-@pytest.mark.parametrize("publication", ["legacy", "labelled", "both", "wrong-manifest"])
+@pytest.mark.parametrize("publication", ["legacy", "labelled", "both", "wrong-manifest", "local"])
 def test_setup_uses_pinned_full_id_and_same_archive_location(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publication: str
 ) -> None:
@@ -32,8 +32,10 @@ def test_setup_uses_pinned_full_id_and_same_archive_location(
     base, _, _ = _mirror(mirror)
     identity = base["id"][7:]
     legacy = mirror / "base" / base["variant"] / identity
+    base["builtAt"] = "2026-11-01T12:00:00Z"
+    (legacy / "manifest.json").write_text(json.dumps(base))
     label = f"2026-10-31-py3.14.10-torch1.0-{identity[:8]}"
-    if publication != "legacy":
+    if publication not in {"legacy", "local"}:
         base["label"] = label
         if publication == "wrong-manifest":
             base["python"] = "3.14.9"
@@ -65,17 +67,31 @@ def test_setup_uses_pinned_full_id_and_same_archive_location(
             setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
         assert not (root / ".run").exists()
         return
-    result = setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+    if publication == "local":
+        from dinkster_supervisor import environment_local
+        from dinkster_supervisor.environment_artifacts import acquire_base
+
+        monkeypatch.setattr(environment_local, "local_selection", lambda *args: {"index": "local"})
+
+        def prepare_local(source, selection, store):
+            acquire_base(base, (str(legacy),), store)
+            return {"base": base["id"]}
+
+        monkeypatch.setattr(environment_local, "prepare_local", prepare_local)
+    result = setup_envs.setup(
+        root, mirror=str(mirror), variant=base["variant"], from_scratch=publication == "local"
+    )
     assert result == root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     receipt = json.loads((root / ".run/environment-base.json").read_text())
     assert receipt["id"] == base["id"]
     store = root / ".run/environment-store"
-    assert (store / "bases" / identity / base["interpreter"]["executable"]).is_file()
+    base_root = store / "bases/fixture-cpu/2026-11-01-py3.14.10-torchnone"
+    assert (base_root / base["interpreter"]["executable"]).is_file()
     for wheel in base["wheels"]:
-        assert (store / "wheels" / wheel["sha256"] / wheel["filename"]).read_bytes() == (
-            store / "bases" / identity / "wheels" / wheel["filename"]
-        ).read_bytes()
-    assert {path.name for path in (store / "bases").iterdir()} == {identity}
+        assert (
+            store / "wheels" / Path(wheel["filename"]).stem / wheel["filename"]
+        ).read_bytes() == (base_root / "wheels" / wheel["filename"]).read_bytes()
+    assert not (store / "bases" / identity).exists()
     if publication in {"labelled", "both"}:
         assert all(label not in path.parts for path in store.rglob("*"))
 

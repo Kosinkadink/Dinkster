@@ -22,6 +22,7 @@ import pytest
 import zstandard
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import Lockfile
+from dinkster_store import object_path
 from dinkster_supervisor.environment_artifacts import acquire_sources, discover
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
 from supervisor_subprocess import run as run_with_diagnostics
@@ -238,7 +239,11 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
     identity["archive"] = {"format": "tar+zstd"}
     custom["id"] = "sha256:" + hashlib.sha256(_json(identity)).hexdigest()
     custom["localBuild"] = {"extrasIndex": "https://pypi.org/simple"}
-    retained = store / "downloads" / custom["id"][7:]
+    retained = object_path(
+        store / "downloads",
+        custom["id"],
+        label="studio-cpu/2026-11-03-py3.14.10-torch2.14.1" if not explicit_sources else None,
+    )
     retained.mkdir(parents=True)
     part = retained / "base.tar.zst.001"
     with part.open("wb") as stream, zstandard.ZstdCompressor().stream_writer(stream) as encoded:
@@ -293,6 +298,8 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         result = json.loads(capsys.readouterr().out)
         assert setup.value.code == 0, result
         assert result["current"] == 1
+        sources = json.loads((root / "generations/1/artifact-sources.json").read_bytes())
+        assert sources["base"] == [str(retained)]
         assert _run(root, "stop", "--yes")[0] == 0
         definitions.unlink()
         (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
@@ -876,7 +883,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
         assert code == 0 and any("feasibility: pending" in line for line in unavailable["plan"])
         assert '"version": "9.9.9"' in "\n".join(unavailable["plan"])
         assert snapshot() == before
-    cached = next(artifacts.glob("*.zip"))
+    cached = next(artifacts.rglob("*.zip"))
     cached.write_bytes(b"x" * cached.stat().st_size)
     before = snapshot()
     code, corrupt = _run(root, "update", "--plan")
@@ -1313,12 +1320,12 @@ environment.main()
         )
         # The empty-pack fixture must refuse nonempty explicit sources, not omit them.
         assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
-        cached_release = store / "engines" / source_release.name
+        cached_release = object_path(store / "engines", "sha256:" + source_release.name)
         assert (cached_release / "official-packs.lock").read_bytes() == payloads[
             "official-packs.lock"
         ]
         assert sorted(
-            path.read_bytes() for path in (cached_release / "artifacts").glob("*.zip")
+            path.read_bytes() for path in (cached_release / "artifacts").rglob("*.zip")
         ) == sorted(payload for name, payload in payloads.items() if name.endswith(".zip"))
         assert {path: path.read_bytes() for path in (root / "journal").glob("*.json")} == (
             before_journals
@@ -1347,7 +1354,7 @@ environment.main()
         assert code == 1 and drift["status"] == "drift"
         assert "missing: constraints.txt" in drift["changes"]
         assert _run(root, "stop", "--yes")[0] == 0
-        base_python = store / "bases" / base_id / "python"
+        base_python = object_path(store / "bases", "sha256:" + base_id) / "python"
         bytecode = base_python / "__pycache__/runtime.cpython-312.pyc"
         bytecode.parent.mkdir(exist_ok=True)
         bytecode.write_bytes(b"disposable bytecode outside the sealed inventory")
@@ -1591,20 +1598,13 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert run("setup")["current"] == 1
         check(1, fixture["expected"]["initial"], "setup")
         store = Path((root / "store").read_text().strip())
-        assert (store / "bases" / base_id).is_dir()
-        assert (store / "downloads" / base_id).is_dir()
-        assert (store / "engines" / engine_id).is_dir()
-        wheel_paths = list((store / "wheels").iterdir())
-        assert wheel_paths and all(
-            len(path.name) == 64 and all(c in "0123456789abcdef" for c in path.name)
-            for path in wheel_paths
-        )
-        for directory in (store, root):
-            assert all(
-                base_label not in part and engine_label not in part
-                for path in directory.rglob("*")
-                for part in path.relative_to(directory).parts
-            )
+        assert object_path(store / "bases", "sha256:" + base_id).is_dir()
+        assert object_path(store / "downloads", "sha256:" + base_id).is_dir()
+        assert object_path(store / "engines", "sha256:" + engine_id).is_dir()
+        wheel_paths = list((store / "wheels").glob("*/*.whl"))
+        assert wheel_paths and all(path.parent.name == path.stem for path in wheel_paths)
+        assert object_path(store / "engines", "sha256:" + engine_id).name == engine_label
+        assert object_path(store / "bases", "sha256:" + base_id).parent.name == variant
         run("advance")
         assert run("update")["current"] == 2
         check(2, fixture["expected"]["updated"], "update")

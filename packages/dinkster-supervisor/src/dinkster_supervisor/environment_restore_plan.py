@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
 
+from dinkster_store import object_path
 from packaging.specifiers import SpecifierSet
 from packaging.tags import parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -243,7 +244,7 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
 
     engine_roots = _sources(provenance, "engine")
     base_roots = _sources(provenance, "base")
-    base_cache = store / "bases" / recorded_base["id"][7:]
+    base_cache = object_path(store / "bases", recorded_base["id"])
     if not base_cache.is_dir() or base_cache.is_symlink():
         for row in artifact_rows(cast("dict[str, object]", base["archive"])["parts"], "filename"):
             check(
@@ -252,7 +253,8 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
                 row,
                 "filename",
                 base_roots,
-                store / "downloads" / recorded_base["id"][7:] / cast("str", row["filename"]),
+                object_path(store / "downloads", recorded_base["id"])
+                / cast("str", row["filename"]),
             )
     else:
         for row in artifact_rows(base["wheels"], "filename"):
@@ -265,7 +267,7 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
                 base_cache / "wheels" / cast("str", row["filename"]),
             )
     owned = set(cast("list[str]", base["replaces"]))
-    release = store / "engines" / recorded_engine["release"][7:]
+    release = object_path(store / "engines", recorded_engine["release"])
     source_payloads = any(
         row["name"] == "official-packs.lock" for row in artifact_rows(engine["artifacts"], "name")
     )
@@ -274,7 +276,7 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
         if name.endswith(".whl"):
             if parse_wheel_filename(name)[0] in owned:
                 continue
-            cached = store / "wheels" / cast("str", row["sha256"]) / name
+            cached = object_path(store / "wheels", "sha256:" + cast("str", row["sha256"])) / name
         elif name == "constraints.txt" or (
             source_payloads and (name.endswith(".zip") or name == "official-packs.lock")
         ):
@@ -291,7 +293,9 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
         for row in dependency_wheels(selection):
             if row["name"] in owned:
                 continue
-            cached = store / "wheels" / cast("str", row["sha256"]) / cast("str", row["filename"])
+            cached = object_path(store / "wheels", "sha256:" + cast("str", row["sha256"])) / cast(
+                "str", row["filename"]
+            )
             if (
                 cached.is_file()
                 and not cached.is_symlink()
@@ -319,7 +323,7 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
                 row,
                 "filename",
                 (source,),
-                store / "wheels" / cast("str", row["sha256"]) / cast("str", row["filename"]),
+                cached,
             )
     return [*missing, *_pack_missing_inputs(snapshot, store)]
 
@@ -424,7 +428,8 @@ def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[
             else:
                 roots = (url.rsplit("/", 1)[0],)
             wheel_store = store / "wheels"
-            if wheel_store.is_symlink() or (wheel_store / sha).is_symlink():
+            wheel_root = object_path(wheel_store, "sha256:" + sha)
+            if wheel_store.is_symlink() or wheel_root.is_symlink():
                 raise EnvironmentError("restore refuses linked pack wheel directories")
             if not any(
                 artifact_available(
@@ -435,7 +440,7 @@ def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[
                     cast("int", row["size"]),
                     source_url=url if parsed.scheme != "file" else None,
                 )
-                for cached in (wheel_store / sha / filename, wheel_store / filename)
+                for cached in (wheel_root / filename, wheel_store / filename)
             ):
                 missing.append(
                     {
@@ -467,9 +472,9 @@ def _local_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict
     engine_id, base_id = digest(engine_record["release"]), digest(base_record["id"])
     for path in (
         store / "bases",
-        store / "bases" / base_id[7:],
+        object_path(store / "bases", base_id),
         store / "engines",
-        store / "engines" / engine_id[7:],
+        object_path(store / "engines", engine_id),
         store / "wheels",
     ):
         if path.is_symlink():
@@ -508,7 +513,7 @@ def _local_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict
             raise EnvironmentError("local snapshot has invalid interpreter paths")
         relative_file(name)
         expected_files[name] = digest(value)
-    base_root = store / "bases" / cast("str", base_record["id"])[7:]
+    base_root = object_path(store / "bases", base_id)
     try:
         verify_base_inputs(base_root / "python", expected_files, operation="restore")
         for name, expected in expected_files.items():
@@ -527,16 +532,17 @@ def _local_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict
     for document, identity in ((base, base_record["id"]), (engine, engine_record["release"])):
         for row in artifact_rows(document.get("wheels"), "filename"):
             filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
-            if (store / "wheels" / sha).is_symlink():
+            wheel_root = object_path(store / "wheels", "sha256:" + sha)
+            if wheel_root.is_symlink():
                 raise EnvironmentError("restore refuses linked local wheel directories")
             url = row.get("url")
             roots = (
                 (url.rsplit("/", 1)[0],)
                 if isinstance(url, str) and url.startswith("https://")
-                else (str(store / "wheels" / sha),)
+                else (str(wheel_root),)
             )
             if not artifact_available(
-                roots, filename, store / "wheels" / sha / filename, sha, cast("int", row["size"])
+                roots, filename, wheel_root / filename, sha, cast("int", row["size"])
             ):
                 missing.append(
                     {
