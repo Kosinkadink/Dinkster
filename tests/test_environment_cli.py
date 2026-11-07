@@ -239,7 +239,11 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
     identity["archive"] = {"format": "tar+zstd"}
     custom["id"] = "sha256:" + hashlib.sha256(_json(identity)).hexdigest()
     custom["localBuild"] = {"extrasIndex": "https://pypi.org/simple"}
-    retained = store / "downloads" / custom["id"][7:]
+    retained = object_path(
+        store / "downloads",
+        custom["id"],
+        label="studio-cpu/2026-11-03-py3.14.10-torch2.14.1" if not explicit_sources else None,
+    )
     retained.mkdir(parents=True)
     part = retained / "base.tar.zst.001"
     with part.open("wb") as stream, zstandard.ZstdCompressor().stream_writer(stream) as encoded:
@@ -294,6 +298,8 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         result = json.loads(capsys.readouterr().out)
         assert setup.value.code == 0, result
         assert result["current"] == 1
+        sources = json.loads((root / "generations/1/artifact-sources.json").read_bytes())
+        assert sources["base"] == [str(retained)]
         assert _run(root, "stop", "--yes")[0] == 0
         definitions.unlink()
         (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())

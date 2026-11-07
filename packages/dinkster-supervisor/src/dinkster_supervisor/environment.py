@@ -833,7 +833,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     artifact_sources={
                         "channel": catalog.document,
                         "engine": list(catalog.engine_sources),
-                        "base": [str(store / "downloads" / base_id[7:])]
+                        "base": [str(object_path(store / "downloads", base_id))]
                         if custom is not None
                         else list(catalog.base_sources[dependency_variant]),
                         "dependencyVariant": dependency_variant,
