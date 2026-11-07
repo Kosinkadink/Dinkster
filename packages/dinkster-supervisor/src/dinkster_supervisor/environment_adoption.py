@@ -20,6 +20,10 @@ from .environment_stores import registry_path
 from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
 
 
+def _linked(path: Path) -> bool:
+    return any(item.is_symlink() or item.is_junction() for item in (path, *path.parents))
+
+
 def _installed_dependencies(venv: Path, content: Path) -> dict[str, object]:
     """Inspect distribution headers only, without executing Python or .pth files."""
     for path in (venv, *venv.parents):
@@ -91,7 +95,7 @@ def _installed_dependencies(venv: Path, content: Path) -> dict[str, object]:
 
 def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, object]:
     """Describe only recorded sources and placement, never the ambient Python."""
-    if not source.is_absolute() or source.is_symlink():
+    if not source.is_absolute() or _linked(source):
         raise EnvironmentError("--adopt-from must be an absolute, unlinked standalone root")
     source = source.resolve(strict=True)
     for path in (target, store, registry_path().resolve()):
@@ -99,7 +103,7 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
             raise EnvironmentError("adoption destination and store must be disjoint from old root")
 
     def software(path: Path) -> bytes:
-        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+        if _linked(path) or not path.is_file():
             raise EnvironmentError(f"adoption requires an intact software file: {path}")
         return path.read_bytes()
 
@@ -155,21 +159,21 @@ def standalone_inputs(source: Path, target: Path, store: Path) -> dict[str, obje
         software(pointer).decode("utf-8") if pointer.exists() or pointer.is_symlink() else None
     )
     content = Path(pointer_text.strip()) if pointer_text is not None else source
-    if not content.is_absolute() or content.is_symlink():
+    if not content.is_absolute() or _linked(content):
         raise EnvironmentError("standalone shared store must be absolute and unlinked")
     content = content.resolve(strict=True)
     for path in (target, store, registry_path().resolve()):
         if path.is_relative_to(content) or content.is_relative_to(path):
             raise EnvironmentError("adoption must not write into the standalone content store")
     archives = content / "artifacts"
-    if archives.is_symlink():
+    if _linked(archives):
         raise EnvironmentError("standalone archives must not be linked")
     payloads: dict[str, str] = {}
     dependencies: dict[str, object] = {}
     for row in packs:
         identity = cast("str", row["artifactDigest"])
         path = archives / f"{identity[7:]}.zip"
-        if path.is_symlink() or not path.is_file():
+        if _linked(path) or not path.is_file():
             raise EnvironmentError(
                 f"standalone pack archive is missing: {row['pack']} ({identity})"
             )

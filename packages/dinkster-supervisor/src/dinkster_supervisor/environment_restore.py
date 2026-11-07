@@ -24,6 +24,7 @@ from .environment_state import (
     EnvironmentError,
     Journal,
     content_digest,
+    digest,
     read_current,
     read_document,
     write_document,
@@ -270,7 +271,10 @@ def restore_entry(
                         if path.is_file()
                     ),
                     catalog_lock=inputs / "dinkster.lock" if "dinkster.lock" in metadata else None,
-                    artifacts=store / "engines" / engine_id[7:] / "artifacts"
+                    artifacts=store
+                    / "engines"
+                    / digest(provenance.get("packSourceRelease", engine_id))[7:]
+                    / "artifacts"
                     if "dinkster.lock" in metadata
                     else None,
                     acquire_pack_wheels=True,

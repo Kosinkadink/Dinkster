@@ -190,6 +190,14 @@ advisory and are never installed, replaced or downgraded by restore. Unavailable
 inputs produce a read-only `restorePlan` with missing payloads, candidate snapshots
 and every proposed substitution. Candidates minimize changed software identity
 fields; equal-cost alternatives remain explicit rather than selecting the newest.
+A base-only proposal preserves recorded pack sources, dependency locks and
+in-process placement, and must pass their compatibility and availability checks
+against the proposed base. Engine replacements also require the sealed pack
+manifests' declared versions and engine ranges to agree with the recorded sources
+and proposed engine. Older entries without those declarations do not infer them.
+Snapshots retain pack manifests, not pack code. Acquisition provenance preserves
+the original source archive cache release across engine replacements; target-owned
+source admission still verifies the exact recorded pack digests.
 `restore ID --approve DIGEST` approves one complete proposal. `--yes` alone never
 approves substitutions. A changed project, current pointer or history invalidates
 the approval. Without an obtainable candidate, restore makes no changes.

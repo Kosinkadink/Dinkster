@@ -6,6 +6,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,8 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
+
+from blake3 import blake3
 
 from .environment_constraints import requirement_hashes
 from .environment_downloads import fetch_artifact
@@ -27,6 +30,7 @@ from .environment_state import (
     read_document,
     write_document,
 )
+from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
 
 
 def verify_base_inputs(base: Path, expected: dict[str, str], *, operation: str) -> None:
@@ -290,20 +294,57 @@ def project_operation(
     return document
 
 
+def retained_pack_archive(store: Path, identity: str, artifacts: Path | None = None) -> Path | None:
+    """Locate selected, digest-verified software bytes without populating any cache."""
+    if re.fullmatch(r"blake3:[0-9a-f]{64}", identity) is None:
+        raise EnvironmentError("restore requires digest-pinned pack sources")
+    if artifacts is not None and any(
+        (path.is_symlink() or path.is_junction())
+        for path in (artifacts, *artifacts.parents)
+        if path == artifacts or path.is_relative_to(store)
+    ):
+        raise EnvironmentError("restore refuses a linked source archive cache")
+    filename = f"{identity[7:]}.zip"
+    engines = store / "engines"
+    if engines.is_symlink() or engines.is_junction():
+        raise EnvironmentError("restore refuses a linked engine cache")
+    candidates = ([artifacts / filename] if artifacts is not None else []) + sorted(
+        engines.glob(f"*/artifacts/{filename}")
+    )
+    for archive in candidates:
+        if any(
+            (path.is_symlink() or path.is_junction())
+            for path in (archive, *archive.parents)
+            if path in (archive, artifacts) or path.is_relative_to(store)
+        ):
+            raise EnvironmentError("restore refuses linked source archives")
+        if not archive.is_file():
+            continue
+        retained = blake3()
+        with archive.open("rb") as source:
+            for chunk in iter(lambda: source.read(ENVIRONMENT_STREAM_CHUNK_BYTES), b""):
+                retained.update(chunk)
+        if retained.hexdigest() == identity[7:]:
+            return archive
+    return None
+
+
 def restore_pack_sources(
-    generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path
+    generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path, store: Path
 ) -> None:
     """Use the target's exact-pin restore in scratch, never the live pack install."""
-    if artifacts.is_symlink():
-        raise EnvironmentError("restore refuses a linked source archive cache")
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
         scratch = Path(directory)
         cache = scratch / "artifacts"
         cache.mkdir()
-        for archive in artifacts.glob("*.zip"):
-            if archive.is_symlink():
-                raise EnvironmentError("restore refuses linked source archives")
-            shutil.copyfile(archive, cache / archive.name)
+        lock = read_document(catalog_lock)
+        for row in cast("list[dict[str, object]]", lock["packs"]):
+            identity = row.get("artifactDigest")
+            if not isinstance(identity, str):
+                raise EnvironmentError("restore requires digest-pinned pack sources")
+            archive = retained_pack_archive(store, identity, artifacts)
+            if archive is not None:
+                shutil.copyfile(archive, cache / archive.name)
         snapshot = scratch / "snapshot.json"
         write_document(
             snapshot,
@@ -786,7 +827,11 @@ def build_generation(
         if catalog_lock is not None and artifacts is not None:
             if acquire_pack_sources:
                 restore_pack_sources(
-                    destination, catalog_lock=catalog_lock, artifacts=artifacts, project=root
+                    destination,
+                    catalog_lock=catalog_lock,
+                    artifacts=artifacts,
+                    project=root,
+                    store=store,
                 )
             selected = stage_pack_sources(
                 destination, catalog_lock=catalog_lock, artifacts=artifacts

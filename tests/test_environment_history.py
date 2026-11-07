@@ -97,9 +97,32 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
-@pytest.mark.parametrize("mutation", ["update", "pack-install"])
+@pytest.mark.parametrize(
+    ("mutation", "replace_base", "replace_engine", "reacquire"),
+    [
+        ("update", False, False, False),
+        ("update", True, False, False),
+        ("update", False, True, False),
+        ("update", True, True, False),
+        ("update", False, False, True),
+        ("pack-install", False, False, False),
+    ],
+    ids=[
+        "exact",
+        "missing-base",
+        "missing-engine",
+        "missing-engine-and-base",
+        "reacquired-source",
+        "pack-install",
+    ],
+)
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    replace_base: bool,
+    replace_engine: bool,
+    reacquire: bool,
 ):
     from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
     from dinkster_supervisor.environment_state import interpreter
@@ -146,7 +169,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
             .replace("numpy>=1.26", "fixture-adopt==1.0")
             .replace(
                 "[pack]\n",
-                '[pack]\npublisher="dinkster"\nversion="1.0.0"\nengine=">=0"\n',
+                '[pack]\npublisher="dinkster"\nversion="1.0.0"\nengine=">=0.0.1,<3.0"\n',
             )
         )
         (pack / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
@@ -156,7 +179,16 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         staging.rename(retained)
         if name != "extra":
             shutil.copyfile(retained, archives / retained.name)
-        entries.append(LockedPack(name, "1.0.0", identity, "dinkster", (name,)))
+        entries.append(
+            LockedPack(
+                name,
+                "1.0.0",
+                identity,
+                "dinkster",
+                (name,),
+                "registry" if name == "extra" else f"local:{pack}",
+            )
+        )
         path = dependencies / f"{name}.pack-lock.json"
         PackLock(
             name,
@@ -242,6 +274,17 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     try:
         assert code == 0 and result["current"] == 1, result.get("error", result)
         first = history(root)[0]
+        snapshot = cast("dict", first["snapshot"])
+        replacement_id = None
+        chosen = None
+        expected_engine = snapshot["engine"]
+        assert (
+            "pack-sources/healthy/dinkster-pack.toml" in cast("dict", first["snapshot"])["metadata"]
+        )
+        assert (
+            "pack-sources/healthy/healthy_nodes.py"
+            not in cast("dict", first["snapshot"])["metadata"]
+        )
         for number in (1, 3):
             generation = root / "generations" / str(number)
             assert json.loads((generation / "dinkster.lock").read_text()) == json.loads(source_lock)
@@ -273,7 +316,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     code, planned = _run(root, "packs-plan", "extra@1.0.0", "--output", str(review))
                     assert code == 0, planned.get("error", planned)
                     assert sorted((root / "journal").glob("*")) == journals
-                    approval = planned["approval"]
+                    pack_approval = planned["approval"]
                     for folder in ("workflows", "models", "outputs", "user"):
                         (root / folder).mkdir(exist_ok=True)
                         (root / folder / "sentinel.bin").write_bytes(
@@ -291,7 +334,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     saved = settings.read_bytes()
                     settings.write_bytes(saved + b"\n")
                     code, stale = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code != 0 and "changed after planning" in stale["error"]
                     assert sorted((root / "journal").glob("*")) == journals
@@ -300,13 +343,13 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     unreviewed = review / "locks/unreviewed.json"
                     unreviewed.write_bytes(extra_lock)
                     code, tampered = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code != 0 and "reviewed pack inputs changed" in tampered["error"]
                     assert sorted((root / "journal").glob("*")) == journals
                     unreviewed.unlink()
                     code, updated = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code == 0, updated.get("error", updated)
                     assert {
@@ -321,10 +364,13 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         root / "generations/2/packs/extra/pack-lock.json"
                     ).read_bytes() == extra_lock
                     code_replay, _replayed = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code_replay != 0 and not (root / "generations/3").exists()
                 else:
+                    (mirror / "channels/main.json").write_bytes(
+                        Path(fixture["updatedChannel"]).read_bytes()
+                    )
                     code, updated = _run(
                         root,
                         "update",
@@ -339,13 +385,188 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
                 assert _run(root, "stop", "--yes")[0] == 0
                 shutil.rmtree(root / "generations/1")
-                code, restored = _run(root, "restore", "1", "--yes")
+                original_release = cast("dict", first["snapshot"])["engine"]["release"]
+                current_release = Generation.read(
+                    root / "generations/2/generation.json"
+                ).engine_release
+                assert (current_release != original_release) == (mutation == "update")
+                for entry in entries[:2]:
+                    filename = f"{entry.artifact_digest[7:]}.zip"
+                    assert (
+                        store / "engines" / current_release[7:] / "artifacts" / filename
+                    ).read_bytes() == (archives / filename).read_bytes()
+                original_archives = store / "engines" / original_release[7:] / "artifacts"
+                if mutation == "update":
+                    shutil.rmtree(original_archives)
+                corrupt_cache = store / "engines" / ("0" * 64) / "artifacts"
+                corrupt_cache.mkdir(parents=True)
+                for entry in entries[:2]:
+                    (corrupt_cache / f"{entry.artifact_digest[7:]}.zip").write_bytes(
+                        b"not the digest-pinned pack archive"
+                    )
+                if reacquire:
+                    for entry in entries[:2]:
+                        (
+                            store
+                            / "engines"
+                            / current_release[7:]
+                            / "artifacts"
+                            / f"{entry.artifact_digest[7:]}.zip"
+                        ).unlink()
+                    preserved_sources = {
+                        path: path.read_bytes()
+                        for parent in (root, store)
+                        for path in parent.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    }
+                    code, available = _run(root, "restore", "1", "--plan")
+                    assert code == 0 and available["restorePlan"]["exact"], available
+                    changed = tmp_path / "healthy/healthy_nodes.py"
+                    original_nodes = changed.read_bytes()
+                    for content in (original_nodes + b"\n# changed source bytes\n", None):
+                        if content is None:
+                            changed.unlink()
+                        else:
+                            changed.write_bytes(content)
+                        code, unavailable = _run(root, "restore", "1", "--yes")
+                        assert code == 0 and unavailable["status"] == "approval-required", (
+                            unavailable
+                        )
+                        assert unavailable["restorePlan"]["missing"] == [
+                            {
+                                "kind": "pack-source",
+                                "identity": entries[0].artifact_digest,
+                                "artifact": f"{entries[0].artifact_digest[7:]}.zip",
+                                "pack": "healthy",
+                                "source": f"local:{tmp_path / 'healthy'}",
+                            }
+                        ]
+                        assert not unavailable["restorePlan"]["exact"]
+                    changed.write_bytes(original_nodes)
+                    assert {
+                        path: path.read_bytes()
+                        for parent in (root, store)
+                        for path in parent.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    } == preserved_sources
+                approval: tuple[str, ...] = ("--yes",)
+                if replace_base:
+                    snapshot = cast("dict", first["snapshot"])
+                    original = json.loads(snapshot["metadata"]["base-manifest.json"])
+                    base_id = snapshot["base"]["id"]
+                    published = mirror / "base/fixture-cpu" / base_id[7:]
+                    index = []
+                    for compatible in (False, True):
+                        base = json.loads(json.dumps(original))
+                        base["interpreter"]["release"] = (
+                            "compatible-replacement" if compatible else "conflicting-replacement"
+                        )
+                        if not compatible:
+                            conflicting, sha = _wheel(dependencies, "fixture_adopt", "2.0", 99)
+                            base["wheels"].append(
+                                {
+                                    "name": "fixture-adopt",
+                                    "version": "2.0",
+                                    "filename": conflicting.name,
+                                    "sha256": sha,
+                                    "size": conflicting.stat().st_size,
+                                }
+                            )
+                            base["replaces"] = sorted([*base["replaces"], "fixture-adopt"])
+                        identity_fields = {
+                            key: value
+                            for key, value in base.items()
+                            if key not in {"id", "signature"}
+                        }
+                        identity_fields["archive"] = {"format": "tar+zstd"}
+                        identity = hashlib.sha256(canonical_json(identity_fields)).hexdigest()
+                        base["id"] = "sha256:" + identity
+                        destination = published.parent / identity
+                        shutil.copytree(published, destination)
+                        (destination / "manifest.json").write_bytes(canonical_json(base))
+                        index.append({"id": base["id"], "path": f"base/fixture-cpu/{identity}"})
+                        if compatible:
+                            replacement_id = base["id"]
+                    (published.parent / "index.json").write_text(json.dumps(index))
+                    shutil.rmtree(published)
+                    shutil.rmtree(store / "bases" / base_id[7:])
+                    shutil.rmtree(store / "downloads" / base_id[7:])
+                if replace_engine:
+                    snapshot = cast("dict", first["snapshot"])
+                    base = json.loads(snapshot["metadata"]["base-manifest.json"])
+                    channel_path = mirror / "channels/main.json"
+                    index = []
+                    for version in ("2.5", "3.0"):
+                        publisher.executable_release(mirror, base, version, 73)
+                        selected = json.loads(channel_path.read_bytes())["engine"]
+                        index.append(
+                            {
+                                "sha256": selected["release"][7:],
+                                "path": f"engine/{selected['release'][7:]}",
+                            }
+                        )
+                        if version == "2.5":
+                            expected_engine = {key: selected[key] for key in ("version", "release")}
+                    (mirror / "engine/index.json").write_text(json.dumps(index))
+                    original = snapshot["engine"]["release"]
+                    shutil.rmtree(mirror / "engine" / original[7:])
+                    for row in json.loads(snapshot["metadata"]["engine-manifest.json"])[
+                        "artifacts"
+                    ]:
+                        if row["name"].endswith(".whl"):
+                            shutil.rmtree(store / "wheels" / row["sha256"])
+                if replace_base or replace_engine:
+                    preserved = {
+                        path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    }
+                    code, proposal = _run(root, "restore", "1", "--yes")
+                    assert code == 0 and proposal["status"] == "approval-required", proposal
+                    alternatives = proposal["restorePlan"]["alternatives"]
+                    assert len(alternatives) == 1, alternatives
+                    chosen = alternatives[0]
+                    substitutions = chosen["substitutions"]
+                    expected_fields = {"engine", "constraints"} if replace_engine else set()
+                    if replace_base:
+                        expected_fields.add("base")
+                        assert next(row for row in substitutions if row["field"] == "base") == {
+                            "field": "base",
+                            "before": snapshot["base"],
+                            "after": {"id": replacement_id, "variant": "fixture-cpu"},
+                        }
+                    assert {row["field"] for row in substitutions} == expected_fields
+                    assert chosen["snapshot"]["engine"] == expected_engine
+                    assert chosen["snapshot"]["base"] == (
+                        {"id": replacement_id, "variant": "fixture-cpu"}
+                        if replace_base
+                        else snapshot["base"]
+                    )
+                    assert chosen["snapshot"]["inProcessPacks"] == ["healthy"]
+                    assert {
+                        path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    } == preserved
+                    approval = ("--approve", chosen["approval"])
+                code, restored = _run(root, "restore", "1", *approval)
                 assert code == 0 and restored["current"] == 3, restored.get("error", restored)
         records = history(root)
         assert len(records) == 3 and records[0] == first
         assert records[1]["reason"] == "update"
         assert records[2]["restoredFrom"] == 1
-        assert all(entry["exact"] is True for entry in records)
+        assert [entry["exact"] for entry in records] == [
+            True,
+            True,
+            not (replace_base or replace_engine),
+        ]
+        if replace_base:
+            assert replacement_id is not None and chosen is not None
+            assert cast("dict", records[2]["snapshot"])["base"]["id"] == replacement_id
+        if replace_base or replace_engine:
+            assert chosen is not None
+            assert records[2]["substitutions"] == chosen["substitutions"]
+        assert cast("dict", records[2]["snapshot"])["engine"] == expected_engine
         assert {
             path.relative_to(source): path.read_bytes()
             for path in source.rglob("*")
@@ -494,6 +715,56 @@ def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
         path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
     } == before
     assert not target.exists() and not store.exists()
+    for boundary in dict.fromkeys((source, content, content / "artifacts")):
+        saved_boundary = boundary.with_name(boundary.name + "-unlinked")
+        boundary.rename(saved_boundary)
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(boundary), str(saved_boundary)],
+                    capture_output=True,
+                    check=True,
+                )
+            else:
+                boundary.symlink_to(saved_boundary, target_is_directory=True)
+            code, refused = _run(target, *args, "--plan")
+            assert code == 1 and "link" in refused["error"], refused
+            assert not target.exists() and not store.exists()
+        finally:
+            if sys.platform == "win32":
+                boundary.rmdir()
+            else:
+                boundary.unlink()
+            saved_boundary.rename(boundary)
+    linked_parent = tmp_path / "linked-parent"
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(linked_parent), str(tmp_path)],
+            capture_output=True,
+            check=True,
+        )
+    else:
+        linked_parent.symlink_to(tmp_path, target_is_directory=True)
+    try:
+        code, refused = _run(
+            target, *args, "--adopt-from", str(linked_parent / source.name), "--plan"
+        )
+        assert code == 1 and "link" in refused["error"], refused
+        if shared_store:
+            pointer = source / "shared-store"
+            original_pointer = pointer.read_bytes()
+            pointer.write_text(str(linked_parent / content.name) + "\n")
+            try:
+                code, refused = _run(target, *args, "--plan")
+                assert code == 1 and "link" in refused["error"], refused
+            finally:
+                pointer.write_bytes(original_pointer)
+        assert not target.exists() and not store.exists()
+    finally:
+        if sys.platform == "win32":
+            linked_parent.rmdir()
+        else:
+            linked_parent.unlink()
     if not in_process:
         distribution = sites[0] / "removed-9.0.dist-info"
         saved = tmp_path / "saved-distribution"
@@ -1008,9 +1279,11 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     assert (target / "private").read_text() == "not software"
 
 
-@pytest.mark.parametrize("operation", ["restore", "rollback"])
+@pytest.mark.parametrize(
+    "operation,interrupted_update", [("restore", False), ("rollback", False), ("rollback", True)]
+)
 def test_restore_rebuilds_pruned_software_without_changing_user_data(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, interrupted_update: bool
 ):
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
@@ -1039,8 +1312,32 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
             directory.mkdir(exist_ok=True)
             (directory / "sentinel").write_bytes(name.encode("ascii") + b" private data")
         shutil.copyfile(fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/main.json")
-        code, result = _run(root, "update", "--yes")
-        assert code == 0 and result["current"] == 2, result
+        if interrupted_update:
+            script = """
+import os, sys
+from dinkster_supervisor import environment, environment_transactions
+original = environment_transactions.publish_entry
+def interrupt(root, entry):
+    if entry['id'] == 2:
+        os._exit(74)
+    original(root, entry)
+environment_transactions.publish_entry = interrupt
+sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
+environment.main()
+"""
+            completed = subprocess.run(
+                [sys.executable, "-c", script, str(root)], capture_output=True, timeout=120
+            )
+            assert completed.returncode == 74, completed.stderr
+            assert (root / "current").read_text() == "2\n"
+            assert len(history(root)) == 1
+            code, result = _run(root, "rollback", "--plan")
+            assert code == 0 and result["status"] == "planned", result
+            assert len(history(root)) == 2
+            assert (root / "current").read_text() == "2\n"
+        else:
+            code, result = _run(root, "update", "--yes")
+            assert code == 0 and result["current"] == 2, result
         second = (root / "history/00000000000000000002.json").read_bytes()
         parked_port = free_port()
         assert (

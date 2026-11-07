@@ -7,6 +7,12 @@
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
   not newer releases. Interrupted software restores retain a failed-attempt receipt
   while leaving successful history unchanged.
+- Restore can recover selected source archives retained by another engine release
+  when the recorded source cache was pruned. Retained bytes must match the locked
+  BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
+- Restore planning checks exact pack source availability. When retained archives
+  are gone, acquisition probes use disposable storage and verify the recorded
+  digest; changed or unavailable sources are disclosed without changing the install.
 - Software restore rebuilds isolated and in-process pack dependencies from the
   snapshot's complete locks, including after its old generation was pruned;
   it does not inherit packs from the current generation.
@@ -17,12 +23,15 @@
 - Local-development software snapshots rebuild from their recorded manifests,
   retained interpreter and hash-pinned wheels, without resolving a checkout again.
   Missing local interpreter files or wheels are disclosed before activation.
-- For snapshots without packs, a missing base can be replaced by an indexed base
+- A missing base can be replaced by an indexed base
   with the same native platform, Python and worker protocol when its locked engine
-  requirements agree. Compatible engine/base pairs are offered when replacing
-  either component alone cannot work. Proposals prefer fewer changed identities,
-  preserve an obtainable compatible engine, and disclose every substitution for
-  explicit approval rather than silently upgrading it.
+  and unchanged pack dependency requirements agree. Packs, source locks and
+  in-process placement are preserved. Engine replacements and combined engine/base
+  proposals also preserve packs when recorded pack manifests declare compatible
+  engine ranges and unchanged dependency locks remain compatible and obtainable.
+  Entries without those declarations do not guess compatibility. Proposals prefer
+  fewer changed identities, preserve an obtainable compatible engine, and disclose
+  every substitution for explicit approval rather than silently upgrading it.
 - Standalone pack-only roots can be adopted with `setup --adopt-from` into a
   new, separate supervisor root using explicitly chosen published engine/base
   identities and target dependency locks. The plan displays exact pack sources,
@@ -32,6 +41,8 @@
   dependency locks, with separate shared-store accelerator scopes. Inspection is
   metadata-only and never executes old Python or .pth files. Ambient/inherited
   packages are not claimed as captured, and changed metadata invalidates approval.
+  Linked source roots, shared stores, archives and their ownership ancestors are
+  refused, including Windows directory junctions.
 - Managed install-root hosts can opt into local human pack installation with
   `dinkster-serve --install-root PATH --allow-pack-install` or the inherited
   `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the plan/apply routes
@@ -450,4 +461,5 @@
 - `dinkster-env rollback` rebuilds the preceding successful history entry, even
   after its generation directory was pruned. It uses restore's missing-input and
   proposal-approval contract, appends a source-linked entry with reason `rollback`,
-  and leaves project settings and user data unchanged.
+  and leaves project settings and user data unchanged. Planning recovers an
+  interrupted publication of a completed activation before selecting that entry.
