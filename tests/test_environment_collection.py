@@ -1077,7 +1077,16 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
     )
 
     def short_interval(command, **kwargs):
-        return launch([command[0], "-c", script, *command[3:]], **kwargs)
+        selected = script
+        if command[command.index("--generation") + 1] == str(root / "generations/2"):
+            selected = (
+                "from dinkster_supervisor import environment_collection as c, supervisor\n"
+                "async def disabled(root, stopped):\n"
+                "    await stopped.wait()\n"
+                "c.maintain_generations=disabled\n"
+                "supervisor.main()\n"
+            )
+        return launch([command[0], "-c", selected, *command[3:]], **kwargs)
 
     monkeypatch.setattr(runtime.subprocess, "Popen", short_interval)
     write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False})
