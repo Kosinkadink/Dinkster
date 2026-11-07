@@ -3859,6 +3859,18 @@
       "pack": "dinkster-3d",
       "nodeType": "dinkster.3d.splat_to_mesh",
       "backendPureRename": true
+    },
+    {
+      "from": "ImageCompare",
+      "pack": "dinkster-image",
+      "nodeType": "dinkster.image.image_compare",
+      "backendPureRename": true
+    },
+    {
+      "from": "GLSLShader",
+      "pack": "dinkster-image",
+      "nodeType": "dinkster.image.glsl_shader",
+      "backendPureRename": false
     }
   ]
 }
