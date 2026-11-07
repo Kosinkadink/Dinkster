@@ -799,6 +799,94 @@ def test_acknowledged_shutdown_collects_without_periodic_maintenance(
         stop_engine(root, "old", generation=2)
 
 
+def test_repeated_updates_collect_old_trees_and_restore_their_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor.environment_history import history
+    from dinkster_supervisor.environment_state import interpreter
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments.build import build, executable_release
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
+    setup = fixture["commands"]["setup"]
+    code, installed = _run(root, *setup[setup.index("setup") : -1])
+    assert code == 0, installed
+    try:
+        protected = {}
+        for name in ("workflows", "models", "outputs", "mounts"):
+            directory = root / name
+            directory.mkdir(exist_ok=True)
+            protected[directory / "sentinel"] = name.encode("ascii") + b" private data"
+        cache = store / "uv-cache/sentinel"
+        cache.parent.mkdir(exist_ok=True)
+        protected[cache] = b"explicit cache GC only"
+        for path, data in protected.items():
+            path.write_bytes(data)
+        protected.update(
+            {
+                path: path.read_bytes()
+                for name in ("wheels", "engines")
+                for path in (store / name).rglob("*")
+                if path.is_file()
+            }
+        )
+        base = json.loads(Path(fixture["baseManifest"]).read_bytes())
+        for number, value in ((2, 59), (3, 73), (4, 91)):
+            preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
+            if number == 2:
+                (mirror / "channels/main.json").write_bytes(
+                    Path(fixture["updatedChannel"]).read_bytes()
+                )
+            else:
+                executable_release(mirror, base, f"{number}.0", value)
+            code, updated = _run(root, "update", "--yes")
+            assert code == 0 and updated["current"] == number, updated
+            assert sorted(path.name for path in (root / "generations").iterdir()) == [
+                str(number - 1),
+                str(number),
+            ]
+            assert all(path.read_bytes() == data for path, data in preserved.items())
+            assert len(history(root)) == number
+            assert all(path.read_bytes() == data for path, data in protected.items())
+        entries = history(root)
+        preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
+        executable_release(mirror, base, "5.0", 113)
+        channel = json.loads((mirror / "channels/main.json").read_bytes())
+        release = mirror / "engine" / channel["engine"]["release"][7:]
+        next(release.glob("*.whl")).write_bytes(b"corrupt next release")
+        code, failed = _run(root, "update", "--yes")
+        assert code == 1 and "corrupt or short data" in failed["error"], failed
+        assert (root / "current").read_text() == "4\n" and history(root) == entries
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["3", "4"]
+        assert not (root / "generations/1").exists()
+        code, restored = _run(root, "restore", "1", "--yes")
+        assert code == 0 and restored["current"] == 5 and restored["exact"] is True, restored
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["4", "5"]
+        assert all(path.read_bytes() == data for path, data in preserved.items())
+        assert all(path.read_bytes() == data for path, data in protected.items())
+        assert history(root)[-1]["restoredFrom"] == 1
+        assert history(root)[-1]["snapshot"] == entries[0]["snapshot"]
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(root / "generations/5")),
+                    "-B",
+                    "-c",
+                    "import fixture_engine; print(fixture_engine.VALUE)",
+                ]
+            ).strip()
+            == b"41"
+        )
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
 def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: Path):
     from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
 
