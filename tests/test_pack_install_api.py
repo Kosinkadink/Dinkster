@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp import ServerDisconnectedError, web
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from dinkster_registry import InstallError, Lockfile, PlanRecord
 from dinkster_server import STATE_KEY, PathRedactor, create_app
+from dinkster_server.auth import PRINCIPAL_KEY, Principal, StaticBearerAuthenticator
 
 import dinkster.pack_install_api as routes
 from dinkster.compose import ServingComposer
@@ -19,8 +21,10 @@ from tests.async_scenarios import run_scenario
 from tests.test_installer import write_pack
 
 
+@pytest.mark.parametrize("authenticated", [False, True])
+@pytest.mark.parametrize("cancel_apply", [0, 1, 2, "shutdown"])
 def test_pack_install_confirmations_and_live_activation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authenticated: bool, cancel_apply: int | str
 ) -> None:
     async def scenario() -> None:
         installer = Installer(tmp_path / "root", accelerator="cpu")
@@ -28,6 +32,9 @@ def test_pack_install_confirmations_and_live_activation(
         entry, _ = lock_local_pack(source, installer.artifacts_dir)
         target = Lockfile.of([entry])
         spawn = asyncio.create_subprocess_exec
+        published = asyncio.Event()
+        finish_manager = asyncio.Event()
+        request_task: asyncio.Task[Any] | None = None
 
         # Substitute only manager I/O and venv provisioning. Real Installer
         # publication and whole-generation activation still run below.
@@ -48,27 +55,97 @@ def test_pack_install_confirmations_and_live_activation(
             else:
                 record = PlanRecord.from_record_json(path.read_text())
                 installer.apply(record.target, expected_base=record.base, venvs=False)
+
+            async def communicate() -> tuple[bytes, bytes]:
+                if action == "apply" and cancel_apply:
+                    published.set()
+                    await finish_manager.wait()
+                return b"add: demo 0.0.0 digest [registry] venv: new\n", b""
+
             return type(
                 "Process",
                 (),
                 {
                     "returncode": 0,
-                    "communicate": AsyncMock(
-                        return_value=(b"add: demo 0.0.0 digest [registry] venv: new\n", b"")
-                    ),
+                    "communicate": AsyncMock(side_effect=communicate),
                 },
             )()
 
         monkeypatch.setattr(routes.asyncio, "create_subprocess_exec", command)
         composer = ServingComposer(worker_env={"PYTHONPATH": str(source)})
         composition = composer.composition
-        app = create_app(composition.make_engine, composition.schemas)
+        auth = (
+            StaticBearerAuthenticator(
+                {
+                    "test-operator": Principal(
+                        "operator", grants={"local": frozenset({"settings:write"})}
+                    ),
+                    "test-reader": Principal("reader", grants={"local": frozenset({"nodes:read"})}),
+                    "test-agent": Principal(
+                        "agent", kind="agent", grants={"local": frozenset({"settings:write"})}
+                    ),
+                    "test-delegate": Principal(
+                        "delegate",
+                        delegation_id="untrusted-delegation",
+                        grants={"local": frozenset({"settings:write"})},
+                    ),
+                }
+            )
+            if authenticated
+            else None
+        )
+        app = create_app(composition.make_engine, composition.schemas, authenticator=auth)
+
+        @web.middleware
+        async def capture_request(request: web.Request, handler: Any) -> web.StreamResponse:
+            nonlocal request_task
+            if request.path == "/api/packs/install/apply":
+                request_task = asyncio.current_task()
+            return await handler(request)
+
+        app.middlewares.append(capture_request)
+        cleanup_started = asyncio.Event()
+        composition_stopped = asyncio.Event()
+
+        async def begin_cleanup(_: web.Application) -> None:
+            cleanup_started.set()
+
+        async def stop_composition(_: web.Application) -> None:
+            composition_stopped.set()
+            assert "demo" in composer.pack_specs()
+            assert app[STATE_KEY].schema_epoch > 0
+            await composer.close()
+
+        if cancel_apply == "shutdown":
+            app.on_cleanup.append(stop_composition)
         busy = asyncio.Lock()
         routes.add_pack_install_routes(app, composer, installer, busy=busy, redactor=PathRedactor())
-        client = TestClient(TestServer(app))
+        if cancel_apply == "shutdown":
+            app.on_cleanup.insert(0, begin_cleanup)
+        server = TestServer(app)
+        # Exhaust the HTTP grace period while publication is held by an event.
+        # The property asserted below is cleanup ordering, not elapsed time.
+        await server.start_server(shutdown_timeout=0.001)
+        client = TestClient(
+            server,
+            headers={"Authorization": "Bearer test-operator"} if authenticated else {},
+        )
         await client.start_server()
         try:
             selection = {"packs": [{"pack": "demo", "version": "1.0.0"}]}
+            if authenticated:
+                for token in ("test-reader", "test-agent", "test-delegate"):
+                    for endpoint, body in (
+                        ("plan", selection),
+                        ("apply", {"confirmation": "untrusted"}),
+                    ):
+                        denied = await client.post(
+                            f"/api/packs/install/{endpoint}",
+                            json=body,
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        assert denied.status == 403
+                assert installer.current_number() is None
             for invalid in (
                 {"packs": []},
                 {"packs": [{"pack": "./demo", "version": "1.0.0"}]},
@@ -101,6 +178,40 @@ def test_pack_install_confirmations_and_live_activation(
             )
             assert (await response.json())["error"] == "install-in-progress"
             busy.release()
+            if cancel_apply:
+                applying = asyncio.ensure_future(
+                    client.post(
+                        "/api/packs/install/apply", json={"confirmation": second["confirmation"]}
+                    )
+                )
+                await asyncio.wait_for(published.wait(), timeout=10)
+                assert request_task is not None
+                if cancel_apply == "shutdown":
+                    cleanup = asyncio.create_task(server.close())
+                    try:
+                        await asyncio.wait_for(cleanup_started.wait(), timeout=10)
+                        assert installer.current_number() == 1
+                        assert not composition_stopped.is_set()
+                    finally:
+                        finish_manager.set()
+                        await cleanup
+                        await asyncio.gather(applying, return_exceptions=True)
+                    assert composition_stopped.is_set()
+                    assert not busy.locked()
+                    return
+                request_task.cancel()
+                if cancel_apply == 2:
+                    # The handler resumes from the first cancel before this callback runs.
+                    asyncio.get_running_loop().call_soon(request_task.cancel)
+                assert busy.locked()
+                finish_manager.set()
+                with pytest.raises(ServerDisconnectedError):
+                    await applying
+                assert installer.current_number() == 1
+                assert "demo" in composer.pack_specs()
+                assert app[STATE_KEY].schema_epoch > 0
+                assert not busy.locked()
+                return
             response = await client.post(
                 "/api/packs/install/apply", json={"confirmation": second["confirmation"]}
             )
@@ -125,6 +236,43 @@ def test_pack_install_confirmations_and_live_activation(
             assert "demo" in composer.pack_specs()
         finally:
             await client.close()
+            await composer.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("peer", ["203.0.113.12", "::ffff:203.0.113.12"])
+def test_pack_install_refuses_nonlocal_transport_even_with_operator_and_forwarded_headers(
+    tmp_path: Path, peer: str
+) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer()
+        composition = composer.composition
+        app = create_app(composition.make_engine, composition.schemas)
+        installer = Installer(tmp_path / "root", accelerator="cpu")
+        routes.add_pack_install_routes(
+            app, composer, installer, busy=asyncio.Lock(), redactor=PathRedactor()
+        )
+        transport = Mock()
+        transport.get_extra_info.return_value = (peer, 12345)
+        try:
+            for action in ("plan", "apply"):
+                request = make_mocked_request(
+                    "POST",
+                    f"/api/packs/install/{action}",
+                    app=app,
+                    transport=transport,
+                    headers={"X-Forwarded-For": "127.0.0.1"},
+                )
+                request[PRINCIPAL_KEY] = Principal(
+                    "operator", local=True, grants={"local": frozenset({"settings:write"})}
+                )
+                resolved = await app.router.resolve(request)
+                with pytest.raises(web.HTTPForbidden) as denied:
+                    await resolved.handler(request)
+                assert denied.value.text == '{"error":"local-operator-required"}'
+            assert installer.current_number() is None
+        finally:
             await composer.close()
 
     run_scenario(scenario())
