@@ -28,8 +28,9 @@ from dinkster_nodes_ltx.ltx_video_conditioning import (
     LTXVImgToVideo,
     LTXVImgToVideoInplace,
 )
+from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -238,9 +239,7 @@ def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(
-                PackSpec(trust_reserved=True, manifest=fixture, in_process=in_process)
-            )
+            await compose_ltx_packs(composer, fixture, in_process=in_process)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
@@ -444,16 +443,13 @@ def test_crop_guides_ordinary_native_and_separate_fixture_twice(
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "ltx-crop-guides-fixture",
-                        group_manifests=() if in_process else (native, fixture),
-                    )
-                )
+            await compose_ltx_packs(
+                composer,
+                native,
+                fixture,
+                in_process=in_process,
+                worker_group="ltx-crop-guides-fixture",
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("ltx-crop-guides-fixture.source", {}),

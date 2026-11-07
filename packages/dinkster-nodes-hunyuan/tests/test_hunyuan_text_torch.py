@@ -27,6 +27,7 @@ from dinkster_nodes_hunyuan.hunyuan_text import (
     CLIPTextEncodeHunyuanDiT,
     TextEncodeHunyuanVideo_ImageToVideo,
 )
+from hunyuan_pack_fixtures import hunyuan_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -182,6 +183,8 @@ def test_hunyuan_text_both_production_hosts_twice(tmp_path: Path, in_process: bo
                 ),
                 encoding="ascii",
             )
+            for provider in hunyuan_providers(in_process):
+                await composer.add_pack(provider)
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=manifest, in_process=in_process)
             )

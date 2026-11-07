@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx.ltx_duration import LTXVDurationPredictor
+from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 
 class CaptionModel(torch.nn.Module):
@@ -195,16 +196,9 @@ def test_duration_prediction_crosses_ordinary_hosts_twice(
             }
         )
         try:
-            for manifest in (native, fixture):
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "duration-fixture",
-                        group_manifests=() if in_process else (native, fixture),
-                    )
-                )
+            await compose_ltx_packs(
+                composer, native, fixture, in_process=in_process, worker_group="duration-fixture"
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("duration-fixture.source"),

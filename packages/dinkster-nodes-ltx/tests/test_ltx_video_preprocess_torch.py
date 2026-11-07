@@ -22,8 +22,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx.ltx_video_preprocess import LTXVPreprocess
+from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 
@@ -161,31 +162,13 @@ def test_ltx_video_preprocess_executes_twice_through_both_production_hosts(
                 'types = "ltx_preprocess_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            if in_process:
-                await composer.add_pack(
-                    PackSpec(trust_reserved=True, manifest=native_manifest, in_process=True)
-                )
-                await composer.add_pack(
-                    PackSpec(trust_reserved=True, manifest=fixture_manifest, in_process=True)
-                )
-            else:
-                group_manifests = (native_manifest, fixture_manifest)
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=native_manifest,
-                        worker_group="ltx-preprocess-fixture",
-                        group_manifests=group_manifests,
-                    )
-                )
-                await composer.add_pack(
-                    PackSpec(
-                        trust_reserved=True,
-                        manifest=fixture_manifest,
-                        worker_group="ltx-preprocess-fixture",
-                        group_manifests=group_manifests,
-                    )
-                )
+            await compose_ltx_packs(
+                composer,
+                native_manifest,
+                fixture_manifest,
+                in_process=in_process,
+                worker_group="ltx-preprocess-fixture",
+            )
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={

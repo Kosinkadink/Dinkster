@@ -21,8 +21,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_nodes_ltx.ltx_audio import LTXVEmptyLatentAudio
+from ltx_pack_fixtures import compose_ltx_packs
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
 
@@ -142,9 +143,7 @@ def test_empty_audio_executes_twice_through_both_production_hosts(
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(
-                PackSpec(trust_reserved=True, manifest=fixture, in_process=in_process)
-            )
+            await compose_ltx_packs(composer, fixture, in_process=in_process)
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={

@@ -30,6 +30,7 @@ from dinkster_nodes_hunyuan.hunyuan_video_image import (
     HunyuanVideo15ImageToVideo,
     HunyuanVideo15SuperResolution,
 )
+from hunyuan_pack_fixtures import hunyuan_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -523,6 +524,8 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                 ),
                 encoding="ascii",
             )
+            for provider in hunyuan_providers(in_process):
+                await composer.add_pack(provider)
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=manifest, in_process=in_process)
             )

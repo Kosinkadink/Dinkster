@@ -22,6 +22,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_hunyuan.hunyuan_latent import EmptyHunyuanImageLatent, HunyuanRefinerLatent
+from hunyuan_pack_fixtures import hunyuan_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -164,6 +165,8 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
                 ),
                 encoding="ascii",
             )
+            for provider in hunyuan_providers(in_process):
+                await composer.add_pack(provider)
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=source_manifest, in_process=in_process)
             )
