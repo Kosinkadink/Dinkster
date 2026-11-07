@@ -29,6 +29,7 @@ from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_void import NODES as COMFY_NODES
 from dinkster_nodes_void.void_warped_noise import VOIDWarpedNoise
+from void_pack_fixtures import void_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -261,15 +262,17 @@ def test_node_crosses_ordinary_hosts_twice_with_native_manifest(
             }
         )
         try:
-            for manifest in (native, fixture):
+            providers = void_providers(in_process)
+            manifests = (*providers, native, fixture)
+            for manifest in manifests:
                 await composer.add_pack(
-                    PackSpec(manifest, trust_reserved=True, in_process=True)
-                    if in_process
-                    else PackSpec(
+                    PackSpec(
                         manifest,
                         trust_reserved=True,
-                        worker_group="void-warped-noise-fixture",
-                        group_manifests=(native, fixture),
+                        packs=providers[manifest].packs if manifest in providers else None,
+                        in_process=in_process,
+                        worker_group=None if in_process else "void-warped-noise-fixture",
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             graph = Graph(

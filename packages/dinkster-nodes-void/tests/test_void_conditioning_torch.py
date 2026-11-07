@@ -40,6 +40,7 @@ from dinkster_nodes_void.void_conditioning import (
     VOIDQuadmaskPreprocess,
     VOIDWarpedNoiseSource,
 )
+from void_pack_fixtures import void_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -267,12 +268,14 @@ def test_void_nodes_run_twice_through_native_manifest_and_shared_worker(
             }
         )
         try:
-            manifests = (native_manifest, fixture_manifest)
+            providers = void_providers(in_process)
+            manifests = (*providers, native_manifest, fixture_manifest)
             for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
                         trust_reserved=True,
                         manifest=manifest,
+                        packs=providers[manifest].packs if manifest in providers else None,
                         in_process=in_process,
                         worker_group=None if in_process else "void-conditioning-fixture",
                         group_manifests=() if in_process else manifests,

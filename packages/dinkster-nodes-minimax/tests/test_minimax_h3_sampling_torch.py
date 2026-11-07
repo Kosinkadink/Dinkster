@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_minimax.minimax_h3_sampling import MiniMaxH3SigmaShift
+from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -133,14 +134,17 @@ def test_minimax_h3_shifts_twice_with_native_manifest_in_both_hosts(
             }
         )
         try:
-            for manifest in (native, fixture):
+            providers = conditioning_providers(in_process)
+            manifests = (*providers, native, fixture)
+            for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
                         trust_reserved=True,
                         manifest=manifest,
+                        packs=providers[manifest].packs if manifest in providers else None,
                         in_process=in_process,
                         worker_group=None if in_process else "minimax-shift-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             graph = Graph(
