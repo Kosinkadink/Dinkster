@@ -3,11 +3,13 @@
 from .bbox_crop import (
     CropByBBoxes,
 )
+from .compare import NativeImageCompare
 from .compositing import (
     JoinImageWithAlpha,
     PorterDuffImageComposite,
     SplitImageWithAlpha,
 )
+from .glsl import NativeGlslShader
 from .image_color_conversion import (
     ImageColorSpace,
     ImageSDRToHDR,
@@ -170,6 +172,8 @@ NODES = (
     SaveImageAdvanced,
     SaveSVGNode,
     TextOverlay,
+    NativeImageCompare,
+    NativeGlslShader,
 )
 
 __all__ = ["NODES"]

@@ -1,5 +1,11 @@
 {
   "nodes": {
+    "dinkster.image.image_compare": {
+      "displayName": "Compare Images"
+    },
+    "dinkster.image.glsl_shader": {
+      "displayName": "GLSL Shader"
+    },
     "dinkster.image.crop_by_b_boxes": {
       "displayName": "Crop By Bounding Boxes"
     },

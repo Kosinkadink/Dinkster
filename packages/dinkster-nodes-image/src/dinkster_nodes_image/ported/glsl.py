@@ -31,6 +31,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    first_party_schema,
     render_image_png,
     report_event,
     report_preview,
@@ -533,7 +534,7 @@ class NativeGlslShader(Node):
                     ),
                 )
             )
-        return replace(
+        schema = replace(
             schema,
             node_type="GLSLShader",
             inputs=tuple(
@@ -581,6 +582,7 @@ class NativeGlslShader(Node):
             ),
             output_node=False,
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(
