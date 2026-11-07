@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
+from dinkster_store import object_path
+
 from .environment_constraints import requirement_hashes
 from .environment_state import (
     EnvironmentError,
@@ -377,7 +379,7 @@ def prepare_engine_interpreter(
     success and failure. No project, journal, pack or generation record is written.
     """
     digest(base)
-    source = store / "bases" / base.removeprefix("sha256:") / "python"
+    source = object_path(store / "bases", base) / "python"
     if destination.exists():
         raise EnvironmentError(f"interpreter destination already exists: {destination}")
     if not source.is_dir():
@@ -629,7 +631,7 @@ def build_generation(
     digest(engine_release)
     if (catalog_lock is None) != (artifacts is None):
         raise EnvironmentError("source staging requires both catalog lock and artifact cache")
-    source = store / "bases" / base.removeprefix("sha256:") / "python"
+    source = object_path(store / "bases", base) / "python"
     destination = root / "generations" / str(number)
     if destination.exists():
         raise EnvironmentError(f"generation {number} already exists")
@@ -644,9 +646,7 @@ def build_generation(
         )
         if source_kind == "local" or (source.parent / "manifest.json").is_file():
             shutil.copyfile(source.parent / "manifest.json", destination / "base-manifest.json")
-        engine_manifest = (
-            store / "engines" / engine_release.removeprefix("sha256:") / "release-manifest.json"
-        )
+        engine_manifest = object_path(store / "engines", engine_release) / "release-manifest.json"
         try:
             engine_manifest.lstat()
         except FileNotFoundError:

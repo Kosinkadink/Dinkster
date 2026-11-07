@@ -15,6 +15,7 @@ from functools import partial
 from pathlib import Path, PureWindowsPath
 
 import pytest
+from dinkster_store import object_path
 from dinkster_supervisor.environment_generations import (
     build_generation,
     pack_operation,
@@ -158,18 +159,30 @@ def _standalone_tree(root: Path) -> None:
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
 
 
-@pytest.mark.parametrize("cached", ["exact", "absent", "corrupt", "directory", "changed-copy"])
+@pytest.mark.parametrize(
+    "cached", ["exact", "readable", "absent", "corrupt", "directory", "changed-copy"]
+)
 def test_generation_retains_verified_engine_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: str
 ) -> None:
     root, store = tmp_path / "project", tmp_path / "store"
     base_id = "sha256:" + "a" * 64
-    _standalone_tree(store / "bases" / ("a" * 64) / "python")
+    base_path = object_path(
+        store / "bases",
+        base_id,
+        label="linux-cpu/2026-11-03-py3.14.10-torch2.14.1" if cached == "readable" else None,
+    )
+    _standalone_tree(base_path / "python")
     constraints = tmp_path / "constraints.txt"
     constraints.write_text("")
     raw = b'{  "version": "0.5", "unknown": [3, 1] }\r\n'
     release = hashlib.sha256(raw).hexdigest()
-    cached_manifest = store / "engines" / release / "release-manifest.json"
+    release_path = object_path(
+        store / "engines",
+        "sha256:" + release,
+        label="2026-11-03-0.5" if cached == "readable" else None,
+    )
+    cached_manifest = release_path / "release-manifest.json"
     if cached != "absent":
         cached_manifest.parent.mkdir(parents=True)
         if cached == "directory":
@@ -190,7 +203,7 @@ def test_generation_retains_verified_engine_manifest(
 
     def prepare(target: Path) -> None:
         callbacks.append(target)
-        if cached == "exact":
+        if cached in {"exact", "readable"}:
             assert (target / "engine-manifest.json").read_bytes() == raw
 
     def build():
@@ -217,7 +230,7 @@ def test_generation_retains_verified_engine_manifest(
         generation = build()
         assert callbacks == [target]
         assert generation.drift(target) == ()
-        if cached == "exact":
+        if cached in {"exact", "readable"}:
             assert (target / "engine-manifest.json").read_bytes() == raw
             assert dict(generation.files)["engine-manifest.json"] == "sha256:" + release
         else:
