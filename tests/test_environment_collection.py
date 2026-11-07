@@ -1301,12 +1301,18 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         protected[cache] = b"explicit cache GC only"
         for path, data in protected.items():
             path.write_bytes(data)
+        indexes = {
+            store / name / ".objects.json": json.loads(
+                (store / name / ".objects.json").read_bytes()
+            )["objects"]
+            for name in ("wheels", "engines")
+        }
         protected.update(
             {
                 path: path.read_bytes()
                 for name in ("wheels", "engines")
                 for path in (store / name).rglob("*")
-                if path.is_file()
+                if path.is_file() and path not in indexes
             }
         )
         base = json.loads(Path(fixture["baseManifest"]).read_bytes())
@@ -1331,6 +1337,11 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
                 for path, data in protected.items()
                 if path.read_bytes() != data
             ]
+            for path, objects in indexes.items():
+                document = json.loads(path.read_bytes())
+                assert document["format"] == "dinkster.store-paths/1"
+                assert objects.items() <= document["objects"].items()
+                indexes[path] = document["objects"]
             assert history(second) == other_history
             assert _run(second, "status")[1]["engines"] == [other_engine]
             with urlopen(f"{other_engine['url']}/api/health", timeout=5) as response:
@@ -1355,6 +1366,10 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
             for path, data in protected.items()
             if path.read_bytes() != data
         ]
+        for path, objects in indexes.items():
+            document = json.loads(path.read_bytes())
+            assert document["format"] == "dinkster.store-paths/1"
+            assert objects.items() <= document["objects"].items()
         assert history(root)[-1]["restoredFrom"] == 1
         assert history(root)[-1]["snapshot"] == entries[0]["snapshot"]
         assert (
