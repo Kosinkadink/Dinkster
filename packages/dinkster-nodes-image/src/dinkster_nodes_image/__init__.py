@@ -5,6 +5,7 @@ from functools import partial
 from dinkster_api.v1 import (
     ASSET_TYPE,
     COLOR_TYPE,
+    IMAGECOMPARE_TYPE,
     LAYERS_TYPE,
     TypeRegistry,
     register_asset_type,
@@ -27,8 +28,9 @@ def register_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env())
     register_media_types(registry)
     register_box_types(registry)
-    if COLOR_TYPE not in registry:
-        registry.register(COLOR_TYPE)
+    for type_id in (COLOR_TYPE, IMAGECOMPARE_TYPE):
+        if type_id not in registry:
+            registry.register(type_id)
     if LAYERS_TYPE not in registry:
         registry.register(
             LAYERS_TYPE,

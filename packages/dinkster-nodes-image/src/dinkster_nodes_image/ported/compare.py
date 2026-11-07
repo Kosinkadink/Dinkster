@@ -15,6 +15,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     TypeExpr,
     copy_media_semantics,
+    first_party_schema,
     report_preview,
 )
 from PIL import Image
@@ -42,7 +43,7 @@ def _compare_images(*, image_a: object = None, image_b: object = None) -> Mappin
 class NativeImageCompare(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
+        schema = NodeSchema(
             node_type="ImageCompare",
             display_name="Compare Images",
             category="image",
@@ -63,6 +64,7 @@ class NativeImageCompare(Node):
             emits_previews=True,
             idempotent=False,
         )
+        return first_party_schema(schema)
 
     @classmethod
     def execute(
