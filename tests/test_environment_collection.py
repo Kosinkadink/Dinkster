@@ -1083,10 +1083,10 @@ def test_successful_cli_stop_attempts_cleanup_without_turning_failure_into_faile
         assert (root / "runtime/maintenance").read_bytes() == b"keep this unexpected file"
 
 
-@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize(("legacy", "capture_fault"), [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
 def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_generations(
-    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, capture_fault: bool
 ):
     from dinkster_supervisor import environment_runtime as runtime
     from dinkster_supervisor.environment_history import history, validate_import
@@ -1108,6 +1108,8 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
     )
 
     def short_interval(command, **kwargs):
+        if "--generation" not in command:
+            return launch(command, **kwargs)
         selected = script
         if command[command.index("--generation") + 1] == str(root / "generations/2"):
             selected = (
@@ -1122,29 +1124,84 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
     monkeypatch.setattr(runtime.subprocess, "Popen", short_interval)
     write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False})
     old_port, current_port = free_port(), free_port()
+
+    def collection_finished(number: int) -> bool:
+        # Quarantine hides the tree before its collection journal commits.
+        return not (root / "generations" / str(number)).exists() and not any(
+            Journal.read(path).incomplete for path in (root / "journal").glob("*.json")
+        )
+
     try:
         start_engine(root, 2, "old", old_port)
         start_engine(root, 3, "main", current_port)
         import time
 
         assert (root / "generations/7").exists()
+        constraints = root / "generations/7/constraints.txt"
+        original_constraints = constraints.read_bytes()
+        if capture_fault:
+            constraints.write_bytes(b"unsealed software must survive failed capture")
+        old_tree = {p: p.read_bytes() for p in (root / "generations/7").rglob("*") if p.is_file()}
+        protected = {
+            p: p.read_bytes()
+            for name in (
+                "workflows",
+                "models",
+                "outputs",
+                "mounts",
+                "cache",
+                "journal",
+                "generations/1",
+                "generations/3",
+            )
+            for p in (root / name).rglob("*")
+            if p.is_file()
+        }
+        protected.update({root / name: (root / name).read_bytes() for name in ("current", "store")})
+        imported: dict[Path, bytes] = {}
         write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": True})
+        if capture_fault:
+            attempt = root / "runtime/maintenance/cleanup"
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                if attempt.exists() and any(
+                    "generation 7 history capture deferred" in warning
+                    for warning in json.loads(attempt.read_bytes())["warnings"]
+                ):
+                    break
+                time.sleep(0.05)
+            code, status = _run(root, "status")
+            assert code == 0, status
+            assert status["cleanup"]["lastAttempt"]["status"] == "deferred", status
+            assert any(
+                "generation 7 history capture deferred" in warning
+                for warning in status["cleanup"]["lastAttempt"]["warnings"]
+            ), status
+            assert {p: p.read_bytes() for p in old_tree} == old_tree
+            assert {p: p.read_bytes() for p in protected} == protected
+            assert (root / "generations/2").is_dir()
+            assert {entry["generation"] for entry in history(root)} == {1}
+            imported = {p: p.read_bytes() for p in (root / "history").glob("*.json")}
+            constraints.write_bytes(original_constraints)
         deadline = time.monotonic() + 20
-        while (root / "generations/7").exists() and time.monotonic() < deadline:
+        while not collection_finished(7) and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert not (root / "generations/7").exists()
+        assert collection_finished(7)
+        if capture_fault:
+            assert {p: p.read_bytes() for p in imported} == imported
         assert (root / "generations/2").is_dir()
         with urlopen(f"http://127.0.0.1:{old_port}/api/health", timeout=5) as response:
             assert response.status == 200
         stop_engine(root, "old", generation=2)
         if sys.platform == "linux" or os.name == "nt":
             deadline = time.monotonic() + 20
-            while (root / "generations/2").exists() and time.monotonic() < deadline:
+            while not collection_finished(2) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            assert not (root / "generations/2").exists()
+            assert collection_finished(2)
         else:
             assert (root / "generations/2").is_dir()
         assert (root / "generations/1").is_dir()
+        assert {p: p.read_bytes() for p in protected} == protected
         if legacy:
             assert {entry["generation"] for entry in history(root)} == {1, 2, 7}
             assert all(entry["kind"] == "import" for entry in history(root))
