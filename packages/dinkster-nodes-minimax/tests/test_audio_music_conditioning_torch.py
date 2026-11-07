@@ -194,10 +194,7 @@ def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process
                 (package / "dinkster-pack.toml")
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["music-fixture",')
-                .replace(
-                    "dinkster_nodes_minimax:NODES",
-                    ('music_fixture:NODES"\ntypes = "music_fixture:register_inference_types'),
-                )
+                .replace("dinkster_nodes_minimax:NODES", "music_fixture:NODES")
                 .replace(
                     "dinkster_nodes_models.device_routing:device_choices",
                     "music_fixture:device_choices",

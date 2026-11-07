@@ -22,3 +22,4 @@ api = "dinkster-api/v1"
 
 [pack.entry]
 nodes = "dinkster_nodes_minimax:NODES"
+types = "dinkster_nodes_minimax:register_types"
