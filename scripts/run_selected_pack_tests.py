@@ -31,10 +31,13 @@ _SUITES = {
         "tests/test_foundation_guide.py",
         "tests/test_combo_nodes.py",
         "tests/test_string_comfy_aliases.py",
-        "tests/test_comfy_loops.py",
         "tests/test_output_descriptors.py",
         "tests/test_composed_schema.py",
         "tests/test_editor_roles.py",
+    ),
+    "dinkster-utilities": (
+        "packages/dinkster-nodes-utilities/tests/test_*.py",
+        "tests/test_comfy_loops.py",
     ),
     "dinkster-nodes-image": (
         "tests/test_image_*.py",
