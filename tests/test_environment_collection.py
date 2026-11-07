@@ -26,17 +26,50 @@ from test_environment_cli import _run
 from test_environment_state import _generation
 
 
+@pytest.mark.parametrize("cleanup_project", [True], indirect=True)
+@pytest.mark.parametrize("command", ["gc", "cleanup"])
 @pytest.mark.parametrize("worker_kind", ["isolated", "grouped", "descendant"])
 def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
-    tmp_path: Path, worker_kind: str
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, worker_kind: str, command: str
 ):
+    from dinkster_supervisor import environment_runtime as runtime
     from dinkster_supervisor.environment_runtime import start_engine, stop_engine
-    from test_environment_runtime import free_port, make_generation
+    from test_environment_runtime import free_port
 
-    for number in (1, 2, 3):
-        make_generation(tmp_path, number)
-    (tmp_path / "current").write_text("3\n")
-    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    tmp_path = cleanup_project
+    if command == "gc":
+        (tmp_path / "store").unlink()
+    launch = subprocess.Popen
+    script = (
+        "from dinkster_supervisor import environment_collection as c, supervisor\n"
+        "async def disabled(root, stopped):\n"
+        "    await stopped.wait()\n"
+        "c.maintain_generations=disabled\n"
+        "supervisor.main()\n"
+    )
+
+    def no_periodic_maintenance(command, **kwargs):
+        if "dinkster_supervisor.supervisor" not in command:
+            return launch(command, **kwargs)
+        return launch([command[0], "-c", script, *command[3:]], **kwargs)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", no_periodic_maintenance)
+    protected = {
+        p: p.read_bytes()
+        for name in (
+            "history",
+            "workflows",
+            "models",
+            "outputs",
+            "mounts",
+            "cache",
+            "generations/1",
+            "generations/2",
+            "generations/3",
+        )
+        for p in (tmp_path / name).rglob("*")
+        if p.is_file()
+    }
     pack = tmp_path / "fixture-pack"
     pack.mkdir()
     manifest = pack / "dinkster-pack.toml"
@@ -91,15 +124,30 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
         connection = None
         try:
             port = free_port()
-            start_engine(tmp_path, 1, "old", port)
+            start_engine(tmp_path, 2, "old", port)
             connection, _ = listener.accept()
             connection.settimeout(10)
             assert connection.recv(5) == b"ready"
-            code, refused = _run(tmp_path, "gc", "--yes")
-            assert code == 1 and "cleanup is unproven" in refused["error"], refused
+            binding = tmp_path / "runtime/2/old.json"
+            binding_bytes = binding.read_bytes()
+            code, refused = _run(tmp_path, command, "--yes")
+            if command == "cleanup":
+                assert code == 0 and refused["status"] == "complete", refused
+                retained = next(
+                    row for row in refused["cleanup"]["generations"] if row["generation"] == 2
+                )
+                assert retained["status"] == "retained", retained
+                assert any("cleanup is unproven" in reason for reason in retained["reasons"])
+                assert not (tmp_path / "generations/7").exists()
+            else:
+                assert code == 1 and "cleanup is unproven" in refused["error"], refused
+            assert {p: p.read_bytes() for p in protected} == protected
+            assert binding.read_bytes() == binding_bytes
+            with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:
+                assert response.status == 200
             connection.sendall(b"p")
             assert connection.recv(1) == b"p"
-            assert (tmp_path / "generations/1").is_dir()
+            assert (tmp_path / "generations/2").is_dir()
             if sys.platform == "linux" or os.name == "nt":
                 request = Request(
                     f"http://127.0.0.1:{port}/supervisor/engine/restart",
@@ -117,26 +165,58 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
                 connection, _ = listener.accept()
                 connection.settimeout(10)
                 assert connection.recv(5) == b"ready"
-                code, refused = _run(tmp_path, "gc", "--yes")
-                assert code == 1 and "cleanup is unproven" in refused["error"], refused
+                binding_bytes = binding.read_bytes()
+                code, refused = _run(tmp_path, command, "--yes")
+                if command == "cleanup":
+                    assert code == 0 and refused["status"] == "complete", refused
+                    retained = next(
+                        row for row in refused["cleanup"]["generations"] if row["generation"] == 2
+                    )
+                    assert retained["status"] == "retained", retained
+                    assert any("cleanup is unproven" in reason for reason in retained["reasons"])
+                else:
+                    assert code == 1 and "cleanup is unproven" in refused["error"], refused
+                assert {p: p.read_bytes() for p in protected} == protected
+                assert binding.read_bytes() == binding_bytes
+                with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:
+                    assert response.status == 200
                 connection.sendall(b"p")
                 assert connection.recv(1) == b"p"
-            stop_engine(tmp_path, "old", generation=1)
+            stop_engine(tmp_path, "old", generation=2)
             if sys.platform != "linux" and os.name != "nt":
-                code, refused = _run(tmp_path, "gc", "--yes")
-                assert code == 1 and "descendant cleanup is unproven" in refused["error"], refused
-                assert (tmp_path / "generations/1").is_dir()
+                code, refused = _run(tmp_path, command, "--yes")
+                if command == "gc":
+                    assert code == 1 and "descendant cleanup is unproven" in refused["error"], (
+                        refused
+                    )
+                else:
+                    assert code == 0, refused
+                    retained = next(
+                        row for row in refused["cleanup"]["generations"] if row["generation"] == 2
+                    )
+                    assert "managed worker descendant cleanup is unproven" in retained["reasons"]
+                assert (tmp_path / "generations/2").is_dir()
                 return
             try:
                 assert connection.recv(1) == b""
             except ConnectionResetError:
                 pass
-            code, applied = _run(tmp_path, "gc", "--yes")
-            assert code == 0 and applied["status"] == "applied", applied
-            assert not (tmp_path / "generations/1").exists()
-            assert all((tmp_path / "generations" / str(number)).is_dir() for number in (2, 3))
+            code, applied = _run(tmp_path, command, "--yes")
+            assert code == 0 and applied["status"] == (
+                "complete" if command == "cleanup" else "applied"
+            ), applied
+            assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
+            assert {
+                p: p.read_bytes()
+                for p in protected
+                if not p.is_relative_to(tmp_path / "generations/2")
+            } == {
+                p: data
+                for p, data in protected.items()
+                if not p.is_relative_to(tmp_path / "generations/2")
+            }
         finally:
-            stop_engine(tmp_path, "old", generation=1)
+            stop_engine(tmp_path, "old", generation=2)
             if connection is not None:
                 try:
                     connection.sendall(b"x")
@@ -631,7 +711,9 @@ def test_generation_cleanup_coalesces_and_does_not_stop_pending_launches(cleanup
     assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
 
 
-@pytest.mark.parametrize("interrupted", ["before-quarantine", "quarantine", "cleanup", "sharing"])
+@pytest.mark.parametrize(
+    "interrupted", ["before-quarantine", "quarantine", "cleanup", "sharing", "open-file"]
+)
 def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
     cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str
 ):
@@ -691,7 +773,7 @@ def interrupt(source, destination):
     if interruption == 'before-quarantine': os._exit(73)
     original(source, destination)
     os._exit(73)
-if interruption == 'cleanup':
+if interruption in {'cleanup', 'open-file'}:
     collection.shutil.rmtree = lambda *args, **kwargs: os._exit(73)
 else:
     collection.durable_rename = interrupt
@@ -712,10 +794,11 @@ environment.main()
         )
         record = Journal.read(journal)
         assert record.collected_generations == (2, 7)
-        assert record.stage == ("complete" if interrupted == "cleanup" else "building")
+        committed = interrupted in {"cleanup", "open-file"}
+        assert record.stage == ("complete" if committed else "building")
         directory = root / ".garbage" / journal.stem
         for number in (2, 7):
-            moved = interrupted == "cleanup" or (interrupted == "quarantine" and number == 2)
+            moved = committed or (interrupted == "quarantine" and number == 2)
             assert (directory / str(number)).is_dir() == moved
             assert (root / "generations" / str(number)).is_dir() != moved
         before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
@@ -723,13 +806,34 @@ environment.main()
         assert code == 0, status
         assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
         assert {p: p.read_bytes() for p in protected} == protected
+        if interrupted == "open-file":
+            payload = directory / "2/constraints.txt"
+            original_bytes = payload.read_bytes()
+            with payload.open("rb") as held:
+                code, attempt = _run(root, "cleanup", "--yes")
+                assert code == 0, attempt
+                assert held.read() == original_bytes
+                code, status = _run(root, "status")
+                assert code == 0, status
+                assert status["cleanup"]["lastAttempt"] == attempt["cleanupAttempt"]
+                if os.name == "nt":
+                    assert attempt["status"] == "deferred", attempt
+                    assert attempt["cleanupAttempt"]["warnings"], attempt
+                    assert payload.is_file()
+                    assert status["cleanup"]["quarantine"] == [
+                        {"journal": journal.name, "stage": "complete", "generations": [2, 7]}
+                    ]
+                else:
+                    assert attempt["status"] == "complete", attempt
+                    assert not payload.exists()
+                    assert status["cleanup"]["quarantine"] == []
     code, retried = _run(root, "cleanup", "--yes")
     assert code == 0 and retried["status"] == "complete", retried
     assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
     assert {p: p.read_bytes() for p in protected} == protected
     if journal is not None:
         assert Journal.read(journal).stage == (
-            "complete" if interrupted == "cleanup" else "rolled-back"
+            "complete" if interrupted in {"cleanup", "open-file"} else "rolled-back"
         )
     assert (parked / "sentinel").read_bytes() == b"explicit cache GC only"
     assert (store / "uv-cache/sentinel").read_text() == "cache/uv-cache"
