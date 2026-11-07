@@ -236,7 +236,8 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
             (tmp_path / "style_apply_fixture.py").write_text(
                 "from test_style_model_apply_torch import FIXTURES\n"
                 "from dinkster_nodes_conditioning import NODES as PACK_NODES\n"
-                "from dinkster_nodes_conditioning.types import register_types as conditioning_types\n"
+                "from dinkster_nodes_conditioning.types import "
+                "register_types as conditioning_types\n"
                 "from dinkster_nodes_models.types import register_types as model_types\n"
                 "def register_types(registry):\n"
                 "    conditioning_types(registry)\n"
