@@ -6452,11 +6452,12 @@ def test_values_endpoint_layer_document_rendition(
     type_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import numpy as np
-    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_graph import TypedLiteral
+    from dinkster_image_document.compat import register_comfy_layers
     from dinkster_image_document.document import ImageDocument
     from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
-    from dinkster_nodes_image import AddLayer, register_image_types
+    from dinkster_nodes_image.compositor import AddLayer
+    from dinkster_nodes_image.types import register_image_types
 
     pixels = np.array([[[[1, 0, 0, 1], [0, 1, 0, 0.5]]]], dtype=np.float32)
     expected = cast(ImageDocument, AddLayer.execute(image=pixels)["layers"]).data
@@ -6482,7 +6483,7 @@ def test_values_endpoint_layer_document_rendition(
         if type_id == "dinkster.layers":
             register_image_types(registry)
         else:
-            register_comfy_host_types(registry)
+            register_comfy_layers(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6556,18 +6557,18 @@ def test_values_endpoint_layer_document_rendition(
 
 
 def test_values_endpoint_comfy_image_png_rendition() -> None:
-    """The compat host registration at the endpoint: a comfy.IMAGE value
-    (numpy BHWC floats - exactly the form the compat npy codec decodes to
-    host-side) DECLARES the png rendition on peek and serves valid PNG
+    """The public media registration at the endpoint: an IMAGE value
+    (numpy BHWC floats) declares the png rendition on peek and serves valid PNG
     bytes of the first batch element. This is the contract the frontend
     negotiates against; it never hardcodes png."""
     import struct
 
     import numpy as np
-    from dinkster.comfy_compose import COMFY_IMAGE_TYPE, register_comfy_host_types
+    from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
+    from dinkster_api.v1 import register_media_types
 
     class CompatImage(Node):
-        """Stands in for the compat worker: emits the host runtime form."""
+        """Emits the process-independent image runtime form."""
 
         @classmethod
         def define_schema(cls) -> NodeSchema:
@@ -6587,7 +6588,7 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_media_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6636,9 +6637,9 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
-    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_api.v1 import VIDEO_TYPE
-    from dinkster_nodes_media_io.video_ops import AssembleVideo
+    from dinkster_nodes_video import register_types as register_video_types
+    from dinkster_nodes_video.video_components import CreateVideo
 
     class ComponentVideo(Node):
         @classmethod
@@ -6651,7 +6652,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
         @classmethod
         async def execute(cls) -> Mapping[str, object]:
             frames = np.zeros((2, 4, 4, 3), dtype=np.float32)
-            return cls.outputs(video=AssembleVideo.execute(images=frames, fps=4.0)["video"])
+            return cls.outputs(video=CreateVideo.execute(images=frames, fps=4.0)["video"])
 
     nodes: list[type[Node]] = [ComponentVideo]
     schemas = build_schemas(nodes)
@@ -6659,7 +6660,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_video_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6699,8 +6700,8 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     import struct
 
     import numpy as np
-    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
+    from dinkster_nodes_video import register_types as register_video_types
 
     from tests.test_video_probe import _encode
 
@@ -6732,7 +6733,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     schemas = build_schemas(nodes)
     expected_registry = TypeRegistry()
     register_core_types(expected_registry)
-    register_comfy_host_types(expected_registry)
+    register_video_types(expected_registry)
     expected_fingerprints = {
         "audio": expected_registry.wrap(
             AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
@@ -6746,7 +6747,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_video_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6892,12 +6893,10 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
 def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The compat host registry must wrap the SAVE_TARGET literal before a
-    job reaches its worker. This is the no-ComfyUI regression for the real
-    dinkster.save_image input contract: both its advertised default and an
+    """The asset registry must wrap the SAVE_TARGET literal before a
+    job reaches its worker. Both its advertised default and an
     explicit graph value arrive as validated SaveTarget values and produce
     digest-addressed asset receipts."""
-    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_assets import (
         ASSET_TYPE,
         SAVE_TARGET_TYPE,
@@ -6906,9 +6905,10 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         MountSnapshotWriter,
         SaveTarget,
         digest_bytes,
+        register_asset_type,
+        register_save_target_type,
+        resolver_from_env,
     )
-    from dinkster_nodes_foundation import StringPrimitive
-    from dinkster_nodes_media_io import SetSaveTargetPrefix, register_media_types
 
     output_root = tmp_path / "output"
     output_root.mkdir()
@@ -6930,6 +6930,35 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
 
     save_target = TypeExpr.concrete(SAVE_TARGET_TYPE)
+
+    class StringPrimitive(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="dinkster.string",
+                inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
+                outputs=(OutputSpec("value", TypeExpr.concrete("STRING")),),
+            )
+
+        @classmethod
+        def execute(cls, *, value: str) -> Mapping[str, object]:
+            return cls.outputs(value=value)
+
+    class SetSaveTargetPrefix(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="dinkster.set_save_target_prefix",
+                inputs=(
+                    InputSpec("target", save_target),
+                    InputSpec("prefix", TypeExpr.concrete("STRING")),
+                ),
+                outputs=(OutputSpec("save_target", save_target),),
+            )
+
+        @classmethod
+        def execute(cls, *, target: SaveTarget, prefix: str) -> Mapping[str, object]:
+            return cls.outputs(save_target=SaveTarget(mount=target.mount, prefix=prefix))
 
     class CompatSave(Node):
         seen: list[SaveTarget] = []
@@ -6970,8 +6999,8 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
-        register_comfy_host_types(registry)
+        register_asset_type(registry, resolver_from_env())
+        register_save_target_type(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
