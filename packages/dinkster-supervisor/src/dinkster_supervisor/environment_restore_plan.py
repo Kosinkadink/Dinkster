@@ -816,7 +816,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         return [*missing_inputs(candidate, store), *sources[source_lock]]
 
     missing = unavailable_inputs(snapshot)
-    candidates = [snapshot]
+    candidates: list[dict[str, object]] = [snapshot]
     if missing:
         candidates = []
         for entry in entries:
