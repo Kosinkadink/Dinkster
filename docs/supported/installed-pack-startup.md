@@ -1,5 +1,21 @@
 ## Installed pack startup
 
+- Managed install-root hosts can opt into local human pack installation with
+  `dinkster-serve --install-root PATH --allow-pack-install` or the inherited
+  `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the plan/apply routes
+  do not exist. Exact registry selections produce a reviewable plan and a
+  short-lived single-use confirmation; application rejects a changed install
+  root and activates the complete installed generation. Remote, agent and
+  delegated callers cannot use the routes. Sealed `--generation` hosts do not
+  support this managed-root installation surface.
+  Authenticated loopback callers require a nondelegated human identity with
+  settings-write authority. Repeated cancellations after confirmation do not
+  interrupt the disk-apply/live-activation operation; reconnect and refresh the registry
+  before deciding whether another installation is needed.
+  Graceful server shutdown waits for confirmed installations to reach their
+  activation outcome before closing the live composition, even when the HTTP
+  request grace period expires. This wait has no separate installation deadline;
+  forcibly terminating the process is not a graceful shutdown.
 - Published base selection includes `linux-nvidia` for Linux x86_64 with
   glibc 2.28+, NVIDIA driver 580+ and compute capability 7.5+. Its Python
   3.14.10 environment carries torch 2.14.1+cu132 and the full CUDA closure.

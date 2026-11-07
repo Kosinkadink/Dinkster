@@ -1230,6 +1230,7 @@ class Installer:
         target: Lockfile,
         artifacts: Mapping[str, Path] | None = None,
         *,
+        expected_base: str | None = "",
         venvs: bool = True,
         venv_specs: Mapping[str, VenvSpec] | None = None,
         allow_doctor_findings: bool = False,
@@ -1255,9 +1256,16 @@ class Installer:
         a gc between staging and recording would see freshly staged
         content as unreferenced and collect it. The idempotence check
         also re-reads state under the lock, so two concurrent identical
-        applies produce one generation, not two."""
+        applies produce one generation, not two. A nonempty expected_base
+        pins a reviewed lockfile digest; None requires an empty root. The
+        default empty string leaves ordinary unreviewed callers unchanged."""
         with self._locked():
             current = self.current_lockfile()
+            if (
+                expected_base != ""
+                and (current.record_digest() if current is not None else None) != expected_base
+            ):
+                raise InstallError("plan is stale: installation changed; re-plan and review again")
             current_number = self.current_number()
             self.check_engine_compatibility(target, artifacts)
             explicit_topology = (
