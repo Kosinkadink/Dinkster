@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.sparse_attention import (
+from dinkster_nodes_models import NODES
+from dinkster_nodes_models.sparse_attention import (
     BlockSparseAttention,
     SparseAttnPatch,
     h3_sparse_attention,
@@ -154,8 +154,8 @@ def _patch(*, minimum: int = 0) -> SparseAttnPatch:
 
 def test_schema_has_source_identity_required_inputs_and_stable_methods() -> None:
     schema = BlockSparseAttention.define_schema()
-    assert BlockSparseAttention in COMFY_NODES
-    assert schema.node_type == "BlockSparseAttention"
+    assert BlockSparseAttention in NODES
+    assert schema.node_type == "dinkster.models.block_sparse_attention"
     assert not schema.aliases
     assert [item.id for item in schema.inputs] == [
         "model",
@@ -174,7 +174,9 @@ def test_schema_has_source_identity_required_inputs_and_stable_methods() -> None
 def test_dense_fallback_preserves_previous_override_and_all_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_nodes_comfy.sparse_attention._runtime", lambda: (torch, object()))
+    monkeypatch.setattr(
+        "dinkster_nodes_models.sparse_attention._runtime", lambda: (torch, object())
+    )
     patch = _patch(minimum=8)
     calls: list[str] = []
 
@@ -197,7 +199,9 @@ def test_dense_fallback_preserves_previous_override_and_all_gates(
 
 
 def test_vsa_plan_inverse_rope_cache_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("dinkster_nodes_comfy.sparse_attention._runtime", lambda: (torch, object()))
+    monkeypatch.setattr(
+        "dinkster_nodes_models.sparse_attention._runtime", lambda: (torch, object())
+    )
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
     initialize_inference_process()
     minimax = __import__("dinkster_inference.ldm.minimax.model", fromlist=["PackedLayout"])
@@ -245,7 +249,7 @@ def test_h3_chunked_producer_uses_kernel_seam_and_block_patch_keeps_cpu_dense(
                 torch.full((heads, 128), 3.0),
             )
 
-    monkeypatch.setattr("dinkster_nodes_comfy.sparse_attention._runtime", lambda: (torch, Kitchen))
+    monkeypatch.setattr("dinkster_nodes_models.sparse_attention._runtime", lambda: (torch, Kitchen))
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
     initialize_inference_process()
     management = __import__("dinkster_inference.model_management", fromlist=["cast_to"])
@@ -284,26 +288,28 @@ def test_h3_chunked_producer_uses_kernel_seam_and_block_patch_keeps_cpu_dense(
     assert original_calls == [args]
 
 
-@pytest.mark.parametrize("in_process", (True,))
+@pytest.mark.parametrize("in_process", (True, False))
 def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         source_root = root / "src"
         composer = ServingComposer(
             worker_env={
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(source_root))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(root), str(source_root))),
             }
         )
         try:
-            manifest = root / "dinkster-pack.toml"
+            manifest = root / "packages/dinkster-nodes-models/dinkster-pack.toml"
             (tmp_path / "sparse_attention_fixture_sources.py").write_text(
-                "from test_sparse_attention_torch import MANIFEST_NODES\n"
-                "from dinkster_api.v1 import register_inference_types\n"
+                "from tests.first_party_runtime.test_sparse_attention_torch "
+                "import MANIFEST_NODES\n"
+                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "def register_types(registry):\n"
+                "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
+                "        register_models(registry)\n"
                 "NODES = MANIFEST_NODES\n",
                 encoding="ascii",
             )
@@ -313,19 +319,27 @@ def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
                 'name = "sparse-attention-fixture"\n'
                 'publisher = "dinkster"\n'
                 'namespaces = ["sparse-attention-fixture"]\n'
+                '\n[pack.dependencies]\ndinkster-models = ">=0.0.1,<1"\n'
                 "\n[pack.entry]\n"
                 'nodes = "sparse_attention_fixture_sources:NODES"\n'
-                'types = "sparse_attention_fixture_sources:register_inference_types"\n',
+                'types = "sparse_attention_fixture_sources:register_types"\n',
                 encoding="ascii",
             )
+            from dinkster_server import PackInfo
+
+            packs = {"dinkster-models": PackInfo("Models", version="0.0.1")}
             if in_process:
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=True))
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True, packs=packs)
+                )
                 await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=True))
             else:
                 group_manifests = (manifest, fixture_manifest)
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
+                        trust_reserved=True,
+                        packs=packs,
                         worker_group="sparse-attention-fixture",
                         group_manifests=group_manifests,
                     )
@@ -341,7 +355,7 @@ def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
                 nodes={
                     "source": GraphNode("sparse-attention-fixture.source"),
                     "patch": GraphNode(
-                        "BlockSparseAttention",
+                        "dinkster.models.block_sparse_attention",
                         {
                             "model": Link("source", "MODEL"),
                             "selection.tau": 1.3,

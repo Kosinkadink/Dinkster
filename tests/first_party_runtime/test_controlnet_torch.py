@@ -24,13 +24,13 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.controlnet import (
+from dinkster_nodes_conditioning.controlnet import (
     ControlNetApply,
     ControlNetApplyAdvanced,
-    ControlNetApplySD3,
     ControlNetInpaintingAliMamaApply,
     SetUnionControlNetType,
 )
+from dinkster_nodes_sd.controlnet import ControlNetApplySD3
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -251,40 +251,60 @@ class ControlInspect(Node):
 def test_ordinary_manifest_executes_controlnet_nodes(
     tmp_path: Path, in_process: bool, apply_type: str
 ) -> None:
+    from dinkster_server import PackInfo
+    from dinkster_workers.manifest import load_manifest
+
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         composer = ServingComposer(
             worker_env={
                 "PYTHONPATH": os.pathsep.join(
-                    (str(root / "tests"), str(root / "src"), os.environ.get("PYTHONPATH", ""))
+                    (str(root), str(root / "src"), os.environ.get("PYTHONPATH", ""))
                 )
             }
         )
         try:
             module_name = f"control_fixture_{apply_type}_{in_process}"
             (tmp_path / f"{module_name}.py").write_text(
-                "from test_controlnet_torch import ControlSource, ControlInspect\n"
-                "from dinkster_inference_wire import register_inference_types\n"
+                "from tests.first_party_runtime.test_controlnet_torch "
+                "import ControlSource, ControlInspect\n"
+                "from dinkster_nodes_models.types import register_types as models\n"
+                "from dinkster_nodes_conditioning.types import register_types as conditioning\n"
+                "from dinkster_nodes_image import register_types as image\n"
+                "def register_types(registry):\n"
+                "    for owner, register in (('dinkster-models', models), "
+                "('dinkster-conditioning', conditioning), ('dinkster-image', image)):\n"
+                "        with registry.registering_pack(owner, (), allow_bare=True):\n"
+                "            register(registry)\n"
                 "NODES = (ControlSource, ControlInspect)\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "fixture.toml"
             fixture_manifest.write_text(
                 '[pack]\nname = "control-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["control-fixture"]\n[pack.entry]\n'
+                'namespaces = ["control-fixture"]\n'
+                '[pack.dependencies]\ndinkster-models=">=0.0.1,<1"\n'
+                'dinkster-conditioning=">=0.0.1,<1"\ndinkster-image=">=0.0.1,<1"\n'
+                "[pack.entry]\n"
                 f'nodes = "{module_name}:NODES"\n'
-                f'types = "{module_name}:register_inference_types"\n',
+                f'types = "{module_name}:register_types"\n',
                 encoding="ascii",
             )
-            native_manifest = root / "dinkster-pack.toml"
-            for manifest in (native_manifest, fixture_manifest):
+            manifests = tuple(
+                root / f"packages/dinkster-nodes-{name}/dinkster-pack.toml"
+                for name in ("models", "image", "latent", "conditioning", "sampling", "sd")
+            )
+            for manifest in (*manifests, fixture_manifest):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
+                    PackSpec(
                         manifest=manifest,
-                        worker_group="control-fixture",
-                        group_manifests=(native_manifest, fixture_manifest),
+                        in_process=in_process,
+                        trust_reserved=True,
+                        packs={load_manifest(manifest).name: PackInfo("Runtime", version="0.0.1")}
+                        if manifest != fixture_manifest
+                        else None,
+                        worker_group=None if in_process else "control-fixture",
+                        group_manifests=() if in_process else (*manifests, fixture_manifest),
                     )
                 )
             base = {
@@ -304,15 +324,21 @@ def test_ordinary_manifest_executes_controlnet_nodes(
                 nodes={
                     "source": GraphNode("control-fixture.source"),
                     "union": GraphNode(
-                        "SetUnionControlNetType",
+                        "dinkster.conditioning.set_union_control_net_type",
                         {"control_net": Link("source", "control"), "type": "repaint"},
                     ),
                     "legacy": GraphNode(
-                        "ControlNetApply", {**base, "conditioning": Link("source", "positive")}
+                        "dinkster.conditioning.control_net_apply",
+                        {**base, "conditioning": Link("source", "positive")},
                     ),
-                    "advanced": GraphNode(apply_type, scheduled),
+                    "advanced": GraphNode(
+                        "dinkster.sd.control_net_apply_sd3"
+                        if apply_type == "ControlNetApplySD3"
+                        else "dinkster.conditioning.control_net_apply_advanced",
+                        scheduled,
+                    ),
                     "masked": GraphNode(
-                        "ControlNetInpaintingAliMamaApply",
+                        "dinkster.conditioning.control_net_inpainting_ali_mama_apply",
                         {**scheduled, "mask": Link("source", "mask")},
                     ),
                     "inspect": GraphNode(

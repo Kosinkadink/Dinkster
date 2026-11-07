@@ -25,9 +25,11 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.hook_lora import HOOK_LORA_NODES, CreateHookLora, CreateHookLoraModelOnly
+from dinkster_nodes_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
 
 from dinkster.compose import PackSpec, ServingComposer
+
+HOOK_LORA_NODES = (CreateHookLora, CreateHookLoraModelOnly)
 
 
 class _Resolver:
@@ -62,7 +64,7 @@ def _write_lora(path: Path) -> None:
 
 
 def test_lora_hook_schemas_are_torch_free_and_registered() -> None:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[2]
     subprocess.run(
         [
             sys.executable,
@@ -71,7 +73,9 @@ def test_lora_hook_schemas_are_torch_free_and_registered() -> None:
 import sys
 
 from dinkster_api.v1 import HOOKS_TYPE, TypeExpr
-from dinkster_nodes_comfy.hook_lora import HOOK_LORA_NODES
+from dinkster_nodes_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
+
+HOOK_LORA_NODES = (CreateHookLora, CreateHookLoraModelOnly)
 
 expected = (
     (("lora_name", "strength_model", "strength_clip", "prev_hooks"), "Create Hook LoRA"),
@@ -92,9 +96,9 @@ assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
         check=True,
         cwd=root,
     )
-    from dinkster_nodes_comfy import COMFY_NODES
+    from dinkster_nodes_models import NODES
 
-    assert all(node in COMFY_NODES for node in HOOK_LORA_NODES)
+    assert all(node in NODES for node in HOOK_LORA_NODES)
 
 
 @pytest.mark.parametrize("verified", [False, True])
@@ -227,6 +231,8 @@ LORA_HOOK_FIXTURES = (LoraHookSource, LoraHookInspect)
 def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:
+    from dinkster_server import PackInfo
+
     checkpoint = tmp_path / "tiny.safetensors"
     _write_lora(checkpoint)
     snapshot = tmp_path / "mounts.json"
@@ -239,33 +245,37 @@ def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
 
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        manifest = root / "tests/fixtures/lora_hooks/dinkster-pack.toml"
-        native = root / "dinkster-pack.toml"
+        root = Path(__file__).resolve().parents[2]
+        manifest = Path(__file__).parent / "fixtures/lora_hooks/dinkster-pack.toml"
+        native = root / "packages/dinkster-nodes-models/dinkster-pack.toml"
         manifests = (native, manifest)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
                 "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
-                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+                "PYTHONPATH": os.pathsep.join((str(root), str(root / "src"))),
             }
         )
         try:
             for entry in manifests:
-                pack = PackSpec(manifest=entry, in_process=True)
-                if not in_process:
-                    pack = PackSpec(
+                await composer.add_pack(
+                    PackSpec(
                         manifest=entry,
-                        worker_group="lora-hooks-fixture",
-                        group_manifests=manifests,
+                        in_process=in_process,
+                        trust_reserved=True,
+                        packs={"dinkster-models": PackInfo("Models", version="0.0.1")}
+                        if entry == native
+                        else None,
+                        worker_group=None if in_process else "lora-hooks-fixture",
+                        group_manifests=() if in_process else manifests,
                     )
-                await composer.add_pack(pack)
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("lora-hooks-fixture.source", {}),
                     "full": GraphNode(
-                        "CreateHookLora",
+                        "dinkster.models.create_hook_lora",
                         {
                             "lora_name": asset.to_wire(),
                             "strength_model": -0.7,
@@ -274,7 +284,7 @@ def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
                         },
                     ),
                     "model_only": GraphNode(
-                        "CreateHookLoraModelOnly",
+                        "dinkster.models.create_hook_lora_model_only",
                         {
                             "lora_name": asset.to_wire(),
                             "strength_model": 0.8,

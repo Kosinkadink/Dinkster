@@ -21,8 +21,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.model_advanced import (
-    MODEL_ADVANCED_NODES,
+from dinkster_nodes_models.model_advanced import (
     ModelAttentionBackend,
     ModelComputeDtype,
     ModelNoiseScale,
@@ -34,6 +33,20 @@ from dinkster_nodes_comfy.model_advanced import (
     ModelSamplingSD3,
     ModelSamplingStableCascade,
     RescaleCFG,
+)
+
+MODEL_ADVANCED_NODES = (
+    ModelSamplingDiscrete,
+    ModelSamplingContinuousEDM,
+    ModelSamplingContinuousV,
+    ModelSamplingStableCascade,
+    ModelSamplingSD3,
+    ModelSamplingAuraFlow,
+    ModelSamplingFlux,
+    ModelNoiseScale,
+    RescaleCFG,
+    ModelComputeDtype,
+    ModelAttentionBackend,
 )
 
 
@@ -258,7 +271,7 @@ def test_compute_dtype_installs_torch_dtype() -> None:
 def test_attention_backend_installs_runtime_callback(
     monkeypatch: pytest.MonkeyPatch, attention: str
 ) -> None:
-    import dinkster_nodes_comfy.model_advanced as advanced
+    import dinkster_nodes_models.model_advanced as advanced
 
     def pytorch_attention(
         query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
@@ -326,47 +339,61 @@ class AdvancedModelResult(Node):
 ADVANCED_MODEL_FIXTURE_NODES = (AdvancedModelSource, AdvancedModelResult)
 
 
-@pytest.mark.parametrize("in_process", (True,))
+@pytest.mark.parametrize("in_process", (True, False))
 def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
     tmp_path: Path, in_process: bool
 ) -> None:
+    from dinkster_server import PackInfo
+
     from dinkster.compose import PackSpec, ServingComposer
 
     async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        root = Path(__file__).resolve().parents[2]
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(root)})
         try:
-            manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
+            manifest = root / "packages/dinkster-nodes-models/dinkster-pack.toml"
             (tmp_path / "advanced_model_fixture_sources.py").write_text(
-                "from test_model_advanced_torch import ADVANCED_MODEL_FIXTURE_NODES\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, *ADVANCED_MODEL_FIXTURE_NODES)\n",
+                "from tests.first_party_runtime.test_model_advanced_torch "
+                "import ADVANCED_MODEL_FIXTURE_NODES\n"
+                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "def register_types(registry):\n"
+                "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
+                "        register_models(registry)\n"
+                "NODES = ADVANCED_MODEL_FIXTURE_NODES\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["advanced-model-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "advanced_model_fixture_sources:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "advanced_model_fixture_sources:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "advanced_model_fixture_sources:register_inference_types",
-                ),
+                '[pack]\nname="advanced-model-fixture"\npublisher="dinkster"\n'
+                'namespaces=["advanced-model-fixture"]\n'
+                '[pack.dependencies]\ndinkster-models=">=0.0.1,<1"\n'
+                '[pack.entry]\nnodes="advanced_model_fixture_sources:NODES"\n'
+                'types="advanced_model_fixture_sources:register_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
+            for current in (manifest, source_manifest):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=current,
+                        in_process=in_process,
+                        trust_reserved=True,
+                        packs={"dinkster-models": PackInfo("Models", version="0.0.1")}
+                        if current == manifest
+                        else None,
+                        worker_group=None if in_process else "advanced-model-fixture",
+                        group_manifests=() if in_process else (manifest, source_manifest),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("advanced-model-fixture.source", {}),
                     "patch": GraphNode(
-                        "ModelSamplingSD3", {"model": Link("source", "MODEL"), "shift": 3.0}
+                        "dinkster.models.model_sampling_sd3",
+                        {"model": Link("source", "MODEL"), "shift": 3.0},
                     ),
                     "noise": GraphNode(
-                        "ModelNoiseScale", {"model": Link("patch", "MODEL"), "noise_scale": 2.5}
+                        "dinkster.models.model_noise_scale",
+                        {"model": Link("patch", "MODEL"), "noise_scale": 2.5},
                     ),
                     "result": GraphNode(
                         "advanced-model-fixture.result", {"model": Link("noise", "MODEL")}
@@ -384,4 +411,7 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
 
 
 def test_pack_exports_exact_advanced_node_group() -> None:
+    from dinkster_nodes_models import NODES
+
     assert len(MODEL_ADVANCED_NODES) == 11
+    assert all(node in NODES for node in MODEL_ADVANCED_NODES)

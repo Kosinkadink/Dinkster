@@ -21,7 +21,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.compile import TorchCompileModel, wanBlockSwap
+from dinkster_nodes_models.compile import TorchCompileModel
+from dinkster_nodes_wan.compile import wanBlockSwap
 
 
 def _model_patcher() -> Any:
@@ -118,7 +119,7 @@ def test_wan_block_swap_is_a_deprecated_identity_node() -> None:
     model = object()
     schema = wanBlockSwap.schema()
 
-    assert schema.node_type == "wanBlockSwap"
+    assert schema.node_type == "dinkster.wan.wan_block_swap"
     assert schema.deprecation is not None
     assert schema.search_visibility == "deprecated"
     assert wanBlockSwap.execute(model=model)["MODEL"] is model
@@ -183,27 +184,39 @@ class CompileModelConsumer(Node):
 COMPILE_FIXTURE_NODES = (CompileModelSource, CompileModelConsumer)
 
 
-@pytest.mark.parametrize("in_process", (True,))
+@pytest.mark.parametrize("in_process", (True, False))
 def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
+    from dinkster_server import PackInfo
+    from dinkster_workers.manifest import load_manifest
+
     from dinkster.compose import PackSpec, ServingComposer
 
     async def scenario() -> None:
+        root = Path(__file__).resolve().parents[2]
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": str(Path(__file__).parent),
+                "PYTHONPATH": str(root),
             }
         )
         original_compile = torch.compile
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+            manifests = (
+                root / "packages/dinkster-nodes-latent/dinkster-pack.toml",
+                root / "packages/dinkster-nodes-conditioning/dinkster-pack.toml",
+                root / "packages/dinkster-nodes-models/dinkster-pack.toml",
+                root / "packages/dinkster-nodes-wan/dinkster-pack.toml",
+            )
             module = "compile_fixture_" + str(in_process)
             (tmp_path / f"{module}.py").write_text(
-                "from test_compile_torch import COMPILE_FIXTURE_NODES\n"
-                "from dinkster_nodes_comfy import register_inference_types\n"
+                "from tests.first_party_runtime.test_compile_torch import COMPILE_FIXTURE_NODES\n"
+                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "def register_types(registry):\n"
+                "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
+                "        register_models(registry)\n"
                 "NODES = COMPILE_FIXTURE_NODES\n",
                 encoding="ascii",
             )
@@ -213,27 +226,46 @@ def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
                 'name = "compile-fixture"\n'
                 'publisher = "dinkster"\n'
                 'namespaces = ["compile-fixture"]\n'
+                '[pack.dependencies]\ndinkster-models=">=0.0.1,<1"\n'
+                'dinkster-wan=">=0.0.1,<1"\n'
                 "\n[pack.entry]\n"
                 f'nodes = "{module}:NODES"\n'
-                f'types = "{module}:register_inference_types"\n',
+                f'types = "{module}:register_types"\n',
                 encoding="ascii",
             )
+            pack_info = {
+                path: {load_manifest(path).name: PackInfo(path.parent.name, version="0.0.1")}
+                for path in manifests
+            }
             specs = (
                 (
-                    PackSpec(manifest=manifest, in_process=True),
+                    *(
+                        PackSpec(
+                            manifest=manifest,
+                            in_process=True,
+                            trust_reserved=True,
+                            packs=pack_info[manifest],
+                        )
+                        for manifest in manifests
+                    ),
                     PackSpec(manifest=fixture_manifest, in_process=True),
                 )
                 if in_process
                 else (
-                    PackSpec(
-                        manifest=manifest,
-                        worker_group="compile-fixture",
-                        group_manifests=(manifest, fixture_manifest),
+                    *(
+                        PackSpec(
+                            manifest=manifest,
+                            worker_group="compile-fixture",
+                            group_manifests=(*manifests, fixture_manifest),
+                            trust_reserved=True,
+                            packs=pack_info[manifest],
+                        )
+                        for manifest in manifests
                     ),
                     PackSpec(
                         manifest=fixture_manifest,
                         worker_group="compile-fixture",
-                        group_manifests=(manifest, fixture_manifest),
+                        group_manifests=(*manifests, fixture_manifest),
                     ),
                 )
             )
@@ -243,10 +275,12 @@ def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
                 nodes={
                     "source": GraphNode("compile-fixture.source"),
                     "compile": GraphNode(
-                        "TorchCompileModel",
+                        "dinkster.models.torch_compile_model",
                         {"model": Link("source", "MODEL"), "backend": "inductor"},
                     ),
-                    "noop": GraphNode("wanBlockSwap", {"model": Link("compile", "MODEL")}),
+                    "noop": GraphNode(
+                        "dinkster.wan.wan_block_swap", {"model": Link("compile", "MODEL")}
+                    ),
                     "consumer": GraphNode(
                         "compile-fixture.consumer", {"model": Link("noop", "MODEL")}
                     ),

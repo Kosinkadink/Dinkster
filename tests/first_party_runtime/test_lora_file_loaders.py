@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from dinkster_api.v1 import ASSET_TYPE, CLIP_TYPE, CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, TypeExpr
-from dinkster_nodes_comfy import lora_file_loaders as loaders
+from dinkster_nodes_models import lora_file_loaders as loaders
 
 
 class _VerifiedAsset:
@@ -39,18 +39,25 @@ def _patch_assets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_lora_file_loader_schemas_are_torch_free() -> None:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[2]
     subprocess.run(
         [
             sys.executable,
             "-c",
             """
 import sys
-from dinkster_nodes_comfy.lora_file_loaders import LORA_FILE_LOADER_NODES
+from dinkster_nodes_models import NODES
+from dinkster_nodes_models import lora_file_loaders as loaders
 
-assert tuple(node.schema().node_type for node in LORA_FILE_LOADER_NODES) == (
-    "LoraLoader", "LoraLoaderModelOnly", "LoadLoraModel", "LoadLoraTextEncoder",
-    "LoraLoaderBypass", "LoraLoaderBypassModelOnly",
+nodes = (
+    loaders.LoraLoader, loaders.LoraLoaderModelOnly, loaders.LoadLoraModel,
+    loaders.LoadLoraTextEncoder, loaders.LoraLoaderBypass, loaders.LoraLoaderBypassModelOnly,
+)
+assert all(node in NODES for node in nodes)
+assert tuple(node.schema().node_type for node in nodes) == (
+    "dinkster.models.lora_loader", "dinkster.models.lora_loader_model_only",
+    "dinkster.models.load_lora_model", "dinkster.models.load_lora_text_encoder",
+    "dinkster.models.lora_loader_bypass", "dinkster.models.lora_loader_bypass_model_only",
 )
 assert "torch" not in sys.modules
 assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
@@ -79,9 +86,9 @@ def test_loader_schemas_preserve_file_picker_strength_and_stack_contracts() -> N
             ("model", "lora_name", "strength_model"),
         ),
     }
-    for node in loaders.LORA_FILE_LOADER_NODES:
+    for name, (display, inputs) in expected.items():
+        node = getattr(loaders, name)
         schema = node.schema()
-        display, inputs = expected[schema.node_type]
         assert schema.display_name == display
         assert schema.category == "model/loaders"
         assert tuple(item.id for item in schema.inputs) == inputs

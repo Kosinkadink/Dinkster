@@ -21,11 +21,9 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.context_windows import (
-    ContextWindowsManual,
-    LTXVContextWindows,
-    WanContextWindowsManual,
-)
+from dinkster_nodes_ltx.context_windows import LTXVContextWindows
+from dinkster_nodes_models.context_windows import ContextWindowsManual
+from dinkster_nodes_wan.context_windows import WanContextWindowsManual
 
 
 def _model_patcher() -> Any:
@@ -163,26 +161,34 @@ class ContextWindowConsumer(Node):
 CONTEXT_WINDOW_FIXTURE_NODES = (ContextWindowSource, ContextWindowConsumer)
 
 
-@pytest.mark.parametrize("in_process", (True,))
+@pytest.mark.parametrize("in_process", (True, False))
 def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
+    from dinkster_server import PackInfo
+    from dinkster_workers.manifest import load_manifest
+
     from dinkster.compose import PackSpec, ServingComposer
 
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
+        root = Path(__file__).resolve().parents[2]
+        source_root = root / "src"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": os.pathsep.join((str(root), str(source_root))),
             }
         )
         try:
             module = f"context_windows_fixture_{int(in_process)}"
             (tmp_path / f"{module}.py").write_text(
-                "from test_context_windows_torch import CONTEXT_WINDOW_FIXTURE_NODES\n"
-                "from dinkster_nodes_comfy import register_inference_types\n"
+                "from tests.first_party_runtime.test_context_windows_torch "
+                "import CONTEXT_WINDOW_FIXTURE_NODES\n"
+                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "def register_types(registry):\n"
+                "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
+                "        register_models(registry)\n"
                 "NODES = CONTEXT_WINDOW_FIXTURE_NODES\n",
                 encoding="ascii",
             )
@@ -190,37 +196,34 @@ def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
             fixture_manifest.write_text(
                 '[pack]\nname = "context-window-fixture"\npublisher = "dinkster"\n'
                 'namespaces = ["context-window-fixture"]\n'
+                '[pack.dependencies]\ndinkster-models=">=0.0.1,<1"\n'
+                'dinkster-wan=">=0.0.1,<1"\ndinkster-ltx=">=0.0.1,<1"\n'
                 f'[pack.entry]\nnodes = "{module}:NODES"\n'
-                f'types = "{module}:register_inference_types"\n',
+                f'types = "{module}:register_types"\n',
                 encoding="ascii",
             )
-            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            specs = (
-                (
-                    PackSpec(manifest=native_manifest, in_process=True),
-                    PackSpec(manifest=fixture_manifest, in_process=True),
-                )
-                if in_process
-                else (
-                    PackSpec(
-                        manifest=native_manifest,
-                        worker_group="context-window-fixture",
-                        group_manifests=(native_manifest, fixture_manifest),
-                    ),
-                    PackSpec(
-                        manifest=fixture_manifest,
-                        worker_group="context-window-fixture",
-                        group_manifests=(native_manifest, fixture_manifest),
-                    ),
-                )
+            manifests = tuple(
+                root / f"packages/dinkster-nodes-{name}/dinkster-pack.toml"
+                for name in ("latent", "conditioning", "models", "llm", "video", "wan", "ltx")
             )
-            for spec in specs:
-                await composer.add_pack(spec)
+            for manifest in (*manifests, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        trust_reserved=True,
+                        packs={load_manifest(manifest).name: PackInfo("Runtime", version="0.0.1")}
+                        if manifest != fixture_manifest
+                        else None,
+                        worker_group=None if in_process else "context-window-fixture",
+                        group_manifests=() if in_process else (*manifests, fixture_manifest),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("context-window-fixture.source"),
                     "manual": GraphNode(
-                        "ContextWindowsManual",
+                        "dinkster.models.context_windows_manual",
                         {
                             "model": Link("source", "model"),
                             "context_length": 17,
@@ -238,7 +241,7 @@ def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
                         },
                     ),
                     "wan": GraphNode(
-                        "WanContextWindowsManual",
+                        "dinkster.wan.wan_context_windows_manual",
                         {
                             "model": Link("source", "model"),
                             "context_length": 81,
@@ -253,7 +256,7 @@ def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
                         },
                     ),
                     "ltxv": GraphNode(
-                        "LTXVContextWindows",
+                        "dinkster.ltx.ltxv_context_windows",
                         {
                             "model": Link("source", "model"),
                             "context_length": 145,

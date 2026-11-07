@@ -25,8 +25,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.latent_upscale_loader import LatentUpscaleModelLoader
+from dinkster_nodes_models import NODES
+from dinkster_nodes_models.latent_upscale_loader import LatentUpscaleModelLoader
+from dinkster_server import PackInfo
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -53,9 +54,9 @@ def _asset(path: Path) -> AssetRef:
 
 
 def test_loader_is_registered_with_the_canonical_core_schema_without_torch() -> None:
-    assert LatentUpscaleModelLoader in COMFY_NODES
+    assert LatentUpscaleModelLoader in NODES
     schema = LatentUpscaleModelLoader.schema()
-    assert schema.node_type == "LatentUpscaleModelLoader"
+    assert schema.node_type == "dinkster.models.latent_upscale_model_loader"
     assert schema.display_name == "Load Latent Upscale Model"
     assert schema.category == "model/loaders"
     assert [input.id for input in schema.inputs] == ["model_name"]
@@ -98,13 +99,13 @@ def test_hunyuan_720p_dispatch_derives_the_reference_config(monkeypatch, tmp_pat
         ),
     }
     monkeypatch.setattr(
-        "dinkster_nodes_comfy.latent_upscale_loader.initialize_inference_process", lambda: None
+        "dinkster_nodes_models.latent_upscale_loader.initialize_inference_process", lambda: None
     )
     monkeypatch.setattr(
-        "dinkster_nodes_comfy.latent_upscale_loader._asset_path", lambda _: str(tmp_path / "model")
+        "dinkster_nodes_models.latent_upscale_loader._asset_path", lambda _: str(tmp_path / "model")
     )
     monkeypatch.setattr(
-        "dinkster_nodes_comfy.latent_upscale_loader.importlib.import_module", modules.__getitem__
+        "dinkster_nodes_models.latent_upscale_loader.importlib.import_module", modules.__getitem__
     )
     result = LatentUpscaleModelLoader.execute(model_name=_Asset(tmp_path / "model"))
     assert isinstance(result["LATENT_UPSCALE_MODEL"], Model)
@@ -285,9 +286,9 @@ def test_latent_upscale_loader_crosses_ordinary_hosts_twice(
     monkeypatch.setenv("LATENT_UPSCALE_FORMAT", model_format)
 
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        comfy_manifest = root / "dinkster-pack.toml"
-        fixture_manifest = root / "tests/fixtures/latent_upscale/dinkster-pack.toml"
+        root = Path(__file__).resolve().parents[2]
+        models_manifest = root / "packages/dinkster-nodes-models/dinkster-pack.toml"
+        fixture_manifest = Path(__file__).parent / "fixtures/latent_upscale/dinkster-pack.toml"
         environment = {
             "CUDA_VISIBLE_DEVICES": "",
             "DINKSTER_ACCELERATOR": "cpu",
@@ -296,7 +297,7 @@ def test_latent_upscale_loader_crosses_ordinary_hosts_twice(
             "PYTHONPATH": os.pathsep.join(
                 (
                     str(tmp_path),
-                    str(Path(__file__).parent),
+                    str(root),
                     str(root / "src"),
                     os.environ.get("PYTHONPATH", ""),
                 )
@@ -304,19 +305,23 @@ def test_latent_upscale_loader_crosses_ordinary_hosts_twice(
         }
         composer = ServingComposer(worker_env=environment)
         try:
-            for manifest in (comfy_manifest, fixture_manifest):
+            for manifest in (models_manifest, fixture_manifest):
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
                         in_process=in_process,
+                        trust_reserved=True,
+                        packs={"dinkster-models": PackInfo("Models", version="0.0.1")}
+                        if manifest == models_manifest
+                        else None,
                         worker_group=None if in_process else "latent-upscale-fixture",
-                        group_manifests=() if in_process else (comfy_manifest, fixture_manifest),
+                        group_manifests=() if in_process else (models_manifest, fixture_manifest),
                     )
                 )
             graph = Graph(
                 nodes={
                     "loader": GraphNode(
-                        "LatentUpscaleModelLoader",
+                        "dinkster.models.latent_upscale_model_loader",
                         {
                             "model_name": AssetRef(
                                 digest, checkpoint.name, checkpoint.stat().st_size

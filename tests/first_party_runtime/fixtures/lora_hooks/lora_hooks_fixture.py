@@ -1,6 +1,14 @@
-"""LoRA-hook fixture with independent public type registration."""
+"""LoRA-hook fixture using the model producer's codecs."""
 
-from dinkster_api.v1 import register_inference_types
-from test_hook_lora import LORA_HOOK_FIXTURES
+from dinkster_api.v1 import TypeRegistry
+from dinkster_nodes_models.types import register_types
+
+from tests.first_party_runtime.test_hook_lora import LORA_HOOK_FIXTURES
+
+
+def register_inference_types(registry: TypeRegistry) -> None:
+    with registry.registering_pack("dinkster-models", (), allow_bare=True):
+        register_types(registry)
+
 
 __all__ = ["LORA_HOOK_FIXTURES", "register_inference_types"]
