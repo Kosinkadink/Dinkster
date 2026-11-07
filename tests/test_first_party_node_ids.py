@@ -29,8 +29,8 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
     rows = inventory["nodes"]
     assert inventory["schemaVersion"] == 1
     assert inventory["referenceCommit"] == "bc5f880dbdd43e426077f42ccec53bb577ffee9f"
-    assert len(rows) == len({row["from"] for row in rows}) == 642
-    assert len({row["nodeType"] for row in rows}) == 642
+    assert len(rows) == len({row["from"] for row in rows}) == 644
+    assert len({row["nodeType"] for row in rows}) == 644
     assert Counter(row["pack"].removeprefix("dinkster-") for row in rows[:636]) == {
         "sampling": 63,
         "models": 101,
@@ -83,6 +83,8 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         "WebcamCapture": "dinkster.image.webcam_capture",
         "LoadMoGeModel": "dinkster.vision.moge.load_mo_ge_model",
         "SplatToMesh": "dinkster.3d.splat_to_mesh",
+        "ImageCompare": "dinkster.image.image_compare",
+        "GLSLShader": "dinkster.image.glsl_shader",
     }
     assert {row["from"] for row in rows if row.get("bodyNotFromUpstream") is True} == {
         "CreateBoundingBoxes",
@@ -97,7 +99,7 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         row["class_name"]: row
         for row in json.loads(Path("tools/data/comfy_core_reference.json").read_text())["nodes"]
     }
-    for row in rows[636:]:
+    for row in rows[636:642]:
         assert row["backendPureRename"] is True
         source = reference[row["from"]]
         for group in ("required", "optional"):
@@ -132,13 +134,46 @@ def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
         {"nodes": {}},
         scope=scope,
     )
-    assert census["eligible_node_count"] == 6
-    assert census["counts"] == {"absent": 6}
+    assert census["eligible_node_count"] == 8
+    assert census["counts"] == {"absent": 8}
     assert census["pack_counts"] == {
-        "dinkster-image": {"absent": 4},
+        "dinkster-image": {"absent": 6},
         "dinkster-vision-moge": {"absent": 1},
         "dinkster-3d": {"absent": 1},
     }
+
+
+def test_retained_image_classes_have_ordinary_identity_rules() -> None:
+    from dinkster_nodes_image.compare import NativeImageCompare
+    from dinkster_nodes_image.glsl import NativeGlslShader
+
+    schemas = []
+    for node, expected in (
+        (NativeImageCompare, "dinkster.image.image_compare"),
+        (NativeGlslShader, "dinkster.image.glsl_shader"),
+    ):
+        original = node.schema()
+        renamed = first_party_schema(original)
+        assert renamed.node_type == expected
+        assert renamed.aliases == ()
+        assert len(renamed.replacements) == 1
+        assert renamed.replacements[0].from_type == original.node_type
+        assert renamed.replacements[0].migration is None
+        assert (
+            replace(
+                renamed,
+                node_type=original.node_type,
+                aliases=original.aliases,
+                search_terms=original.search_terms,
+                replacements=original.replacements,
+            )
+            == original
+        )
+        schemas.append(renamed)
+    index = collect_comfy_translations([("dinkster", "dinkster-image", "0.0.1", schemas)])
+    items = index["items"]
+    assert isinstance(items, list)
+    assert {item["rule"]["from"] for item in items} == {"ImageCompare", "GLSLShader"}
 
 
 def test_first_party_rules_preserve_flat_graphs_and_leave_families_frontend_owned() -> None:
