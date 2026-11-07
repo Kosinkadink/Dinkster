@@ -32,6 +32,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_server import PackInfo
+from dinkster_workers.manifest import load_manifest
 from safetensors.torch import load_file, save_file
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -302,12 +304,12 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
     assert type(asset).__name__ == ("AssetRef" if verified else "LocalAssetRef")
 
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
-        checkout = package.parents[1]
+        checkout = Path(__file__).resolve().parents[2]
         module = f"model_file_loaders_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
-            "from test_model_file_loaders_torch import HOST_NODES, _install_controlled_runtime\n"
-            "from dinkster_nodes_models.types import register_types as register_inference_types\n"
+            "from tests.first_party_runtime.test_model_file_loaders_torch import "
+            "HOST_NODES, _install_controlled_runtime\n"
+            "from dinkster_api.v1 import register_inference_types\n"
             "_install_controlled_runtime()\n"
             "NODES = HOST_NODES\n",
             encoding="ascii",
@@ -315,12 +317,21 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
         fixture = tmp_path / "dinkster-pack.toml"
         fixture.write_text(
             '[pack]\nname = "model-file-loaders-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["model-file-loaders-fixture"]\n[pack.entry]\n'
+            'namespaces = ["model-file-loaders-fixture"]\n'
+            '[pack.dependencies]\ndinkster-models = ">=0.0.1,<1"\n'
+            'dinkster-sd = ">=0.0.1,<1"\n[pack.entry]\n'
             f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
             encoding="ascii",
         )
-        native = package / "dinkster-pack.toml"
-        paths = (checkout / "src", *(sorted(checkout.glob("packages/*/src"))))
+        pack_manifests = tuple(
+            checkout / f"packages/dinkster-nodes-{name}/dinkster-pack.toml"
+            for name in ("latent", "conditioning", "sampling", "models", "sd")
+        )
+        pack_info = {
+            path: {load_manifest(path).name: PackInfo(path.parent.name, version="0.0.1")}
+            for path in pack_manifests
+        }
+        paths = (checkout, checkout / "src", *(sorted(checkout.glob("packages/*/src"))))
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -337,12 +348,14 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
             }
         )
         try:
-            manifests = (native, fixture)
+            manifests = (*pack_manifests, fixture)
             for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
                         in_process=in_process,
+                        trust_reserved=manifest in pack_info,
+                        packs=pack_info.get(manifest),
                         worker_group=None if in_process else "model-file-loaders-fixture",
                         group_manifests=() if in_process else manifests,
                     )
@@ -351,27 +364,32 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
                 nodes={
                     "source": GraphNode("model-file-loaders-fixture.source"),
                     "checkpoint": GraphNode(
-                        "CheckpointLoaderSimple", {"ckpt_name": asset.to_wire()}
+                        "dinkster.models.checkpoint_loader_simple", {"ckpt_name": asset.to_wire()}
                     ),
                     "configured": GraphNode(
-                        "CheckpointLoader",
+                        "dinkster.models.checkpoint_loader",
                         {"config_name": asset.to_wire(), "ckpt_name": asset.to_wire()},
                     ),
-                    "unclip": GraphNode("unCLIPCheckpointLoader", {"ckpt_name": asset.to_wire()}),
-                    "control": GraphNode("ControlNetLoader", {"control_net_name": asset.to_wire()}),
+                    "unclip": GraphNode(
+                        "dinkster.sd.un_clip_checkpoint_loader", {"ckpt_name": asset.to_wire()}
+                    ),
+                    "control": GraphNode(
+                        "dinkster.models.control_net_loader", {"control_net_name": asset.to_wire()}
+                    ),
                     "diff-control": GraphNode(
-                        "DiffControlNetLoader",
+                        "dinkster.models.diff_control_net_loader",
                         {"model": Link("checkpoint", "MODEL"), "control_net_name": asset.to_wire()},
                     ),
                     "unet": GraphNode(
-                        "UNETLoader", {"unet_name": asset.to_wire(), "weight_dtype": "default"}
+                        "dinkster.models.unet_loader",
+                        {"unet_name": asset.to_wire(), "weight_dtype": "default"},
                     ),
                     "clip": GraphNode(
-                        "CLIPLoader",
+                        "dinkster.models.clip_loader",
                         {"clip_name": asset.to_wire(), "type": "stable_diffusion", "device": "cpu"},
                     ),
                     "dual": GraphNode(
-                        "DualCLIPLoader",
+                        "dinkster.models.dual_clip_loader",
                         {
                             "clip_name1": asset.to_wire(),
                             "clip_name2": asset.to_wire(),
@@ -379,9 +397,15 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
                             "device": "cpu",
                         },
                     ),
-                    "vision": GraphNode("CLIPVisionLoader", {"clip_name": asset.to_wire()}),
-                    "style": GraphNode("StyleModelLoader", {"style_model_name": asset.to_wire()}),
-                    "gligen": GraphNode("GLIGENLoader", {"gligen_name": asset.to_wire()}),
+                    "vision": GraphNode(
+                        "dinkster.models.clip_vision_loader", {"clip_name": asset.to_wire()}
+                    ),
+                    "style": GraphNode(
+                        "dinkster.models.style_model_loader", {"style_model_name": asset.to_wire()}
+                    ),
+                    "gligen": GraphNode(
+                        "dinkster.sd.gligen_loader", {"gligen_name": asset.to_wire()}
+                    ),
                     "inspect": GraphNode(
                         "model-file-loaders-fixture.inspect", {"ready": Link("source", "ready")}
                     ),
