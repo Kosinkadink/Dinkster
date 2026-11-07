@@ -1,0 +1,90 @@
+{
+  "nodes": {
+    "dinkster.hunyuan.clip_text_encode_hunyuan_di_t": {
+      "displayName": "CLIP Text Encode (Hunyuan Image)"
+    },
+    "dinkster.hunyuan.empty_hunyuan_image_latent": {
+      "displayName": "Empty Hunyuan Image Latent"
+    },
+    "dinkster.hunyuan.empty_hunyuan_latent_video": {
+      "displayName": "Empty Hunyuan Video 1.0 Latent"
+    },
+    "dinkster.hunyuan.empty_hunyuan_video15_latent": {
+      "displayName": "Empty Hunyuan Video 1.5 Latent"
+    },
+    "dinkster.hunyuan.empty_latent_hunyuan3_dv2": {
+      "displayName": "Empty Hunyuan 3D v2 Latent"
+    },
+    "dinkster.hunyuan.hunyuan3_dv2_conditioning": {
+      "displayName": "Hunyuan3Dv2Conditioning"
+    },
+    "dinkster.hunyuan.hunyuan3_dv2_conditioning_multi_view": {
+      "displayName": "Hunyuan3Dv2ConditioningMultiView"
+    },
+    "dinkster.hunyuan.hunyuan_image_to_video": {
+      "displayName": "HunyuanImageToVideo"
+    },
+    "dinkster.hunyuan.hunyuan_refiner_latent": {
+      "displayName": "Hunyuan Latent Refiner"
+    },
+    "dinkster.hunyuan.hunyuan_video15_image_to_video": {
+      "displayName": "HunyuanVideo15ImageToVideo"
+    },
+    "dinkster.hunyuan.hunyuan_video15_latent_upscale_with_model": {
+      "displayName": "Hunyuan Video 1.5 Latent Upscale With Model"
+    },
+    "dinkster.hunyuan.hunyuan_video15_super_resolution": {
+      "displayName": "Hunyuan Video 1.5 Super Resolution"
+    },
+    "dinkster.hunyuan.text_encode_hunyuan_video_image_to_video": {
+      "displayName": "TextEncodeHunyuanVideo_ImageToVideo"
+    },
+    "dinkster.hunyuan.vae_decode_hunyuan3_d": {
+      "displayName": "Hunyuan 3D VAE Decode"
+    }
+  },
+  "searchTerms": {
+    "dinkster.hunyuan.clip_text_encode_hunyuan_di_t": [
+      "CLIPTextEncodeHunyuanDiT"
+    ],
+    "dinkster.hunyuan.empty_hunyuan_image_latent": [
+      "EmptyHunyuanImageLatent"
+    ],
+    "dinkster.hunyuan.empty_hunyuan_latent_video": [
+      "EmptyHunyuanLatentVideo"
+    ],
+    "dinkster.hunyuan.empty_hunyuan_video15_latent": [
+      "EmptyHunyuanVideo15Latent"
+    ],
+    "dinkster.hunyuan.empty_latent_hunyuan3_dv2": [
+      "EmptyLatentHunyuan3Dv2"
+    ],
+    "dinkster.hunyuan.hunyuan3_dv2_conditioning": [
+      "Hunyuan3Dv2Conditioning"
+    ],
+    "dinkster.hunyuan.hunyuan3_dv2_conditioning_multi_view": [
+      "Hunyuan3Dv2ConditioningMultiView"
+    ],
+    "dinkster.hunyuan.hunyuan_image_to_video": [
+      "HunyuanImageToVideo"
+    ],
+    "dinkster.hunyuan.hunyuan_refiner_latent": [
+      "HunyuanRefinerLatent"
+    ],
+    "dinkster.hunyuan.hunyuan_video15_image_to_video": [
+      "HunyuanVideo15ImageToVideo"
+    ],
+    "dinkster.hunyuan.hunyuan_video15_latent_upscale_with_model": [
+      "HunyuanVideo15LatentUpscaleWithModel"
+    ],
+    "dinkster.hunyuan.hunyuan_video15_super_resolution": [
+      "HunyuanVideo15SuperResolution"
+    ],
+    "dinkster.hunyuan.text_encode_hunyuan_video_image_to_video": [
+      "TextEncodeHunyuanVideo_ImageToVideo"
+    ],
+    "dinkster.hunyuan.vae_decode_hunyuan3_d": [
+      "VAEDecodeHunyuan3D"
+    ]
+  }
+}

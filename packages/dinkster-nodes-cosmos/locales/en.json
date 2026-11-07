@@ -1,0 +1,24 @@
+{
+  "nodes": {
+    "dinkster.cosmos.cosmos_image_to_video_latent": {
+      "displayName": "CosmosImageToVideoLatent"
+    },
+    "dinkster.cosmos.cosmos_predict2_image_to_video_latent": {
+      "displayName": "CosmosPredict2ImageToVideoLatent"
+    },
+    "dinkster.cosmos.empty_cosmos_latent_video": {
+      "displayName": "Empty Cosmos Latent Video"
+    }
+  },
+  "searchTerms": {
+    "dinkster.cosmos.cosmos_image_to_video_latent": [
+      "CosmosImageToVideoLatent"
+    ],
+    "dinkster.cosmos.cosmos_predict2_image_to_video_latent": [
+      "CosmosPredict2ImageToVideoLatent"
+    ],
+    "dinkster.cosmos.empty_cosmos_latent_video": [
+      "EmptyCosmosLatentVideo"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+[pack]
+name = "dinkster-void"
+version = "0.0.1"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.void"]
+requires = ["torch", "dinkster-inference==0.1.1", "numpy"]
+
+[pack.inference]
+imports = ["model_management", "samplers", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+"dinkster-conditioning" = ">=0.0.1"
+
+[pack.entry]
+nodes = "dinkster_nodes_void:NODES"
