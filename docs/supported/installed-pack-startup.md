@@ -374,3 +374,7 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+  Linux and Windows managed shutdown drains worker descendants before proving
+  exit, including isolated and grouped workers blocked during pack import.
+  Collection retains legacy or unsupported-platform stopped generations when
+  descendant exit is unproven; it never stops processes to make them collectible.

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import socket
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +22,109 @@ from dinkster_supervisor.environment_state import (
 )
 from test_environment_cli import _run
 from test_environment_state import _generation
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
+    tmp_path: Path, grouped: bool
+):
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from test_environment_runtime import free_port, make_generation
+
+    for number in (1, 2, 3):
+        make_generation(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    pack = tmp_path / "fixture-pack"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="cleanup-fixture"\n[pack.entry]\nnodes="cleanup_fixture:NODES"\n'
+    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(20)
+        (pack / "cleanup_fixture.py").write_text(
+            "import socket\n"
+            f"connection=socket.create_connection(('127.0.0.1',{listener.getsockname()[1]}))\n"
+            "connection.sendall(b'ready')\n"
+            "while True:\n"
+            " data=connection.recv(1)\n"
+            " if not data or data==b'x': break\n"
+            " connection.sendall(b'p')\n"
+            "connection.close()\nNODES=[]\n"
+        )
+        serve = tmp_path / "dinkster/serve.py"
+        worker = (
+            f"GroupIsolatedWorker('cleanup-group', [{str(manifest)!r}], registry, use_shm=False)"
+            if grouped
+            else f"IsolatedWorker({str(manifest)!r}, registry, use_shm=False)"
+        )
+        serve.write_text(
+            serve.read_text().replace(
+                "ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()",
+                "import asyncio,threading\n"
+                "from dinkster_workers import IsolatedWorker,GroupIsolatedWorker\n"
+                "from dinkster_values import TypeRegistry,register_core_types\n"
+                "async def launch_worker():\n"
+                " registry=TypeRegistry();register_core_types(registry)\n"
+                f" worker={worker}\n"
+                " await worker.start()\n"
+                " await asyncio.Event().wait()\n"
+                "threading.Thread(target=lambda:asyncio.run(launch_worker()),daemon=True).start()\n"
+                "ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()",
+            )
+        )
+        connection = None
+        try:
+            start_engine(tmp_path, 1, "old", free_port())
+            connection, _ = listener.accept()
+            connection.settimeout(10)
+            assert connection.recv(5) == b"ready"
+            code, refused = _run(tmp_path, "gc", "--yes")
+            assert code == 1 and "cleanup is unproven" in refused["error"], refused
+            connection.sendall(b"p")
+            assert connection.recv(1) == b"p"
+            assert (tmp_path / "generations/1").is_dir()
+            stop_engine(tmp_path, "old", generation=1)
+            if sys.platform != "linux" and os.name != "nt":
+                code, refused = _run(tmp_path, "gc", "--yes")
+                assert code == 1 and "descendant cleanup is unproven" in refused["error"], refused
+                assert (tmp_path / "generations/1").is_dir()
+                return
+            try:
+                assert connection.recv(1) == b""
+            except ConnectionResetError:
+                pass
+            code, applied = _run(tmp_path, "gc", "--yes")
+            assert code == 0 and applied["status"] == "applied", applied
+            assert not (tmp_path / "generations/1").exists()
+            assert all((tmp_path / "generations" / str(number)).is_dir() for number in (2, 3))
+        finally:
+            stop_engine(tmp_path, "old", generation=1)
+            if connection is not None:
+                try:
+                    connection.sendall(b"x")
+                except OSError:
+                    pass
+                connection.close()
+
+
+def test_collection_retains_legacy_direct_child_only_stop_receipt(tmp_path: Path):
+    for number in (1, 2, 3):
+        _generation(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    instance = "legacy-supervisor"
+    directory = tmp_path / "runtime/1/old.process" / hashlib.sha256(instance.encode()).hexdigest()
+    directory.mkdir(parents=True)
+    write_document(directory / "state.json", {"instance": instance, "state": "stopped", "pid": 1})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    code, refused = _run(tmp_path, "gc", "--yes")
+    assert code == 1 and "descendant cleanup is unproven" in refused["error"], refused
+    assert (tmp_path / "generations/1").is_dir()
+    assert {p: p.read_bytes() for p in before} == before
 
 
 def test_cleanup_policy_persists_without_collecting_or_changing_software(tmp_path: Path):

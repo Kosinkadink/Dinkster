@@ -285,8 +285,14 @@ def generation_runtime_reason(root: Path, generation: int) -> str | None:
                 or (lifecycle.name != hashlib.sha256(instance.encode()).hexdigest())
             ):
                 raise EnvironmentError("lifecycle directory and instance disagree")
-            if process_state(lifecycle, instance) not in {"stopped", "cancelled"}:
+            state = process_state(lifecycle, instance)
+            if state not in {"stopped", "cancelled"}:
                 return "managed supervisor is live or its child cleanup is unproven"
+            if (
+                state == "stopped"
+                and read_document(state_path).get("descendantsStopped") is not True
+            ):
+                return "managed worker descendant cleanup is unproven"
     if any(binding["running"] for binding in engine_assignments(root, generation)):
         return "live managed engine"
     return None

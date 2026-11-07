@@ -554,6 +554,10 @@ Collection requires terminal child-cleanup or launch-cancellation receipts for
 all recorded launch attempts; a missing receipt retains the tree. A live
 supervisor can restart its engine, so its generation remains protected even
 when its current HTTP engine status is stopped.
+On Linux and Windows, normal managed shutdown and restart also drain owned
+worker descendants, including workers blocked before their startup handshake.
+Collection does not stop processes. Legacy direct-child-only receipts and
+platforms without full descendant-exit proof retain the generation.
 
 Shared-store collection preserves the bases, engine caches and hashed wheels of
 every extant generation in registered projects, except this project's approved
@@ -678,6 +682,9 @@ directory's OS lock through child cleanup. Recovery may cancel a still-pending
 launch under that lock; a delayed supervisor then exits without an engine.
 The supervisor writes a stopped receipt only after cleanup, so interruption
 of the updater before its own record write cannot erase shutdown evidence.
+A stopped receipt must also carry `descendantsStopped: true` for collection.
+The dedicated supervisor owns descendants through Linux child-subreaper or
+Windows Job Object membership; a cleanup failure cannot publish that proof.
 A dead supervisor without that receipt remains ambiguous. No process receipt
 or shutdown credential is added to the exported operation journal.
 
