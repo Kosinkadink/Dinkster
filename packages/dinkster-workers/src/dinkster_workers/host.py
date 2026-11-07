@@ -46,7 +46,6 @@ from dinkster_assets import (
     use_declared_asset_pack,
 )
 from dinkster_assets.declared import use_produced_output_job
-from dinkster_assets.scratch import hold_produced_vault
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     AcceleratorMemoryPolicy,
@@ -1401,11 +1400,6 @@ async def serve_connection(
 
         result_send_locked = False
         try:
-            vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
-            if vault_root:
-                produced_context.enter_context(
-                    contextlib.closing(hold_produced_vault(Path(vault_root)))
-                )
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
             produced_context.enter_context(
@@ -1833,13 +1827,7 @@ async def serve_connection(
             "requestId": request_id,
         }
         cancelled = False
-        produced_context = contextlib.ExitStack()
         try:
-            vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
-            if vault_root:
-                produced_context.enter_context(
-                    contextlib.closing(hold_produced_vault(Path(vault_root)))
-                )
             if request_id != str(header.get("invocationId", "")):
                 raise ValueError("lazy-protocol-skew: request id mismatch")
             consumed: list[str] = []
@@ -1911,7 +1899,6 @@ async def serve_connection(
                 "traceback": traceback.format_exc(),
             }
         finally:
-            produced_context.close()
             if not cancelled:
                 try:
                     await send(reply)
@@ -2599,11 +2586,6 @@ async def serve_connection(
                 ownership.enter_context(
                     use_produced_output_job(f"{process_instance_token()}-{request_id}", 1)
                 )
-                vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
-                if vault_root:
-                    ownership.enter_context(
-                        contextlib.closing(hold_produced_vault(Path(vault_root)))
-                    )
                 value_wire = header.get("value")
                 if not isinstance(value_wire, Mapping):
                     raise InvalidRenditionRequest("rendition value is missing")
