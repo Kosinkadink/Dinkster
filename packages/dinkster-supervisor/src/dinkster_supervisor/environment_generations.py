@@ -588,6 +588,7 @@ def prepare_registry_inputs(
     engine_version: str,
     project: Path,
     installed_lock: Path | None = None,
+    additions: tuple[str, ...] = (),
     pack_locks: tuple[Path, ...] = (),
     prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
     preflight: Callable[[Path, Path, Path], None] | None = None,
@@ -604,7 +605,12 @@ def prepare_registry_inputs(
     Explicit ``pack_locks`` take precedence over either automatic producer.
     ``preflight`` checks the scratch engine, catalog and archives before locks
     are prepared; it also runs when explicit locks override automatic preparation.
+    ``additions`` retains installed sources and acquires published dependency locks
+    only for exact new selections. Construction inherits the old dependency locks
+    from its source generation instead of retrieving them from the registry again.
     """
+    if additions and installed_lock is None:
+        raise EnvironmentError("additive registry preparation requires installed sources")
     with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
         scratch = Path(directory)
         python = prepare_engine_interpreter(
@@ -637,6 +643,8 @@ def prepare_registry_inputs(
             if installed_lock is not None
             else ["--allow-missing"]
         )
+        for addition in additions:
+            selection.extend(["--add", addition])
         sources = run(
             [
                 "prepare-registry-sources",
@@ -686,6 +694,11 @@ def prepare_registry_inputs(
                     "--base-id",
                     base,
                     "--registry-only",
+                    *[
+                        argument
+                        for addition in additions
+                        for argument in ("--pack", addition.partition("@")[0])
+                    ],
                 ]
             )
             raw_locks = prepared.get("locks")

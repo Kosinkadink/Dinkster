@@ -1210,7 +1210,22 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     try:
         sources = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        if args.pack:
+            requested = set(args.pack)
+            if len(requested) != len(args.pack):
+                raise InstallError("dependency lock selection must not repeat a pack")
+            available = {entry.pack for entry in sources.packs}
+            if missing := requested - available:
+                raise InstallError(
+                    f"dependency lock selection is absent: {', '.join(sorted(missing))}"
+                )
+            sources = Lockfile.of([entry for entry in sources.packs if entry.pack in requested])
         if args.registry_only:
+            if args.pack and any(
+                entry.source != "registry" and not entry.source.startswith("registry:")
+                for entry in sources.packs
+            ):
+                raise InstallError("selected dependency locks require registry provenance")
             sources = Lockfile.of(
                 [
                     entry
@@ -1400,6 +1415,13 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--pack",
+        action="append",
+        default=[],
+        metavar="PACK",
+        help="acquire only this selected source's dependency lock; repeat for multiple packs",
+    )
     locks.add_argument(
         "--registry-only",
         action="store_true",
