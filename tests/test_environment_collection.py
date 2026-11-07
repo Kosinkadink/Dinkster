@@ -472,6 +472,99 @@ def test_collection_defers_while_an_old_generation_is_being_acquired(
         runtime.start_engine(tmp_path, 1, "old", 3639)
 
 
+def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
+    tmp_path: Path,
+):
+    from dinkster_supervisor.environment_collection import collect_generations, collection_plan
+    from dinkster_supervisor.environment_state import EnvironmentError, read_current, writer_lock
+    from dinkster_supervisor.environment_transactions import activate, begin_activation
+    from test_environment_transactions import _target
+
+    for number in (1, 2, 3):
+        _target(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    approved = collection_plan(tmp_path)
+    entered, release = Event(), Event()
+
+    def revalidate():
+        entered.set()
+        assert release.wait(20), "test did not release activation"
+
+    def activation():
+        with writer_lock(tmp_path):
+            path = begin_activation(tmp_path, 4, "update")
+            _target(tmp_path, 4)
+            activate(tmp_path, path, revalidate=revalidate)
+
+    with ThreadPoolExecutor(max_workers=1) as threads:
+        pending = threads.submit(activation)
+        try:
+            assert entered.wait(20), "activation did not reach validation"
+            before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+            code, refused = _run(tmp_path, "gc", "--yes")
+            assert code == 1 and "another environment writer holds" in refused["error"], refused
+            assert {p: p.read_bytes() for p in before} == before
+            assert not list((tmp_path / ".garbage").glob("*"))
+        finally:
+            release.set()
+        pending.result(timeout=20)
+    assert read_current(tmp_path) == 4
+    with writer_lock(tmp_path):
+        with pytest.raises(EnvironmentError, match="collection changed after planning"):
+            collect_generations(tmp_path, approved)
+    assert all((tmp_path / "generations" / str(number)).is_dir() for number in (1, 2, 3, 4))
+    code, collected = _run(tmp_path, "gc", "--yes")
+    assert code == 0 and collected["status"] == "applied", collected
+    assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["3", "4"]
+
+
+def test_collection_defers_during_move_without_touching_source_generations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_move as move
+    from dinkster_supervisor.environment_stores import register_project
+    from test_environment_transactions import _target
+
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user-data"))
+    root, store, destination = (tmp_path / name for name in ("project", "store", "destination"))
+    root.mkdir()
+    store.mkdir()
+    for number in (1, 2, 3):
+        _target(root, number)
+    (root / "current").write_text("3\n")
+    (root / "store").write_text(str(store) + "\n")
+    Journal("update", 2, 3, "complete").write(root / "journal/100.json")
+    register_project(root, store)
+    entered, release = Event(), Event()
+
+    def interrupt(plan, path, journal):
+        entered.set()
+        assert release.wait(20), "test did not release move"
+        raise OSError("fixture interrupted destination preparation")
+
+    monkeypatch.setattr(move, "_prepare", interrupt)
+    plan = move.plan_move(root, destination, store)
+    with ThreadPoolExecutor(max_workers=1) as threads:
+        pending = threads.submit(move.execute_move, plan)
+        try:
+            assert entered.wait(20), "move did not reach destination preparation"
+            before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            code, refused = _run(root, "gc", "--yes")
+            assert code == 1 and "another environment writer holds" in refused["error"], refused
+            assert {p: p.read_bytes() for p in before} == before
+            assert not list((root / ".garbage").glob("*"))
+        finally:
+            release.set()
+        with pytest.raises(OSError, match="interrupted destination preparation"):
+            pending.result(timeout=20)
+    assert (root / "current").read_text() == "3\n"
+    assert all((root / "generations" / str(number)).is_dir() for number in (1, 2, 3))
+    assert not destination.exists()
+    assert all(not Journal.read(path).incomplete for path in (root / "journal").glob("*.json"))
+
+
 @pytest.mark.parametrize(
     "interruption", [None, "quarantine", "cleanup", "missing-project", "corrupt-constraints"]
 )

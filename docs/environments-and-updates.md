@@ -554,6 +554,9 @@ Collection requires terminal child-cleanup or launch-cancellation receipts for
 all recorded launch attempts; a missing receipt retains the tree. A live
 supervisor can restart its engine, so its generation remains protected even
 when its current HTTP engine status is stopped.
+Collection defers while activation or move holds the project transaction lock.
+A collection plan made before a later activation must be replanned against
+the new current and successful predecessor before any tree is quarantined.
 On Linux and Windows, normal managed shutdown and restart also drain owned
 worker descendants, including workers blocked before their startup handshake.
 Collection does not stop processes. Legacy direct-child-only receipts and
