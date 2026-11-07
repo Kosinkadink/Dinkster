@@ -222,6 +222,7 @@ def test_ordinary_manifest_texture_twice(tmp_path: Path, in_process: bool) -> No
                         in_process=in_process,
                         worker_group=None if in_process else "texture-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

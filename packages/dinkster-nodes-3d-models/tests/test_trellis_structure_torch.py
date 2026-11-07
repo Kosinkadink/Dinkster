@@ -148,6 +148,7 @@ def test_ordinary_manifest_structure_twice(tmp_path: Path, in_process: bool) -> 
                         in_process=in_process,
                         worker_group=None if in_process else "structure-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

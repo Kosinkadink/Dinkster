@@ -238,12 +238,13 @@ def test_admitted_background_loader_to_mask_through_ordinary_manifest_twice(
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="background-fixture",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

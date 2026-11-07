@@ -163,6 +163,7 @@ def test_native_manifest_conditions_twice(tmp_path: Path, in_process: bool) -> N
                         in_process=in_process,
                         worker_group=None if in_process else "trellis-vision-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

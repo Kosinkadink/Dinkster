@@ -33,7 +33,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_native.nodes_model3d import GenerationMeshToModel3D
 from dinkster_nodes_3d.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_protocol import use_export_snapshot
 from dinkster_schema.reporting import capture_saved_artifacts
@@ -352,7 +351,11 @@ def test_ordinary_save_glb_hosts_twice(
     asyncio.run(scenario())
 
 
-def test_mesh_serialization_embeds_distinct_fixed_reference_texture_bytes() -> None:
+def test_mesh_serialization_embeds_distinct_fixed_reference_texture_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("DINKSTER_PACK_SCRATCH", raising=False)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
     pixels = np.arange(7 * 11 * 3).reshape(7, 11, 3)
     maps = [
         (pixels * multiplier + shift) % 256
@@ -369,9 +372,9 @@ def test_mesh_serialization_embeds_distinct_fixed_reference_texture_bytes() -> N
         occlusion_in_mr=True,
         material={"normal_scale": 0.4, "occlusion_strength": 0.7},
     )
-    model = GenerationMeshToModel3D.execute(mesh=source)["model"]
+    model = MeshToFile3D.execute(mesh=source)["model_3d"]
     assert isinstance(model, dict) and model["format"] == "glb"
-    data = model["bytes"]
+    data = model["source"].read_bytes()
     magic, version, length = struct.unpack_from("<4sII", data)
     assert (magic, version, length) == (b"glTF", 2, len(data))
     json_length, json_kind = struct.unpack_from("<II", data, 12)

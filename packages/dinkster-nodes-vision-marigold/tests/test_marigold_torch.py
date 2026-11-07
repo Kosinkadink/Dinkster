@@ -129,7 +129,9 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("marigold-fixture.source"),

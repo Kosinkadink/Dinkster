@@ -326,12 +326,13 @@ def test_ordinary_panorama_hosts_twice(
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="moge-panorama",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             engine = composer.composition.make_engine(lambda _event: None)

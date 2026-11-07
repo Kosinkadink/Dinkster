@@ -3,7 +3,7 @@ name = "dinkster-nodes-vision-sam3d-body"
 version = "0.0.2"
 description = "ComfyUI-origin vision-sam3d-body nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-image", "numpy>=1.26", "scipy>=1.11"]
+dependencies = ["dinkster-api", "dinkster-nodes-image", "numpy>=1.26", "scipy>=1.11", "pillow>=10"]
 
 [build-system]
 requires = ["hatchling"]

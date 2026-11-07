@@ -242,6 +242,7 @@ def test_native_manifest_texture_stage_twice(tmp_path: Path, in_process: bool) -
                         in_process=in_process,
                         worker_group=None if in_process else "trellis-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

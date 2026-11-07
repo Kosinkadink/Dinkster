@@ -199,12 +199,13 @@ def test_ordinary_manifest_shape_stage_twice(tmp_path: Path, in_process: bool) -
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="shape-fixture",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
@@ -383,6 +384,7 @@ def test_ordinary_shape_decoder_hosts_twice(tmp_path: Path, in_process: bool) ->
                         in_process=in_process,
                         worker_group=None if in_process else "shape-decode-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

@@ -172,12 +172,13 @@ def test_ordinary_geometry_hosts_twice(tmp_path: Path, in_process: bool) -> None
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="moge-fov",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

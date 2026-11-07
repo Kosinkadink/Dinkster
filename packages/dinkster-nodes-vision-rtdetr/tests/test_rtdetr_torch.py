@@ -224,12 +224,13 @@ def test_ordinary_manifest_detects_and_draws_twice(tmp_path: Path, in_process: b
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="rtdetr-fixture",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(

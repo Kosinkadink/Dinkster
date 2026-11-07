@@ -252,6 +252,7 @@ def test_native_manifest_conditions_twice(
                         in_process=in_process,
                         worker_group=None if in_process else "pixal-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
