@@ -21,6 +21,17 @@ uv sync --all-packages
 
 The package is not published separately yet and provides no console script.
 
+## ComfyUI import metadata
+
+`first_party.collect_comfy_translations` consumes authenticated publisher, pack,
+version and schema snapshots. Each index item carries `pack`, `version`, the
+ordinary `rule` and its target `schema` in the normal schema wire format.
+The schema retains ordered interfaces, family templates, combo choices and
+widget descriptors so import does not require the target pack to be installed.
+These snapshots are import metadata, not installed node registrations. The
+collector accepts only table-owned identities from publisher `dinkster` and
+rejects duplicate source classes and altered identity rules.
+
 ## Pack versions and engine compatibility
 
 `PackCompatibility` is the shared declaration for `[pack] version` and

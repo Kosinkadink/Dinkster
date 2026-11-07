@@ -17,6 +17,7 @@ from dinkster_nodes_upscale import NODES as UPSCALE_NODES
 from dinkster_schema import claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
+from dinkster_schema.wire import schema_from_wire, schema_to_wire
 from dinkster_workers import load_manifest
 from dinkster_workers.manifest import validate_registration_claims
 
@@ -191,6 +192,7 @@ def test_translation_index_collects_schema_rules_and_refuses_wrong_claims() -> N
                 "pack": "dinkster-text",
                 "version": "0.0.1",
                 "rule": rule_to_wire(schema.replacements[0]),
+                "schema": schema_to_wire(schema),
             }
         ],
     }
@@ -210,6 +212,48 @@ def test_translation_index_collects_schema_rules_and_refuses_wrong_claims() -> N
     )
     with pytest.raises(ValueError, match="comfy-translations.rule"):
         collect_comfy_translations([("dinkster", "dinkster-text", "0.0.1", (altered,))])
+
+
+def test_translation_interfaces_retain_positional_order_after_json_round_trip() -> None:
+    index = json.loads(
+        json.dumps(
+            collect_comfy_translations(
+                [
+                    (
+                        "dinkster",
+                        "dinkster-text",
+                        "0.0.1",
+                        (StringFormat.schema(), StringConcatenate.schema()),
+                    )
+                ]
+            )
+        )
+    )
+    flat, family = index["items"]
+    assert [item["rule"]["from"] for item in index["items"]] == [
+        "StringConcatenate",
+        "StringFormat",
+    ]
+    assert flat["schema"]["nodeType"] == "dinkster.text.string_concatenate"
+    assert [entry["id"] for entry in flat["schema"]["interface"]] == [
+        "string_a",
+        "string_b",
+        "delimiter",
+        "STRING",
+    ]
+    assert [entry["id"] for entry in family["schema"]["interface"]] == [
+        "values",
+        "f_string",
+        "STRING",
+    ]
+    assert family["schema"]["interface"][0]["memberNames"] == list("abcdefghijklmnopqrstuvwxyz")
+    assert family["schema"]["interface"][0]["template"][0]["id"] == "value"
+    assert family["schema"]["interface"][1]["default"] == "{a}"
+    assert family["schema"]["interface"][1]["widget"] == {"type": "STRING", "multiline": True}
+    decoded = schema_from_wire(family["schema"])
+    assert decoded.node_type == "dinkster.text.string_format"
+    assert tuple(entry.id for entry in decoded.input_entries) == ("values", "f_string")
+    assert decoded.replacements[0].from_type == "StringFormat"
 
 
 @pytest.mark.parametrize(

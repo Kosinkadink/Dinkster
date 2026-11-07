@@ -18,6 +18,7 @@ from .replace import (
     ReplacementRule,
     rule_to_wire,
 )
+from .wire import schema_to_wire
 
 
 @cache
@@ -123,7 +124,7 @@ def first_party_schema(schema: NodeSchema) -> NodeSchema:
 def collect_comfy_translations(
     packs: Iterable[tuple[str, str, str, Iterable[NodeSchema]]],
 ) -> dict[str, object]:
-    """Collect unchanged rules from (authenticated publisher, pack, version, schemas)."""
+    """Collect rules and import interfaces from authenticated pack schema snapshots."""
     identities = _identities()
     sources = {target: source for source, (_, target, _) in identities.items()}
     claimed: set[str] = set()
@@ -157,5 +158,6 @@ def collect_comfy_translations(
                     "pack": pack,
                     "version": version,
                     "rule": rule_to_wire(rule),
+                    "schema": schema_to_wire(schema),
                 }
     return {"schemaVersion": 1, "items": [items[source] for source in sorted(items)]}
