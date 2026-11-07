@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -138,14 +137,25 @@ environment._recover_pending(Path(sys.argv[1]))
 
 
 @pytest.mark.parametrize("interruption", [None, "before-switch", "after-switch"])
+@pytest.mark.parametrize("constraints", [b"test\n", b"test\r\n"], ids=["lf", "crlf"])
 def test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation(
-    tmp_path: Path, interruption: str | None
+    tmp_path: Path, interruption: str | None, constraints: bytes
 ) -> None:
     port = free_port()
     path = begin_setup(tmp_path, 1, port, ("GPU-aB12",), name="compute")
     assert read_current(tmp_path) is None
     assert Journal.read(path).previous is None
-    _target(tmp_path, 1)
+    target = _target(tmp_path, 1)
+    (target / "constraints.txt").write_bytes(constraints)
+    generation = Generation.read(target / "generation.json")
+    identity = content_digest(target / "constraints.txt")
+    replace(
+        generation,
+        constraints=identity,
+        files=tuple(
+            (name, identity if name == "constraints.txt" else sha) for name, sha in generation.files
+        ),
+    ).write(target / "generation.json")
     (tmp_path / "current").unlink()
     script = """
 import os
@@ -186,7 +196,7 @@ else:
             assert entries[0]["generation"] == 1
             software = cast("dict[str, object]", entries[0]["snapshot"])
             metadata = cast("dict[str, object]", software["metadata"])
-            assert metadata["constraints.txt"] == "test" + os.linesep
+            assert metadata["constraints.txt"] == constraints.decode("ascii")
             with pytest.raises(EnvironmentError, match="already has an active"):
                 begin_setup(tmp_path, 2, free_port())
         else:
