@@ -3,7 +3,7 @@ name = "dinkster-nodes-minimax"
 version = "0.0.2"
 description = "Dinkster minimax model nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-conditioning"]
+dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-inference-wire"]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,3 +20,4 @@ packages = ["src/dinkster_nodes_minimax"]
 [tool.uv.sources]
 dinkster-api = { workspace = true }
 dinkster-nodes-conditioning = { workspace = true }
+dinkster-inference-wire = { workspace = true }

@@ -22,3 +22,4 @@ api = "dinkster-api/v1"
 
 [pack.entry]
 nodes = "dinkster_nodes_void:NODES"
+types = "dinkster_nodes_void:register_types"

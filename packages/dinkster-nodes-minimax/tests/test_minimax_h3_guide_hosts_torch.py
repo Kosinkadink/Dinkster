@@ -20,6 +20,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    materialize_latent,
     register_audio_value_type,
     register_inference_types,
     resolver_from_env,
@@ -28,6 +29,47 @@ from dinkster_graph import Graph, GraphNode, Link
 from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_isolated_minimax_manifest_installs_only_consumed_codecs() -> None:
+    from dinkster_nodes_minimax import register_types
+    from dinkster_workers import load_manifest
+    from dinkster_workers.host import load_pack
+
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "dinkster-pack.toml")
+    worker, registry, _, _ = load_pack(manifest)
+    required = {
+        "AUDIO",
+        "CLIP",
+        "CONDITIONING",
+        "IMAGE",
+        "LATENT",
+        "MASK",
+        "MODEL",
+        "MODEL_PATCH",
+        "VAE",
+    }
+    for type_id in required:
+        assert registry.spec(type_id).declared_codec, type_id
+        assert type_id in worker.registered_types
+        assert registry.owner_of(type_id) != manifest.name
+    for type_id in (
+        "IC_LORA_PARAMETERS",
+        "WAN_CAMERA_EMBEDDING",
+        "TRACKS",
+        "OPTICAL_FLOW",
+        "SAMPLER",
+    ):
+        assert type_id not in registry, type_id
+    register_types(registry)
+    latent = {"samples": torch.arange(12, dtype=torch.float32).reshape(1, 2, 2, 3)}
+    codec = registry.spec("LATENT")
+    decoded = materialize_latent(codec.decode(codec.encode(latent)))
+    torch.testing.assert_close(decoded["samples"], latent["samples"], rtol=0, atol=0)
+    for type_id in ("CLIP", "MODEL", "MODEL_PATCH", "VAE"):
+        resident = object()
+        codec = registry.spec(type_id)
+        assert codec.decode(codec.encode(resident)) is resident
 
 
 class GuideVideoEncoder:
