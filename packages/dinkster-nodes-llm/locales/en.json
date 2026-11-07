@@ -1,0 +1,14 @@
+{
+  "nodes": {
+    "dinkster.llm.text_generate": {
+      "displayName": "Generate Text"
+    }
+  },
+  "searchTerms": {
+    "dinkster.llm.text_generate": [
+      "LLM",
+      "gemma",
+      "TextGenerate"
+    ]
+  }
+}
