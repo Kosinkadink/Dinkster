@@ -33,7 +33,7 @@ from .environment_artifacts import (
 from .environment_constraints import effective_constraints
 from .environment_downloads import artifact_available, read_metadata
 from .environment_generations import retained_pack_archive, verify_base_inputs
-from .environment_history import history
+from .environment_history import history, validate_import
 from .environment_state import (
     Channel,
     EnvironmentError,
@@ -796,6 +796,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
     selected = next((entry for entry in entries if entry["id"] == entry_id), None)
     if selected is None:
         raise EnvironmentError(f"installation history has no entry {entry_id}")
+    validate_import(root, selected)
     snapshot = cast("dict[str, object]", selected["snapshot"])
     store = Path((root / "store").read_text(encoding="utf-8").strip())
     if not store.is_absolute() or store.is_symlink() or (root / "store").is_symlink():
@@ -815,15 +816,17 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         return [*missing_inputs(candidate, store), *sources[source_lock]]
 
     missing = unavailable_inputs(snapshot)
-    candidates = (
-        [snapshot]
-        if not missing
-        else [
-            *[cast("dict[str, object]", entry["snapshot"]) for entry in entries],
-            *_engine_alternatives(snapshot),
-            *_base_alternatives(snapshot),
-        ]
-    )
+    candidates = [snapshot]
+    if missing:
+        candidates = []
+        for entry in entries:
+            try:
+                validate_import(root, entry)
+            except EnvironmentError:
+                continue
+            candidates.append(cast("dict[str, object]", entry["snapshot"]))
+        candidates.extend(_engine_alternatives(snapshot))
+        candidates.extend(_base_alternatives(snapshot))
     viable: dict[str, dict[str, object]] = {}
     for candidate in candidates:
         if candidate.get("source") not in {"published", "local"}:

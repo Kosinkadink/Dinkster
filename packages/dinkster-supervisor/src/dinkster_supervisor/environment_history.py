@@ -134,13 +134,9 @@ def activation_entries(root: Path) -> list[dict[str, object]]:
     return [entry for entry in history(root) if entry.get("kind", "activation") == "activation"]
 
 
-def import_generation(root: Path, number: int) -> dict[str, object]:
-    """Capture legacy software under the caller's project writer lock or refuse.
-
-    EnvironmentError means retain/defer. Recovery and collection belong to the
-    caller; this operation only appends history after complete provenance checks.
-    """
-    generation_number(number)
+def _activation_provenance(
+    root: Path,
+) -> tuple[list[dict[str, object]], dict[str, Journal], dict[int, str]]:
     journals: dict[str, Journal] = {}
     directory = root / "journal"
     if any(
@@ -204,6 +200,28 @@ def import_generation(root: Path, number: int) -> dict[str, object]:
             raise EnvironmentError("legacy import requires connected setup ancestry")
         ancestry[current] = operation
         current = journal.previous
+    return entries, journals, ancestry
+
+
+def validate_import(root: Path, entry: dict[str, object]) -> None:
+    """Recheck import provenance read-only, even after its tree was collected."""
+    if entry.get("kind") != "import":
+        return
+    entries, _, ancestry = _activation_provenance(root)
+    if entry not in entries or ancestry.get(
+        generation_number(entry.get("generation"))
+    ) != entry.get("operation"):
+        raise EnvironmentError("legacy import generation is disconnected from current ancestry")
+
+
+def import_generation(root: Path, number: int) -> dict[str, object]:
+    """Capture legacy software under the caller's project writer lock or refuse.
+
+    EnvironmentError means retain/defer. Recovery and collection belong to the
+    caller; this operation only appends history after complete provenance checks.
+    """
+    generation_number(number)
+    entries, journals, ancestry = _activation_provenance(root)
     operation = ancestry.get(number)
     if operation is None:
         raise EnvironmentError("legacy import generation is disconnected from current ancestry")
@@ -237,13 +255,11 @@ def import_generation(root: Path, number: int) -> dict[str, object]:
             raise EnvironmentError("legacy import conflicts with recorded software")
         return matching[0]
     observed = {"tools": snapshot["tools"], "host": snapshot["host"]}
-    host = cast("dict[str, object]", snapshot["host"])
     snapshot["tools"] = {"version": "unknown"}
     snapshot["host"] = {
         "system": "unknown",
         "machine": "unknown",
         "python": "unknown",
-        **({"wheelTags": host["wheelTags"]} if "wheelTags" in host else {}),
     }
     entry: dict[str, object] = {
         "format": "dinkster.install-history/1",

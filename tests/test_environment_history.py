@@ -185,9 +185,20 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
         assert code == 0 and result["current"] == 3, result
         assert _run(root, "stop", "--yes")[0] == 0
         preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
+        for flags in (("--plan",), ()):
+            code, result = _run(root, "import", "1", *flags)
+            assert code == 0 and result["status"] == "planned", result
+            assert len(history(root)) == 2
         with writer_lock(root):
-            imported = import_generation(root, 1)
-            assert import_generation(root, 1) == imported
+            code, result = _run(root, "import", "1", "--yes")
+            assert code == 1 and "another environment writer" in result["error"], result
+        # A confirmed import recovers an unpublished completed activation first.
+        (root / "history/00000000000000000002.json").unlink()
+        code, result = _run(root, "import", "1", "--yes")
+        assert code == 0 and result["status"] == "applied", result
+        imported = result["entry"]
+        code, result = _run(root, "import", "1", "--yes")
+        assert code == 0 and result["entry"] == imported, result
         assert imported["id"] == 3 and imported["kind"] == "import"
         assert (root / "current").read_text() == "3\n"
         assert all(path.read_bytes() == payload for path, payload in preserved.items())
@@ -196,9 +207,41 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
         assert history(root)[-1]["restoredFrom"] == 1
         assert Generation.read(root / "generations/4/generation.json").engine_version == "2.0"
         assert _run(root, "stop", "--yes")[0] == 0
+        missing_snapshot = cast("dict", history(root)[1]["snapshot"])
+        manifest = json.loads(missing_snapshot["metadata"]["engine-manifest.json"])
+        shutil.rmtree(mirror / "engine" / missing_snapshot["engine"]["release"][7:])
+        for artifact in manifest["artifacts"]:
+            if artifact["name"].endswith(".whl"):
+                cached = Path(fixture["store"]) / "wheels" / artifact["sha256"]
+                if cached.exists():
+                    shutil.rmtree(cached)
+        code, proposal = _run(root, "restore", "2", "--plan")
+        assert code == 0 and proposal["status"] == "approval-required", proposal
+        assert any(
+            candidate["snapshot"] == imported["snapshot"]
+            for candidate in proposal["restorePlan"]["alternatives"]
+        )
         shutil.rmtree(root / "generations/1")
         code, shown = _run(root, "history", "show", "3")
         assert code == 0 and shown["entry"] == imported
+        journal_bytes = setup_journal.read_bytes()
+        preserved_imports = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
+        for mutation in (journal_bytes + b"\n", None):
+            if mutation is None:
+                setup_journal.unlink()
+            else:
+                setup_journal.write_bytes(mutation)
+            code, refused = _run(root, "restore", "3", "--yes")
+            assert code == 1 and "provenance" in refused["error"], refused
+            assert (root / "current").read_text() == "4\n"
+            assert all(path.read_bytes() == payload for path, payload in preserved_imports.items())
+            code, proposal = _run(root, "restore", "2", "--plan")
+            assert code == 0 and proposal["status"] == "approval-required", proposal
+            assert all(
+                candidate["snapshot"] != imported["snapshot"]
+                for candidate in proposal["restorePlan"]["alternatives"]
+            )
+            setup_journal.write_bytes(journal_bytes)
         code, result = _run(root, "restore", "3", "--yes")
         assert code == 0 and result["current"] == 5 and result["exact"] is True, result
         restored = history(root)[-1]
@@ -1048,6 +1091,25 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         assert planned["restorePlan"]["exact"] is exact
         assert (root / "current").read_text() == "1\n"
         assert (root / "history/00000000000000000002.json").read_bytes() == preserved
+
+    journal = next((root / "journal").glob("*.json"))
+    replace(Journal.read(journal), history_entry=None).write(journal)
+    for path in (root / "history").glob("*.json"):
+        path.unlink()
+    code, result = _run(root, "import", "1", "--yes")
+    assert code == 0, result
+    imported = result["entry"]
+    assert imported["snapshot"]["host"] == {
+        "system": "unknown",
+        "machine": "unknown",
+        "python": "unknown",
+    }
+    assert "py3-none-any" in imported["observedWith"]["host"]["wheelTags"]
+    original = (root / "history/00000000000000000001.json").read_bytes()
+    code, result = _run(root, "restore", "1", "--yes")
+    assert code == 1 and "wheel compatibility tags" in result["error"], result
+    assert (root / "current").read_text() == "1\n"
+    assert (root / "history/00000000000000000001.json").read_bytes() == original
 
 
 @pytest.mark.parametrize("combined", [False, True], ids=["base-only", "engine-and-base"])

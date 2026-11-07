@@ -23,6 +23,7 @@ from .environment_history import (
     is_software_metadata,
     prepare_entry,
     record_failed_restore,
+    validate_import,
 )
 from .environment_restore_plan import plan_restore
 from .environment_state import (
@@ -135,6 +136,10 @@ def restore_entry(
 
     with writer_lock(store), writer_lock(root):
         revalidate()
+        validate_import(root, selected)
+        for entry in entries:
+            if entry["snapshot"] == snapshot:
+                validate_import(root, entry)
         target = next_generation(root)
         journal = begin_activation(root, target, reason, restored_from=entry_id)
         try:
