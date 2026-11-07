@@ -218,6 +218,10 @@ def _decode_curve(data: bytes) -> object:
     return coerce_curve(record)
 
 
+def _validate_curve_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    _decode_curve(data)
+
+
 def _curve_meta(obj: object) -> Mapping[str, object]:
     curve = coerce_curve(obj)
     return {"pointCount": len(curve.points), "start": curve.start, "end": curve.end}
@@ -241,6 +245,8 @@ def register_curve_type(registry: TypeRegistry) -> None:
             decode=_decode_curve,
             coerce=coerce_curve,
             meta=_curve_meta,
+            validate_encoded=_validate_curve_encoded,
+            asset_references_complete=True,
         )
         registry.register_rendition(
             CURVE_TYPE,

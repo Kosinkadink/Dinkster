@@ -437,7 +437,7 @@ class _WheelLinks(HTMLParser):
             self.links.extend(value for key, value in attrs if key == "href" and value is not None)
 
 
-def _dependency_source(row: dict[str, object], package_index: str | None) -> str:
+def dependency_source(row: dict[str, object], package_index: str | None) -> str:
     if package_index is None:
         return cast("str", row["url"]).rsplit("/", 1)[0]
     project = cast("str", row["name"])
@@ -532,7 +532,7 @@ def acquire(
                     or destination.stat().st_size != row["size"]
                     or content_digest(destination) != "sha256:" + sha
                 ):
-                    source = _dependency_source(row, package_index)
+                    source = dependency_source(row, package_index)
                     fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
         requirements = engine_constraints(catalog.engine, variant)
     context = published_base if custom else None
