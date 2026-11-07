@@ -36,7 +36,13 @@ def is_software_metadata(name: str) -> bool:
         "engine-manifest.json",
         "artifact-sources.json",
         "dinkster.lock",
-    } or (len(parts) == 3 and parts[0] == "packs" and parts[2] == "pack-lock.json")
+    } or (
+        len(parts) == 3
+        and (
+            (parts[0] == "packs" and parts[2] == "pack-lock.json")
+            or (parts[0] == "pack-sources" and parts[2] == "dinkster-pack.toml")
+        )
+    )
 
 
 def capture_software(generation: Path) -> dict[str, object]:

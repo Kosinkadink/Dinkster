@@ -20,11 +20,12 @@
 - A missing base can be replaced by an indexed base
   with the same native platform, Python and worker protocol when its locked engine
   and unchanged pack dependency requirements agree. Packs, source locks and
-  in-process placement are preserved. For snapshots without packs, compatible
-  engine/base pairs are offered when replacing either component alone cannot work.
-  Proposals prefer fewer changed identities,
-  preserve an obtainable compatible engine, and disclose every substitution for
-  explicit approval rather than silently upgrading it.
+  in-process placement are preserved. Engine replacements and combined engine/base
+  proposals also preserve packs when recorded pack manifests declare compatible
+  engine ranges and unchanged dependency locks remain compatible and obtainable.
+  Entries without those declarations do not guess compatibility. Proposals prefer
+  fewer changed identities, preserve an obtainable compatible engine, and disclose
+  every substitution for explicit approval rather than silently upgrading it.
 - Standalone pack-only roots can be adopted with `setup --adopt-from` into a
   new, separate supervisor root using explicitly chosen published engine/base
   identities and target dependency locks. The plan displays exact pack sources,

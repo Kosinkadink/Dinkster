@@ -6,13 +6,14 @@ import copy
 import hashlib
 import json
 import os
+import tomllib
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
 
 from packaging.specifiers import SpecifierSet
 from packaging.tags import parse_tag
-from packaging.utils import parse_wheel_filename
+from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
 from .environment_artifacts import (
@@ -465,9 +466,32 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
         metadata["base-manifest.json"].encode("utf-8"), base_record["id"], base_record["variant"]
     )
     variant = cast("str", provenance.get("dependencyVariant", base_record["variant"]))
-    # Nonempty packs need target-owned source and lock compatibility evidence.
     source_lock = parse_metadata(metadata.get("dinkster.lock", '{"packs":[]}').encode("utf-8"))
-    if source_lock.get("packs") or any(name.startswith("packs/") for name in metadata):
+    packs = cast("list[dict[str, object]]", source_lock.get("packs", []))
+    ranges: list[SpecifierSet] = []
+    for pack in packs:
+        text = metadata.get(f"pack-sources/{pack['pack']}/dinkster-pack.toml")
+        if text is None:
+            return []
+        declaration = tomllib.loads(text).get("pack")
+        if not isinstance(declaration, dict):
+            return []
+        fields = cast("dict[str, object]", declaration)
+        name, version, engine_range = (
+            fields.get("name"),
+            fields.get("version"),
+            fields.get("engine"),
+        )
+        if (
+            not isinstance(name, str)
+            or canonicalize_name(name) != pack["pack"]
+            or version != pack["version"]
+            or not isinstance(engine_range, str)
+            or not str(SpecifierSet(engine_range))
+        ):
+            return []
+        ranges.append(SpecifierSet(engine_range))
+    if not packs and any(name.startswith("packs/") for name in metadata):
         return []
     publications: list[tuple[dict[str, object], tuple[str, ...], bytes]] = []
     for mirror in mirrors:
@@ -502,7 +526,10 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
                 continue
     alternatives: list[dict[str, object]] = []
     for engine, roots, data in publications:
-        if engine["workerProtocol"] != snapshot.get("workerProtocol"):
+        if engine["workerProtocol"] != snapshot.get("workerProtocol") or any(
+            not allowed.contains(cast("str", engine["version"]), prereleases=True)
+            for allowed in ranges
+        ):
             continue
         try:
             if "dependencies" in engine:
@@ -525,6 +552,10 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
             }
             Channel.parse(document)
             candidate_provenance["engine"] = list(roots)
+            if packs:
+                candidate_provenance["packSourceRelease"] = provenance.get(
+                    "packSourceRelease", cast("dict[str, object]", snapshot["engine"])["release"]
+                )
             candidate_metadata["artifact-sources.json"] = (
                 json.dumps(candidate_provenance, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
             )

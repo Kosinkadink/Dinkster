@@ -97,9 +97,13 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
-@pytest.mark.parametrize("replace_base", [False, True], ids=["exact", "missing-base"])
+@pytest.mark.parametrize(
+    ("replace_base", "replace_engine"),
+    [(False, False), (True, False), (False, True)],
+    ids=["exact", "missing-base", "missing-engine"],
+)
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_base: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_base: bool, replace_engine: bool
 ):
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_supervisor.environment_state import interpreter
@@ -141,7 +145,9 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         pack = tmp_path / name
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
-            HEALTHY_MANIFEST.replace("healthy", name).replace("numpy>=1.26", "fixture-adopt==1.0")
+            HEALTHY_MANIFEST.replace("healthy", name)
+            .replace("numpy>=1.26", "fixture-adopt==1.0")
+            .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n')
         )
         (pack / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
         staging = updated_artifacts / "staging.zip"
@@ -210,6 +216,14 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         first = history(root)[0]
         replacement_id = None
         chosen = None
+        expected_engine = cast("dict", first["snapshot"])["engine"]
+        assert (
+            "pack-sources/healthy/dinkster-pack.toml" in cast("dict", first["snapshot"])["metadata"]
+        )
+        assert (
+            "pack-sources/healthy/healthy_nodes.py"
+            not in cast("dict", first["snapshot"])["metadata"]
+        )
         for number in (1, 3):
             generation = root / "generations" / str(number)
             assert json.loads((generation / "dinkster.lock").read_text()) == json.loads(source_lock)
@@ -312,17 +326,70 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         if path.is_file() and path.name != ".lock"
                     } == preserved
                     approval = ("--approve", chosen["approval"])
+                elif replace_engine:
+                    snapshot = cast("dict", first["snapshot"])
+                    base = json.loads(snapshot["metadata"]["base-manifest.json"])
+                    channel_path = mirror / "channels/main.json"
+                    index = []
+                    for version in ("2.5", "3.0"):
+                        publisher.executable_release(mirror, base, version, 73)
+                        selected = json.loads(channel_path.read_bytes())["engine"]
+                        index.append(
+                            {
+                                "sha256": selected["release"][7:],
+                                "path": f"engine/{selected['release'][7:]}",
+                            }
+                        )
+                        if version == "2.5":
+                            expected_engine = {key: selected[key] for key in ("version", "release")}
+                    (mirror / "engine/index.json").write_text(json.dumps(index))
+                    original = snapshot["engine"]["release"]
+                    shutil.rmtree(mirror / "engine" / original[7:])
+                    for row in json.loads(snapshot["metadata"]["engine-manifest.json"])[
+                        "artifacts"
+                    ]:
+                        if row["name"].endswith(".whl"):
+                            shutil.rmtree(store / "wheels" / row["sha256"])
+                    preserved = {
+                        path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    }
+                    code, proposal = _run(root, "restore", "1", "--yes")
+                    assert code == 0 and proposal["status"] == "approval-required", proposal
+                    alternatives = proposal["restorePlan"]["alternatives"]
+                    assert len(alternatives) == 1, alternatives
+                    chosen = alternatives[0]
+                    assert {row["field"] for row in chosen["substitutions"]} == {
+                        "engine",
+                        "constraints",
+                    }
+                    assert chosen["snapshot"]["engine"] == expected_engine
+                    assert chosen["snapshot"]["base"] == snapshot["base"]
+                    assert {
+                        path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*")
+                        if path.is_file() and path.name != ".lock"
+                    } == preserved
+                    approval = ("--approve", chosen["approval"])
                 code, restored = _run(root, "restore", "1", *approval)
                 assert code == 0 and restored["current"] == 3, restored.get("error", restored)
         records = history(root)
         assert len(records) == 3 and records[0] == first
         assert records[1]["reason"] == "update"
         assert records[2]["restoredFrom"] == 1
-        assert [entry["exact"] for entry in records] == [True, True, not replace_base]
+        assert [entry["exact"] for entry in records] == [
+            True,
+            True,
+            not (replace_base or replace_engine),
+        ]
         if replace_base:
             assert replacement_id is not None and chosen is not None
             assert cast("dict", records[2]["snapshot"])["base"]["id"] == replacement_id
+        if replace_base or replace_engine:
+            assert chosen is not None
             assert records[2]["substitutions"] == chosen["substitutions"]
+        assert cast("dict", records[2]["snapshot"])["engine"] == expected_engine
         assert {
             path.relative_to(source): path.read_bytes()
             for path in source.rglob("*")
