@@ -2,11 +2,26 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    CAMERA_INFO_STATE_TYPE,
+    COLOR_TYPE,
+    LOAD3D_CAMERA_TYPE,
+    LOAD3D_MODEL_INFO_TYPE,
+    VIDEO_TYPE,
     TypeRegistry,
     register_asset_type,
-    register_inference_types,
+    register_file3d_types,
+    register_load3d_type,
+    register_media_types,
+    register_splat_type,
+    register_video_value_type,
     resolver_from_env,
 )
+from dinkster_inference_wire.camera_wire import (
+    register_load3d_camera_type,
+    register_load3d_model_info_type,
+)
+from dinkster_inference_wire.geometry_wire import register_mesh_type
+from dinkster_inference_wire.voxel_wire import register_voxel_type
 
 from .camera_angle import CameraAngle
 from .camera_info import CreateCameraInfo
@@ -79,10 +94,20 @@ NODES = (
 
 
 def register_types(registry: TypeRegistry) -> None:
-    from dinkster_api.v1 import register_file3d_types, register_load3d_type
-
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
-    register_inference_types(registry)
+    register_media_types(registry)
+    register_mesh_type(registry)
+    register_splat_type(registry)
+    register_voxel_type(registry)
+    for type_id in (CAMERA_INFO_STATE_TYPE, COLOR_TYPE):
+        if type_id not in registry:
+            registry.register(type_id)
+    if LOAD3D_CAMERA_TYPE not in registry:
+        register_load3d_camera_type(registry)
+    if LOAD3D_MODEL_INFO_TYPE not in registry:
+        register_load3d_model_info_type(registry)
+    if VIDEO_TYPE not in registry:
+        register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_file3d_types(registry, resolver_from_env())
     register_load3d_type(registry)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import replace
+from importlib import import_module
 from importlib.resources import files
 from pathlib import Path
 
@@ -453,3 +454,45 @@ def test_pack_inference_declaration_rejects_undeclared_import(
     check_pack(tmp_path, "0.1.1")
     with pytest.raises(ValueError, match="tested-version must be 0.1.2"):
         check_pack(tmp_path, "0.1.2")
+
+
+@pytest.mark.parametrize(
+    ("pack", "required"),
+    [
+        ("3d", {"MESH", "SPLAT", "VOXEL", "LOAD3D_CAMERA", "LOAD3D_MODEL_INFO", "VIDEO"}),
+        ("3d_models", {"MODEL", "VAE", "CONDITIONING", "LATENT", "SHAPE_SUBDIVIDES"}),
+        ("vision_background_removal", {"ASSET", "BACKGROUND_REMOVAL"}),
+        ("vision_marigold", {"IMAGE"}),
+        ("vision_moge", {"ASSET", "MOGE_MODEL", "MOGE_GEOMETRY", "MESH"}),
+        ("vision_rtdetr", {"MODEL", "BOUNDING_BOX"}),
+        ("vision_sam3", {"MODEL", "CONDITIONING", "BOUNDING_BOX", "SAM3_TRACK_DATA"}),
+        ("vision_sdpose", {"MODEL", "VAE", "BOUNDING_BOX", "POSE_KEYPOINT"}),
+    ],
+)
+def test_geometry_and_vision_hooks_do_not_register_unrelated_family_codecs(
+    pack: str, required: set[str]
+) -> None:
+    from dinkster_values import TypeRegistry, register_core_types
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    hook = import_module(f"dinkster_nodes_{pack}").register_types
+    hook(registry)
+    assert required <= set(registry.type_ids())
+    assert not {
+        "DA3_MODEL",
+        "DA3_GEOMETRY",
+        "SAM3D_BODY_MODEL",
+        "MHR_POSE_DATA",
+        "FACE_DETECTION_MODEL",
+        "FACE_LANDMARKS",
+        "PHOTOMAKER",
+        "INTERP_MODEL",
+        "OPTICAL_FLOW",
+        "WAN_CAMERA_EMBEDDING",
+        "TRACKS",
+        "IC_LORA_PARAMETERS",
+    } & set(registry.type_ids())
+    specs = {type_id: registry.spec(type_id) for type_id in required}
+    hook(registry)
+    assert all(registry.spec(type_id) is spec for type_id, spec in specs.items())
