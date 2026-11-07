@@ -1,3 +1,4 @@
+# Draft provider metadata is not an installable pack manifest.
 [pack]
 name = "dinkster-vision-rtdetr"
 version = "0.0.3"
