@@ -259,7 +259,13 @@ def test_start_status_idempotence_and_stop(
             supervisor_pid = json.loads(response.read())["supervisor"]["pid"]
         persisted = json.loads((tmp_path / "runtime/1/main.json").read_bytes())
         assert persisted["pid"] == supervisor_pid and supervisor_pid > 0
-        assert engine_status(tmp_path) == (row,)
+        with monkeypatch.context() as patch:
+
+            def unavailable_tls(*args, **kwargs):
+                raise AssertionError("loopback HTTP must not load TLS certificates")
+
+            patch.setattr("ssl._create_default_https_context", unavailable_tls)
+            assert engine_status(tmp_path) == (row,)
         assert start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12")) == row
         with pytest.raises(EnvironmentError, match="stop it first"):
             start_engine(tmp_path, 1, "main", free_port())

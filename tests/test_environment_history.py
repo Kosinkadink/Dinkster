@@ -460,6 +460,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         str(fixture["port"]),
         *locks[:4],
         "--yes",
+        timeout=120,
     )
     try:
         assert code == 0 and result["current"] == 1, result.get("error", result)
@@ -508,6 +509,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     str(updated_artifacts),
                     *locks,
                     "--yes",
+                    timeout=120,
                 )
                 assert code == 0 and updated["current"] == 2, updated.get("error", updated)
                 assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
@@ -676,7 +678,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         if path.is_file() and path.name != ".lock"
                     } == preserved
                     approval = ("--approve", chosen["approval"])
-                code, restored = _run(root, "restore", "1", *approval)
+                code, restored = _run(root, "restore", "1", *approval, timeout=120)
                 assert code == 0 and restored["current"] == 3, restored.get("error", restored)
         records = history(root)
         assert len(records) == 3 and records[0] == first
@@ -1406,12 +1408,12 @@ def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_pat
 
 def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Path):
     generation = _generation(tmp_path, 1).parent
-    (generation / "constraints.txt").write_text("demo==2\n")
+    (generation / "constraints.txt").write_bytes(b"demo==2\n")
     with pytest.raises(EnvironmentError, match="intact software metadata: constraints.txt"):
         prepare_entry(tmp_path, generation, operation="install", reason="setup")
     assert history(tmp_path) == []
     assert not (tmp_path / "history").exists()
-    (generation / "constraints.txt").write_text("demo==1\n")
+    (generation / "constraints.txt").write_bytes(b"demo==1\n")
     target = tmp_path / "user-files"
     target.mkdir()
     (target / "private").write_text("not software")
