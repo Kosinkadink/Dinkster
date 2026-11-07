@@ -41,6 +41,8 @@ __all__ = [
     "encode_detection",
     "encode_region",
     "region_meta",
+    "validate_detection_encoded",
+    "validate_region_encoded",
 ]
 
 DETECTION_CODEC_MAGIC = b"DINKSTER-DETECTION\x00"
@@ -125,6 +127,11 @@ def decode_region(data: bytes) -> object:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid {REGION_TYPE} payload") from exc
     return coerce_region(record)
+
+
+def validate_region_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    """Validate the complete numeric region before encoded admission."""
+    decode_region(data)
 
 
 def region_meta(obj: object) -> Mapping[str, object]:
@@ -280,6 +287,11 @@ def decode_detection(data: bytes) -> object:
         )
     fields = {key: value for key, value in header.items() if key != "mask"}
     return coerce_detection({**fields, "mask": mask})
+
+
+def validate_detection_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    """Validate framing, numeric fields and owned mask bytes before admission."""
+    decode_detection(data)
 
 
 def detection_meta(obj: object) -> Mapping[str, object]:

@@ -47,10 +47,43 @@ answer = types.wrap(CORE_INT, 42)
 Node authors normally work with plain Python values. Worker shims construct
 the envelopes at the execution boundary.
 
+`TypeRegistry.register(..., asset_references_complete=True)` declares that the
+atom's metadata exhaustively describes its external asset references. This is
+an opt-in contract, independent of declaring an encode/decode codec. The
+default is unknown, not an empty reference set. The asset layer interprets the
+reference metadata; lists and tuples require traversal of every typed child.
+Opaque dictionaries, arrays and streams do not inherit completeness from a
+codec or from missing metadata.
+
+### Decoded document lifetime for SDK hosts
+
+1. A host decoding, editing or rendering a produced document acquires
+   `dinkster_assets.scratch.hold_produced_vault(vault.root)` before the first
+   lazy decode. Keep the lease until every document operation and spawned task
+   or thread has settled, including after exceptions and cancellation.
+   `contextlib.closing()` around the existing lease suits short-lived tools.
+2. Before a document outlives that context, serialize or wrap it with exhaustive
+   external roots and obtain acknowledgment from its real fresh result or
+   document owner. Release the transient lease only after acknowledgment.
+   Preserve the original legacy envelope's bytes, fingerprint and incomplete
+   offer; deriving an equal document does not justify restamping that envelope.
+3. `Value.resolve()` and `EncodedPayload.load()` remain usable without a lease
+   for scalar and read-only callers, but decoded objects hold no vault
+   ownership. A retained resolver does not add ownership. A maintained caller
+   that later depends on produced bytes must acquire the lease at that caller,
+   not rely on automatic object retention.
+
+See [retained asset registration](../dinkster-server/README.md#retained-asset-registration)
+for durable owner acknowledgment. This host responsibility does not change
+node-authoring APIs or make completeness an automatic property of decoding.
+
 Core `STRING` values expose a default `text` rendition containing the full UTF-8
 text, including strings too long for inline status descriptors. Use
 `GET /api/values?...&rendition=text` for full execution-scoped text retrieval;
 the 256-character inline preview limit does not truncate that response.
+`STRING` accepts only Python strings and canonical JSON string encodings, not
+arbitrary embedded payloads or pickle encodings. This restriction makes its
+empty external asset reference set exhaustive.
 
 ### Bounded media streams
 

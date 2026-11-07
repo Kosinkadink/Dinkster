@@ -129,6 +129,9 @@ def register_save_target_type(registry: TypeRegistry) -> None:
         assert isinstance(obj, SaveTarget)  # coerce ran first
         return obj.to_wire()
 
+    def validate_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+        decode(data)
+
     registry.register(
         SAVE_TARGET_TYPE,
         encode=encode,
@@ -136,4 +139,6 @@ def register_save_target_type(registry: TypeRegistry) -> None:
         fingerprint=fingerprint,
         meta=meta,
         coerce=coerce_save_target,
+        validate_encoded=validate_encoded,
+        asset_references_complete=True,
     )
