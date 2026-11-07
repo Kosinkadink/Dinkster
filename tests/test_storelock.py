@@ -116,11 +116,11 @@ def test_concurrent_cross_process_applies_share_the_store(tmp_path: Path) -> Non
         assert child.returncode == 0, err
         assert out.strip() == "ok"
     # exactly one copy of the content in the shared store
-    store_dirs = [child for child in (shared / "store").iterdir() if child.is_dir()]
+    store_dirs = [path.parent for path in (shared / "store").rglob("dinkster-pack.toml")]
     assert len(store_dirs) == 1
-    archives = list((shared / "artifacts").glob("*.zip"))
+    archives = list((shared / "artifacts").rglob("*.zip"))
     assert len(archives) == 1
-    assert not list((shared / "artifacts").glob("*.tmp"))  # no staging leftovers
+    assert not list((shared / "artifacts").rglob("*.tmp"))  # no staging leftovers
     # both roots activated their own generation 1
     for name in ("root-a", "root-b"):
         root = tmp_path / name

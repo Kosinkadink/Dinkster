@@ -854,6 +854,17 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 monkeypatch.setattr(environment_move, "volume", volume)
                 monkeypatch.setattr(environment_stores, "volume", volume)
                 target_store = tmp_path / "destination-store"
+                if problem == "move-cross-volume-plain":
+                    label = "stable_fixture-1.0-py3-none-any"
+                    transfer = tmp_path / "wheel-transfer"
+                    (wheels / sha).rename(transfer)
+                    source_wheel = object_path(wheels, "sha256:" + sha, label=label)
+                    transfer.rename(source_wheel)
+                    occupied = object_path(
+                        target_store / "wheels", "sha256:" + "f" * 64, label=label
+                    )
+                    occupied.mkdir(parents=True)
+                    (occupied / "retained.txt").write_bytes(b"different wheel with the same label")
                 if problem in {
                     "move-cross-volume-cached-aliases",
                     "move-cross-volume-missing-resource",
@@ -976,6 +987,19 @@ environment.main()
             assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
             moved_tree = destination / "generations/1"
             assert Generation.read(moved_tree / "generation.json").drift(moved_tree) == ()
+            if problem == "move-cross-volume-plain":
+                resolved = object_path(moved_store / "wheels", "sha256:" + sha)
+                assert resolved.name == "stable_fixture-1.0-py3-none-any--2"
+                assert (
+                    hashlib.sha256(
+                        (resolved / "stable_fixture-1.0-py3-none-any.whl").read_bytes()
+                    ).hexdigest()
+                    == sha
+                )
+                retained = object_path(moved_store / "wheels", "sha256:" + "f" * 64)
+                assert (
+                    retained / "retained.txt"
+                ).read_bytes() == b"different wheel with the same label"
             if cross_volume:
                 moved_generation = Generation.read(moved_tree / "generation.json")
                 assert dict(moved_generation.files).keys() == dict(generation.files).keys()
