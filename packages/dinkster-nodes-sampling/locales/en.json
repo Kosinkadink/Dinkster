@@ -1,0 +1,384 @@
+{
+  "nodes": {
+    "dinkster.sampling.self_attention_guidance": {
+      "displayName": "Self-Attention Guidance"
+    },
+    "dinkster.sampling.perturbed_attention_guidance": {
+      "displayName": ""
+    },
+    "dinkster.sampling.skip_layer_guidance_di_t": {
+      "displayName": ""
+    },
+    "dinkster.sampling.skip_layer_guidance_di_t_simple": {
+      "displayName": ""
+    },
+    "dinkster.sampling.k_sampler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.k_sampler_advanced": {
+      "displayName": "KSampler (Advanced)"
+    },
+    "dinkster.sampling.sampler_custom": {
+      "displayName": ""
+    },
+    "dinkster.sampling.sampler_custom_advanced": {
+      "displayName": ""
+    },
+    "dinkster.sampling.align_your_steps_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.gits_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.optimal_steps_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.cfg_guider": {
+      "displayName": "CFG Guider"
+    },
+    "dinkster.sampling.basic_guider": {
+      "displayName": "Basic Guider"
+    },
+    "dinkster.sampling.dual_cfg_guider": {
+      "displayName": "Dual CFG Guider"
+    },
+    "dinkster.sampling.dual_model_guider": {
+      "displayName": "Dual Model CFG Guider"
+    },
+    "dinkster.sampling.cfg_override": {
+      "displayName": "CFG Override"
+    },
+    "dinkster.sampling.cfg_zero_star": {
+      "displayName": ""
+    },
+    "dinkster.sampling.cfg_norm": {
+      "displayName": ""
+    },
+    "dinkster.sampling.apg": {
+      "displayName": "Adaptive Projected Guidance"
+    },
+    "dinkster.sampling.tcfg": {
+      "displayName": "Tangential Damping CFG"
+    },
+    "dinkster.sampling.mahiro": {
+      "displayName": "Positive-Biased Guidance"
+    },
+    "dinkster.sampling.na_guidance": {
+      "displayName": "Normalized Attention Guidance"
+    },
+    "dinkster.sampling.renorm_cfg": {
+      "displayName": ""
+    },
+    "dinkster.sampling.perp_neg": {
+      "displayName": "Perp-Neg (DEPRECATED by Perp-Neg Guider)"
+    },
+    "dinkster.sampling.perp_neg_guider": {
+      "displayName": "Perp-Neg Guider"
+    },
+    "dinkster.sampling.video_linear_cfg_guidance": {
+      "displayName": "Video Linear CFG Guidance"
+    },
+    "dinkster.sampling.video_triangle_cfg_guidance": {
+      "displayName": "Video Triangle CFG Guidance"
+    },
+    "dinkster.sampling.epsilon_scaling": {
+      "displayName": ""
+    },
+    "dinkster.sampling.temporal_score_rescaling": {
+      "displayName": "TSR - Temporal Score Rescaling"
+    },
+    "dinkster.sampling.fre_sca": {
+      "displayName": "FreSca"
+    },
+    "dinkster.sampling.random_noise": {
+      "displayName": ""
+    },
+    "dinkster.sampling.disable_noise": {
+      "displayName": ""
+    },
+    "dinkster.sampling.add_noise": {
+      "displayName": ""
+    },
+    "dinkster.sampling.split_sigmas": {
+      "displayName": ""
+    },
+    "dinkster.sampling.split_sigmas_denoise": {
+      "displayName": ""
+    },
+    "dinkster.sampling.flip_sigmas": {
+      "displayName": ""
+    },
+    "dinkster.sampling.set_first_sigma": {
+      "displayName": ""
+    },
+    "dinkster.sampling.extend_intermediate_sigmas": {
+      "displayName": ""
+    },
+    "dinkster.sampling.sampling_percent_to_sigma": {
+      "displayName": ""
+    },
+    "dinkster.sampling.manual_sigmas": {
+      "displayName": ""
+    },
+    "dinkster.sampling.basic_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.karras_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.exponential_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.polyexponential_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.laplace_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.vp_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.beta_sampling_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.sd_turbo_scheduler": {
+      "displayName": ""
+    },
+    "dinkster.sampling.k_sampler_select": {
+      "displayName": "KSamplerSelect"
+    },
+    "dinkster.sampling.sampler_euler_ancestral": {
+      "displayName": "SamplerEulerAncestral"
+    },
+    "dinkster.sampling.sampler_euler_ancestral_cfgpp": {
+      "displayName": "SamplerEulerAncestralCFG++"
+    },
+    "dinkster.sampling.sampler_lms": {
+      "displayName": "SamplerLMS"
+    },
+    "dinkster.sampling.sampler_dpmpp_3_m_sde": {
+      "displayName": "SamplerDPMPP_3M_SDE"
+    },
+    "dinkster.sampling.sampler_dpmpp_2_m_sde": {
+      "displayName": "SamplerDPMPP_2M_SDE"
+    },
+    "dinkster.sampling.sampler_dpmpp_sde": {
+      "displayName": "SamplerDPMPP_SDE"
+    },
+    "dinkster.sampling.sampler_dpmpp_2_s_ancestral": {
+      "displayName": "SamplerDPMPP_2S_Ancestral"
+    },
+    "dinkster.sampling.sampler_dpm_adaptative": {
+      "displayName": "SamplerDPMAdaptative"
+    },
+    "dinkster.sampling.sampler_er_sde": {
+      "displayName": "SamplerER_SDE"
+    },
+    "dinkster.sampling.sampler_sa_solver": {
+      "displayName": "SamplerSASolver"
+    },
+    "dinkster.sampling.sampler_seeds2": {
+      "displayName": "SamplerSEEDS2"
+    },
+    "dinkster.sampling.sampler_lcm_upscale": {
+      "displayName": "SamplerLCMUpscale"
+    },
+    "dinkster.sampling.sampler_lcm": {
+      "displayName": "SamplerLCM"
+    },
+    "dinkster.sampling.sampler_euler_cf_gpp": {
+      "displayName": "SamplerEulerCFG++"
+    }
+  },
+  "searchTerms": {
+    "dinkster.sampling.self_attention_guidance": [
+      "SelfAttentionGuidance"
+    ],
+    "dinkster.sampling.perturbed_attention_guidance": [
+      "PerturbedAttentionGuidance"
+    ],
+    "dinkster.sampling.skip_layer_guidance_di_t": [
+      "SkipLayerGuidanceDiT"
+    ],
+    "dinkster.sampling.skip_layer_guidance_di_t_simple": [
+      "SkipLayerGuidanceDiTSimple"
+    ],
+    "dinkster.sampling.k_sampler": [
+      "KSampler"
+    ],
+    "dinkster.sampling.k_sampler_advanced": [
+      "KSamplerAdvanced"
+    ],
+    "dinkster.sampling.sampler_custom": [
+      "SamplerCustom"
+    ],
+    "dinkster.sampling.sampler_custom_advanced": [
+      "SamplerCustomAdvanced"
+    ],
+    "dinkster.sampling.align_your_steps_scheduler": [
+      "AlignYourStepsScheduler"
+    ],
+    "dinkster.sampling.gits_scheduler": [
+      "GITSScheduler"
+    ],
+    "dinkster.sampling.optimal_steps_scheduler": [
+      "OptimalStepsScheduler"
+    ],
+    "dinkster.sampling.cfg_guider": [
+      "CFGGuider"
+    ],
+    "dinkster.sampling.basic_guider": [
+      "BasicGuider"
+    ],
+    "dinkster.sampling.dual_cfg_guider": [
+      "DualCFGGuider"
+    ],
+    "dinkster.sampling.dual_model_guider": [
+      "DualModelGuider"
+    ],
+    "dinkster.sampling.cfg_override": [
+      "CFGOverride"
+    ],
+    "dinkster.sampling.cfg_zero_star": [
+      "CFGZeroStar"
+    ],
+    "dinkster.sampling.cfg_norm": [
+      "CFGNorm"
+    ],
+    "dinkster.sampling.apg": [
+      "APG"
+    ],
+    "dinkster.sampling.tcfg": [
+      "TCFG"
+    ],
+    "dinkster.sampling.mahiro": [
+      "Mahiro"
+    ],
+    "dinkster.sampling.na_guidance": [
+      "NAGuidance"
+    ],
+    "dinkster.sampling.renorm_cfg": [
+      "RenormCFG"
+    ],
+    "dinkster.sampling.perp_neg": [
+      "PerpNeg"
+    ],
+    "dinkster.sampling.perp_neg_guider": [
+      "PerpNegGuider"
+    ],
+    "dinkster.sampling.video_linear_cfg_guidance": [
+      "VideoLinearCFGGuidance"
+    ],
+    "dinkster.sampling.video_triangle_cfg_guidance": [
+      "VideoTriangleCFGGuidance"
+    ],
+    "dinkster.sampling.epsilon_scaling": [
+      "Epsilon Scaling"
+    ],
+    "dinkster.sampling.temporal_score_rescaling": [
+      "TemporalScoreRescaling"
+    ],
+    "dinkster.sampling.fre_sca": [
+      "FreSca"
+    ],
+    "dinkster.sampling.random_noise": [
+      "RandomNoise"
+    ],
+    "dinkster.sampling.disable_noise": [
+      "DisableNoise"
+    ],
+    "dinkster.sampling.add_noise": [
+      "AddNoise"
+    ],
+    "dinkster.sampling.split_sigmas": [
+      "SplitSigmas"
+    ],
+    "dinkster.sampling.split_sigmas_denoise": [
+      "SplitSigmasDenoise"
+    ],
+    "dinkster.sampling.flip_sigmas": [
+      "FlipSigmas"
+    ],
+    "dinkster.sampling.set_first_sigma": [
+      "SetFirstSigma"
+    ],
+    "dinkster.sampling.extend_intermediate_sigmas": [
+      "ExtendIntermediateSigmas"
+    ],
+    "dinkster.sampling.sampling_percent_to_sigma": [
+      "SamplingPercentToSigma"
+    ],
+    "dinkster.sampling.manual_sigmas": [
+      "ManualSigmas"
+    ],
+    "dinkster.sampling.basic_scheduler": [
+      "BasicScheduler"
+    ],
+    "dinkster.sampling.karras_scheduler": [
+      "KarrasScheduler"
+    ],
+    "dinkster.sampling.exponential_scheduler": [
+      "ExponentialScheduler"
+    ],
+    "dinkster.sampling.polyexponential_scheduler": [
+      "PolyexponentialScheduler"
+    ],
+    "dinkster.sampling.laplace_scheduler": [
+      "LaplaceScheduler"
+    ],
+    "dinkster.sampling.vp_scheduler": [
+      "VPScheduler"
+    ],
+    "dinkster.sampling.beta_sampling_scheduler": [
+      "BetaSamplingScheduler"
+    ],
+    "dinkster.sampling.sd_turbo_scheduler": [
+      "SDTurboScheduler"
+    ],
+    "dinkster.sampling.k_sampler_select": [
+      "KSamplerSelect"
+    ],
+    "dinkster.sampling.sampler_euler_ancestral": [
+      "SamplerEulerAncestral"
+    ],
+    "dinkster.sampling.sampler_euler_ancestral_cfgpp": [
+      "SamplerEulerAncestralCFGPP"
+    ],
+    "dinkster.sampling.sampler_lms": [
+      "SamplerLMS"
+    ],
+    "dinkster.sampling.sampler_dpmpp_3_m_sde": [
+      "SamplerDPMPP_3M_SDE"
+    ],
+    "dinkster.sampling.sampler_dpmpp_2_m_sde": [
+      "SamplerDPMPP_2M_SDE"
+    ],
+    "dinkster.sampling.sampler_dpmpp_sde": [
+      "SamplerDPMPP_SDE"
+    ],
+    "dinkster.sampling.sampler_dpmpp_2_s_ancestral": [
+      "SamplerDPMPP_2S_Ancestral"
+    ],
+    "dinkster.sampling.sampler_dpm_adaptative": [
+      "SamplerDPMAdaptative"
+    ],
+    "dinkster.sampling.sampler_er_sde": [
+      "SamplerER_SDE"
+    ],
+    "dinkster.sampling.sampler_sa_solver": [
+      "SamplerSASolver"
+    ],
+    "dinkster.sampling.sampler_seeds2": [
+      "SamplerSEEDS2"
+    ],
+    "dinkster.sampling.sampler_lcm_upscale": [
+      "SamplerLCMUpscale"
+    ],
+    "dinkster.sampling.sampler_lcm": [
+      "SamplerLCM"
+    ],
+    "dinkster.sampling.sampler_euler_cf_gpp": [
+      "SamplerEulerCFGpp"
+    ]
+  }
+}

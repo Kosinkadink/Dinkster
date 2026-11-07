@@ -1,0 +1,25 @@
+[pack]
+name = "dinkster-sampling"
+version = "0.0.1"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.sampling"]
+requires = ["torch", "numpy", "dinkster-inference==0.1.1"]
+
+[pack.dependencies]
+dinkster-latent = ">=0.0.1,<1"
+
+[pack.inference]
+imports = ["k_diffusion.sa_solver", "k_diffusion.sampling", "ldm.modules.attention", "model_management", "model_patcher", "nested_tensor", "patcher_extension", "sample", "sampler_helpers", "samplers", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_sampling:NODES"
+types = "dinkster_nodes_sampling.types:register_types"
