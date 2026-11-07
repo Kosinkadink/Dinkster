@@ -11,7 +11,6 @@ manifests live in the immutable store.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -20,6 +19,7 @@ import sys
 import threading
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -32,6 +32,7 @@ from dinkster_registry import (
     SnapshotRecord,
     build_artifact,
 )
+from dinkster_store import pack_archive_path
 from dinkster_workers import DoctorReport, Finding, PackManifest
 from dinkster_workers.provision import ProvisionError
 
@@ -54,7 +55,7 @@ def venv_python(venv_dir: Path) -> Path:
 
 def venv_metadata_glob(root: Path, pack: str, filename: str) -> list[Path]:
     scripts = "Scripts" if os.name == "nt" else "bin"
-    return list((root / "venvs").glob(f"*/{pack}/{scripts}/{filename}"))
+    return list((root / "venvs").glob(f"**/{pack}/{scripts}/{filename}"))
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +64,13 @@ def _no_host_runtime_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     shells out to the host's vendor status tool (nvidia-smi), which must
     never run under tests. Tests that WANT runtime facts inject their
     own probe or re-monkeypatch this name."""
+
+    class AcquisitionClock:
+        @staticmethod
+        def now(_timezone: object) -> datetime:
+            return datetime(2026, 11, 3, tzinfo=UTC)
+
+    monkeypatch.setattr("dinkster_store.datetime", AcquisitionClock)
     monkeypatch.setattr(installer_module, "detect_runtime", lambda _accelerator: ())
     monkeypatch.setattr(
         installer_module,
@@ -623,8 +631,8 @@ def test_absent_hosting_policy_preserves_per_pack_layout_and_identity(
     installer.apply(target)
     assert target.record_json() == before
     for entry in target.packs:
-        digest = entry.artifact_digest.partition(":")[2]
-        assert venv_python(installer.root / "venvs" / digest / entry.pack).is_file()
+        path = installer.root / "venvs" / entry.pack / "2026-11-03-0.0.0" / entry.pack
+        assert venv_python(path).is_file()
     assert installer.snapshot().venv_groups == ()
 
 
@@ -639,12 +647,7 @@ def test_group_staging_uses_one_aggregate_venv_and_serves_every_member_from_it(
     )
     write_hosting(installer, '[venv-groups]\nmodels = ["beta", "alpha"]\n')
     installer.apply(target)
-    payload = "".join(
-        f"{entry.pack}\0{entry.artifact_digest}\n"
-        for entry in sorted(target.packs, key=lambda item: item.pack)
-    )
-    aggregate = hashlib.sha256(payload.encode()).hexdigest()
-    group = installer.root / "venvs" / aggregate / "models"
+    group = installer.root / "venvs" / "groups" / "2026-11-03-alpha-0.0.0-and-beta-0.0.0" / "models"
     assert (venv_python(group).parent / "members.txt").read_text() == "alpha\nbeta"
     assert not any(
         (installer.root / "venvs" / entry.artifact_digest.partition(":")[2]).exists()
@@ -858,8 +861,7 @@ def test_lock_local_pack_digest_is_identity(tmp_path: Path, claims: tuple[str, .
     assert entry.claims == claims
     assert entry.source == f"local:{pack_dir.resolve()}"
     assert archive.is_file()
-    # the archive is content-addressed next to the digest
-    assert archive.stem in entry.artifact_digest
+    assert archive == installer.artifacts_dir / "demo" / "2026-11-03-0.0.0" / "pack.zip"
     # re-archiving identical content is a no-op identity-wise
     entry_again, archive_again = lock_local_pack(pack_dir, installer.artifacts_dir)
     assert entry_again.artifact_digest == entry.artifact_digest
@@ -976,7 +978,7 @@ def test_removing_group_policy_restages_per_pack_and_gc_keeps_live_collects_dead
     dead_group = aggregate_dir / "dead-group"
     dead_group.mkdir()
     removed = installer.gc()
-    assert f"venvs/{aggregate_dir.name}/dead-group" in removed
+    assert (dead_group.relative_to(installer.root).as_posix()) in removed
     assert aggregate_dir.exists()  # generation 1 still references the original group
     assert not dead_group.exists()
 
@@ -1339,7 +1341,7 @@ def test_cli_plan_file_and_apply(tmp_path: Path, capsys: pytest.CaptureFixture[s
     installer = Installer(Path(root))
     assert installer.current_number() is None  # planning never mutates
     # The plan-time archive is staged content-addressed, inert until applied.
-    assert list(installer.artifacts_dir.glob("*.zip"))
+    assert list(installer.artifacts_dir.rglob("*.zip"))
 
     run_cli("--root", root, "apply", str(plan_file))
     out = capsys.readouterr().out
@@ -1421,7 +1423,7 @@ def test_cli_gc_requires_confirmation(tmp_path: Path, capsys: pytest.CaptureFixt
     captured = capsys.readouterr()
     assert "would remove: artifacts/" in captured.out
     assert "refusing to mutate" in captured.err
-    assert list(Installer(Path(root)).artifacts_dir.glob("*.zip"))  # still there
+    assert list(Installer(Path(root)).artifacts_dir.rglob("*.zip"))  # still there
 
 
 def test_cli_snapshot_and_restore(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1861,7 +1863,7 @@ def test_cli_restore_plan_file_defers_to_apply(
     assert record.venv_specs == (("demo", VenvSpec(exact=("numpy==1.0", "torch==2.0+cu124"))),)
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None  # plan phase stayed read-only
-    assert not list(fresh_installer.artifacts_dir.glob("*.zip"))
+    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
     assert not list((fresh / "venvs").iterdir())  # scaffold only, nothing staged
 
     run_cli("--root", str(fresh), "apply", str(plan_file))
@@ -1940,11 +1942,11 @@ def test_cli_restore_plan_file_defers_to_apply(
     other = write_pack(tmp_path / "other", "other")
     run_cli("--root", str(stale_root), "install", "--no-venv", "--yes", str(other))
     capsys.readouterr()
-    zips_before = sorted(Installer(stale_root).artifacts_dir.glob("*.zip"))
+    zips_before = sorted(Installer(stale_root).artifacts_dir.rglob("*.zip"))
     with pytest.raises(SystemExit):
         run_cli("--root", str(stale_root), "apply", str(stale_plan))
     assert "plan is stale" in capsys.readouterr().err
-    assert sorted(Installer(stale_root).artifacts_dir.glob("*.zip")) == zips_before
+    assert sorted(Installer(stale_root).artifacts_dir.rglob("*.zip")) == zips_before
 
     # source bytes changed after planning: apply refuses the digest
     # mismatch and activates nothing
@@ -2057,7 +2059,7 @@ def test_cli_reproduce_plan_is_read_only(
     assert "refusing to mutate without confirmation" in captured.err
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None
-    assert not list(fresh_installer.artifacts_dir.glob("*.zip"))
+    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
 
 
 def test_cli_reproduce_plan_file_defers_acquisition_to_apply(
@@ -2089,7 +2091,7 @@ def test_cli_reproduce_plan_file_defers_acquisition_to_apply(
     assert record.acquire and record.derive_claims
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None  # plan phase stayed read-only
-    assert not list(fresh_installer.artifacts_dir.glob("*.zip"))
+    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
 
     run_cli("--root", str(fresh), "apply", str(plan_file))
     out = capsys.readouterr().out
@@ -2489,9 +2491,8 @@ def test_acquire_refetches_local_source_bytes(tmp_path: Path) -> None:
     installer.acquire(entry)
     assert installer.artifact_available(entry) and archive.is_file()
     installer.acquire(entry)  # no-op, no error
-    # nothing but content-addressed zips in the artifacts dir (no
-    # leftover scratch)
-    assert all(child.suffix == ".zip" for child in installer.artifacts_dir.iterdir())
+    assert list(installer.artifacts_dir.rglob("*.zip")) == [archive]
+    assert not list(installer.artifacts_dir.glob("acquire-*"))
 
 
 def test_acquire_refuses_changed_or_vanished_local_source(tmp_path: Path) -> None:
@@ -2504,7 +2505,8 @@ def test_acquire_refuses_changed_or_vanished_local_source(tmp_path: Path) -> Non
         installer.acquire(entry)
     # the mismatched candidate was discarded, not admitted
     assert not installer.artifact_available(entry)
-    assert all(child.suffix == ".zip" for child in installer.artifacts_dir.iterdir())
+    assert not list(installer.artifacts_dir.rglob("*.zip"))
+    assert not list(installer.artifacts_dir.glob("acquire-*"))
     shutil.rmtree(demo)
     with pytest.raises(InstallError, match="no longer exists"):
         installer.acquire(entry)
@@ -2581,7 +2583,7 @@ def test_acquire_registry_source_downloads_digest_verified(tmp_path: Path) -> No
     )
     with pytest.raises(InstallError, match="refusing to\\s+substitute different bytes"):
         lying.acquire(release)
-    assert not list(lying.artifacts_dir.glob("*.zip"))
+    assert not list(lying.artifacts_dir.rglob("*.zip"))
 
     # a failed download propagates and admits nothing
     def broken(_entry: LockedPack) -> bytes:
@@ -2595,7 +2597,7 @@ def test_acquire_registry_source_downloads_digest_verified(tmp_path: Path) -> No
     )
     with pytest.raises(InstallError, match="failed: down"):
         offline.acquire(release)
-    assert not list(offline.artifacts_dir.glob("*.zip"))
+    assert not list(offline.artifacts_dir.rglob("*.zip"))
 
 
 def _serve_artifacts(
@@ -2744,8 +2746,7 @@ def test_cli_restore_downloads_registry_sources(
     [entry_record] = document["lockfile"]["packs"]
     entry_record["source"] = "registry"
     snap.write_text(json.dumps(document))
-    hex_digest = entry_record["artifactDigest"].partition(":")[2]
-    data = (source_root / "artifacts" / f"{hex_digest}.zip").read_bytes()
+    data = pack_archive_path(source_root / "artifacts", entry_record["artifactDigest"]).read_bytes()
 
     # no endpoint configured: refused up front, naming the way forward
     with pytest.raises(SystemExit):
@@ -3474,7 +3475,7 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         run_cli(*args)
         assert json.loads(capsys.readouterr().out)["packs"] == ["local-pack"]
         assert Lockfile.from_record_json(candidate.read_text()) == lock
-        assert (artifacts / f"{identity[7:]}.zip").read_bytes() == archive.read_bytes()
+        assert pack_archive_path(artifacts, identity).read_bytes() == archive.read_bytes()
     assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
 
 
@@ -3568,7 +3569,7 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
                     ),
                 )
                 assert report["packs"] == [pack_name]
-                cached = artifacts / f"{digest[7:]}.zip"
+                cached = pack_archive_path(artifacts, digest)
                 assert cached.read_bytes() == archive.read_bytes()
                 if mode == "partial":
                     assert set(report["unavailable"]) == set(default_pack_minimums()) - {pack_name}
@@ -3965,10 +3966,6 @@ def make_shared_installer(
     )
 
 
-def hex_of(lockfile: Lockfile, index: int = 0) -> str:
-    return lockfile.packs[index].artifact_digest.partition(":")[2]
-
-
 def test_shared_store_two_roots_share_one_copy(tmp_path: Path) -> None:
     shared = tmp_path / "shared"
     first = make_shared_installer(tmp_path, "root-a", shared)
@@ -3977,10 +3974,10 @@ def test_shared_store_two_roots_share_one_copy(tmp_path: Path) -> None:
     target_a = local_lockfile(first, pack_dir)
     first.apply(target_a)
     second.apply(local_lockfile(second, pack_dir))
-    digest = hex_of(target_a)
+    label = "demo/2026-11-03-0.0.0"
     # one copy of the content, under the shared store - never under a root
-    assert (shared / "store" / digest / "dinkster-pack.toml").is_file()
-    assert (shared / "artifacts" / f"{digest}.zip").is_file()
+    assert (shared / "store" / label / "dinkster-pack.toml").is_file()
+    assert (shared / "artifacts" / label / "pack.zip").is_file()
     assert not (first.root / "store").exists()
     assert not (second.root / "store").exists()
     # per-root state stays per root
@@ -4014,10 +4011,10 @@ def test_shared_venvs_key_by_accelerator(tmp_path: Path) -> None:
     target = local_lockfile(cpu, pack_dir)
     cpu.apply(target)
     cuda.apply(local_lockfile(cuda, pack_dir))
-    digest = hex_of(target)
+    label = "demo/2026-11-03-0.0.0"
     # same bytes, different accelerator resolution, different venv
-    assert venv_python(shared / "venvs" / "cpu" / digest / "demo").is_file()
-    assert venv_python(shared / "venvs" / "cuda" / digest / "demo").is_file()
+    assert venv_python(shared / "venvs" / "cpu" / label / "demo").is_file()
+    assert venv_python(shared / "venvs" / "cuda" / label / "demo").is_file()
 
 
 def test_shared_gc_unions_references_across_registered_roots(tmp_path: Path) -> None:
@@ -4037,8 +4034,7 @@ def test_shared_gc_unions_references_across_registered_roots(tmp_path: Path) -> 
         "venvs/cpu/feedface",
     }
     # root B's content survived a gc run from root A
-    digest = hex_of(only_b)
-    assert (shared / "store" / digest / "dinkster-pack.toml").is_file()
+    assert (shared / "store" / "solo/2026-11-03-0.0.0" / "dinkster-pack.toml").is_file()
     assert second.packs_for_serving()
 
 
@@ -4053,7 +4049,7 @@ def test_shared_gc_counts_old_generations_of_other_roots(tmp_path: Path) -> None
     second.apply(local_lockfile(second, pack_dir))
     # B's generation 1 content is rollback material - A's gc must keep it
     assert first.gc() == ()
-    assert (shared / "store" / hex_of(old)).is_dir()
+    assert (shared / "store" / "demo/2026-11-03-0.0.0").is_dir()
 
 
 def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> None:
@@ -4068,7 +4064,7 @@ def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> 
     with pytest.raises(InstallError, match="registered install root"):
         first.gc_candidates()
     # nothing was deleted
-    assert (shared / "store" / hex_of(target)).is_dir()
+    assert (shared / "store" / "demo/2026-11-03-0.0.0").is_dir()
     # forgetting the root is explicit: delete its registry entry, then gc
     roots_dir = shared / "roots"
     entries = [entry for entry in roots_dir.iterdir() if entry.is_file()]
@@ -4076,18 +4072,67 @@ def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> 
         if entry.read_text().strip() == str(second.root.resolve()):
             entry.unlink()
     removed = first.gc()
-    assert f"store/{hex_of(target)}" in removed
+    assert "store/demo/2026-11-03-0.0.0" in removed
 
 
-def test_private_root_layout_is_unchanged(tmp_path: Path) -> None:
+def test_private_root_layout_uses_readable_pack_names(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     target = local_lockfile(installer, write_pack(tmp_path / "demo", "demo"))
     installer.apply(target)
-    digest = hex_of(target)
+    label = "demo/2026-11-03-0.0.0"
     assert installer.shared_store is None
-    assert (installer.root / "store" / digest / "dinkster-pack.toml").is_file()
-    assert venv_python(installer.root / "venvs" / digest / "demo").is_file()
+    assert (installer.root / "store" / label / "dinkster-pack.toml").is_file()
+    assert venv_python(installer.root / "venvs" / label / "demo").is_file()
     assert not (installer.root / "shared-store").exists()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_pack_identity_reuses_paths_and_separates_same_label_updates(
+    tmp_path: Path, legacy: bool
+) -> None:
+    installer = make_installer(tmp_path)
+    source = write_pack(tmp_path / "demo", "demo")
+    if legacy:
+        entry, archive = lock_local_pack(source, tmp_path / "external")
+        old_archive = installer.artifacts_dir / f"{entry.artifact_digest[7:]}.zip"
+        shutil.copyfile(archive, old_archive)
+        (installer.store_root / entry.artifact_digest[7:]).mkdir()
+        (installer.root / "venvs" / entry.artifact_digest[7:]).mkdir()
+    else:
+        entry, old_archive = lock_local_pack(source, installer.artifacts_dir)
+    first = Lockfile.of([entry])
+    installer.apply(first)
+    first_spec = installer.packs_for_serving()[0]
+    first_manifest = Path(first_spec.manifest)
+    assert first_spec.python is not None
+    first_python = Path(first_spec.python)
+    if legacy:
+        assert first_manifest.parent == installer.store_root / entry.artifact_digest[7:]
+        assert first_python == venv_python(
+            installer.root / "venvs" / entry.artifact_digest[7:] / "demo"
+        )
+    before = old_archive.read_bytes(), first_manifest.read_bytes(), first_python.read_bytes()
+    installer.apply(Lockfile.of([replace(entry, version="9.0.0")]))
+    assert installer.packs_for_serving()[0].manifest == first_spec.manifest
+    assert installer.packs_for_serving()[0].python == first_spec.python
+    assert pack_archive_path(installer.artifacts_dir, entry.artifact_digest) == old_archive
+    (source / "demo_nodes.py").write_text("NODES = [99]\n")
+    newer, new_archive = lock_local_pack(source, installer.artifacts_dir)
+    assert newer.artifact_digest != entry.artifact_digest
+    expected = "2026-11-03-0.0.0" + ("" if legacy else "--2")
+    assert new_archive == installer.artifacts_dir / "demo" / expected / "pack.zip"
+    installer.apply(Lockfile.of([newer]))
+    latest = installer.packs_for_serving()[0]
+    assert Path(latest.manifest).parent == installer.store_root / "demo" / expected
+    assert latest.python == str(venv_python(installer.root / "venvs" / "demo" / expected / "demo"))
+    assert before == (
+        old_archive.read_bytes(),
+        first_manifest.read_bytes(),
+        first_python.read_bytes(),
+    )
+    installer.rollback()
+    assert installer.packs_for_serving()[0].python == first_spec.python
+    assert installer.gc() == ()
 
 
 def test_cli_shared_store_flag_and_gc_across_roots(

@@ -317,6 +317,14 @@ identity reuses its original location. Existing full-hash paths remain supported
 without renaming installed interpreters or environments. Base archive parts use
 the same base label under `downloads/`. Unknown build dates use the first local
 acquisition date in UTC. Wheel filenames remain unchanged, including backend tags.
+Pack archives use `artifacts/<pack>/<date>-<version>/pack.zip`, with the date
+of first local acquisition. Standalone pack sources use the same label beneath
+`store/`; per-pack virtual environments use `venvs/<pack>/<date>-<version>/<pack>/`,
+with an accelerator parent in shared stores. Grouped environments use bounded
+sorted member labels under `venvs/groups/`, retaining their full aggregate
+identity. Explicit collection resolves those identities rather than treating
+readable namespace directories as disposable objects. Existing digest-named
+archives and environments remain in place.
 Engine-owned wheel and constraints artifacts are verified through the same
 downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into

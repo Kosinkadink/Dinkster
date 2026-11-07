@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from blake3 import blake3
-from dinkster_store import object_path, readable_label
+from dinkster_store import object_path, pack_archive_path, pack_label, readable_label
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
 from packaging.utils import parse_wheel_filename
 
@@ -473,8 +473,14 @@ def prepare_local_packs(
     locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
     for archive in artifacts.glob("*.zip"):
         digest = blake3(archive.read_bytes()).hexdigest()
-        cached = artifacts / f"{digest}.zip"
+        pack, separator, version = archive.stem.rpartition("-")
+        cached = pack_archive_path(
+            artifacts,
+            "blake3:" + digest,
+            label=pack_label(pack if separator else version, version if separator else "0.0.0"),
+        )
         if archive != cached:
+            cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(archive, cached)
     for operation in ("preflight", "rebuild", "doctor"):
         pack_operation(

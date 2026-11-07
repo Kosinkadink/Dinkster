@@ -12,6 +12,7 @@ import sys
 import tarfile
 import threading
 import zipfile
+from datetime import UTC, datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 import zstandard
 from dinkster_registry import LockedPack, Lockfile, build_artifact
-from dinkster_store import object_path
+from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor import environment_artifacts
 from dinkster_supervisor.environment_artifacts import (
     acquire,
@@ -243,6 +244,7 @@ def test_acquires_only_selected_variant_dependency_locks(tmp_path: Path):
 
 
 def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_path: Path):
+    acquired_date = datetime.now(UTC).date().isoformat()
     mirror, store = tmp_path / "mirror", tmp_path / "store"
     _mirror(mirror)
     release, payloads = _release_sources(mirror)
@@ -258,27 +260,25 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
     assert len(entries) == 2
     assert acquire_sources(catalog, store, download=False) == acquired
     for entry in entries:
-        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        cached = pack_archive_path(artifacts, entry.artifact_digest)
+        assert cached == artifacts / entry.pack / f"{acquired_date}-1.0" / "pack.zip"
         assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
         cached.write_bytes(b"damaged cache")
     with pytest.raises(EnvironmentError, match="intact cached release source"):
         acquire_sources(catalog, store, download=False)
     for entry in entries:
-        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        cached = pack_archive_path(artifacts, entry.artifact_digest)
         assert cached.read_bytes() == b"damaged cache"
     acquire_sources(catalog, store)
     for entry in entries:
-        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        cached = pack_archive_path(artifacts, entry.artifact_digest)
         assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
     target = tmp_path / "target"
     target.mkdir()
     stage_generation_packs(
         target,
         Lockfile.from_record_json(lock.read_text()),
-        {
-            entry.pack: artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
-            for entry in entries
-        },
+        {entry.pack: pack_archive_path(artifacts, entry.artifact_digest) for entry in entries},
     )
     assert (target / "dinkster.lock").read_bytes() == payloads["official-packs.lock"]
     for entry in entries:

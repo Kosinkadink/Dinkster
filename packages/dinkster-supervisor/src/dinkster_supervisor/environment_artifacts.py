@@ -18,7 +18,7 @@ from typing import cast
 from urllib.parse import quote, unquote, urljoin, urlparse
 
 from blake3 import blake3
-from dinkster_store import object_path, readable_label
+from dinkster_store import object_path, pack_archive_path, pack_label, readable_label
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
@@ -661,7 +661,11 @@ def acquire_sources(
             with downloaded.open("rb") as source:
                 for chunk in iter(lambda: source.read(ENVIRONMENT_STREAM_CHUNK_BYTES), b""):
                     identity.update(chunk)
-            cached = artifacts / f"{identity.hexdigest()}.zip"
+            pack, separator, version = name.removesuffix(".zip").rpartition("-")
+            label = pack_label(pack if separator else version, version if separator else "0.0.0")
+            cached = pack_archive_path(
+                artifacts, "blake3:" + identity.hexdigest(), label=label if download else None
+            )
             if download:
                 fetch_artifact((str(release),), name, cached, sha, size)
             elif (

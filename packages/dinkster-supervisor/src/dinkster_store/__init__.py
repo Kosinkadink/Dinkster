@@ -8,6 +8,7 @@ import re
 import tempfile
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -16,6 +17,20 @@ _COMPONENT = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._+-]{0,95}")
 _RESERVED = re.compile(r"(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?", re.IGNORECASE)
 _INDEX = ".objects.json"
 _JOURNAL = ".objects.pending.json"
+
+
+def pack_label(name: str, version: str) -> str:
+    """Label a pack's first local acquisition; the index preserves it on reuse."""
+    return readable_label(
+        name, f"{datetime.now(UTC).date().isoformat()}-{version.split('+', 1)[0]}"
+    )
+
+
+def pack_archive_path(root: Path, identity: str, *, label: str | None = None) -> Path:
+    """Resolve legacy ZIP files or readable archive directories by full identity."""
+    legacy = identity.split(":", 1)[-1] + ".zip"
+    path = object_path(root, identity, label=label, legacy=legacy)
+    return path if path == root / legacy else _unlinked(path, "pack.zip")
 
 
 class StorePathError(ValueError):
