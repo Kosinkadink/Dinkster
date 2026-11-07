@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import sys
+from collections.abc import Mapping
 from fractions import Fraction
 from types import SimpleNamespace
 from typing import Any, cast
@@ -12,7 +13,15 @@ import av
 import numpy as np
 import pytest
 from aiohttp import web
-from dinkster_api.v1 import ABSENT, AUDIO_TYPE, VIDEO_TYPE
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    VIDEO_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -22,8 +31,8 @@ from dinkster_assets import (
 )
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import bind_video_value
-from dinkster_compat_comfy.video import _VideoValue
-from dinkster_nodes_media_io.video_ops import DisassembleVideo
+from dinkster_native.video import _VideoValue
+from dinkster_nodes_video.video_components import GetVideoComponents
 from dinkster_protocol import Invocation
 from dinkster_values import (
     TypeRegistry,
@@ -46,7 +55,7 @@ from dinkster_values.video_codec import validate_video_encoded
 from dinkster_video import assemble_video, disassemble_video
 from dinkster_workers import RemoteWorker
 from dinkster_workers.devices import DeviceMap
-from test_av_codec import FakeTensor
+from test_av_codec import FakeTensor, mp4_bytes
 from test_remote import TOKEN, start_service, stop_service
 from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost
 
@@ -128,10 +137,10 @@ def decoded_audio_samples(monkeypatch, tmp_path):
     return samples
 
 
-@pytest.fixture(params=["native", "comfy"])
+@pytest.fixture(params=["node", "native-value"])
 def extract_audio(request, monkeypatch):
-    if request.param == "native":
-        return lambda video: DisassembleVideo.execute(video=video)["audio"]
+    if request.param == "node":
+        return lambda video: GetVideoComponents.execute(video=video)["audio"]
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(from_numpy=FakeTensor))
     monkeypatch.setitem(
         sys.modules,
@@ -211,16 +220,14 @@ def test_extraction_callers_publish_inline_video_before_lazy_audio(
 def test_silent_video_extraction_needs_no_vault(
     monkeypatch, extract_audio, decoded_audio_samples, components
 ) -> None:
-    from test_video_runtime import _source
-
     monkeypatch.delenv("DINKSTER_ASSET_VAULT")
     video = (
         assemble_video(np.zeros((2, 2, 2, 3), np.float32), fps=2)
         if components
-        else video_from_source(_source())
+        else video_from_source(mp4_bytes())
     )
     audio = extract_audio(video)
-    assert audio is None or audio is ABSENT
+    assert audio is None
     assert disassemble_video(video)["audio"] is None
     assert decoded_audio_samples == []
 
@@ -229,16 +236,15 @@ def test_extraction_binding_preserves_standalone_silent_video_above_inline_limit
     monkeypatch, decoded_audio_samples
 ) -> None:
     import dinkster_assets.value as assets
-    from test_video_runtime import _source
 
     monkeypatch.delenv("DINKSTER_ASSET_VAULT")
-    data = _source()
+    data = mp4_bytes()
     video = video_from_source(data)
     monkeypatch.setattr(assets, "VIDEO_INLINE_LIMIT", len(data) - 1)
     with pytest.raises(AssetError, match="DINKSTER_ASSET_VAULT"):
         bind_video_value(video)
     assert bind_video_value(video, for_audio_extraction=True)["source"] is data
-    assert DisassembleVideo.execute(video=video)["audio"] is ABSENT
+    assert GetVideoComponents.execute(video=video)["audio"] is None
     assert decoded_audio_samples == []
 
 
@@ -421,7 +427,7 @@ def test_video_returns_lazy_audio_consumed_in_bounded_windows(
     monkeypatch.setattr(lazy, "_decode_source_window", bounded_window)
     with monkeypatch.context() as patch:
         patch.setattr(AssetRef, "open", lambda self: pytest.fail("unused audio source opened"))
-        result = DisassembleVideo.execute(video=value)["audio"]
+        result = disassemble_video(value)["audio"]
         assert isinstance(result, LazyAudio)
         assert result["source"] is audio["source"]
         facts = effective_audio_facts(result)
@@ -584,9 +590,50 @@ def test_nested_audio_roundtrip_binds_without_decoding(
     assert len(encoded) < 4096
 
 
+class TrimAudioFixture(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="audio-contract.trim",
+            inputs=(
+                InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),
+                InputSpec("start", TypeExpr.concrete("FLOAT")),
+                InputSpec("duration", TypeExpr.concrete("FLOAT")),
+            ),
+            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, audio: object, start: float, duration: float) -> Mapping[str, object]:
+        rate = effective_audio_facts(audio)["sample_rate"]
+        return cls.outputs(
+            audio=append_audio_edit(
+                audio,
+                {
+                    "trim": {
+                        "start_sample": round(start * rate),
+                        "sample_count": round(duration * rate),
+                    }
+                },
+            )
+        )
+
+
+class DecodeAudioFixture(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="audio-contract.decode",
+            inputs=(InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, audio: object) -> Mapping[str, object]:
+        return cls.outputs(audio=audio_window(audio, 0, effective_audio_facts(audio)["frames"]))
+
+
 def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monkeypatch) -> None:
-    from dinkster_nodes_media_io import register_media_types
-    from dinkster_nodes_media_io.audio_ops import TrimAudio
     from dinkster_values import register_core_types
 
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "producer"))
@@ -595,13 +642,21 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
     asset = cast(AssetRef, source["source"])
     with asset.open() as file:
         data = file.read()
-    expected = TrimAudio.execute(audio=source, start=0.113, duration=0.751)["audio"]
+    expected = append_audio_edit(source, {"trim": {"start_sample": 904, "sample_count": 6008}})
+    (tmp_path / "audio_contract_fixture.py").write_text(
+        "from test_audio_video_contract import TrimAudioFixture, DecodeAudioFixture\n"
+        "from dinkster_api.v1 import AUDIO_TYPE, register_audio_value_type\n"
+        "from dinkster_assets import resolver_from_env\n"
+        "NODES = (TrimAudioFixture, DecodeAudioFixture)\n"
+        "def register_types(registry):\n"
+        "    register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())\n"
+    )
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         '[pack]\nname = "audio-contract"\npublisher = "dinkster"\n'
-        'type-namespaces = ["dinkster"]\nnamespaces = ["dinkster"]\n'
-        '[pack.entry]\nnodes = "dinkster_nodes_media_io:AUDIO_OPS_NODES"\n'
-        'types = "dinkster_nodes_media_io:register_media_types"\n'
+        'namespaces = ["audio-contract"]\n'
+        '[pack.entry]\nnodes = "audio_contract_fixture:NODES"\n'
+        'types = "audio_contract_fixture:register_types"\n'
     )
 
     class AudioHost(AssetHost):
@@ -613,13 +668,12 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
 
     async def scenario() -> None:
         proc, host, port = await start_service(
-            manifest, tmp_path, "--asset-vault", str(tmp_path / "consumer")
+            manifest, tmp_path, "--asset-vault", str(tmp_path / "consumer"), pythonpath=(tmp_path,)
         )
         try:
             registry = TypeRegistry()
             register_core_types(registry)
             register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
-            register_media_types(registry)
             async with AudioHost() as endpoint:
                 worker = RemoteWorker(
                     host,
@@ -636,13 +690,13 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                         Invocation(
                             invocation_id="trim",
                             node_id="trim",
-                            node_type="dinkster.audio.trim",
+                            node_type="audio-contract.trim",
                             inputs={
                                 "audio": registry.wrap(AUDIO_TYPE, source),
                                 "start": registry.wrap("FLOAT", 0.113),
                                 "duration": registry.wrap("FLOAT", 0.751),
                             },
-                            effective_schema=worker.schemas["dinkster.audio.trim"],
+                            effective_schema=worker.schemas["audio-contract.trim"],
                         )
                     )
                     assert trimmed.error is None and trimmed.outputs is not None
@@ -653,13 +707,9 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                         Invocation(
                             invocation_id="decode",
                             node_id="decode",
-                            node_type="dinkster.audio.fade",
-                            inputs={
-                                "audio": trimmed.outputs["audio"],
-                                "fade_in_seconds": registry.wrap("FLOAT", 0.0),
-                                "fade_out_seconds": registry.wrap("FLOAT", 0.0),
-                            },
-                            effective_schema=worker.schemas["dinkster.audio.fade"],
+                            node_type="audio-contract.decode",
+                            inputs={"audio": trimmed.outputs["audio"]},
+                            effective_schema=worker.schemas["audio-contract.decode"],
                         )
                     )
                     assert decoded.error is None and decoded.outputs is not None

@@ -12,7 +12,8 @@ from functools import cache
 import numpy as np
 import pytest
 from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
-from dinkster_assets import AssetRef, digest_bytes
+from dinkster_assets import AssetRef, digest_bytes, register_video_value_type
+from dinkster_assets.audio import register_audio_value_type
 from dinkster_values import (
     TypeRegistry,
     audio_fingerprint,
@@ -30,7 +31,6 @@ from dinkster_values import (
     video_rendition_mime,
 )
 
-from dinkster.comfy_compose import register_comfy_host_types
 from tests.test_video_probe import _encode
 
 
@@ -271,17 +271,17 @@ def test_video_cost_rejects_malformed_remote_accounting(cost: object) -> None:
         validate_video_encoded(encode_video(video), metadata)
 
 
-def test_audio_crosses_between_compat_torch_and_torch_free_forms(
+def test_audio_crosses_between_native_torch_and_torch_free_forms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_compat_comfy.audio import register_audio_type
+    from dinkster_native.audio import register_audio_type
 
     fake_torch = types.ModuleType("torch")
     fake_torch.from_numpy = FakeTensor  # pyright: ignore[reportAttributeAccessIssue]
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     host = TypeRegistry()
-    register_comfy_host_types(host)
+    register_audio_value_type(host, AUDIO_TYPE)
     worker = TypeRegistry()
     register_audio_type(worker, AUDIO_TYPE)
     waveform = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(1, 2, 4)
@@ -331,7 +331,7 @@ class FakeVideoFromComponents:
 
 
 def test_pinned_component_video_defaults_to_srgb(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_compat_comfy.video import register_video_type
+    from dinkster_native.video import register_video_type
 
     input_impl = types.ModuleType("comfy_api.input_impl")
     input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
@@ -356,7 +356,7 @@ def test_pinned_component_video_defaults_to_srgb(monkeypatch: pytest.MonkeyPatch
 def test_video_crosses_between_upstream_family_and_torch_free_form(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_compat_comfy.video import register_video_type
+    from dinkster_native.video import register_video_type
 
     comfy_api = types.ModuleType("comfy_api")
     input_impl = types.ModuleType("comfy_api.input_impl")
@@ -365,7 +365,7 @@ def test_video_crosses_between_upstream_family_and_torch_free_form(
     monkeypatch.setitem(sys.modules, "comfy_api.input_impl", input_impl)
 
     host = TypeRegistry()
-    register_comfy_host_types(host)
+    register_video_value_type(host, VIDEO_TYPE)
     worker = TypeRegistry()
     register_video_type(worker, VIDEO_TYPE)
     assert worker.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
@@ -385,8 +385,8 @@ def test_video_crosses_between_upstream_family_and_torch_free_form(
     )
 
 
-def test_compat_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_compat_comfy.video import register_video_type
+def test_native_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster_native.video import register_video_type
 
     input_impl = types.ModuleType("comfy_api.input_impl")
     input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
@@ -401,11 +401,12 @@ def test_compat_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch
         worker.spec(VIDEO_TYPE).encode(UnknownVideo(mp4_bytes()))
 
 
-def test_av_registration_wiring_covers_host_and_translation() -> None:
-    from dinkster_compat_comfy.translate import CompatTranslation
+def test_av_registration_wiring_covers_host_and_native() -> None:
+    from dinkster_native.native import register_native_types
 
     host = TypeRegistry()
-    register_comfy_host_types(host)
+    register_audio_value_type(host, AUDIO_TYPE)
+    register_video_value_type(host, VIDEO_TYPE)
     assert host.spec(AUDIO_TYPE).declared_codec
     assert host.spec(VIDEO_TYPE).declared_codec
     assert host.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
@@ -425,13 +426,11 @@ def test_av_registration_wiring_covers_host_and_translation() -> None:
     assert host.render(audio_value).mime == "audio/wav"
     assert host.render(video_value).data == mp4_bytes()
 
-    translated = TypeRegistry()
-    translation = CompatTranslation()
-    translation.opaque_types.update({AUDIO_TYPE, VIDEO_TYPE})
-    translation.register_types(translated)
-    assert translated.spec(AUDIO_TYPE).declared_codec
-    assert translated.spec(VIDEO_TYPE).declared_codec
-    assert translated.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
+    native = TypeRegistry()
+    register_native_types(native)
+    assert native.spec(AUDIO_TYPE).declared_codec
+    assert native.spec(VIDEO_TYPE).declared_codec
+    assert native.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
 
 
 def test_av_preview_intent_is_explicit_on_test_owned_output_schemas() -> None:
