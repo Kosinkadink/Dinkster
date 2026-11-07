@@ -1,0 +1,30 @@
+{
+  "nodes": {
+    "dinkster.vision.depth.anything.3.da3_geometry_to_mesh": {
+      "displayName": "DA3GeometryToMesh"
+    },
+    "dinkster.vision.depth.anything.3.da3_inference": {
+      "displayName": "DA3Inference"
+    },
+    "dinkster.vision.depth.anything.3.da3_render": {
+      "displayName": "DA3Render"
+    },
+    "dinkster.vision.depth.anything.3.load_da3_model": {
+      "displayName": "LoadDA3Model"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.depth.anything.3.da3_geometry_to_mesh": [
+      "DA3GeometryToMesh"
+    ],
+    "dinkster.vision.depth.anything.3.da3_inference": [
+      "DA3Inference"
+    ],
+    "dinkster.vision.depth.anything.3.da3_render": [
+      "DA3Render"
+    ],
+    "dinkster.vision.depth.anything.3.load_da3_model": [
+      "LoadDA3Model"
+    ]
+  }
+}

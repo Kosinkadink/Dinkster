@@ -1,0 +1,24 @@
+{
+  "nodes": {
+    "dinkster.vision.sdpose.sd_pose_draw_keypoints": {
+      "displayName": "SDPoseDrawKeypoints"
+    },
+    "dinkster.vision.sdpose.sd_pose_face_b_boxes": {
+      "displayName": "SDPoseFaceBBoxes"
+    },
+    "dinkster.vision.sdpose.sd_pose_keypoint_extractor": {
+      "displayName": "SDPoseKeypointExtractor"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.sdpose.sd_pose_draw_keypoints": [
+      "SDPoseDrawKeypoints"
+    ],
+    "dinkster.vision.sdpose.sd_pose_face_b_boxes": [
+      "SDPoseFaceBBoxes"
+    ],
+    "dinkster.vision.sdpose.sd_pose_keypoint_extractor": [
+      "SDPoseKeypointExtractor"
+    ]
+  }
+}

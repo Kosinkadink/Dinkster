@@ -1,0 +1,30 @@
+{
+  "nodes": {
+    "dinkster.vision.mediapipe.load_media_pipe_face_landmarker": {
+      "displayName": "LoadMediaPipeFaceLandmarker"
+    },
+    "dinkster.vision.mediapipe.media_pipe_face_landmarker": {
+      "displayName": "MediaPipeFaceLandmarker"
+    },
+    "dinkster.vision.mediapipe.media_pipe_face_mask": {
+      "displayName": "MediaPipeFaceMask"
+    },
+    "dinkster.vision.mediapipe.media_pipe_face_mesh_visualize": {
+      "displayName": "MediaPipeFaceMeshVisualize"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.mediapipe.load_media_pipe_face_landmarker": [
+      "LoadMediaPipeFaceLandmarker"
+    ],
+    "dinkster.vision.mediapipe.media_pipe_face_landmarker": [
+      "MediaPipeFaceLandmarker"
+    ],
+    "dinkster.vision.mediapipe.media_pipe_face_mask": [
+      "MediaPipeFaceMask"
+    ],
+    "dinkster.vision.mediapipe.media_pipe_face_mesh_visualize": [
+      "MediaPipeFaceMeshVisualize"
+    ]
+  }
+}

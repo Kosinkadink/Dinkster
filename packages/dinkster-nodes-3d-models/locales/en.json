@@ -1,0 +1,90 @@
+{
+  "nodes": {
+    "dinkster.3d.models.empty_trellis2_latent_structure": {
+      "displayName": "EmptyTrellis2LatentStructure"
+    },
+    "dinkster.3d.models.pixal3_d_conditioning": {
+      "displayName": "Pixal3DConditioning"
+    },
+    "dinkster.3d.models.pixal3_d_multi_view_conditioning": {
+      "displayName": "Pixal3DMultiViewConditioning"
+    },
+    "dinkster.3d.models.trellis2_conditioning": {
+      "displayName": "Trellis2Conditioning"
+    },
+    "dinkster.3d.models.trellis2_shape_stage": {
+      "displayName": "Trellis2ShapeStage"
+    },
+    "dinkster.3d.models.trellis2_texture_stage": {
+      "displayName": "Trellis2TextureStage"
+    },
+    "dinkster.3d.models.trellis2_upsample_stage": {
+      "displayName": "Trellis2UpsampleStage"
+    },
+    "dinkster.3d.models.tripo_splat_conditioning": {
+      "displayName": "TripoSplatConditioning"
+    },
+    "dinkster.3d.models.tripo_splat_preprocess_image": {
+      "displayName": "TripoSplatPreprocessImage"
+    },
+    "dinkster.3d.models.tripo_splat_sampling_preview": {
+      "displayName": "TripoSplatSamplingPreview"
+    },
+    "dinkster.3d.models.vae_decode_tripo_splat": {
+      "displayName": "VAEDecodeTripoSplat"
+    },
+    "dinkster.3d.models.vae_decode_shape_trellis": {
+      "displayName": "VaeDecodeShapeTrellis"
+    },
+    "dinkster.3d.models.vae_decode_structure_trellis2": {
+      "displayName": "VaeDecodeStructureTrellis2"
+    },
+    "dinkster.3d.models.vae_decode_texture_trellis": {
+      "displayName": "VaeDecodeTextureTrellis"
+    }
+  },
+  "searchTerms": {
+    "dinkster.3d.models.empty_trellis2_latent_structure": [
+      "EmptyTrellis2LatentStructure"
+    ],
+    "dinkster.3d.models.pixal3_d_conditioning": [
+      "Pixal3DConditioning"
+    ],
+    "dinkster.3d.models.pixal3_d_multi_view_conditioning": [
+      "Pixal3DMultiViewConditioning"
+    ],
+    "dinkster.3d.models.trellis2_conditioning": [
+      "Trellis2Conditioning"
+    ],
+    "dinkster.3d.models.trellis2_shape_stage": [
+      "Trellis2ShapeStage"
+    ],
+    "dinkster.3d.models.trellis2_texture_stage": [
+      "Trellis2TextureStage"
+    ],
+    "dinkster.3d.models.trellis2_upsample_stage": [
+      "Trellis2UpsampleStage"
+    ],
+    "dinkster.3d.models.tripo_splat_conditioning": [
+      "TripoSplatConditioning"
+    ],
+    "dinkster.3d.models.tripo_splat_preprocess_image": [
+      "TripoSplatPreprocessImage"
+    ],
+    "dinkster.3d.models.tripo_splat_sampling_preview": [
+      "TripoSplatSamplingPreview"
+    ],
+    "dinkster.3d.models.vae_decode_tripo_splat": [
+      "VAEDecodeTripoSplat"
+    ],
+    "dinkster.3d.models.vae_decode_shape_trellis": [
+      "VaeDecodeShapeTrellis"
+    ],
+    "dinkster.3d.models.vae_decode_structure_trellis2": [
+      "VaeDecodeStructureTrellis2"
+    ],
+    "dinkster.3d.models.vae_decode_texture_trellis": [
+      "VaeDecodeTextureTrellis"
+    ]
+  }
+}
