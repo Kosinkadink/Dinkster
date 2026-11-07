@@ -9,7 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
+from dinkster_supervisor.environment_downloads import (
+    DownloadError,
+    artifact_available,
+    fetch_artifact,
+    read_metadata,
+)
 
 
 @contextmanager
@@ -22,8 +27,17 @@ def artifact_server(
     statuses: list[int] | None = None,
     responses: list[bytes] | None = None,
     ranges: list[str | None] | None = None,
+    head_path: str | None = None,
 ) -> Iterator[str]:
     class Handler(BaseHTTPRequestHandler):
+        def do_HEAD(self) -> None:  # noqa: N802
+            if head_path is None or self.path != head_path:
+                self.send_error(403)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+
         def do_GET(self) -> None:  # noqa: N802
             if ranges is not None:
                 ranges.append(self.headers.get("Range"))
@@ -78,6 +92,24 @@ def artifact_server(
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def test_availability_preserves_locked_source_query_without_writing(tmp_path: Path) -> None:
+    payload = b"locked wheel bytes"
+    destination = tmp_path / "not-created" / "wheel.whl"
+    with artifact_server(payload, head_path="/wheel.whl?signature=fixture") as mirror:
+        assert not artifact_available(
+            (mirror,), "wheel.whl", destination, digest(payload), len(payload)
+        )
+        assert artifact_available(
+            (mirror,),
+            "wheel.whl",
+            destination,
+            digest(payload),
+            len(payload),
+            source_url=mirror + "/wheel.whl?signature=fixture",
+        )
+    assert not destination.parent.exists()
 
 
 def test_falls_back_after_corrupt_local_mirror(tmp_path: Path) -> None:
