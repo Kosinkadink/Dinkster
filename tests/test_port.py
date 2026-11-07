@@ -23,11 +23,10 @@ from types import ModuleType
 from typing import cast
 
 import pytest
+from dinkster.port import PortError, generate_pack, main
 from dinkster_api.v1 import BooleanWidget, ComboWidget, Node, TypeExpr, TypeRegistry
 from dinkster_compat_comfy.port_probe import probe_pack
 from dinkster_workers.doctor import diagnose, render_text
-
-from dinkster.port import PortError, generate_pack, main
 
 # --- pack scaffolding ----------------------------------------------------
 

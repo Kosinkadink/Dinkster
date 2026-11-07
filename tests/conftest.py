@@ -113,10 +113,10 @@ def shm_segments(monkeypatch: pytest.MonkeyPatch) -> set[str]:
 
 @pytest.fixture(scope="session")
 def installed_default_catalogs(tmp_path_factory: pytest.TempPathFactory) -> None:
+    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster_workers import diagnose, load_manifest
     from dinkster_workers.catalog import read_catalog
 
-    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster.compose import default_pack_specs
 
     for spec in (*default_pack_specs(), *comfy_compat_specs()):

@@ -453,9 +453,8 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
     import io
 
     import numpy as np
-    from PIL import Image
-
     from dinkster.comfy_compose import register_comfy_host_types
+    from PIL import Image
 
     pixels = np.zeros((3, 5, 3), dtype=np.uint8)
     pixels[..., 1] = 255
@@ -2294,9 +2293,8 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
 
 
 def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_nodes_comfy import COMFY_NODES
-
     from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster_nodes_comfy import COMFY_NODES
 
     monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
 
@@ -2324,9 +2322,8 @@ def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.Monk
 def test_rootless_native_runtime_configuration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
 ) -> None:
-    from dinkster_workers import SingleJobMultiGpuConfig
-
     from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster_workers import SingleJobMultiGpuConfig
 
     monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/environment/python")
     specs = comfy_compat_specs(
@@ -3225,8 +3222,9 @@ def test_comfy_compat_specs_carry_host_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The combined core and legacy worker installs the comfy host types."""
-    from dinkster import comfy_compose
     from dinkster.comfy_compose import comfy_compat_specs, register_comfy_host_types
+
+    from dinkster import comfy_compose
 
     (tmp_path / "legacy-pack").mkdir()
     monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", lambda _interpreter: None)
@@ -4034,8 +4032,9 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     """Pure spec construction: no ComfyUI needed. The core worker
     attributes everything to 'comfy'; legacy nodes attribute per pack by
     the same namespace rule legacy.py applies, longest prefix first."""
-    from dinkster import comfy_compose
     from dinkster.comfy_compose import comfy_compat_specs
+
+    from dinkster import comfy_compose
 
     root = tmp_path / "ComfyUI"
     root.mkdir()
@@ -4178,10 +4177,9 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_comfy_host_types_register_save_target_runtime_values() -> None:
+    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_assets import SAVE_TARGET_TYPE, AssetError, SaveTarget
     from dinkster_values import TypeRegistry
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     registry = TypeRegistry()
     register_comfy_host_types(registry)

@@ -6452,12 +6452,11 @@ def test_values_endpoint_layer_document_rendition(
     type_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import numpy as np
+    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_graph import TypedLiteral
     from dinkster_image_document.document import ImageDocument
     from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
     from dinkster_nodes_image import AddLayer, register_image_types
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     pixels = np.array([[[[1, 0, 0, 1], [0, 1, 0, 0.5]]]], dtype=np.float32)
     expected = cast(ImageDocument, AddLayer.execute(image=pixels)["layers"]).data
@@ -6565,7 +6564,6 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
     import struct
 
     import numpy as np
-
     from dinkster.comfy_compose import COMFY_IMAGE_TYPE, register_comfy_host_types
 
     class CompatImage(Node):
@@ -6638,10 +6636,9 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
+    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_api.v1 import VIDEO_TYPE
     from dinkster_nodes_media_io.video_ops import AssembleVideo
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     class ComponentVideo(Node):
         @classmethod
@@ -6702,9 +6699,9 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     import struct
 
     import numpy as np
+    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 
-    from dinkster.comfy_compose import register_comfy_host_types
     from tests.test_video_probe import _encode
 
     mp4 = _encode("mp4", "libx264", "yuv420p")
@@ -6900,6 +6897,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     dinkster.save_image input contract: both its advertised default and an
     explicit graph value arrive as validated SaveTarget values and produce
     digest-addressed asset receipts."""
+    from dinkster.comfy_compose import register_comfy_host_types
     from dinkster_assets import (
         ASSET_TYPE,
         SAVE_TARGET_TYPE,
@@ -6911,8 +6909,6 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     )
     from dinkster_nodes_foundation import StringPrimitive
     from dinkster_nodes_media_io import SetSaveTargetPrefix, register_media_types
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     output_root = tmp_path / "output"
     output_root.mkdir()

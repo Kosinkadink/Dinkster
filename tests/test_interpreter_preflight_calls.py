@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from dinkster.port import PortError
 from dinkster_values import TypeRegistry
 from dinkster_workers import doctor, isolated, provision
 from dinkster_workers.interpreter import InterpreterPreflightError
@@ -13,7 +14,6 @@ from dinkster_workers.provision import ProvisionError
 
 from dinkster import comfy_compose, port
 from dinkster.compose import CompositionError
-from dinkster.port import PortError
 from tests.async_scenarios import run_scenario
 
 

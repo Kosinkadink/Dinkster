@@ -43,9 +43,9 @@ def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatc
 
 
 async def _default_pack_names() -> tuple[str, ...]:
+    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster_workers import load_manifest
 
-    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster.compose import ServingComposer, default_pack_specs, model_pack_specs
 
     composer = ServingComposer()
@@ -3298,10 +3298,10 @@ def test_degraded_default_ordering_composes_media_io_before_image(
 
 
 def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> None:
+    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
-    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster.compose import PackSpec, ServingComposer, default_pack_specs, model_pack_specs
 
     broken = tmp_path / "ordering-probe"
