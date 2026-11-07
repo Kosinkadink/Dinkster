@@ -64,7 +64,6 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             "mounts",
             "cache",
             "generations/1",
-            "generations/2",
             "generations/3",
         )
         for p in (tmp_path / name).rglob("*")
@@ -128,6 +127,10 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
             connection, _ = listener.accept()
             connection.settimeout(10)
             assert connection.recv(5) == b"ready"
+            # Worker imports may refresh interpreter bytecode before collection begins.
+            protected.update(
+                {p: p.read_bytes() for p in (tmp_path / "generations/2").rglob("*") if p.is_file()}
+            )
             binding = tmp_path / "runtime/2/old.json"
             binding_bytes = binding.read_bytes()
             code, refused = _run(tmp_path, command, "--yes")
