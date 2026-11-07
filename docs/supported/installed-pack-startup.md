@@ -232,6 +232,12 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env cleanup --plan` reports retained, candidate and deferred
+  generation numbers with reasons without recovering or modifying the project.
+  Status includes the same preview and visible pending quarantine warnings.
+  Candidate status does not authorize deletion without durable software history.
+  Managed interpreter acquisition is serialized against generation collection;
+  pending launches and unproven child cleanup retain the generation.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs

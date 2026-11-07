@@ -11,7 +11,7 @@ from typing import cast
 
 from .environment_constraints import requirement_hashes
 from .environment_generations import pack_operation
-from .environment_runtime import engine_assignments
+from .environment_runtime import generation_runtime_lock, generation_runtime_reason
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -204,10 +204,100 @@ def collection_plan(root: Path) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
             raise EnvironmentError("collection refuses linked or non-directory generation trees")
         number = int(path.name)
         if number not in retained:
-            if any(binding["running"] for binding in engine_assignments(root, number)):
-                raise EnvironmentError(f"generation {number} has a live engine; stop it before gc")
+            reason = generation_runtime_reason(root, number)
+            if reason is not None:
+                raise EnvironmentError(f"generation {number} retained: {reason}")
             collected.append(number)
     return current, tuple(sorted(retained)), tuple(sorted(collected))
+
+
+def collection_preview(root: Path) -> dict[str, object]:
+    """Observe generation safety without locking, recovering or authorizing deletion."""
+    directory = root / "generations"
+    if directory.is_symlink() or directory.is_junction():
+        raise EnvironmentError("collection refuses a linked generations directory")
+    current = read_current(root)
+    if current is None:
+        raise EnvironmentError("project has no active generation")
+    journal_directory = root / "journal"
+    if journal_directory.is_symlink() or journal_directory.is_junction():
+        raise EnvironmentError("collection refuses linked journals")
+    journals: list[tuple[Path, Journal]] = []
+    for path in sorted(journal_directory.glob("*.json")):
+        if path.is_symlink():
+            raise EnvironmentError("collection refuses linked journals")
+        journals.append((path, Journal.read(path)))
+    previous = previous_activation(root, current)
+    predecessor = previous.previous if previous is not None else None
+    warnings: list[str] = []
+    if any(journal.incomplete for _, journal in journals):
+        warnings.append("pending environment operation requires recovery")
+    if not any(
+        journal.stage == "complete"
+        and journal.operation in {"setup", "update", "rollback", "repair", "restore"}
+        and journal.target == current
+        for _, journal in journals
+    ):
+        warnings.append("current generation has no committed activation record")
+    quarantine: list[dict[str, object]] = []
+    for path, journal in journals:
+        if journal.operation == "gc" and journal.stage in {"complete", "planned", "building"}:
+            parked = _quarantine(root, path)
+            numbers = [
+                number
+                for number in journal.collected_generations
+                if (parked / str(number)).exists()
+            ]
+            if numbers:
+                quarantine.append(
+                    {"journal": path.name, "stage": journal.stage, "generations": numbers}
+                )
+                warnings.append(
+                    f"collection {path.stem} has quarantined generations "
+                    "awaiting recovery or cleanup"
+                )
+    rows: list[dict[str, object]] = []
+    present: set[int] = set()
+    for tree in sorted(directory.iterdir()):
+        if not tree.name.isdecimal() or str(int(tree.name)) != tree.name or int(tree.name) < 1:
+            raise EnvironmentError("generation directory must have a positive canonical number")
+        number = int(tree.name)
+        present.add(number)
+        reasons: list[str] = []
+        state = "candidate"
+        if number == current:
+            state, reasons = "retained", ["current activation"]
+        elif number == predecessor:
+            state, reasons = "retained", ["previous successful activation"]
+        try:
+            if tree.is_symlink() or tree.is_junction() or not tree.is_dir():
+                raise EnvironmentError("generation tree must be an unlinked directory")
+            if Generation.read(tree / "generation.json").number != number:
+                raise EnvironmentError("generation directory and recorded number disagree")
+            reason = generation_runtime_reason(root, number)
+            if reason is not None:
+                state = "retained"
+                reasons.append(reason)
+        except (OSError, ValueError) as exc:
+            state = "deferred"
+            reasons.append(str(exc))
+        if warnings and state == "candidate":
+            state = "deferred"
+            reasons.extend(warnings)
+        if state == "candidate":
+            reasons.append(
+                "outside current and previous; durable history coverage required "
+                "before automatic deletion"
+            )
+        rows.append({"generation": number, "status": state, "reasons": reasons})
+    if current not in present or (predecessor is not None and predecessor not in present):
+        raise EnvironmentError("current or previous generation tree is missing")
+    return {
+        "current": current,
+        "generations": rows,
+        "quarantine": quarantine,
+        "warnings": warnings,
+    }
 
 
 def _quarantine(root: Path, path: Path) -> Path:
@@ -274,6 +364,17 @@ def collect_generations(
     store_paths: tuple[str, ...] = (),
 ) -> None:
     """Caller holds the project lock and has recovered all pending operations."""
+    with generation_runtime_lock(root):
+        _collect_generations(root, approved, store=store, store_paths=store_paths)
+
+
+def _collect_generations(
+    root: Path,
+    approved: tuple[int, tuple[int, ...], tuple[int, ...]],
+    *,
+    store: Path | None,
+    store_paths: tuple[str, ...],
+) -> None:
     if collection_plan(root) != approved:
         raise EnvironmentError("generation collection changed after planning; request a new plan")
     if store is not None and store_collection_plan(root, store, approved[2]) != store_paths:

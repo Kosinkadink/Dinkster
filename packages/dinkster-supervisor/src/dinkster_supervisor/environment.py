@@ -18,6 +18,7 @@ from .environment_collection import (
     cleanup_collection,
     collect_generations,
     collection_plan,
+    collection_preview,
     recover_collection,
     recover_store_collection,
     store_collection_plan,
@@ -153,6 +154,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             variant=settings["variant"] if settings else None,
             engines=list(engine_status(root)),
         )
+        if current is not None:
+            try:
+                result["cleanup"] = collection_preview(root)
+            except (OSError, ValueError) as exc:
+                result["cleanup"] = {"warnings": [str(exc)], "generations": [], "quarantine": []}
     elif args.operation == "doctor":
         if current is None:
             raise EnvironmentError("project has no active generation")
@@ -1064,6 +1070,8 @@ def main() -> None:
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
+    cleanup = commands.add_parser("cleanup", help="preview generation retention without mutation")
+    cleanup.add_argument("--plan", action="store_true", help="inspect without mutation")
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
@@ -1073,7 +1081,20 @@ def main() -> None:
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (tools, catalog, status, doctor, setup, update, start, stop, rollback, gc, move):
+    for command in (
+        tools,
+        catalog,
+        status,
+        doctor,
+        setup,
+        update,
+        start,
+        stop,
+        rollback,
+        gc,
+        cleanup,
+        move,
+    ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -1108,6 +1129,20 @@ def main() -> None:
             code = _rollback(args, result)
         elif args.operation == "gc":
             code = _gc(args, result)
+        elif args.operation == "cleanup":
+            preview = collection_preview(args.root)
+            result.update(
+                cleanup=preview,
+                current=preview["current"],
+                status="planned",
+                plan=[
+                    f"generation {row['generation']}: {row['status']}: "
+                    + "; ".join(cast("list[str]", row["reasons"]))
+                    for row in cast("list[dict[str, object]]", preview["generations"])
+                ]
+                + cast("list[str]", preview["warnings"]),
+            )
+            code = 0
         elif args.operation == "move":
             code = _move(args, result)
         elif args.operation in {"start", "stop"}:

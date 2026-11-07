@@ -10,17 +10,29 @@ import secrets
 import subprocess
 import sys
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from .environment_process import cancel_pending_process, prepare_process, process_state
-from .environment_state import EnvironmentError, Generation, atomic_write, interpreter, read_current
+from .environment_state import (
+    EnvironmentError,
+    Generation,
+    atomic_write,
+    interpreter,
+    read_current,
+    read_document,
+    writer_lock,
+)
 
 __all__ = [
     "engine_assignments",
     "engine_status",
+    "generation_runtime_lock",
+    "generation_runtime_reason",
     "preserve_stopped_engine",
     "require_idle",
     "start_engine",
@@ -35,6 +47,17 @@ _STARTUP_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.05
 
 
+@contextmanager
+def generation_runtime_lock(root: Path) -> Generator[None]:
+    """Serialize interpreter acquisition with collection, including direct runtime callers."""
+    runtime = root / "runtime"
+    if runtime.is_symlink() or runtime.is_junction():
+        raise EnvironmentError("runtime must not be linked")
+    runtime.mkdir(exist_ok=True)
+    with writer_lock(runtime):
+        yield
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -44,6 +67,13 @@ def start_engine(
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
+    with generation_runtime_lock(root):
+        return _start_engine(root, generation, name, port, gpus)
+
+
+def _start_engine(
+    root: Path, generation: int, name: str, port: int, gpus: tuple[str, ...]
+) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
     Generation.read(target / "generation.json")
@@ -115,6 +145,7 @@ def start_engine(
         try:
             process = subprocess.Popen(command, cwd=root, env=environment, stdout=log, stderr=log)
         except OSError:
+            cancel_pending_process(lifecycle, instance)
             record["state"] = "stopped"
             _write_record(root, name, record)
             raise
@@ -223,6 +254,42 @@ def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def generation_runtime_reason(root: Path, generation: int) -> str | None:
+    """A supervisor may restart its child even while its HTTP engine status is stopped."""
+    directory = root / "runtime" / str(generation)
+    for path in (directory.parent, directory):
+        if path.is_symlink() or path.is_junction():
+            raise EnvironmentError("collection refuses linked runtime records")
+    for path in sorted(directory.glob("*.json")):
+        if path.is_symlink() or path.is_junction():
+            raise EnvironmentError("collection refuses linked runtime records")
+        record = _parse_record(path)
+        lifecycle = cast("Path", record["_processState"])
+        if not lifecycle.is_dir():
+            return "managed engine has no child-cleanup receipt"
+    for processes in sorted(directory.glob("*.process")):
+        if processes.is_symlink() or processes.is_junction() or not processes.is_dir():
+            raise EnvironmentError("collection refuses linked lifecycle records")
+        for lifecycle in sorted(processes.iterdir()):
+            if lifecycle.is_symlink() or lifecycle.is_junction() or not lifecycle.is_dir():
+                raise EnvironmentError("collection refuses linked lifecycle records")
+            state_path = lifecycle / "state.json"
+            if state_path.is_symlink():
+                raise EnvironmentError("collection refuses linked lifecycle state")
+            instance = read_document(state_path).get("instance")
+            if (
+                not isinstance(instance, str)
+                or not instance
+                or (lifecycle.name != hashlib.sha256(instance.encode()).hexdigest())
+            ):
+                raise EnvironmentError("lifecycle directory and instance disagree")
+            if process_state(lifecycle, instance) not in {"stopped", "cancelled"}:
+                return "managed supervisor is live or its child cleanup is unproven"
+    if any(binding["running"] for binding in engine_assignments(root, generation)):
+        return "live managed engine"
+    return None
 
 
 def preserve_stopped_engine(root: Path, name: str, previous: int, target: int, port: int) -> None:

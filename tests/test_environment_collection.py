@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 
 import pytest
 from dinkster_supervisor.environment_state import (
@@ -17,6 +20,141 @@ from dinkster_supervisor.environment_state import (
 )
 from test_environment_cli import _run
 from test_environment_state import _generation
+
+
+@pytest.mark.parametrize(
+    "condition", [None, "pending", "ambiguous", "quarantine", "corrupt-journal"]
+)
+def test_cleanup_preview_and_status_are_read_only_and_explain_retention(
+    tmp_path: Path, condition: str | None
+):
+    for number in (1, 2, 3, 7):
+        _generation(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 1, 3, "complete").write(tmp_path / "journal/100.json")
+    Journal("update", 3, 7, "rolled-back").write(tmp_path / "journal/200.json")
+    for name in ("workflows", "models", "outputs", "mounts", "history"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "sentinel").write_text(name)
+    if condition == "pending":
+        Journal("update", 3, 9, "planned").write(tmp_path / "journal/300.json")
+    elif condition == "ambiguous":
+        directory = tmp_path / "runtime/2"
+        directory.mkdir(parents=True)
+        (directory / "old.json").write_text("{}")
+    elif condition == "quarantine":
+        directory = tmp_path / ".garbage/300"
+        directory.mkdir(parents=True)
+        (tmp_path / "generations/7").rename(directory / "7")
+        Journal("gc", 3, 3, "complete", collected_generations=(7,)).write(
+            tmp_path / "journal/300.json"
+        )
+    elif condition == "corrupt-journal":
+        (tmp_path / "journal/300.json").write_text("broken")
+    before = {
+        p.relative_to(tmp_path): content_digest(p) for p in tmp_path.rglob("*") if p.is_file()
+    }
+    code, preview = _run(tmp_path, "cleanup", "--plan")
+    status_code, status = _run(tmp_path, "status")
+    if condition == "corrupt-journal":
+        assert code == 1 and "cannot read 300.json" in preview["error"], preview
+        assert status_code == 1 and status["status"] == "error", status
+        assert "cannot read 300.json" in status["error"]
+    else:
+        assert status_code == 0 and status["status"] == "clean", status
+        assert code == 0 and preview["status"] == "planned", preview
+        assert status["cleanup"] == preview["cleanup"]
+        rows = {row["generation"]: row for row in preview["cleanup"]["generations"]}
+        assert rows[1]["reasons"] == ["previous successful activation"]
+        assert rows[3]["reasons"] == ["current activation"]
+        assert rows[2]["status"] == ("candidate" if condition is None else "deferred")
+        if condition == "ambiguous":
+            assert "invalid" in rows[2]["reasons"][0]
+            assert rows[7]["status"] == "candidate"
+        elif condition == "pending":
+            assert rows[7]["status"] == "deferred"
+            assert "requires recovery" in rows[7]["reasons"][0]
+        elif condition == "quarantine":
+            assert preview["cleanup"]["quarantine"] == [
+                {"journal": "300.json", "stage": "complete", "generations": [7]}
+            ]
+        else:
+            assert "history coverage required" in rows[2]["reasons"][0]
+    assert {
+        p.relative_to(tmp_path): content_digest(p) for p in tmp_path.rglob("*") if p.is_file()
+    } == before
+    assert not (tmp_path / ".lock").exists()
+    assert not (tmp_path / "runtime/.lock").exists()
+
+
+def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: Path):
+    from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
+
+    for number in (1, 2, 3):
+        _generation(tmp_path, number)
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    instance = "unpublished-launch"
+    lifecycle = tmp_path / "runtime/1/old.process" / hashlib.sha256(instance.encode()).hexdigest()
+    prepare_process(lifecycle, instance)
+    code, refused = _run(tmp_path, "gc", "--yes")
+    assert code == 1 and "child cleanup is unproven" in refused["error"], refused
+    assert (tmp_path / "generations/1/generation.json").is_file()
+    assert not cancel_pending_process(lifecycle, instance)
+    code, applied = _run(tmp_path, "gc", "--yes")
+    assert code == 0 and applied["status"] == "applied", applied
+    assert not (tmp_path / "generations/1").exists()
+
+
+def test_collection_defers_while_an_old_generation_is_being_acquired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+
+    for number in (1, 2, 3):
+        _generation(tmp_path, number)
+    python = interpreter(tmp_path / "generations/1")
+    python.parent.mkdir(exist_ok=True)
+    python.write_bytes(b"unused fixture interpreter")
+    (tmp_path / "current").write_text("3\n")
+    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    entered, release = Event(), Event()
+    prepare = runtime.prepare_process
+    launch = subprocess.Popen
+
+    def acquiring(directory, instance):
+        entered.set()
+        assert release.wait(20), "test did not release the acquiring engine"
+        prepare(directory, instance)
+
+    def cancel_launch(command, **kwargs):
+        if "dinkster_supervisor.supervisor" in command:
+            raise OSError("fixture did not launch a process")
+        return launch(command, **kwargs)
+
+    monkeypatch.setattr(runtime, "prepare_process", acquiring)
+    monkeypatch.setattr(runtime.subprocess, "Popen", cancel_launch)
+    with ThreadPoolExecutor(max_workers=1) as threads:
+        pending = threads.submit(runtime.start_engine, tmp_path, 1, "old", 3639)
+        try:
+            assert entered.wait(20), "engine did not reach acquisition"
+            code, refused = _run(tmp_path, "gc", "--yes")
+            assert code == 1 and "another environment writer holds" in refused["error"], refused
+            assert (tmp_path / "generations/1/generation.json").is_file()
+            assert not list((tmp_path / ".garbage").glob("*"))
+        finally:
+            release.set()
+        with pytest.raises(OSError, match="fixture did not launch"):
+            pending.result(timeout=20)
+    code, applied = _run(tmp_path, "gc", "--yes")
+    assert code == 0 and applied["status"] == "applied", applied
+    assert not (tmp_path / "generations/1").exists()
+    assert (tmp_path / "generations/2/generation.json").is_file()
+    assert (tmp_path / "generations/3/generation.json").is_file()
+    with pytest.raises(EnvironmentError, match="cannot read generation.json"):
+        runtime.start_engine(tmp_path, 1, "old", 3639)
 
 
 @pytest.mark.parametrize(

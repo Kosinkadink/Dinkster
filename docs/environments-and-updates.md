@@ -523,6 +523,26 @@ Incomplete collection restores quarantined trees before another confirmed
 operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
 bindings refuse collection. Previously published generation numbers are not reused.
 
+`dinkster-env --root /absolute/project cleanup --plan --json` reports a
+read-only generation safety preview. `status --json` includes the same
+`cleanup` object: `current`, `generations` (generation number, status and
+reasons), `quarantine` (journal, stage and generation numbers), and `warnings`.
+Rows distinguish retained generations, candidates outside current/previous,
+and deferred records. A candidate is not authorization for automatic deletion:
+durable software-history coverage must also be established before pruning.
+The preview never recovers operations, captures history, acquires writer
+locks, removes trash, or changes project settings. Corrupt records report a
+reason rather than granting permission to delete. Committed quarantine stays
+visible until cleanup succeeds.
+
+Interpreter acquisition and collection share a runtime admission lock in
+addition to the existing project transaction lock. A pending launch protects
+its generation even if the caller exits before publishing its engine binding.
+Collection requires terminal child-cleanup or launch-cancellation receipts for
+all recorded launch attempts; a missing receipt retains the tree. A live
+supervisor can restart its engine, so its generation remains protected even
+when its current HTTP engine status is stopped.
+
 Shared-store collection preserves the bases, engine caches and hashed wheels of
 every extant generation in registered projects, except this project's approved
 obsolete trees. Missing projects, unreadable constraints/dependency locks or linked
