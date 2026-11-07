@@ -147,7 +147,11 @@ def scenario(output: Path, changed_base: bool) -> dict[str, Any]:
     variant = "windows-cpu" if os.name == "nt" else "linux-cpu"
     fixture = build(output, variant, port)
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
-    environment = {**os.environ, "XDG_DATA_HOME": str(output / "user-data")}
+    environment = {
+        **os.environ,
+        "XDG_DATA_HOME": str(output / "user-data"),
+        "LOCALAPPDATA": str(output / "user-data"),
+    }
     command = [sys.executable, "-m", "dinkster_supervisor.environment", "--root", str(root)]
 
     def run(*arguments: str) -> dict[str, Any]:
