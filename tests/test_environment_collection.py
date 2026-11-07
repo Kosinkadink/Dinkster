@@ -738,31 +738,62 @@ def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
     assert {p: p.read_bytes() for p in (root / "history").glob("*.json")} == receipts
 
 
-@pytest.mark.parametrize("pending", [False, True])
-def test_cleanup_publishes_only_completed_activation_history(cleanup_project: Path, pending: bool):
+@pytest.mark.parametrize("fault", [None, "pending", "conflicting", "unreadable"])
+def test_cleanup_publishes_only_completed_activation_history(
+    cleanup_project: Path, fault: str | None
+):
     root = cleanup_project
     receipt = root / "history/00000000000000000004.json"
     expected = receipt.read_bytes()
     receipt.unlink()
     journal = root / "journal/400.json"
-    if pending:
+    original_journal = journal.read_bytes()
+    if fault == "pending":
         replace(Journal.read(journal), stage="switching").write(journal)
+    elif fault == "conflicting":
+        conflicting = json.loads(expected)
+        conflicting["reason"] = "conflicting receipt must not be replaced"
+        write_document(receipt, conflicting)
+    elif fault == "unreadable":
+        receipt.mkdir()
     protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     code, result = _run(root, "cleanup", "--yes")
-    assert code == 0 and result["status"] == ("deferred" if pending else "complete"), result
-    if pending:
-        assert not receipt.exists()
+    assert code == 0 and result["status"] == ("deferred" if fault else "complete"), result
+    if fault:
+        assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "2", "3", "7"]
         assert {p: p.read_bytes() for p in protected} == protected
-        assert "requires recovery" in result["cleanupAttempt"]["warnings"][0]
-    else:
-        assert receipt.read_bytes() == expected
-        assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
-        protected = {
-            p: data
-            for p, data in protected.items()
-            if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
-        }
-        assert {p: p.read_bytes() for p in protected} == protected
+        assert result["cleanupAttempt"]["warnings"], result
+        if fault == "pending":
+            assert not receipt.exists()
+            assert "requires recovery" in result["cleanupAttempt"]["warnings"][0]
+        elif fault == "conflicting":
+            assert "cannot replace" in result["cleanupAttempt"]["warnings"][0]
+        else:
+            assert receipt.is_dir()
+        before_status = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        code, status = _run(root, "status")
+        assert code == 0, status
+        assert status["cleanup"]["lastAttempt"] == result["cleanupAttempt"]
+        assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before_status
+        if fault == "pending":
+            journal.write_bytes(original_journal)
+            protected[journal] = original_journal
+        elif fault == "conflicting":
+            receipt.write_bytes(expected)
+            protected[receipt] = expected
+        else:
+            receipt.rmdir()
+        code, result = _run(root, "cleanup", "--yes")
+        assert code == 0 and result["status"] == "complete", result
+        assert result["cleanupAttempt"]["warnings"] == []
+    assert receipt.read_bytes() == expected
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    protected = {
+        p: data
+        for p, data in protected.items()
+        if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
+    }
+    assert {p: p.read_bytes() for p in protected} == protected
 
 
 @pytest.mark.parametrize(
