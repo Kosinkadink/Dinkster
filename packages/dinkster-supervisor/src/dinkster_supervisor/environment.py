@@ -41,7 +41,7 @@ from .environment_generations import (
     stage_pack_sources,
     verify_base_inputs,
 )
-from .environment_history import attempts, history
+from .environment_history import activation_entries, attempts, history
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -995,7 +995,7 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
         current = read_current(root)
         if current is None:
             raise EnvironmentError("project has no active generation")
-        entries = history(root)
+        entries = activation_entries(root)
         if len(entries) < 2:
             raise EnvironmentError("project has no previous successful history entry")
         if entries[-1]["generation"] != current:

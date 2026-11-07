@@ -12,14 +12,211 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_supervisor.environment_history import history, prepare_entry, publish_entry
+from dinkster_supervisor.environment_history import (
+    activation_entries,
+    history,
+    import_generation,
+    prepare_entry,
+    publish_entry,
+)
 from dinkster_supervisor.environment_runtime import engine_status
-from dinkster_supervisor.environment_state import EnvironmentError, Generation
+from dinkster_supervisor.environment_state import (
+    EnvironmentError,
+    Generation,
+    Journal,
+    content_digest,
+    interpreter,
+    set_current,
+    writer_lock,
+)
 from test_environment_cli import _run
 from test_environment_runtime import free_port
 from test_environment_state import _generation
 
 from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
+
+
+@pytest.mark.parametrize("existing_history", [False, True])
+def test_legacy_import_preserves_activation_selection_and_refuses_conflicting_capture(
+    tmp_path: Path, existing_history: bool
+):
+    (tmp_path / "journal").mkdir()
+    for operation, previous, number in ((10, None, 7), (20, 7, 2), (30, 2, 9)):
+        tree = _generation(tmp_path, number).parent
+        python = interpreter(tree)
+        python.parent.mkdir(exist_ok=True)
+        python.write_bytes(b"sealed interpreter fixture")
+        record = Generation.read(tree / "generation.json")
+        replace(
+            record,
+            engine_version=f"0.3.{number}",
+            files=(*record.files, (python.relative_to(tree).as_posix(), content_digest(python))),
+        ).write(tree / "generation.json")
+        entry = None
+        if existing_history and number != 7:
+            entry = prepare_entry(tmp_path, tree, operation=str(operation), reason="update")
+            publish_entry(tmp_path, entry)
+        Journal(
+            "setup" if previous is None else "update",
+            previous,
+            number,
+            "complete",
+            history_entry=entry,
+        ).write(tmp_path / "journal" / f"{operation}.json")
+    set_current(tmp_path, 9)
+    old_entries = {path: path.read_bytes() for path in (tmp_path / "history").glob("*.json")}
+    with writer_lock(tmp_path):
+        imported = import_generation(tmp_path, 7)
+        assert import_generation(tmp_path, 7) == imported
+    assert imported["kind"] == "import" and imported["reason"] == "legacy-import"
+    assert imported["generation"] == 7 and imported["operation"] == "10"
+    assert cast("dict", imported["snapshot"])["tools"] == {"version": "unknown"}
+    assert cast("dict", imported["snapshot"])["host"] == {
+        "system": "unknown",
+        "machine": "unknown",
+        "python": "unknown",
+    }
+    assert imported["provenance"] == {
+        "journal": "10",
+        "digest": content_digest(tmp_path / "journal/10.json"),
+        "operation": "setup",
+        "previous": None,
+        "target": 7,
+        "stage": "complete",
+    }
+    assert [entry["generation"] for entry in activation_entries(tmp_path)] == (
+        [2, 9] if existing_history else []
+    )
+    assert (tmp_path / "current").read_bytes() == b"9\n"
+    assert all(path.read_bytes() == payload for path, payload in old_entries.items())
+    if existing_history:
+        assert (
+            prepare_entry(tmp_path, tmp_path / "generations/9", operation="40", reason="update")[
+                "diff"
+            ]
+            == []
+        )
+    preserved = {path: path.read_bytes() for path in (tmp_path / "history").glob("*.json")}
+    seal = tmp_path / "generations/7/generation.json"
+    original = seal.read_bytes()
+    replace(Generation.read(seal), engine_version="9.9").write(seal)
+    with (
+        writer_lock(tmp_path),
+        pytest.raises(EnvironmentError, match="conflicts with recorded software"),
+    ):
+        import_generation(tmp_path, 7)
+    seal.write_bytes(original)
+    Journal("update", 7, 2, "planned").write(tmp_path / "journal/40.json")
+    with (
+        writer_lock(tmp_path),
+        pytest.raises(EnvironmentError, match="completed operation recovery"),
+    ):
+        import_generation(tmp_path, 7)
+    (tmp_path / "journal/40.json").unlink()
+    Journal("update", 9, 7, "complete").write(tmp_path / "journal/40.json")
+    with (
+        writer_lock(tmp_path),
+        pytest.raises(EnvironmentError, match="unambiguous completed ancestry"),
+    ):
+        import_generation(tmp_path, 7)
+    (tmp_path / "journal/40.json").unlink()
+    entry = prepare_entry(tmp_path, tmp_path / "generations/9", operation="40", reason="update")
+    Journal("update", 2, 9, "complete", history_entry=entry).write(tmp_path / "journal/40.json")
+    with (
+        writer_lock(tmp_path),
+        pytest.raises(EnvironmentError, match="completed history publication"),
+    ):
+        import_generation(tmp_path, 7)
+    (tmp_path / "journal/40.json").unlink()
+    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="disconnected"):
+        import_generation(tmp_path, 5)
+    python = interpreter(tmp_path / "generations/7")
+    payload = python.read_bytes()
+    python.unlink()
+    with (
+        writer_lock(tmp_path),
+        pytest.raises(EnvironmentError, match="sealed generation interpreter"),
+    ):
+        import_generation(tmp_path, 7)
+    python.write_bytes(payload)
+    setup = tmp_path / "journal/10.json"
+    original_journal = setup.read_bytes()
+    setup.write_bytes(original_journal + b"\n")
+    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="import provenance"):
+        import_generation(tmp_path, 7)
+    setup.write_bytes(original_journal)
+    unexpected = tmp_path / "generations/7/unsealed.py"
+    unexpected.write_bytes(b"unsealed software")
+    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="intact generation seal"):
+        import_generation(tmp_path, 7)
+    unexpected.unlink()
+    (tmp_path / "generations/7/constraints.txt").write_bytes(b"changed")
+    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="intact generation seal"):
+        import_generation(tmp_path, 7)
+    assert all(path.read_bytes() == payload for path, payload in preserved.items())
+
+
+def test_imported_software_restores_after_pruning_without_becoming_rollback_predecessor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from tests.fixtures.environments.build import build
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, mirror = Path(fixture["root"]), Path(fixture["mirror"])
+    setup = fixture["commands"]["setup"]
+    code, result = _run(root, *setup[setup.index("setup") : -1])
+    assert code == 0, result
+    try:
+        legacy_snapshot = history(root)[0]["snapshot"]
+        assert _run(root, "stop", "--yes")[0] == 0
+        setup_journal = next((root / "journal").glob("*.json"))
+        replace(Journal.read(setup_journal), history_entry=None).write(setup_journal)
+        (root / "history/00000000000000000001.json").unlink()
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        code, result = _run(root, "update", "--yes")
+        assert code == 0 and result["current"] == 2, result
+        assert _run(root, "stop", "--yes")[0] == 0
+        executable_release(
+            mirror, json.loads(Path(fixture["baseManifest"]).read_bytes()), "3.0", 73
+        )
+        code, result = _run(root, "update", "--yes")
+        assert code == 0 and result["current"] == 3, result
+        assert _run(root, "stop", "--yes")[0] == 0
+        preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
+        with writer_lock(root):
+            imported = import_generation(root, 1)
+            assert import_generation(root, 1) == imported
+        assert imported["id"] == 3 and imported["kind"] == "import"
+        assert (root / "current").read_text() == "3\n"
+        assert all(path.read_bytes() == payload for path, payload in preserved.items())
+        code, result = _run(root, "rollback", "--yes")
+        assert code == 0 and result["current"] == 4, result
+        assert history(root)[-1]["restoredFrom"] == 1
+        assert Generation.read(root / "generations/4/generation.json").engine_version == "2.0"
+        assert _run(root, "stop", "--yes")[0] == 0
+        shutil.rmtree(root / "generations/1")
+        code, shown = _run(root, "history", "show", "3")
+        assert code == 0 and shown["entry"] == imported
+        code, result = _run(root, "restore", "3", "--yes")
+        assert code == 0 and result["current"] == 5 and result["exact"] is True, result
+        restored = history(root)[-1]
+        assert restored["restoredFrom"] == 3
+        assert restored["recordedTools"] == {"version": "unknown"}
+        assert {
+            key: value
+            for key, value in cast("dict", restored["snapshot"]).items()
+            if key not in {"tools", "host"}
+        } == {
+            key: value
+            for key, value in cast("dict", legacy_snapshot).items()
+            if key not in {"tools", "host"}
+        }
+        assert all(path.read_bytes() == payload for path, payload in preserved.items())
+        assert [entry["generation"] for entry in activation_entries(root)] == [2, 3, 4, 5]
+    finally:
+        _run(root, "stop", "--yes")
 
 
 def test_standalone_adoption_builds_separate_history_without_touching_old_root(

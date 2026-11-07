@@ -411,6 +411,12 @@
   generation-directory collection. Snapshots exclude workflows, models, outputs,
   libraries and mounts. Interrupted activation does not become a successful entry;
   completed activation history publication is recoverable without duplication.
+- Legacy software can be preserved as explicitly marked imports in the same
+  history without changing current software, rollback selection or activation
+  diffs. Imports require intact sealed software and unambiguous completed
+  activation ancestry; conflicting captures refuse. Their timestamps describe
+  observation, and unknown historical tools and host facts stay unknown.
+  `restore ID` accepts an imported entry after its generation tree is collected.
 - `dinkster-env restore ID` rebuilds a published software snapshot in a new
   generation after confirmation. Recorded identities are preserved; unavailable
   inputs refuse activation. Tools versions are displayed but tools are never

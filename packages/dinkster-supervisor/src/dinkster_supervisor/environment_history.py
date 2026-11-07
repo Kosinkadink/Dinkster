@@ -17,6 +17,7 @@ import packaging
 from .environment_state import (
     EnvironmentError,
     Generation,
+    Journal,
     content_digest,
     generation_number,
     interpreter,
@@ -124,8 +125,155 @@ def _changes(previous: object, current: object, field: str = "") -> list[dict[st
 
 
 def history(root: Path) -> list[dict[str, object]]:
-    """Return successful entries without consulting materialized generations."""
+    """Return activations and explicit imports without consulting generation trees."""
     return _records(root, "history")
+
+
+def activation_entries(root: Path) -> list[dict[str, object]]:
+    """Imports preserve software, but never change the active chronology."""
+    return [entry for entry in history(root) if entry.get("kind", "activation") == "activation"]
+
+
+def import_generation(root: Path, number: int) -> dict[str, object]:
+    """Capture legacy software under the caller's project writer lock or refuse.
+
+    EnvironmentError means retain/defer. Recovery and collection belong to the
+    caller; this operation only appends history after complete provenance checks.
+    """
+    generation_number(number)
+    journals: dict[str, Journal] = {}
+    directory = root / "journal"
+    if any(
+        path.is_symlink() or path.is_junction()
+        for path in (root, *root.parents, directory, root / "current")
+    ):
+        raise EnvironmentError("legacy import requires unlinked activation journals")
+    entries = history(root)
+    for path in sorted(directory.glob("*.json")):
+        if (
+            path.is_symlink()
+            or path.is_junction()
+            or not path.stem.isascii()
+            or not path.stem.isdecimal()
+        ):
+            raise EnvironmentError("legacy import requires unlinked numeric journals")
+        journal = Journal.read(path)
+        if journal.incomplete:
+            raise EnvironmentError("legacy import requires completed operation recovery")
+        if journal.operation in {"setup", "update", "rollback", "repair", "restore"}:
+            journals[path.stem] = journal
+    for journal in journals.values():
+        if journal.stage == "complete" and journal.history_entry is not None:
+            if journal.history_entry not in entries:
+                raise EnvironmentError("legacy import requires completed history publication")
+    seen: set[str] = set()
+    for entry in entries:
+        operation = entry.get("operation")
+        if not isinstance(operation, str) or operation in seen:
+            raise EnvironmentError("legacy import requires unique activation identities")
+        seen.add(operation)
+        generation_number(entry.get("generation"))
+        if (
+            cast("dict[str, object]", entry["snapshot"]).get("format")
+            != "dinkster.install-snapshot/1"
+        ):
+            raise EnvironmentError("legacy import requires supported software snapshots")
+        journal = journals.get(operation)
+        if journal is None or journal.stage != "complete" or journal.error is not None:
+            raise EnvironmentError("legacy import requires completed activation provenance")
+        if entry.get("generation") != journal.target or (
+            entry.get("kind", "activation") == "activation" and journal.history_entry != entry
+        ):
+            raise EnvironmentError("legacy import conflicts with recorded activation provenance")
+        if entry.get("kind") == "import" and entry.get("provenance") != _provenance(
+            root, operation, journal
+        ):
+            raise EnvironmentError("legacy import conflicts with recorded import provenance")
+    ancestry: dict[int, str] = {}
+    current = read_current(root)
+    while current is not None:
+        matches = [
+            (operation, journal)
+            for operation, journal in journals.items()
+            if journal.stage == "complete" and journal.error is None and journal.target == current
+        ]
+        if current in ancestry or len(matches) != 1:
+            raise EnvironmentError("legacy import requires unambiguous completed ancestry")
+        operation, journal = matches[0]
+        if (journal.previous is None) != (journal.operation == "setup"):
+            raise EnvironmentError("legacy import requires connected setup ancestry")
+        ancestry[current] = operation
+        current = journal.previous
+    operation = ancestry.get(number)
+    if operation is None:
+        raise EnvironmentError("legacy import generation is disconnected from current ancestry")
+    journal = journals[operation]
+    tree = root / "generations" / str(number)
+    seal = tree / "generation.json"
+    if any(path.is_symlink() or path.is_junction() for path in (root / "generations", tree, seal)):
+        raise EnvironmentError("legacy import requires an unlinked generation seal")
+    record = Generation.read(seal)
+    if record.number != number:
+        raise EnvironmentError("generation directory and recorded number disagree")
+    python = interpreter(tree)
+    if not python.is_file() or python.relative_to(tree).as_posix() not in dict(record.files):
+        raise EnvironmentError("legacy import requires the sealed generation interpreter")
+    for name, _ in record.files:
+        path = tree / name
+        if any(parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)):
+            raise EnvironmentError("legacy import refuses linked sealed software")
+        # User-data paths are never a legitimate software seal input.
+        if Path(name).parts[0] in {"workflows", "models", "outputs", "mounts", "user", "libraries"}:
+            raise EnvironmentError("legacy import refuses user data in a software seal")
+    if record.drift(tree):
+        raise EnvironmentError("legacy import requires an intact generation seal")
+    snapshot = capture_software(tree)
+    matching = [entry for entry in entries if entry.get("operation") == operation]
+    if matching:
+        recorded = cast("dict[str, object]", matching[0]["snapshot"])
+        if len(matching) != 1 or {
+            key: value for key, value in recorded.items() if key not in {"tools", "host"}
+        } != {key: value for key, value in snapshot.items() if key not in {"tools", "host"}}:
+            raise EnvironmentError("legacy import conflicts with recorded software")
+        return matching[0]
+    observed = {"tools": snapshot["tools"], "host": snapshot["host"]}
+    host = cast("dict[str, object]", snapshot["host"])
+    snapshot["tools"] = {"version": "unknown"}
+    snapshot["host"] = {
+        "system": "unknown",
+        "machine": "unknown",
+        "python": "unknown",
+        **({"wheelTags": host["wheelTags"]} if "wheelTags" in host else {}),
+    }
+    entry: dict[str, object] = {
+        "format": "dinkster.install-history/1",
+        "kind": "import",
+        "id": len(entries) + 1,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "operation": operation,
+        "reason": "legacy-import",
+        "generation": number,
+        "snapshot": snapshot,
+        "provenance": _provenance(root, operation, journal),
+        "observedWith": observed,
+        "diff": [],
+        "restoredFrom": None,
+        "exact": True,
+        "substitutions": [],
+    }
+    publish_entry(root, entry)
+    return entry
+
+
+def _provenance(root: Path, operation: str, journal: Journal) -> dict[str, object]:
+    return {
+        "journal": operation,
+        "digest": content_digest(root / "journal" / f"{operation}.json"),
+        "operation": journal.operation,
+        "previous": journal.previous,
+        "target": journal.target,
+        "stage": journal.stage,
+    }
 
 
 def attempts(root: Path) -> list[dict[str, object]]:
@@ -135,11 +283,11 @@ def attempts(root: Path) -> list[dict[str, object]]:
 
 def _records(root: Path, kind: str) -> list[dict[str, object]]:
     directory = root / kind
-    if directory.is_symlink():
+    if directory.is_symlink() or directory.is_junction():
         raise EnvironmentError("history must not be a symlink")
     entries: list[dict[str, object]] = []
     for path in sorted(directory.glob("*.json")):
-        if path.is_symlink():
+        if path.is_symlink() or path.is_junction():
             raise EnvironmentError("history entries must not be symlinks")
         entry = read_document(path)
         number = generation_number(entry.get("id"))
@@ -148,6 +296,10 @@ def _records(root: Path, kind: str) -> list[dict[str, object]]:
             or number != len(entries) + 1
             or entry.get("format") != f"dinkster.install-{kind}/1"
             or (kind == "history" and not isinstance(entry.get("snapshot"), dict))
+            or (
+                kind == "history"
+                and entry.get("kind", "activation") not in ("activation", "import")
+            )
         ):
             raise EnvironmentError("invalid installation history entry")
         entries.append(entry)
@@ -166,8 +318,9 @@ def prepare_entry(
     """Prepare under the project writer lock, before attempting activation."""
     entries = history(root)
     snapshot = capture_software(generation)
+    activations = activation_entries(root)
     previous: dict[str, object] = (
-        cast("dict[str, object]", entries[-1]["snapshot"]) if entries else {}
+        cast("dict[str, object]", activations[-1]["snapshot"]) if activations else {}
     )
     return {
         "format": "dinkster.install-history/1",
@@ -212,11 +365,11 @@ def record_failed_restore(root: Path, operation: str, entry_id: int, error: str)
 def _publish_record(root: Path, entry: dict[str, object], kind: str) -> None:
     number = generation_number(entry.get("id"))
     directory = root / kind
-    if directory.is_symlink():
+    if directory.is_symlink() or directory.is_junction():
         raise EnvironmentError("history must not be a symlink")
     directory.mkdir(exist_ok=True)
     destination = directory / f"{number:020d}.json"
-    if destination.is_symlink():
+    if destination.is_symlink() or destination.is_junction():
         raise EnvironmentError("history entries must not be symlinks")
     if destination.exists():
         if read_document(destination) != entry:

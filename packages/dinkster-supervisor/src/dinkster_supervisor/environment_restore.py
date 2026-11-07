@@ -17,7 +17,13 @@ from .environment_artifacts import (
 )
 from .environment_downloads import fetch_artifact
 from .environment_generations import build_generation
-from .environment_history import history, is_software_metadata, prepare_entry, record_failed_restore
+from .environment_history import (
+    activation_entries,
+    history,
+    is_software_metadata,
+    prepare_entry,
+    record_failed_restore,
+)
 from .environment_restore_plan import plan_restore
 from .environment_state import (
     Channel,
@@ -62,8 +68,11 @@ def restore_entry(
     current = read_current(root)
     if current is None:
         raise EnvironmentError("project has no active generation")
+    activations = activation_entries(root)
     if reason == "rollback" and (
-        len(entries) < 2 or entries[-1]["generation"] != current or entries[-2]["id"] != entry_id
+        len(activations) < 2
+        or activations[-1]["generation"] != current
+        or activations[-2]["id"] != entry_id
     ):
         raise EnvironmentError("rollback selection changed; inspect a new plan")
     pointer = root / "store"
