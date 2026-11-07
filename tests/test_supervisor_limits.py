@@ -13,18 +13,12 @@ from dinkster_values.limits import (
     ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
 )
 
-SUPERVISOR_SOURCE = (
-    Path(__file__).parent.parent
-    / "packages"
-    / "dinkster-supervisor"
-    / "src"
-    / "dinkster_supervisor"
-)
+SUPERVISOR_SOURCE = Path(__file__).parent.parent / "packages" / "dinkster-supervisor" / "src"
 
 
 def test_supervisor_imports_no_other_dinkster_packages() -> None:
     violations: list[tuple[str, int, str]] = []
-    for path in sorted(SUPERVISOR_SOURCE.glob("*.py")):
+    for path in sorted(SUPERVISOR_SOURCE.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             names: tuple[str, ...] = ()
@@ -36,7 +30,10 @@ def test_supervisor_imports_no_other_dinkster_packages() -> None:
                 names = (node.module,)
                 line = node.lineno
             for name in names:
-                if name.startswith("dinkster_") and not name.startswith("dinkster_supervisor"):
+                if name.startswith("dinkster_") and name.split(".", 1)[0] not in {
+                    "dinkster_supervisor",
+                    "dinkster_store",
+                }:
                     violations.append((path.name, line, name))
     assert violations == []
 
