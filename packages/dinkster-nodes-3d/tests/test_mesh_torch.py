@@ -13,9 +13,7 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_STRING,
-    LATENT_TYPE,
     MESH_TYPE,
-    VAE_TYPE,
     VOXEL_TYPE,
     InputSpec,
     Node,
@@ -31,7 +29,6 @@ from dinkster_api.v1 import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_3d.mesh import GetMeshInfo, MergeMeshes, RotateMesh
 from dinkster_nodes_3d.voxel_mesh import VoxelToMesh, VoxelToMeshBasic
-from dinkster_nodes_comfy.hunyuan3d import VAEDecodeHunyuan3D
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -279,47 +276,20 @@ def test_surface_net_small_and_empty_grids_do_not_depend_on_progress_divisors() 
     assert empty.vertices.shape == (1, 0, 3) and empty.faces.shape == (1, 0, 3)
 
 
-def test_hunyuan_decode_preserves_options_and_wraps_voxel_data() -> None:
-    class VAE:
-        def decode(self, samples: torch.Tensor, *, vae_options: dict[str, int]) -> torch.Tensor:
-            assert samples is latent
-            assert vae_options == {"num_chunks": 1234, "octree_resolution": 48}
-            return data
-
-    latent = torch.tensor([2.0, 5.0, 11.0])
-    data = torch.zeros(1, 2, 3, 4)
-    value = VAEDecodeHunyuan3D.execute(
-        samples={"samples": latent}, vae=VAE(), num_chunks=1234, octree_resolution=48
-    )["VOXEL"]
-    materialized = materialize_voxel(value)
-    assert materialized.data is data
-    assert materialized.voxel_colors is None and materialized.resolution is None
-
-
-class GeometryVAE:
-    def decode(self, samples: torch.Tensor, *, vae_options: dict[str, int]) -> torch.Tensor:
-        assert samples.tolist() == [2.0, 5.0, 11.0]
-        assert vae_options == {"num_chunks": 1234, "octree_resolution": 48}
-        data = torch.zeros(2, 2, 3, 4)
-        data[0, 0, 1, 2] = 1.0
-        data[1, 0, 1, 1] = 1.0
-        return data
-
-
 class GeometrySource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="geometry-fixture.source",
-            outputs=(
-                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
-                OutputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
-            ),
+            outputs=(OutputSpec("voxel", TypeExpr.concrete(VOXEL_TYPE)),),
         )
 
     @classmethod
     def execute(cls) -> dict[str, object]:
-        return cls.outputs(vae=GeometryVAE(), samples={"samples": torch.tensor([2.0, 5.0, 11.0])})
+        data = torch.zeros(2, 2, 3, 4)
+        data[0, 0, 1, 2] = 1.0
+        data[1, 0, 1, 1] = 1.0
+        return cls.outputs(voxel={"data": data})
 
 
 class GeometryInspect(Node):
@@ -426,23 +396,14 @@ def test_ordinary_geometry_sequence_in_both_hosts_twice(tmp_path: Path, in_proce
             graph = Graph(
                 nodes={
                     "source": GraphNode("geometry-fixture.source"),
-                    "decode": GraphNode(
-                        "VAEDecodeHunyuan3D",
-                        {
-                            "samples": Link("source", "samples"),
-                            "vae": Link("source", "vae"),
-                            "num_chunks": 1234,
-                            "octree_resolution": 48,
-                        },
-                    ),
                     "basic": GraphNode(
                         "dinkster.3d.voxel_to_mesh_basic",
-                        {"voxel": Link("decode", "VOXEL"), "threshold": 0.6},
+                        {"voxel": Link("source", "voxel"), "threshold": 0.6},
                     ),
                     "surface": GraphNode(
                         "dinkster.3d.voxel_to_mesh",
                         {
-                            "voxel": Link("decode", "VOXEL"),
+                            "voxel": Link("source", "voxel"),
                             "algorithm": "surface net",
                             "threshold": 0.6,
                         },
@@ -468,7 +429,7 @@ def test_ordinary_geometry_sequence_in_both_hosts_twice(tmp_path: Path, in_proce
                     "inspect": GraphNode(
                         "geometry-fixture.inspect",
                         {
-                            "voxel": Link("decode", "VOXEL"),
+                            "voxel": Link("source", "voxel"),
                             "basic": Link("basic", "MESH"),
                             "surface": Link("surface-info", "MESH"),
                             "rotated": Link("basic-info", "MESH"),

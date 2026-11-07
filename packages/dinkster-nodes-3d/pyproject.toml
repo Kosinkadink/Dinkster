@@ -3,7 +3,10 @@ name = "dinkster-nodes-3d"
 version = "0.0.2"
 description = "ComfyUI-origin 3d nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-image", "numpy>=1.26", "scipy>=1.11", "tqdm>=4", "numba>=0.67"]
+dependencies = ["dinkster-api", "dinkster-inference-wire", "dinkster-nodes-image", "numpy>=1.26", "scipy>=1.11", "tqdm>=4", "pillow>=10"]
+
+[project.optional-dependencies]
+numba = ["numba>=0.67"]
 
 [build-system]
 requires = ["hatchling"]
@@ -19,4 +22,5 @@ packages = ["src/dinkster_nodes_3d"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
+dinkster-inference-wire = { workspace = true }
 dinkster-nodes-image = { workspace = true }

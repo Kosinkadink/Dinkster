@@ -224,12 +224,13 @@ def test_ordinary_model_geometry_hosts_twice(tmp_path: Path, in_process: bool) -
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="moge-inference",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             engine = composer.composition.make_engine(lambda _event: None)

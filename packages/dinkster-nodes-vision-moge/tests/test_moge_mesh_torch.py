@@ -204,12 +204,13 @@ def test_moge_mesh_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> 
         try:
             for manifest in (native, fixture):
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
+                    PackSpec(manifest=manifest, in_process=True, trust_reserved=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
                         worker_group="moge-mesh-fixture",
                         group_manifests=(native, fixture),
+                        trust_reserved=True,
                     )
                 )
             nodes = {"source": GraphNode("moge-mesh-fixture.source")}

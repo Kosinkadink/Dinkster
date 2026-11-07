@@ -170,6 +170,7 @@ def test_native_manifest_preprocesses_twice(tmp_path: Path, in_process: bool) ->
                         in_process=in_process,
                         worker_group=None if in_process else "triposplat-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
@@ -372,6 +373,7 @@ def test_native_manifest_conditions_twice(tmp_path: Path, in_process: bool) -> N
                         in_process=in_process,
                         worker_group=None if in_process else "conditioning-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
@@ -570,6 +572,7 @@ def test_native_manifest_decodes_splats_twice(tmp_path: Path, in_process: bool) 
                         in_process=in_process,
                         worker_group=None if in_process else "splat-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
@@ -784,6 +787,7 @@ def test_native_manifest_sampling_preview_twice(tmp_path: Path, in_process: bool
                         in_process=in_process,
                         worker_group=None if in_process else "preview-fixture",
                         group_manifests=() if in_process else (native, fixture),
+                        trust_reserved=True,
                     )
                 )
             graph = Graph(
