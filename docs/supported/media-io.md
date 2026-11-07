@@ -177,6 +177,11 @@
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
+- Ordinary file encoding defaults to H.264 CRF 18 with the encoder's medium
+  preset and no zerolatency tuning, or AV1 CRF 24 with SVT preset 8 and one
+  logical processor without forced low-delay settings. Explicit CRF and
+  microsecond/trimmed-source timestamp handling remain available; ordinary
+  H.264 encoding disables B-frames independently of its quality settings.
 - Opt-in unedited component-video encoding preserves source H.264/AV1
   quantization, color signaling, CRF defaults, optional H.264 preset, and
   thousandth-rounded encoded frame rates without changing component values.
