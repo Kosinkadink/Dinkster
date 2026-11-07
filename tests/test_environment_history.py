@@ -245,6 +245,9 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 )
             if number == 1:
                 assert _run(root, "stop", "--yes")[0] == 0
+                (mirror / "channels/main.json").write_bytes(
+                    Path(fixture["updatedChannel"]).read_bytes()
+                )
                 code, updated = _run(
                     root,
                     "update",
@@ -259,6 +262,24 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
                 assert _run(root, "stop", "--yes")[0] == 0
                 shutil.rmtree(root / "generations/1")
+                original_release = cast("dict", first["snapshot"])["engine"]["release"]
+                current_release = Generation.read(
+                    root / "generations/2/generation.json"
+                ).engine_release
+                assert current_release != original_release
+                for entry in entries[:2]:
+                    filename = f"{entry.artifact_digest[7:]}.zip"
+                    assert (
+                        store / "engines" / current_release[7:] / "artifacts" / filename
+                    ).read_bytes() == (archives / filename).read_bytes()
+                original_archives = store / "engines" / original_release[7:] / "artifacts"
+                shutil.rmtree(original_archives)
+                corrupt_cache = store / "engines" / ("0" * 64) / "artifacts"
+                corrupt_cache.mkdir(parents=True)
+                for entry in entries[:2]:
+                    (corrupt_cache / f"{entry.artifact_digest[7:]}.zip").write_bytes(
+                        b"not the digest-pinned pack archive"
+                    )
                 approval: tuple[str, ...] = ("--yes",)
                 if replace_base:
                     snapshot = cast("dict", first["snapshot"])

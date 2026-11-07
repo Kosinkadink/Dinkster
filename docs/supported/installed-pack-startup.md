@@ -7,6 +7,9 @@
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
   not newer releases. Interrupted software restores retain a failed-attempt receipt
   while leaving successful history unchanged.
+- Restore can recover selected source archives retained by another engine release
+  when the recorded source cache was pruned. Retained bytes must match the locked
+  BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
 - Software restore rebuilds isolated and in-process pack dependencies from the
   snapshot's complete locks, including after its old generation was pruned;
   it does not inherit packs from the current generation.
