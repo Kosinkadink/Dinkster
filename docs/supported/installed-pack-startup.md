@@ -281,8 +281,8 @@
   Candidate status requires matching sealed software in published history and
   unique completed activation provenance. Missing, damaged, unpublished or
   ambiguous coverage defers the tree. Host and tools observations do not change
-  software identity. Preview never publishes or repairs history, and candidate
-  status is advisory rather than deletion authorization.
+  software identity. Preview never launches an interpreter, publishes or repairs
+  history; candidate status is advisory rather than deletion authorization.
   Managed interpreter acquisition is serialized against generation collection;
   pending launches and unproven child cleanup retain the generation.
   Stopped assignments carried across updates remain stopped and do not by

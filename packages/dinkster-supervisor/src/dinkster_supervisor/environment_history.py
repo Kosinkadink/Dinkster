@@ -46,8 +46,8 @@ def is_software_metadata(name: str) -> bool:
     )
 
 
-def capture_software(generation: Path) -> dict[str, object]:
-    """Read only sealed software metadata, never project libraries or mounts."""
+def _sealed_software(generation: Path) -> dict[str, object]:
+    """Read portable software identities without launching an interpreter."""
     record = Generation.read(generation / "generation.json")
     expected = dict(record.files)
     names = {"constraints.txt"}
@@ -63,6 +63,22 @@ def capture_software(generation: Path) -> dict[str, object]:
         ):
             raise EnvironmentError(f"snapshot requires intact software metadata: {name}")
         metadata[name] = path.read_bytes().decode("utf-8")
+    return {
+        "format": "dinkster.install-snapshot/1",
+        "engine": {"version": record.engine_version, "release": record.engine_release},
+        "base": {"id": record.base, "variant": record.variant},
+        "constraints": record.constraints,
+        "workerProtocol": record.worker_protocol,
+        "source": record.source,
+        "inProcessPacks": list(record.in_process_packs),
+        "metadata": metadata,
+    }
+
+
+def capture_software(generation: Path) -> dict[str, object]:
+    """Read sealed software and compatibility observations, never project data."""
+    snapshot = _sealed_software(generation)
+    metadata = cast("dict[str, str]", snapshot["metadata"])
     host: dict[str, object] = {
         "system": platform.system(),
         "machine": platform.machine(),
@@ -98,16 +114,9 @@ def capture_software(generation: Path) -> dict[str, object]:
             raise EnvironmentError("snapshot requires the generation's wheel compatibility tags")
         host["wheelTags"] = tags
     return {
-        "format": "dinkster.install-snapshot/1",
-        "engine": {"version": record.engine_version, "release": record.engine_release},
-        "base": {"id": record.base, "variant": record.variant},
-        "constraints": record.constraints,
-        "workerProtocol": record.worker_protocol,
-        "source": record.source,
-        "inProcessPacks": list(record.in_process_packs),
+        **snapshot,
         "tools": {"version": version("dinkster-supervisor")},
         "host": host,
-        "metadata": metadata,
     }
 
 
@@ -195,12 +204,10 @@ def generation_history_coverage(root: Path, number: int) -> int:
             raise EnvironmentError("history coverage refuses linked sealed software")
     if record.drift(tree):
         raise EnvironmentError("history coverage requires an intact generation seal")
-    snapshot = capture_software(tree)
+    snapshot = _sealed_software(tree)
     recorded = cast("dict[str, object]", matching[0]["snapshot"])
     # Host and tools describe the observer, not the sealed generation's software.
-    if {key: value for key, value in recorded.items() if key not in {"host", "tools"}} != {
-        key: value for key, value in snapshot.items() if key not in {"host", "tools"}
-    }:
+    if {key: value for key, value in recorded.items() if key not in {"host", "tools"}} != snapshot:
         raise EnvironmentError("history coverage software differs from the sealed generation")
     return generation_number(matching[0]["id"])
 

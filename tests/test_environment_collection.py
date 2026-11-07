@@ -358,6 +358,7 @@ def test_cleanup_preview_and_status_are_read_only_and_explain_retention(
     [
         "covered",
         "observer-changed",
+        "packed-no-launch",
         "missing-history",
         "prepared-only",
         "missing-provenance",
@@ -403,6 +404,19 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
             snapshot = cast("dict[str, object]", entry["snapshot"])
             snapshot["host"] = {"system": "other", "python": "different"}
             snapshot["tools"] = {"version": "older"}
+        if condition == "packed-no-launch" and number == 2:
+            lock = tree / "packs/fixture/pack-lock.json"
+            lock.parent.mkdir(parents=True)
+            lock.write_text("{}")
+            record = Generation.read(seal)
+            replace(
+                record,
+                files=(*record.files, ("packs/fixture/pack-lock.json", content_digest(lock))),
+            ).write(seal)
+            snapshot = cast("dict[str, object]", entry["snapshot"])
+            metadata = cast("dict[str, str]", snapshot["metadata"])
+            metadata["packs/fixture/pack-lock.json"] = "{}"
+            # The sealed interpreter fixture cannot execute; preview must only read it.
         publish_entry(tmp_path, entry)
         Journal(
             operation,
@@ -473,7 +487,7 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
         rows = {row["generation"]: row for row in result["cleanup"]["generations"]}
         assert rows[1]["reasons"] == ["previous successful activation"]
         assert rows[3]["reasons"] == ["current activation"]
-        if condition in {"covered", "observer-changed"}:
+        if condition in {"covered", "observer-changed", "packed-no-launch"}:
             assert rows[2]["status"] == "candidate", rows[2]
             assert rows[2]["reasons"] == [
                 "outside current and previous; covered by history entry 1"
