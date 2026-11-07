@@ -14,7 +14,12 @@ from typing import cast
 
 from .environment_constraints import requirement_hashes
 from .environment_generations import pack_operation
-from .environment_history import generation_history_coverage
+from .environment_history import (
+    generation_history_coverage,
+    history,
+    import_generation,
+    publish_entry,
+)
 from .environment_runtime import generation_runtime_lock, generation_runtime_reason
 from .environment_state import (
     EnvironmentError,
@@ -25,6 +30,7 @@ from .environment_state import (
     digest,
     durable_rename,
     durable_unlink,
+    generation_number,
     read_current,
     read_document,
     store_cache_path,
@@ -387,6 +393,25 @@ def retry_generation_collection(root: Path) -> dict[str, object]:
                             cleanup_collection(root, path)
                     elif journal.incomplete:
                         raise EnvironmentError("pending environment operation requires recovery")
+                    elif journal.stage == "complete" and journal.error is None:
+                        if journal.history_entry is not None:
+                            publish_entry(root, journal.history_entry)
+                published = {generation_number(entry.get("generation")) for entry in history(root)}
+                backlog = collection_preview(root)
+                for row in cast("list[dict[str, object]]", backlog["generations"]):
+                    number = cast("int", row["generation"])
+                    if number in published:
+                        continue
+                    try:
+                        reason = generation_runtime_reason(root, number)
+                        if reason is not None:
+                            raise EnvironmentError(reason)
+                        import_generation(root, number)
+                    except (OSError, ValueError) as exc:
+                        cast("list[str]", result["warnings"]).append(
+                            f"generation {number} history capture deferred: {exc}"
+                        )
+                        result["status"] = "deferred"
                 approved = _covered_collection_plan(root)
                 _collect_generations(
                     root, approved, store=None, store_paths=(), preserve_history=True

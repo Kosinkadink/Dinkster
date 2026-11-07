@@ -652,15 +652,30 @@ def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("fault", [None, "provenance", "payload"])
-def test_cleanup_uses_validated_imports_without_capturing_uncovered_software(
+@pytest.mark.parametrize("fault", [None, "provenance", "malformed", "payload"])
+def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
     cleanup_project: Path, fault: str | None
 ):
+    from dinkster_supervisor.environment_history import activation_entries, history, validate_import
+    from dinkster_supervisor.environment_state import writer_lock
+
     root = cleanup_project
     for path in (root / "history").glob("*.json"):
         path.unlink()
     for path in (root / "journal").glob("*.json"):
         replace(Journal.read(path), history_entry=None).write(path)
+    legacy = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    code, disabled = _run(root, "cleanup", "--automatic", "off", "--yes")
+    assert code == 0, disabled
+    code, disabled = _run(root, "cleanup", "--yes")
+    assert code == 0 and disabled["status"] == "disabled", disabled
+    with writer_lock(root):
+        code, busy = _run(root, "cleanup", "--yes")
+    assert code == 0 and busy["status"] == "deferred", busy
+    assert history(root) == []
+    assert {p: p.read_bytes() for p in legacy} == legacy
+    code, enabled = _run(root, "cleanup", "--automatic", "on", "--yes")
+    assert code == 0, enabled
     code, imported = _run(root, "import", "2", "--yes")
     assert code == 0 and imported["entry"]["kind"] == "import", imported
     receipt = root / "history/00000000000000000001.json"
@@ -669,6 +684,10 @@ def test_cleanup_uses_validated_imports_without_capturing_uncovered_software(
     if fault == "provenance":
         entry = json.loads(original)
         entry["provenance"]["digest"] = "sha256:" + "0" * 64
+        write_document(receipt, entry)
+    elif fault == "malformed":
+        entry = json.loads(original)
+        del entry["generation"]
         write_document(receipt, entry)
     elif fault == "payload":
         payload.parent.mkdir(parents=True)
@@ -685,11 +704,14 @@ def test_cleanup_uses_validated_imports_without_capturing_uncovered_software(
         assert "history coverage required" in rows[2]["reasons"][0], rows[2]
     assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
     code, result = _run(root, "cleanup", "--yes")
-    assert code == 0 and result["status"] == "deferred", result
+    assert code == 0 and result["status"] == ("deferred" if fault else "complete"), result
     assert (root / "generations/2").exists() == bool(fault)
-    assert (root / "generations/7").is_dir()
+    assert (root / "generations/7").exists() == (fault in {"provenance", "malformed"})
     protected = {
-        p: data for p, data in before.items() if not p.is_relative_to(root / "generations/2")
+        p: data
+        for p, data in before.items()
+        if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
+        and not p.is_relative_to(root / "runtime/maintenance")
     }
     assert {p: p.read_bytes() for p in protected} == protected
     if fault:
@@ -700,20 +722,47 @@ def test_cleanup_uses_validated_imports_without_capturing_uncovered_software(
         if fault == "payload":
             payload.unlink()
         code, result = _run(root, "cleanup", "--yes")
-        assert code == 0 and result["status"] == "deferred", result
+        assert code == 0 and result["status"] == "complete", result
         assert not (root / "generations/2").exists()
         protected[receipt] = original
-    code, imported = _run(root, "import", "7", "--yes")
-    assert code == 0 and imported["entry"]["kind"] == "import", imported
-    second = root / "history/00000000000000000002.json"
-    protected[second] = second.read_bytes()
-    protected = {
-        p: data for p, data in protected.items() if not p.is_relative_to(root / "generations/7")
-    }
+    assert {entry["generation"] for entry in history(root)} == {1, 2, 3, 7}
+    assert all(entry["kind"] == "import" for entry in history(root))
+    assert activation_entries(root) == []
+    for entry in history(root):
+        validate_import(root, entry)
+    receipts = {p: p.read_bytes() for p in (root / "history").glob("*.json")}
     code, result = _run(root, "cleanup", "--yes")
     assert code == 0 and result["status"] == "complete", result
     assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
     assert {p: p.read_bytes() for p in protected} == protected
+    assert {p: p.read_bytes() for p in (root / "history").glob("*.json")} == receipts
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_cleanup_publishes_only_completed_activation_history(cleanup_project: Path, pending: bool):
+    root = cleanup_project
+    receipt = root / "history/00000000000000000004.json"
+    expected = receipt.read_bytes()
+    receipt.unlink()
+    journal = root / "journal/400.json"
+    if pending:
+        replace(Journal.read(journal), stage="switching").write(journal)
+    protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    code, result = _run(root, "cleanup", "--yes")
+    assert code == 0 and result["status"] == ("deferred" if pending else "complete"), result
+    if pending:
+        assert not receipt.exists()
+        assert {p: p.read_bytes() for p in protected} == protected
+        assert "requires recovery" in result["cleanupAttempt"]["warnings"][0]
+    else:
+        assert receipt.read_bytes() == expected
+        assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+        protected = {
+            p: data
+            for p, data in protected.items()
+            if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
+        }
+        assert {p: p.read_bytes() for p in protected} == protected
 
 
 @pytest.mark.parametrize(
@@ -1003,15 +1052,22 @@ def test_successful_cli_stop_attempts_cleanup_without_turning_failure_into_faile
         assert (root / "runtime/maintenance").read_bytes() == b"keep this unexpected file"
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
 def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_generations(
-    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool
 ):
     from dinkster_supervisor import environment_runtime as runtime
+    from dinkster_supervisor.environment_history import history, validate_import
     from dinkster_supervisor.environment_runtime import start_engine, stop_engine
     from test_environment_runtime import free_port
 
     root = cleanup_project
+    if legacy:
+        for path in (root / "history").glob("*.json"):
+            path.unlink()
+        for path in (root / "journal").glob("*.json"):
+            replace(Journal.read(path), history_entry=None).write(path)
     launch = subprocess.Popen
     script = (
         "from functools import partial\n"
@@ -1049,11 +1105,20 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
         else:
             assert (root / "generations/2").is_dir()
         assert (root / "generations/1").is_dir()
+        if legacy:
+            assert {entry["generation"] for entry in history(root)} == {1, 2, 7}
+            assert all(entry["kind"] == "import" for entry in history(root))
+            for entry in history(root):
+                validate_import(root, entry)
         with urlopen(f"http://127.0.0.1:{current_port}/api/health", timeout=5) as response:
             assert response.status == 200
     finally:
         stop_engine(root, "old", generation=2)
         stop_engine(root, "main", generation=3)
+    if legacy:
+        assert {entry["generation"] for entry in history(root)} == {1, 2, 3, 7}
+        for entry in history(root):
+            validate_import(root, entry)
 
 
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
