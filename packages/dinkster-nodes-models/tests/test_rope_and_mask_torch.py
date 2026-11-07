@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_models.rope_and_mask import DifferentialDiffusion
 
 
@@ -69,3 +79,40 @@ def test_differential_includes_threshold_and_defaults_to_binary_mask() -> None:
     assert torch.equal(
         patched.mask(torch.tensor([3.0]), mask, extra), torch.tensor([[0.0, 0.0], [1.0, 1.0]])
     )
+
+
+class ModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="rope-fixture.model",
+            inputs=(),
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=Patcher())
+
+
+class Result(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="rope-fixture.result",
+            inputs=(
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("source", TypeExpr.concrete(MODEL_TYPE)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher, source: Patcher) -> Mapping[str, object]:
+        assert model.rope == (2.0, -3.0, 4.0, -5.0, 6.0, -7.0)
+        assert source.rope == () and source.mask is None
+        result = model.mask(
+            torch.tensor([3.0]), torch.tensor([[0.0, 0.125], [0.25, 0.75]]), options(2.0)
+        )
+        assert torch.equal(result, torch.tensor([[0.0, 0.0625], [0.625, 0.875]]))
+        return cls.outputs(value=1.0)

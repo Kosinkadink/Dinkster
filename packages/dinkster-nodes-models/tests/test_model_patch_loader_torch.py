@@ -10,8 +10,15 @@ import dinkster_nodes_models.model_patch_loader as loader
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CORE_STRING,
+    MODEL_PATCH_TYPE,
     AssetRef,
+    InputSpec,
     LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
 )
 from dinkster_assets import AssetVault
 from dinkster_assets.identity import digest_file
@@ -501,3 +508,29 @@ def test_loader_filters_supir_state_and_retains_denoise_encoder(
         "project_modules.project.weight",
     }
     assert model.denoise_encoder_sd == {"weight": state["first_stage_model.denoise_encoder.weight"]}
+
+
+class ModelPatchInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="model-patch-fixture.inspect",
+            inputs=(InputSpec("patch", TypeExpr.concrete(MODEL_PATCH_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, patch: Any) -> dict[str, object]:
+        from dinkster_inference.ldm.lightricks.duration_head import DurationHead
+        from dinkster_inference.model_patcher import ModelPatcher
+
+        assert isinstance(patch, ModelPatcher)
+        assert isinstance(patch.model, DurationHead)
+        weights = patch.model.state_dict()
+        for key, value in weights.items():
+            assert value.dtype == torch.float32
+            expected = 0.0 if key == "mlp_out.weight" else 0.5 if key == "mlp_out.bias" else 0.001
+            assert torch.equal(value, torch.full_like(value, expected))
+        output = patch.model(video_tokens=torch.full((1, 2, 4096), 0.25))
+        assert torch.equal(output, torch.tensor([0.5]).exp())
+        return cls.outputs(summary="duration checkpoint retained")

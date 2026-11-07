@@ -1,6 +1,7 @@
 """Model and hook producers retain their resident and structural codecs."""
 
 from dinkster_api.v1 import (
+    ASSET_TYPE,
     CLIP_TYPE,
     CLIP_VISION_TYPE,
     CONTROL_NET_TYPE,
@@ -17,7 +18,9 @@ from dinkster_api.v1 import (
     TypeSpec,
     comfy_resident_meta,
     default_pool,
+    register_asset_type,
     register_resident_type,
+    resolver_from_env,
 )
 from dinkster_inference_wire.hook_values import (
     normalize_clip_hook_owners,
@@ -27,7 +30,9 @@ from dinkster_inference_wire.hook_values import (
 
 
 def register_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
-    registered = []
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
+    registered: list[TypeSpec] = []
     for type_id in (
         MODEL_TYPE,
         CLIP_TYPE,

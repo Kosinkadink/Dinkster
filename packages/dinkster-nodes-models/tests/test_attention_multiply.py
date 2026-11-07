@@ -8,7 +8,15 @@ from typing import Any, cast
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CORE_FLOAT,
+    CORE_STRING,
+    MODEL_TYPE,
+    InputSpec,
     Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
 )
 from dinkster_nodes_models.attention_multiply import (
     CLIPAttentionMultiply,
@@ -221,3 +229,66 @@ def test_clip_attention_multiplier_scales_exact_tensor_suffixes() -> None:
         Clip, CLIPAttentionMultiply.execute(clip=source, **ATTENTION_STRENGTHS)["CLIP"]
     )
     _verify_clip(source, transformed, expected_weights)
+
+
+class ModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="attention-fixture.model-source",
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=Patcher(_weights()))
+
+
+class ClipSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="attention-fixture.clip-source",
+            outputs=(OutputSpec("CLIP", TypeExpr.concrete(CLIP_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(CLIP=Clip(Patcher(_weights())))
+
+
+class ModelReader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="attention-fixture.model-reader",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("transformed", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("kind", TypeExpr.concrete(CORE_STRING)),
+            ),
+            outputs=(OutputSpec("verified", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, original: Patcher, transformed: Patcher, kind: str) -> Mapping[str, object]:
+        _verify_model(kind, original, transformed, _weights())
+        return cls.outputs(verified=1.0)
+
+
+class ClipReader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="attention-fixture.clip-reader",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("transformed", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+            outputs=(OutputSpec("verified", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, original: Clip, transformed: Clip) -> Mapping[str, object]:
+        _verify_clip(original, transformed, _weights())
+        return cls.outputs(verified=1.0)

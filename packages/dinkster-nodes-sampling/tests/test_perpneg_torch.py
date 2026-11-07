@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
+    CORE_STRING,
+    GUIDER_TYPE,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_nodes_sampling.perpneg import PerpNeg, PerpNegGuider
@@ -105,3 +115,75 @@ def test_legacy_perpneg_clones_source_and_uses_empty_conditioning_batch(
     torch.testing.assert_close(result, torch.tensor([[[[-32.0 / 17.0, 178.0 / 17.0]]]]))
     assert patched is not source
     assert "sampler_cfg_function" not in source.model_options
+
+
+class Source(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="perpneg-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(model=_model_patcher(), conditioning=[[None, {}]])
+
+
+class Consumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="perpneg-fixture.consumer",
+            inputs=(
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("guider", TypeExpr.concrete(GUIDER_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any, guider: Any) -> Mapping[str, object]:
+        from dinkster_inference import samplers
+
+        assert model is not guider.model_patcher
+        assert "sampler_cfg_function" in model.model_options
+        assert "sampler_cfg_function" not in guider.model_patcher.model_options
+        assert guider.cfg == 2.0 and guider.neg_scale == 0.5
+        positive = torch.tensor([[[[6.0, -2.0]]]])
+        negative = torch.tensor([[[[1.0, 4.0]]]])
+        empty = torch.tensor([[[[2.0, -1.0]]]])
+        x = torch.tensor([[[[7.0, 3.0]]]])
+        before = x.clone()
+        sigma = torch.tensor([1.0])
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(samplers, "encode_model_conds", lambda *_: "encoded-empty")
+            patch.setattr(
+                samplers,
+                "calc_cond_batch",
+                lambda _model, conds, *_: (
+                    [empty] if len(conds) == 1 else [positive, negative, empty]
+                ),
+            )
+            guider.inner_model = guider.model_patcher.model
+            guider.inner_model.extra_conds = {}
+            guider.conds = guider.original_conds
+            result = guider.predict_noise(x, sigma)
+            torch.testing.assert_close(result, torch.tensor([[[[151.0 / 17.0, -127.0 / 17.0]]]]))
+            residual = model.model_options["sampler_cfg_function"](
+                {
+                    "model": guider.inner_model,
+                    "input": x,
+                    "sigma": sigma,
+                    "model_options": {"preserved": True},
+                    "cond_denoised": positive,
+                    "uncond_denoised": negative,
+                    "cond_scale": 2.0,
+                }
+            )
+            torch.testing.assert_close(residual, torch.tensor([[[[-32.0 / 17.0, 178.0 / 17.0]]]]))
+        assert torch.equal(x, before)
+        return cls.outputs(summary="perpneg")

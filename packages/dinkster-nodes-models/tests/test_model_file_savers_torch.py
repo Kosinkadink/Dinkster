@@ -12,7 +12,14 @@ from types import SimpleNamespace
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    MODEL_TYPE,
+    VAE_TYPE,
     ExportSnapshot,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_assets import MountDef, MountTable, digest_file
@@ -269,6 +276,70 @@ def test_checkpoint_exports_preserve_metadata_counters_and_tensors(
     assert not list(folder.glob(".dinkster-save-*"))
 
 
+class CheckpointSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="checkpoint-save-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import model_base
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP, VAE
+
+        class TinyModel(model_base.SDXL):
+            def __init__(self):
+                torch.nn.Module.__init__(self)
+                self.diffusion_model = torch.nn.Linear(3, 2, bias=False, dtype=torch.float64)
+                self.diffusion_model.weight.data.copy_(
+                    torch.tensor([[1.25, -3.5, 9.75], [-0.5, 7.0, 2.0]])
+                )
+                self.model_type = model_base.ModelType.EPS
+                self.model_sampling = SimpleNamespace()
+
+            def get_dtype(self):
+                return torch.float64
+
+            def state_dict_for_saving(
+                self,
+                unet_state_dict,
+                clip_state_dict=None,
+                vae_state_dict=None,
+                clip_vision_state_dict=None,
+            ):
+                assert clip_vision_state_dict is None
+                state = {f"model.{key}": value for key, value in unet_state_dict.items()}
+                state.update(
+                    {f"clip.{key}": value for key, value in (clip_state_dict or {}).items()}
+                )
+                state.update({f"vae.{key}": value for key, value in (vae_state_dict or {}).items()})
+                return state
+
+        device = torch.device("cpu")
+        encoder = torch.nn.Linear(2, 1, bias=False)
+        encoder.weight.data.copy_(torch.tensor([[-7.0, 1.5]]))
+        clip = CLIP(no_init=True)
+        clip.patcher = ModelPatcher(encoder, device, device)
+        clip.cond_stage_model = encoder
+        clip.tokenizer = SimpleNamespace(state_dict=lambda: {})
+        clip.layer_idx = None
+        clip.tokenizer_options = {}
+        clip.use_clip_schedule = True
+        clip.apply_hooks_to_conds = None
+        vae = object.__new__(VAE)
+        vae.first_stage_model = torch.nn.Linear(1, 2, bias=False, dtype=torch.float64)
+        vae.first_stage_model.weight.data.copy_(torch.tensor([[0.125], [-2.5]]))
+        return cls.outputs(model=ModelPatcher(TinyModel(), device, device), clip=clip, vae=vae)
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("disabled", (False, True))
 @pytest.mark.parametrize("prompt", ({"source": {"inputs": {"seed": 71}}}, {}, None))
@@ -303,7 +374,7 @@ def test_model_and_encoder_exports_consume_submission_metadata(
         module = f"model_metadata_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_model_file_savers_torch import CheckpointSource\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_inference_wire import register_inference_types\n"
             "from dinkster_api.v1 import initialize_inference_process\n"
             "initialize_inference_process()\n"
             "from dinkster_inference.cli_args import args\n"
@@ -332,6 +403,7 @@ def test_model_and_encoder_exports_consume_submission_metadata(
             for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
+                        trust_reserved=True,
                         manifest=manifest,
                         in_process=in_process,
                         worker_group=None if in_process else "model-metadata-fixture",
@@ -425,7 +497,7 @@ def test_model_exports_attach_exact_mounted_files_on_each_execution(
         module = f"model_attachment_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_model_file_savers_torch import CheckpointSource\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_inference_wire import register_inference_types\n"
             "NODES = (CheckpointSource,)\n",
             encoding="ascii",
         )
@@ -450,6 +522,7 @@ def test_model_exports_attach_exact_mounted_files_on_each_execution(
             for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
+                        trust_reserved=True,
                         manifest=manifest,
                         in_process=in_process,
                         worker_group=None if in_process else "model-attachment-fixture",

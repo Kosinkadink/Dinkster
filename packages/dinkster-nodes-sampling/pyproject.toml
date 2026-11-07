@@ -3,7 +3,7 @@ name = "dinkster-nodes-sampling"
 version = "0.0.2"
 description = "First-party Dinkster sampling nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-inference-wire", "dinkster-nodes-latent"]
+dependencies = ["dinkster-api", "dinkster-inference-wire", "dinkster-nodes-latent", "dinkster-nodes-conditioning"]
 
 [build-system]
 requires = ["hatchling"]
@@ -21,3 +21,4 @@ packages = ["src/dinkster_nodes_sampling"]
 dinkster-api = { workspace = true }
 dinkster-inference-wire = { workspace = true }
 dinkster-nodes-latent = { workspace = true }
+dinkster-nodes-conditioning = { workspace = true }

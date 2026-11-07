@@ -4,7 +4,7 @@ version = "0.0.1"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.latent"]
-requires = ["torch", "numpy", "dinkster-inference==0.1.1"]
+requires = ["torch", "safetensors", "dinkster-inference==0.1.1"]
 
 [pack.inference]
 imports = ["audio", "cli_args", "model_management", "nested_tensor", "utils"]

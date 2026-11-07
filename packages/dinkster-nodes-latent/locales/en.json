@@ -61,19 +61,19 @@
       "displayName": "LatentBatchSeedBehavior"
     },
     "dinkster.latent.latent_apply_operation": {
-      "displayName": ""
+      "displayName": "LatentApplyOperation"
     },
     "dinkster.latent.latent_apply_operation_cfg": {
-      "displayName": ""
+      "displayName": "LatentApplyOperationCFG"
     },
     "dinkster.latent.latent_operation_blend": {
       "displayName": "Latent Operation Blend"
     },
     "dinkster.latent.latent_operation_tonemap_reinhard": {
-      "displayName": ""
+      "displayName": "LatentOperationTonemapReinhard"
     },
     "dinkster.latent.latent_operation_sharpen": {
-      "displayName": ""
+      "displayName": "LatentOperationSharpen"
     },
     "dinkster.latent.replace_video_latent_frames": {
       "displayName": "Replace Video Latent Frames"
@@ -216,9 +216,16 @@
       "ReplaceVideoLatentFrames"
     ],
     "dinkster.latent.vae_decode": [
+      "decode",
+      "decode latent",
+      "latent to image",
+      "render latent",
       "VAEDecode"
     ],
     "dinkster.latent.vae_encode": [
+      "encode",
+      "encode image",
+      "image to latent",
       "VAEEncode"
     ],
     "dinkster.latent.vae_decode_tiled": [
@@ -234,6 +241,10 @@
       "LatentCompositeMasked"
     ],
     "dinkster.latent.get_latent_size": [
+      "dimensions",
+      "resolution",
+      "latent info",
+      "video latent size",
       "GetLatentSize"
     ],
     "dinkster.latent.trim_video_latent": [
@@ -255,21 +266,30 @@
       "EmptyLatentAudio"
     ],
     "dinkster.latent.vae_encode_audio": [
+      "audio to latent",
       "VAEEncodeAudio"
     ],
     "dinkster.latent.vae_decode_audio": [
+      "latent to audio",
       "VAEDecodeAudio"
     ],
     "dinkster.latent.vae_decode_audio_tiled": [
+      "latent to audio",
       "VAEDecodeAudioTiled"
     ],
     "dinkster.latent.get_audio_latent_size": [
+      "dimensions",
+      "audio latent info",
+      "audio latent length",
       "GetAudioLatentSize"
     ],
     "dinkster.latent.load_latent": [
+      "import latent",
+      "open latent",
       "LoadLatent"
     ],
     "dinkster.latent.save_latent": [
+      "export latent",
       "SaveLatent"
     ]
   }

@@ -8,12 +8,23 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CORE_STRING,
+    LATENT_TYPE,
+    VAE_TYPE,
     AssetRef,
     ExportSnapshot,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
 )
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
@@ -23,6 +34,23 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+class _Clip:
+    def load_model(self) -> None:
+        pass
+
+    def state_dict_for_saving(self) -> dict[str, torch.Tensor]:
+        return {
+            "clip_l.transformer.left": torch.tensor([1.25, -3.5]),
+            "clip_g.right": torch.tensor([[8, -2]], dtype=torch.int32),
+            "transformer.other": torch.tensor([9.0], dtype=torch.float64),
+        }
+
+
+class _Vae:
+    def get_sd(self) -> dict[str, torch.Tensor]:
+        return {"decoder.weight": torch.tensor([[1.25, -3.5]], dtype=torch.float64)}
 
 
 @pytest.mark.parametrize("versioned", (False, True))
@@ -144,6 +172,44 @@ def test_save_latent_preserves_source_and_writes_versioned_tensors_to_selected_m
     assert not samples["samples"].is_contiguous()
 
 
+class EncoderSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="file-export-fixture.source",
+            outputs=(
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(clip=_Clip(), vae=_Vae())
+
+
+class LatentInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="file-export-fixture.inspect",
+            inputs=(InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: Any) -> dict[str, object]:
+        samples = materialize_latent(latent)["samples"]
+        # Reciprocal multiplication has different float32 rounding from division.
+        expected = torch.tensor([[[[1.125, -3.5, 0.25], [8.0, -0.75, 2.0]]]]) * (1.0 / 0.18215)
+        assert samples.dtype == torch.float32 and samples.device.type == "cpu"
+        torch.testing.assert_close(samples, expected, rtol=0, atol=0)
+        return cls.outputs(summary="latent-values-exact")
+
+
+HOST_NODES = (EncoderSource, LatentInspect)
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("disabled", (False, True))
 @pytest.mark.parametrize("prompt", ({"load": {"inputs": {"seed": 67}}}, {}, None))
@@ -184,7 +250,7 @@ def test_latent_export_consumes_submission_metadata(
         module = f"latent_metadata_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_latent_files_torch import HOST_NODES\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_inference_wire import register_inference_types\n"
             "from dinkster_api.v1 import initialize_inference_process\n"
             "initialize_inference_process()\n"
             "from dinkster_inference.cli_args import args\n"
@@ -212,6 +278,7 @@ def test_latent_export_consumes_submission_metadata(
             for manifest in manifests:
                 await composer.add_pack(
                     PackSpec(
+                        trust_reserved=True,
                         manifest=manifest,
                         in_process=in_process,
                         worker_group=None if in_process else "latent-metadata-fixture",
@@ -288,7 +355,9 @@ def test_latent_exports_attach_exact_mounted_files_on_each_execution(
             }
         )
         try:
-            await composer.add_pack(PackSpec(manifest=native, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(trust_reserved=True, manifest=native, in_process=in_process)
+            )
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={

@@ -10,8 +10,15 @@ import pytest
 import torch
 from dinkster_api import v1
 from dinkster_api.v1 import (
+    CORE_STRING,
+    HOOKS_TYPE,
     AssetRef,
+    InputSpec,
     LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
@@ -210,3 +217,86 @@ def test_checkpoint_weights_share_residency_across_assets_nodes_and_strengths(
 def test_checkpoint_hook_rejects_unbound_filename() -> None:
     with pytest.raises(TypeError, match="AssetRef or LocalAssetRef"):
         CreateHookModelAsLoraModelOnly.execute(ckpt_name="unbound.ckpt", strength_model=1.0)
+
+
+class CheckpointHookSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="checkpoint-hooks-fixture.source",
+            inputs=(InputSpec("embedding_root", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, embedding_root: str) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import hooks, sd, utils
+
+        calls: list[str] = []
+
+        # Keep checkpoint architecture construction controlled, but read real
+        # safe tensor bytes through the bound path and the production roots API.
+        def load(path: str, **options: Any) -> tuple[Any, Any, object, None]:
+            assert options == {
+                "output_vae": True,
+                "output_clip": True,
+                "embedding_directory": [embedding_root],
+            }, repr(options)
+            actual_roots = v1.mount_roots_for_kind("model/embedding")
+            assert actual_roots == (Path(embedding_root),), repr(actual_roots)
+            state = utils.load_torch_file(path, safe_load=True)
+            model = _patcher(state["model"].tolist())
+            clip = _patcher(state["clip"].tolist())
+            calls.append(path)
+            return model, SimpleNamespace(patcher=clip), object(), None
+
+        load.calls = calls  # type: ignore[attr-defined]
+        sd.load_checkpoint_guess_config = load
+        previous = hooks.HookGroup()
+        previous.add(hooks.WeightHook(strength_model=-0.25, strength_clip=0.75))
+        return cls.outputs(hooks=previous)
+
+
+class CheckpointHookInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="checkpoint-hooks-fixture.inspect",
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(HOOKS_TYPE))
+                for name in ("source", "full", "model_only")
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, source: Any, full: Any, model_only: Any) -> dict[str, object]:
+        from dinkster_inference import sd
+
+        assert len(source.hooks) == 1
+        assert source.hooks[0].strength_model == -0.25
+        owners = []
+        for group, strengths in ((full, (-0.7, 1.3)), (model_only, (0.0, 0.0))):
+            assert len(group.hooks) == 2
+            assert group.hooks[0] is not source.hooks[0]
+            assert group.hooks[0] == source.hooks[0]
+            added = group.hooks[1]
+            assert (added.strength_model, added.strength_clip) == strengths
+            assert set(added.weights) == {"weight"}
+            assert set(added.weights_clip) == {"weight"}
+            assert added.weights["weight"][0] == "model_as_lora"
+            assert torch.equal(
+                added.weights["weight"][1][0], torch.tensor([[2.0, -7.0], [11.0, 0.5]])
+            )
+            assert torch.equal(added.weights_clip["weight"][1][0], torch.tensor([[-3.0, 13.0]]))
+            explicit = [
+                owner
+                for owner in group._dinkster_resident_refs
+                if not any(owner is keyframes for keyframes in group._dinkster_hook_keyframe_refs)
+            ]
+            assert len(explicit) == 1, repr(explicit)
+            owners.append(explicit[0])
+        assert owners[0] is owners[1]
+        assert len(sd.load_checkpoint_guess_config.calls) == 1
+        return cls.outputs(summary="checkpoint weights and roots preserved")

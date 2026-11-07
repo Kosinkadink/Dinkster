@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+import numpy as np
 import torch
+from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CONDITIONING_TYPE,
+    CORE_STRING,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_conditioning.clip_model_specific import CLIPTextEncodeControlnet
 
 
@@ -62,3 +74,42 @@ def test_controlnet_preserves_embeddings_and_metadata() -> None:
         )
     assert source[0][1] == {"tag": "first", "pooled_output_controlnet": "old"}
     assert source[1][1] == {"tag": "second", "start_percent": 0.7}
+
+
+class EncoderSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="encoder-fixture.source",
+            outputs=(OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(clip=TensorEncoder())
+
+
+class InspectConditioning(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="encoder-fixture.inspect",
+            inputs=(InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
+            outputs=(OutputSpec("text", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, conditioning: Any) -> dict[str, object]:
+        def plain(value: Any) -> Any:
+            if isinstance(value, (torch.Tensor, np.ndarray)):
+                return value.tolist()
+            if isinstance(value, dict):
+                return {k: plain(v) for k, v in value.items()}
+            if isinstance(value, (tuple, list)):
+                return [plain(v) for v in value]
+            return value
+
+        return cls.outputs(text=json.dumps(plain(conditioning), sort_keys=True))
+
+
+FIXTURES = (EncoderSource, InspectConditioning)

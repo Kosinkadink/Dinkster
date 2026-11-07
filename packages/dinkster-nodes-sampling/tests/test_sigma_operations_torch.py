@@ -4,6 +4,17 @@ from __future__ import annotations
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    SIGMAS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
+)
 from dinkster_nodes_sampling.sigma_operations import (
     ExtendIntermediateSigmas,
     FlipSigmas,
@@ -114,3 +125,79 @@ def test_sampling_percent_to_sigma_keeps_interval_and_actual_endpoint_values() -
         ]
         == 0.125
     )
+
+
+class SigmaInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="sigma-fixture.inspect",
+            inputs=(
+                InputSpec("source", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("set_first", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("extended", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("flipped", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("high", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("low", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("denoise_high", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("denoise_low", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("endpoint", TypeExpr.concrete(CORE_FLOAT)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        source: object,
+        set_first: object,
+        extended: object,
+        flipped: object,
+        high: object,
+        low: object,
+        denoise_high: object,
+        denoise_low: object,
+        endpoint: float,
+    ) -> dict[str, object]:
+        values = {
+            name: materialize_latent(value)
+            for name, value in {
+                "source": source,
+                "set_first": set_first,
+                "extended": extended,
+                "flipped": flipped,
+                "high": high,
+                "low": low,
+                "denoise_high": denoise_high,
+                "denoise_low": denoise_low,
+            }.items()
+        }
+        expected = {
+            "source": [7.0, 4.0, 1.0, 0.0],
+            "set_first": [9.0, 4.0, 1.0, 0.0],
+            "extended": [9.0, 6.5, 4.0, 2.5, 1.0, 0.5, 0.0],
+            "flipped": [0.0001, 0.5, 1.0, 2.5, 4.0, 6.5, 9.0],
+            "high": [0.0001, 0.5, 1.0, 2.5],
+            "low": [2.5, 4.0, 6.5, 9.0],
+            "denoise_high": [7.0, 4.0],
+            "denoise_low": [4.0, 1.0, 0.0],
+        }
+        for name, tensor in values.items():
+            assert tensor.dtype == torch.float32
+            assert torch.allclose(tensor, torch.tensor(expected[name], dtype=torch.float32))
+        assert endpoint == 14.0
+        return cls.outputs(value=float(values["high"][0] + values["low"][0]))
+
+
+class SigmaModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="sigma-fixture.model",
+            outputs=(OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(model=_Model())

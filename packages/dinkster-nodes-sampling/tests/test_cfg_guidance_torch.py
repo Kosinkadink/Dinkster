@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_sampling.cfg_guidance import (
     APG,
     TCFG,
@@ -101,6 +111,77 @@ def test_cfg_guidance_callbacks_produce_asymmetric_tensor_outputs_without_source
     torch.testing.assert_close(result, torch.tensor([[[0.0, 2.75]], [[4.0, -3.0]]]))
     assert torch.equal(attention, before)
     assert nag.optimization_disabled
+
+
+class ModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="cfg-guidance-fixture.source",
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=Patcher())
+
+
+class ModelConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="cfg-guidance-fixture.consumer",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+        args = {
+            "cond_scale": 2.0,
+            "input": torch.tensor([[[[2.0]]]]),
+            "cond_denoised": torch.tensor([[[[5.0]]]]),
+            "uncond_denoised": torch.tensor([[[[1.0]]]]),
+            "denoised": torch.tensor([[[[9.0]]]]),
+        }
+        return cls.outputs(value=float(model.post(args).item()))
+
+
+class RenormConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "cfg-guidance-fixture.renorm",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+        for timestep, expected in (
+            (
+                [49.0, 51.0],
+                [12.5 / math.sqrt(61), 15.0 / math.sqrt(61), 7.0, -9.0, 1.0, 1.0, -3.0, 2.0],
+            ),
+            ([50.0, 49.0], [3.0, 4.0, 7.0, -9.0, 6.0, 8.0, -3.0, 2.0]),
+        ):
+            actual = model.pre(
+                {
+                    "cond_denoised": torch.tensor(
+                        [3.0, 4.0, 7.0, -9.0, 6.0, 8.0, -3.0, 2.0]
+                    ).reshape(2, 2, 1, 2),
+                    "uncond_denoised": torch.tensor(
+                        [1.0, 2.0, -5.0, 8.0, 11.0, 15.0, 4.0, -1.0]
+                    ).reshape(2, 2, 1, 2),
+                    "cond_scale": 2.0,
+                    "timestep": torch.tensor(timestep),
+                    "input": torch.zeros((2, 2, 1, 2)),
+                }
+            )
+            torch.testing.assert_close(
+                actual, -torch.tensor(expected).reshape(2, 2, 1, 2), rtol=1e-6, atol=0
+            )
+        return cls.outputs(value=2.0)
 
 
 @pytest.mark.parametrize("sample_count", (1, 2))

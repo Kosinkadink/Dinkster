@@ -5,8 +5,20 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from typing import Any
 
 import torch
+from dinkster_api.v1 import (
+    CORE_BOOLEAN,
+    CORE_INT,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_latent.rebatch import RebatchImages, RebatchLatents
 
 
@@ -57,3 +69,53 @@ def test_rebatch_preserves_frame_order_and_latent_indices() -> None:
     )["LATENT"]
     assert torch.equal(masked[0]["noise_mask"], mask.repeat(2, 1, 1, 1))
     assert mask.shape == (1, 1, 2, 3)
+
+
+class DimensionSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "image-dimension-fixture.source",
+            inputs=(InputSpec("video", TypeExpr.concrete(CORE_BOOLEAN)),),
+            outputs=(
+                OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+                OutputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, video: bool) -> Any:
+        return cls.outputs(
+            image=torch.zeros((2, 3, 7, 4)),
+            latent={"samples": torch.zeros((3, 4, 5, 6, 9) if video else (3, 4, 6, 9))},
+        )
+
+
+class RebatchSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "rebatch-fixture.source",
+            outputs=(
+                OutputSpec("images", TypeExpr.list_of(TypeExpr.concrete(IMAGE_TYPE))),
+                OutputSpec("latents", TypeExpr.list_of(TypeExpr.concrete(LATENT_TYPE))),
+                OutputSpec("sizes", TypeExpr.list_of(TypeExpr.concrete(CORE_INT))),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        return cls.outputs(
+            images=[torch.zeros((1, 3, 7, 3)), torch.ones((2, 3, 7, 3))],
+            latents=[
+                {
+                    "samples": torch.zeros((1, 4, 2, 5)),
+                    "batch_index": [8],
+                },
+                {
+                    "samples": torch.ones((2, 4, 2, 5)),
+                    "batch_index": [3, 11],
+                },
+            ],
+            sizes=[2, 1],
+        )

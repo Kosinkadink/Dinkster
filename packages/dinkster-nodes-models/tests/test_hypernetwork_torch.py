@@ -8,8 +8,15 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CORE_STRING,
+    MODEL_TYPE,
     AssetRef,
+    InputSpec,
     LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
@@ -193,3 +200,34 @@ def test_hypernetwork_layer_norm_and_dropout(tmp_path: Path, last_layer_dropout:
     _, k, v = patch(value, value, value, {})
     torch.testing.assert_close(k, expected_k)
     torch.testing.assert_close(v, expected_v)
+
+
+class HypernetworkSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hypernetwork-fixture.source",
+            outputs=(OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(model=_model())
+
+
+class HypernetworkInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hypernetwork-fixture.inspect",
+            inputs=(
+                InputSpec("source", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("patched", TypeExpr.concrete(MODEL_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, source: Any, patched: Any) -> dict[str, object]:
+        _check(source, patched, -0.5)
+        return cls.outputs(summary="asymmetric attention preserved")

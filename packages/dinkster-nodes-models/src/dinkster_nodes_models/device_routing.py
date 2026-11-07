@@ -63,6 +63,18 @@ def _device_input(options: tuple[str, ...], choice_id: str) -> InputSpec:
     )
 
 
+def _device_options(*, include_cpu: bool = True) -> tuple[str, ...]:
+    options = _model_management().get_gpu_device_options()
+    return tuple(option for option in options if include_cpu or option != "cpu")
+
+
+def device_choices() -> Mapping[str, Any]:
+    return {
+        "devices.gpu": _device_options,
+        "devices.vae": lambda: _device_options(include_cpu=False),
+    }
+
+
 def _force_supported_compute_dtype(patcher: Any, device: object) -> None:
     management = _model_management()
     weight_dtype = patcher.model_dtype()

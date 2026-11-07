@@ -12,11 +12,21 @@ from typing import Any, cast
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_VISION_OUTPUT_TYPE,
+    CONDITIONING_TYPE,
+    CORE_STRING,
+    STYLE_MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
     materialize_clip_vision_output,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_conditioning.style_model import StyleModelApply
+from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -132,6 +142,83 @@ def test_attention_bias_strength_adds_mask_without_changing_tokens(strength: flo
     assert source[0][1] == {"tag": "only"}
 
 
+class ConditioningSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="style-apply-fixture.conditioning-source",
+            outputs=(OutputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(conditioning=[[torch.tensor([[[1.0, 2.0]]]), {"source": "raw"}]])
+
+
+class StyleSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="style-apply-fixture.style-source",
+            outputs=(OutputSpec("style", TypeExpr.concrete(STYLE_MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(style=_model())
+
+
+class VisionSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="style-apply-fixture.vision-source",
+            outputs=(OutputSpec("vision", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(vision=_vision())
+
+
+class ConditioningInspector(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="style-apply-fixture.inspect",
+            inputs=(
+                InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("original", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, conditioning: object, original: object) -> dict[str, object]:
+        records = cast(list[list[Any]], conditioning)
+        source = cast(list[list[Any]], original)
+        assert len(records) == len(source) == 1
+        assert torch.equal(
+            records[0][0],
+            torch.tensor([[[1.0, 2.0], [-3.75, -3.75], [-1.75, 13.625], [1.0, 2.0]]]),
+        )
+        mask = torch.zeros((1, 4, 4), dtype=torch.float16)
+        mask[:, (0, 3), 1:3] = torch.log(torch.tensor(0.25)).to(torch.float16)
+        assert torch.equal(records[0][1]["attention_mask"], mask)
+        assert records[0][1]["attention_mask_img_shape"] == (1, 1)
+        assert torch.equal(source[0][0], torch.tensor([[[1.0, 2.0]]]))
+        assert source[0][1] == {"source": "raw"}
+        return cls.outputs(
+            summary=json.dumps(
+                [[list(record[0].shape), record[1].get("source")] for record in records],
+                separators=(",", ":"),
+            )
+        )
+
+
+FIXTURES = (ConditioningSource, StyleSource, VisionSource, ConditioningInspector)
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_style_apply_runs_through_native_conditioning_consumer_twice(
     tmp_path: Path, in_process: bool
@@ -148,27 +235,38 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "style_apply_fixture.py").write_text(
                 "from test_style_model_apply_torch import FIXTURES\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, *FIXTURES)\n",
+                "from dinkster_nodes_conditioning import NODES as PACK_NODES\n"
+                "from dinkster_nodes_conditioning.types import register_types as conditioning_types\n"
+                "from dinkster_nodes_models.types import register_types as model_types\n"
+                "def register_types(registry):\n"
+                "    conditioning_types(registry)\n"
+                "    model_types(registry)\n"
+                "NODES = (*PACK_NODES, *FIXTURES)\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["style-apply-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "style_apply_fixture:NODES")
+                .replace("dinkster_nodes_conditioning:NODES", "style_apply_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "style_apply_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "style_apply_fixture:register_inference_types",
+                    "dinkster_nodes_conditioning.types:register_types",
+                    "style_apply_fixture:register_types",
                 ),
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            latent_manifest = manifest.parent.parent / "dinkster-nodes-latent/dinkster-pack.toml"
+            await composer.add_pack(
+                PackSpec(
+                    trust_reserved=True,
+                    manifest=latent_manifest,
+                    in_process=in_process,
+                    packs={"dinkster-latent": PackInfo(display_name="Latent", version="0.0.1")},
+                )
+            )
+            await composer.add_pack(
+                PackSpec(trust_reserved=True, manifest=fixture_manifest, in_process=in_process)
+            )
             graph = Graph(
                 nodes={
                     "conditioning": GraphNode("style-apply-fixture.conditioning-source"),

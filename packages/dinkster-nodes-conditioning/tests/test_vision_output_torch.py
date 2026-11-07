@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,15 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
+    CLIP_VISION_TYPE,
+    CORE_INT,
+    CORE_STRING,
+    IMAGE_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     TypeRegistry,
     materialize_clip_vision_output,
     register_inference_types,
@@ -107,3 +117,53 @@ def test_actual_output_materialization_is_lossless_and_does_not_mutate(variant: 
         assert "all_hidden_states" in before
     else:
         assert "all_hidden_states" not in before
+
+
+class VisionSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="vision-fixture.source",
+            inputs=(InputSpec("variant", TypeExpr.concrete(CORE_INT)),),
+            outputs=(OutputSpec("vision", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, variant: int) -> dict[str, object]:
+        return cls.outputs(vision=_source(variant))
+
+
+class VisionEncodeSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="vision-fixture.encode-source",
+            outputs=(
+                OutputSpec("clip_vision", TypeExpr.concrete(CLIP_VISION_TYPE)),
+                OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            clip_vision=VisionEncoder(),
+            image=np.arange(24, dtype=np.float32).reshape(1, 2, 4, 3),
+        )
+
+
+class VisionInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="vision-fixture.inspect",
+            inputs=(InputSpec("vision", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)),),
+            outputs=(OutputSpec("text", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, vision: Any) -> dict[str, object]:
+        return cls.outputs(text=json.dumps(_inspect(vision), sort_keys=True))
+
+
+FIXTURES = (VisionSource, VisionEncodeSource, VisionInspect)

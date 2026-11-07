@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 import pytest
@@ -10,9 +11,15 @@ import torch
 from dinkster_api.v1 import (
     CLIP_TYPE,
     CONDITIONING_TYPE,
+    CORE_STRING,
     FLOATS_TYPE,
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
     materialize_latent,
 )
@@ -22,6 +29,189 @@ from dinkster_values import TypeRegistry
 
 def _raw_bytes(tensor: torch.Tensor) -> bytes:
     return tensor.contiguous().view(torch.uint8).numpy().tobytes()
+
+
+class FloatStrengthSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-values-source.source",
+            outputs=(OutputSpec("strengths", TypeExpr.concrete(FLOATS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(strengths=torch.tensor([0.5, -3.25], dtype=torch.bfloat16))
+
+
+class FloatStrengthConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-values-consumer.consumer",
+            inputs=(InputSpec("strengths", TypeExpr.concrete(FLOATS_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, strengths: Any) -> dict[str, object]:
+        tensor = materialize_latent(strengths)
+        return cls.outputs(
+            summary=f"{tensor.dtype};{tuple(tensor.shape)};{hashlib.sha256(_raw_bytes(tensor)).hexdigest()}"
+        )
+
+
+class HookSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-objects.hook-source",
+            outputs=(
+                OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                OutputSpec("keyframes", TypeExpr.concrete(HOOK_KEYFRAMES_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import hooks
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP
+
+        keyframes = hooks.HookKeyframeGroup()
+        keyframes.add(hooks.HookKeyframe(strength=0.625, start_percent=0.25))
+        hook = hooks.WeightHook(strength_model=0.75, strength_clip=-1.25)
+        hook.hook_keyframe = keyframes
+        group = hooks.HookGroup()
+        group.add(hook)
+        clip = CLIP(no_init=True)
+        clip.patcher = ModelPatcher(torch.nn.Linear(2, 3), "cpu", "cpu")
+        clip.cond_stage_model = clip.patcher.model
+        clip.tokenizer = object()
+        clip.layer_idx = None
+        clip.tokenizer_options = {}
+        clip.use_clip_schedule = True
+        clip.apply_hooks_to_conds = group
+        clip.patcher.forced_hooks = group
+        return cls.outputs(hooks=group, keyframes=keyframes, clip=clip)
+
+
+class HookConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-objects.hook-consumer",
+            inputs=(
+                InputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("keyframes", TypeExpr.concrete(HOOK_KEYFRAMES_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, hooks: Any, keyframes: Any, clip: Any) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import hooks as inference_hooks
+
+        assert isinstance(hooks, inference_hooks.HookGroup)
+        assert isinstance(keyframes, inference_hooks.HookKeyframeGroup)
+        assert len(hooks.hooks) == 1
+        hook = hooks.hooks[0]
+        assert hook.hook_keyframe is keyframes
+        clone = hooks.clone()
+        assert clone is not hooks
+        assert clone.hooks[0] is not hook
+        assert clone.hooks[0].hook_keyframe is keyframes
+        assert clip.apply_hooks_to_conds is hooks
+        assert clip.patcher.forced_hooks is hooks
+        clip_clone = clip.clone(disable_dynamic=True)
+        assert clip_clone.apply_hooks_to_conds is hooks
+        assert clip_clone.patcher.forced_hooks is not hooks
+        assert clip_clone.patcher.forced_hooks.hooks[0].hook_keyframe is keyframes
+        keyframe = keyframes.keyframes[0]
+        return cls.outputs(
+            summary=(
+                f"{len(hooks.hooks)};{len(keyframes.keyframes)};"
+                f"{keyframe.strength};{keyframe.start_percent}"
+            )
+        )
+
+
+class HookOwnershipConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-ownership-fixture.inspect",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, original: Any, hooks: Any, clip: Any, conditioning: Any
+    ) -> dict[str, object]:
+        initialize_inference_process()
+
+        assert len(hooks.hooks) == 1
+        hook = hooks.hooks[0]
+        assert hook._strength_model == 0.75
+        assert hook._strength_clip == -1.25
+        hook_frames = [
+            (frame.strength, frame.start_percent) for frame in hook.hook_keyframe.keyframes
+        ]
+        assert hook_frames == [(0.625, 0.25)]
+        assert clip.apply_hooks_to_conds is None
+        assert clip.use_clip_schedule is True
+        forced = clip.patcher.forced_hooks
+        assert forced is not hooks
+        assert len(forced.hooks) == 1
+        forced_hook = forced.hooks[0]
+        assert forced_hook._strength_model == 0.75
+        assert forced_hook._strength_clip == -1.25
+        forced_frames = [
+            (frame.strength, frame.start_percent) for frame in forced_hook.hook_keyframe.keyframes
+        ]
+        assert forced_frames == [(0.625, 0.25)]
+        pair = original._dinkster_resident_refs[0]
+        conditioned = conditioning[0][1]["hooks"]
+        for group in (hooks, forced, conditioned):
+            assert sum(owner is pair for owner in group._dinkster_resident_refs) == 1
+            assert group.hooks[0].weights["weight"][1][0] is pair[0]["weight"]
+            assert group.hooks[0].weights_clip["weight"][1][0] is pair[1]["weight"]
+        assert torch.equal(conditioning[0][0], torch.tensor([[2.0, -7.0]]))
+        return cls.outputs(summary="0.75;-1.25;0.625;0.25")
+
+
+class HookOwnershipSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-ownership-fixture.source",
+            outputs=(
+                OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                OutputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import hooks
+
+        return cls.outputs(
+            hooks=_declared_weight_group()[0],
+            clip=_clip(),
+            conditioning=[[torch.tensor([[2.0, -7.0]]), {"hooks": hooks.HookGroup()}]],
+        )
 
 
 def _clip() -> Any:
@@ -226,6 +416,7 @@ def test_clip_clone_retains_actual_schedule_clone_not_source_group(
 def test_retained_keyframe_release_invalidates_groups_and_conditioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dinkster_api.v1 import CONDITIONING_TYPE
     from dinkster_caches import MemoryLRUCache
     from dinkster_memory.resident import ResidentPool
     from dinkster_protocol import CacheKey
@@ -338,6 +529,7 @@ def test_retained_keyframe_release_invalidates_groups_and_conditioning(
 def test_weight_pair_ownership_survives_hook_clones_and_invalidates_dependents(
     monkeypatch: pytest.MonkeyPatch, native_first: bool, schedule_clip: bool
 ) -> None:
+    from dinkster_api.v1 import CONDITIONING_TYPE
     from dinkster_caches import MemoryLRUCache
     from dinkster_memory.resident import ResidentPool
     from dinkster_native.native import register_native_types

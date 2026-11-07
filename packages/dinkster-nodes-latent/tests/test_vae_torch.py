@@ -7,6 +7,17 @@ from typing import Any
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    IMAGE_TYPE,
+    VAE_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_image,
+)
 from dinkster_nodes_latent.vae import VAEDecode, VAEDecodeTiled, VAEEncode, VAEEncodeTiled
 
 torch: Any = importlib.import_module("torch")
@@ -112,3 +123,33 @@ def test_decode_nested_latent_uses_first_stream_and_flattens_video() -> None:
     np.testing.assert_array_equal(
         result.numpy(), first.movedim(1, -1).reshape(10, 7, 11, 3).numpy()
     )
+
+
+class VAESource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="vae-fixture.source",
+            outputs=(
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+                OutputSpec("pixels", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(vae=ImageVAE(), pixels=np.full((2, 7, 11, 3), 0.25, dtype=np.float32))
+
+
+class VAEInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="vae-fixture.inspect",
+            inputs=(InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
+            outputs=(OutputSpec("pixel", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, image: Any) -> dict[str, object]:
+        return cls.outputs(pixel=float(materialize_image(image)[1, 6, 10, 2]))

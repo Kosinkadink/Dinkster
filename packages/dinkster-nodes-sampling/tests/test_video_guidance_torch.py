@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    InputSpec,
     Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_nodes_sampling.video_guidance import VideoLinearCFGGuidance, VideoTriangleCFGGuidance
@@ -49,3 +56,35 @@ def test_video_cfg_callbacks_match_hand_derived_scales_and_preserve_source(
     assert "sampler_cfg_function" not in source.model_options
     assert source.model_options["transformer_options"] == {"preserved": {"value": 17}}
     assert patched.model_options["transformer_options"] == {"preserved": {"value": 17}}
+
+
+class VideoGuidanceModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="video-guidance-fixture.source",
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=_model_patcher())
+
+
+class VideoGuidanceModelConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="video-guidance-fixture.consumer",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any) -> Mapping[str, object]:
+        cond = torch.tensor([[[[3.0]]], [[[5.0]]], [[[7.0]]]])
+        uncond = torch.tensor([[[[-5.0]]], [[[-3.0]]], [[[-1.0]]]])
+        result = model.model_options["sampler_cfg_function"](
+            {"cond": cond, "uncond": uncond, "cond_scale": 4.0}
+        )
+        return cls.outputs(value=float(result.sum()))
