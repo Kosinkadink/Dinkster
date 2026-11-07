@@ -124,6 +124,9 @@ def test_caption_split_and_flag_are_forwarded(
     )
     assert result["num_frames"] == 41
     assert result["seconds"] == pytest.approx(4.2)
+    from dinkster_inference import model_management
+
+    model_management.unload_model_and_clones(head)
     head.model = torch.nn.Linear(2, 1)
     with pytest.raises(ValueError, match="not an LTX duration head"):
         LTXVDurationPredictor.execute(

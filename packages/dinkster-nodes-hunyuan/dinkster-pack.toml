@@ -19,7 +19,6 @@ api = "dinkster-api/v1"
 
 [pack.dependencies]
 "dinkster-conditioning" = ">=0.0.1"
-"dinkster-latent" = ">=0.0.1"
 "dinkster-video" = ">=0.0.1"
 
 [pack.entry]
