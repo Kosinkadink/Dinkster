@@ -4,7 +4,7 @@
       "displayName": "Load Audio Encoder"
     },
     "dinkster.conditioning.audio_encoder_encode": {
-      "displayName": ""
+      "displayName": "AudioEncoderEncode"
     },
     "dinkster.conditioning.clip_text_encode": {
       "displayName": "CLIP Text Encode (Prompt)"
@@ -55,7 +55,7 @@
       "displayName": "Conditioning Zero Out"
     },
     "dinkster.conditioning.conditioning_set_timestep_range": {
-      "displayName": ""
+      "displayName": "ConditioningSetTimestepRange"
     },
     "dinkster.conditioning.pi_d_conditioning": {
       "displayName": "PiD Conditioning"
@@ -96,6 +96,14 @@
       "AudioEncoderEncode"
     ],
     "dinkster.conditioning.clip_text_encode": [
+      "text",
+      "prompt",
+      "text prompt",
+      "positive prompt",
+      "negative prompt",
+      "encode text",
+      "text encoder",
+      "encode prompt",
       "CLIPTextEncode"
     ],
     "dinkster.conditioning.clip_set_last_layer": [
@@ -105,6 +113,7 @@
       "CLIPVisionEncode"
     ],
     "dinkster.conditioning.style_model_apply": [
+      "style transfer",
       "StyleModelApply"
     ],
     "dinkster.conditioning.clip_text_encode_controlnet": [
@@ -162,18 +171,28 @@
       "ControlNetApply"
     ],
     "dinkster.conditioning.control_net_apply_advanced": [
+      "controlnet",
+      "apply controlnet",
+      "use controlnet",
+      "control net",
       "ControlNetApplyAdvanced"
     ],
     "dinkster.conditioning.set_union_control_net_type": [
+      "set controlnet type",
+      "union controlnet type",
       "SetUnionControlNetType"
     ],
     "dinkster.conditioning.control_net_inpainting_ali_mama_apply": [
+      "masked controlnet",
       "ControlNetInpaintingAliMamaApply"
     ],
     "dinkster.conditioning.conditioning_loader": [
       "ConditioningLoader"
     ],
     "dinkster.conditioning.save_conditioning": [
+      "save conditioning",
+      "export conditioning",
+      "cache text encoder output",
       "SaveConditioning"
     ]
   }

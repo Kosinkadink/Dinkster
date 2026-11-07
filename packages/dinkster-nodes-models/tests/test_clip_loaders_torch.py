@@ -8,12 +8,80 @@ from typing import Any
 
 import pytest
 from dinkster_api.v1 import (
+    ASSET_TYPE,
+    CLIP_TYPE,
+    CORE_INT,
+    CORE_STRING,
     AssetRef,
+    InputSpec,
     LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
+    resolver_from_env,
 )
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_nodes_models.clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
+
+
+class LoaderAssets(Node):
+    original_load_clip: Any = None
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "clip-loader-fixture.assets",
+            inputs=(InputSpec("root", TypeExpr.concrete(CORE_STRING)),),
+            outputs=tuple(
+                OutputSpec(f"asset{i}", TypeExpr.concrete(ASSET_TYPE)) for i in range(1, 5)
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, root: str) -> dict[str, object]:
+        initialize_inference_process()
+        sd = importlib.import_module("dinkster_inference.sd")
+        cls.original_load_clip = sd.load_clip
+        sd.load_clip = lambda **options: options
+        return cls.outputs(
+            **{
+                f"asset{i}": AssetRef(digest_file(path), path.name, 1, resolver=resolver_from_env())
+                for i, index in enumerate((8, 2, 11, 3), 1)
+                for path in (Path(root) / f"encoder-{index}.safetensors",)
+            }
+        )
+
+
+class LoaderInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "clip-loader-fixture.inspect",
+            inputs=(
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("count", TypeExpr.concrete(CORE_INT)),
+                InputSpec("root", TypeExpr.concrete(CORE_STRING)),
+            ),
+            outputs=(OutputSpec("count", TypeExpr.concrete(CORE_INT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, clip: Any, count: int, root: str) -> dict[str, object]:
+        try:
+            assert clip == {
+                "ckpt_paths": [
+                    str(Path(root) / f"encoder-{index}.safetensors")
+                    for index in (8, 2, 11, 3)[:count]
+                ],
+                "embedding_directory": [str(Path(root) / name) for name in ("early", "late")],
+            }
+            return cls.outputs(count=count)
+        finally:
+            importlib.import_module(
+                "dinkster_inference.sd"
+            ).load_clip = LoaderAssets.original_load_clip
 
 
 @pytest.mark.parametrize("count", (3, 4))

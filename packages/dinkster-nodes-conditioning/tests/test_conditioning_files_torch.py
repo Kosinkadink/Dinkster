@@ -6,10 +6,21 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
+    CORE_STRING,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
 from dinkster_nodes_conditioning.conditioning_files import ConditioningLoader, SaveConditioning
 from safetensors import safe_open
 from safetensors.torch import save_file
+
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 
 def _conditioning() -> list[Any]:
@@ -132,3 +143,24 @@ def test_grant_and_output_authority_are_required(
     with pytest.raises(AssetError):
         SaveConditioning.execute(conditioning=_conditioning(), mount="input")
     assert not list((tmp_path / "output").rglob("*.safetensors"))
+
+
+class InspectConditioning(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="conditioning-fixture.inspect",
+            inputs=(InputSpec("value", TypeExpr.concrete(CONDITIONING_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, value: Any) -> dict[str, object]:
+        assert len(value) == 1
+        torch.testing.assert_close(
+            value[0][0], torch.tensor([[[2.0, 11.0], [-7.0, 0.5]]]), rtol=0, atol=0
+        )
+        assert value[0][1]["references"][1].tolist() == [-13.0, 17.0]
+        assert value[0][1]["pooled_output"].dtype == torch.float16
+        assert value[0][1]["label"] == "asymmetric"
+        return cls.outputs(summary="conditioning tensors and metadata preserved")

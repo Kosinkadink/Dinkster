@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import math
+import statistics
 from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    CORE_STRING,
+    VAE_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_audio,
+)
 from dinkster_nodes_latent.audio_vae import VAEDecodeAudio, VAEDecodeAudioTiled, VAEEncodeAudio
+
+_AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 
 
 class AudioVAE:
@@ -30,6 +44,11 @@ class AudioVAE:
     def decode_tiled(self, latent: Any, *, tile_x: int, tile_y: int, overlap: int | None) -> Any:
         self.tiled = (latent, tile_x, tile_y, overlap)
         return latent.movedim(1, -1)
+
+
+class GraphAudioVAE(AudioVAE):
+    def encode(self, waveform: Any) -> Any:
+        return waveform.movedim(-1, 1)
 
 
 def test_encode_preserves_layout_and_rejects_no_audio() -> None:
@@ -119,3 +138,58 @@ def test_tiled_decode_delegates_exact_arguments() -> None:
     assert torch.equal(latent, samples["samples"])
     assert (tile_x, tile_y, overlap) == (520, 520, 72)
     assert output["sample_rate"] == 32000
+
+
+class AudioVAESource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="audio-vae-fixture.source",
+            outputs=(
+                OutputSpec("audio", _AUDIO),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            audio={
+                "waveform": torch.tensor(
+                    [
+                        [[0.0, 8.0, -4.0], [4.0, -8.0, 2.0]],
+                        [[0.0, 0.01, -0.005], [0.005, -0.01, 0.0025]],
+                    ],
+                    dtype=torch.float64,
+                ),
+                "sample_rate": 24000,
+            },
+            vae=GraphAudioVAE(),
+        )
+
+
+class AudioVAEInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="audio-vae-fixture.inspect",
+            inputs=(InputSpec("ordinary", _AUDIO), InputSpec("tiled", _AUDIO)),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, ordinary: Any, tiled: Any) -> dict[str, object]:
+        expected = torch.tensor(
+            [[[0.0, 8.0, -4.0], [4.0, -8.0, 2.0]], [[0.0, 0.01, -0.005], [0.005, -0.01, 0.0025]]],
+            dtype=torch.float32,
+        )
+        expected[0] /= 5 * statistics.stdev([0.0, 8.0, -4.0, 4.0, -8.0, 2.0])
+        for output in (ordinary, tiled):
+            audio = materialize_audio(output)
+            assert set(audio) == {"waveform", "sample_rate"}
+            assert audio["sample_rate"] == 32000
+            assert audio["waveform"].dtype is torch.float32
+            assert audio["waveform"].device.type == "cpu"
+            assert tuple(audio["waveform"].shape) == (2, 2, 3)
+            torch.testing.assert_close(audio["waveform"], expected)
+        return cls.outputs(summary="audio-vae")

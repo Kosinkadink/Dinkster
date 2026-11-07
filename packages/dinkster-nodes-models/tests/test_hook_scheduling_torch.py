@@ -6,6 +6,16 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    FLOATS_TYPE,
+    HOOKS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_models.hook_scheduling import (
     CombineHooks2,
     CombineHooks4,
@@ -115,3 +125,42 @@ def test_combine_hooks_preserves_singleton_and_clones_multi_group_inputs(
     )
     assert CombineHooks2.execute(hooks_A=groups[0], hooks_B=None)["HOOKS"] is groups[0]
     assert CombineHooks2.execute(hooks_A=None, hooks_B=None)["HOOKS"] is None
+
+
+class HookSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-scheduling-fixture.source",
+            outputs=(
+                OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                OutputSpec("strengths", TypeExpr.concrete(FLOATS_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(hooks=_group(0.75), strengths=torch.tensor([0.5, -1.25]))
+
+
+class HookInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-scheduling-fixture.inspect",
+            inputs=(InputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),),
+            outputs=(OutputSpec("strength", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, hooks: Any) -> dict[str, object]:
+        assert len(hooks.hooks) == 1
+        keyframes = hooks.hooks[0].hook_keyframe.keyframes
+        assert [(float(keyframe.strength), keyframe.guarantee_steps) for keyframe in keyframes] == [
+            (0.25, 1),
+            (0.25, 1),
+            (1.25, 0),
+            (0.5, 1),
+            (-1.25, 0),
+        ]
+        return cls.outputs(strength=hooks.hooks[0].strength_model)

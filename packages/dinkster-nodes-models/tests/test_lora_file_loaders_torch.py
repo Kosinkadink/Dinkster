@@ -8,8 +8,16 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CORE_STRING,
+    MODEL_TYPE,
     AssetRef,
+    InputSpec,
     LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_assets import MountDef, MountTable
@@ -184,3 +192,41 @@ def test_real_safetensors_apply_through_all_lora_file_loaders(
         model=_model(), lora_name=asset, strength_model=-0.5
     )["MODEL"]
     assert set(bypass_model_only.injections) == {"bypass_lora"}
+
+
+class _HostSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-file-loaders-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(model=_model(), clip=_clip())
+
+
+class _HostInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-file-loaders-fixture.inspect",
+            inputs=(
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any, clip: Any) -> dict[str, object]:
+        assert [patch[0] for patch in model.patches["diffusion_model.linear.weight"]] == [
+            -0.5,
+            1.25,
+        ]
+        assert [patch[0] for patch in clip.patcher.patches["text_encoder.weight"]] == [-0.5, 1.25]
+        return cls.outputs(summary="ordered lora rows applied")

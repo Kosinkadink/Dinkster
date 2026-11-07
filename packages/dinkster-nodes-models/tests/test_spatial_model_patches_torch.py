@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_models.spatial_model_patches import (
     HyperTile,
     PatchModelAddDownscale,
@@ -145,3 +155,117 @@ def test_downscale_respects_sigma_window_skip_branch_and_restores_skip_shape(
     assert outside_window is hidden
     assert resized.shape == hidden.shape
     assert skip is hidden
+
+
+class ModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="spatial-fixture.model",
+            inputs=(),
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=Patcher())
+
+
+class ModelResult(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="spatial-fixture.result",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, original: Patcher, model: Patcher) -> Mapping[str, object]:
+        assert original.attn_input is None
+        assert original.attn_output is None
+        query = torch.arange(30, dtype=torch.float32).reshape(1, 15, 2) + 1
+        torch.manual_seed(7)
+        merged, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 3, 5)})
+        restored = model.attn_output(merged, {})
+        assert merged.shape == (1, 11, 2)
+        assert torch.equal(
+            merged[0, -4:], torch.tensor([[3.0, 4.0], [1.0, 2.0], [5.0, 6.0], [15.0, 16.0]])
+        )
+        assert torch.equal(
+            restored[0, 5:10], torch.full((5, 2), 15.0).add(torch.tensor([0.0, 1.0]))
+        )
+        return cls.outputs(value=float(restored.sum()))
+
+
+class HyperTileResult(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="spatial-fixture.hypertile-result",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, original: Patcher, model: Patcher) -> Mapping[str, object]:
+        assert original.attn_input is None
+        assert original.attn_output is None
+        query = torch.arange(192, dtype=torch.float32).reshape(1, 96, 2)
+        tiled, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 8, 12)})
+        restored = model.attn_output(tiled, {})
+        assert tiled.shape == (6, 16, 2)
+        assert torch.equal(restored, query)
+        return cls.outputs(value=float(restored.sum()))
+
+
+class DownscaleResult(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="spatial-fixture.downscale-result",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, original: Patcher, model: Patcher) -> Mapping[str, object]:
+        assert original.input_patch is None
+        assert original.after_skip_patch is None
+        assert original.output_patch is None
+        hidden = torch.arange(35, dtype=torch.float32).reshape(1, 1, 5, 7)
+        reduced = model.after_skip_patch(
+            hidden, {"block": ("input", 3), "sigmas": [torch.tensor(1.0)]}
+        )
+        restored, _ = model.output_patch(reduced, hidden, {})
+        assert reduced.shape == (1, 1, 2, 4)
+        assert torch.equal(
+            reduced, torch.tensor([[[[7.0, 9.0, 11.0, 13.0], [21.0, 23.0, 25.0, 27.0]]]])
+        )
+        assert restored.shape == hidden.shape
+        assert torch.equal(
+            restored,
+            torch.tensor(
+                [
+                    [
+                        [
+                            [7.0, 7.0, 9.0, 11.0, 11.0, 13.0, 13.0],
+                            [7.0, 7.0, 9.0, 11.0, 11.0, 13.0, 13.0],
+                            [21.0, 21.0, 23.0, 25.0, 25.0, 27.0, 27.0],
+                            [21.0, 21.0, 23.0, 25.0, 25.0, 27.0, 27.0],
+                            [21.0, 21.0, 23.0, 25.0, 25.0, 27.0, 27.0],
+                        ]
+                    ]
+                ]
+            ),
+        )
+        return cls.outputs(value=float(restored.sum()))

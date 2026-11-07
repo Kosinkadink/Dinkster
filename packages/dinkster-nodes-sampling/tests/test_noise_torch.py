@@ -1,11 +1,23 @@
 """CPU behavior for native ComfyUI noise nodes."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
+    CORE_FLOAT,
+    LATENT_TYPE,
+    MODEL_TYPE,
+    SIGMAS_TYPE,
+    InputSpec,
     MultiStreamLatent,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
 )
 from dinkster_nodes_sampling.noise import AddNoise, DisableNoise, RandomNoise
 
@@ -157,3 +169,91 @@ def test_add_noise_handles_native_av_arithmetic_and_preserves_source(empty: bool
     torch.testing.assert_close(result["samples"].by_role("audio"), expected_audio)
     torch.testing.assert_close(audio, original_audio, equal_nan=True)
     assert source["samples"] is samples
+
+
+class _PackSampling:
+    def noise_scaling(
+        self, scale: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor
+    ) -> torch.Tensor:
+        return latent + noise * scale
+
+
+class _PackModule(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.model_sampling = _PackSampling()
+        self.process_latent_in = lambda value: value + 1
+        self.process_latent_out = lambda value: value * 2
+
+
+def _pack_model() -> Any:
+    from dinkster_api.v1 import initialize_inference_process
+
+    initialize_inference_process()
+    from dinkster_inference.model_patcher import ModelPatcher
+
+    return ModelPatcher(_PackModule(), torch.device("cpu"), torch.device("cpu"))
+
+
+class _Source(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="noise-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("sigmas", TypeExpr.concrete(SIGMAS_TYPE)),
+                OutputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(
+            model=_pack_model(),
+            sigmas=torch.tensor([4.0, 1.0]),
+            latent={
+                "samples": torch.tensor([[[[1.0, -2.0]]], [[[3.0, 4.0]]]]),
+                "noise_mask": torch.tensor([[[0.0, 0.25]], [[0.5, 1.0]]]),
+                "batch_index": [7, 3],
+                "note": "preserved",
+            },
+        )
+
+
+class _Consumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="noise-fixture.consumer",
+            inputs=(
+                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("original", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("random", TypeExpr.concrete(CORE_BOOLEAN)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: Any, original: Any, random: bool) -> Mapping[str, object]:
+        materialized = materialize_latent(latent)
+        original = materialize_latent(original)
+        assert materialized["note"] == "preserved"
+        assert materialized["batch_index"] == [7, 3]
+        source = torch.tensor([[[[1.0, -2.0]]], [[[3.0, 4.0]]]])
+        mask = torch.tensor([[[0.0, 0.25]], [[0.5, 1.0]]])
+        assert torch.equal(original["samples"], source)
+        assert torch.equal(original["noise_mask"], mask)
+        assert torch.equal(materialized["noise_mask"], mask)
+        assert original["batch_index"] == [7, 3]
+        assert original["note"] == "preserved"
+        if random:
+            generator = torch.Generator(device="cpu").manual_seed(42)
+            draws = [torch.randn((1, 1, 1, 2), generator=generator) for _ in range(8)]
+            noise = torch.cat((draws[7], draws[3]))
+            expected = 2 * (source + 1 + noise * 3)
+        else:
+            expected = 2 * (source + 1)
+        assert torch.equal(materialized["samples"], expected)
+        return cls.outputs(value=float(materialized["samples"].sum()))

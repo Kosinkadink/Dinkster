@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_models.freeu import FreeU, FreeU_V2
 
 
@@ -103,3 +113,32 @@ def test_freeu_uses_cpu_fourier_fallback_for_repeated_unsupported_skips() -> Non
         assert torch.equal(hidden, expected_hidden)
         assert torch.allclose(result_skip, expected_skip)
     assert source.patch is None
+
+
+class ModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="freeu-fixture.model",
+            inputs=(),
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=Patcher())
+
+
+class PatchedModelResult(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="freeu-fixture.result",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+        hidden, _ = model.patch(torch.ones((1, 8, 2, 2)), torch.ones((1, 8, 2, 2)), {})
+        return cls.outputs(value=float(hidden[0, 0, 0, 0]))

@@ -1,16 +1,16 @@
 {
   "nodes": {
     "dinkster.models.u_net_self_attention_multiply": {
-      "displayName": ""
+      "displayName": "UNetSelfAttentionMultiply"
     },
     "dinkster.models.u_net_cross_attention_multiply": {
-      "displayName": ""
+      "displayName": "UNetCrossAttentionMultiply"
     },
     "dinkster.models.clip_attention_multiply": {
-      "displayName": ""
+      "displayName": "CLIPAttentionMultiply"
     },
     "dinkster.models.u_net_temporal_attention_multiply": {
-      "displayName": ""
+      "displayName": "UNetTemporalAttentionMultiply"
     },
     "dinkster.models.easy_cache": {
       "displayName": "EasyCache"
@@ -25,103 +25,103 @@
       "displayName": "Load CLIP (Quadruple)"
     },
     "dinkster.models.model_merge_simple": {
-      "displayName": ""
+      "displayName": "ModelMergeSimple"
     },
     "dinkster.models.model_merge_subtract": {
-      "displayName": ""
+      "displayName": "ModelMergeSubtract"
     },
     "dinkster.models.model_merge_add": {
-      "displayName": ""
+      "displayName": "ModelMergeAdd"
     },
     "dinkster.models.clip_merge_simple": {
-      "displayName": ""
+      "displayName": "CLIPMergeSimple"
     },
     "dinkster.models.clip_merge_subtract": {
-      "displayName": ""
+      "displayName": "CLIPMergeSubtract"
     },
     "dinkster.models.clip_merge_add": {
-      "displayName": ""
+      "displayName": "CLIPMergeAdd"
     },
     "dinkster.models.model_merge_blocks": {
-      "displayName": ""
+      "displayName": "ModelMergeBlocks"
     },
     "dinkster.models.model_merge_sd1": {
-      "displayName": ""
+      "displayName": "ModelMergeSD1"
     },
     "dinkster.models.model_merge_sd2": {
-      "displayName": ""
+      "displayName": "ModelMergeSD2"
     },
     "dinkster.models.model_merge_sdxl": {
-      "displayName": ""
+      "displayName": "ModelMergeSDXL"
     },
     "dinkster.models.model_merge_sd3_2_b": {
-      "displayName": ""
+      "displayName": "ModelMergeSD3_2B"
     },
     "dinkster.models.model_merge_auraflow": {
-      "displayName": ""
+      "displayName": "ModelMergeAuraflow"
     },
     "dinkster.models.model_merge_flux1": {
-      "displayName": ""
+      "displayName": "ModelMergeFlux1"
     },
     "dinkster.models.model_merge_sd35_large": {
-      "displayName": ""
+      "displayName": "ModelMergeSD35_Large"
     },
     "dinkster.models.model_merge_mochi_preview": {
-      "displayName": ""
+      "displayName": "ModelMergeMochiPreview"
     },
     "dinkster.models.model_merge_ltxv": {
-      "displayName": ""
+      "displayName": "ModelMergeLTXV"
     },
     "dinkster.models.model_merge_cosmos7_b": {
-      "displayName": ""
+      "displayName": "ModelMergeCosmos7B"
     },
     "dinkster.models.model_merge_cosmos14_b": {
-      "displayName": ""
+      "displayName": "ModelMergeCosmos14B"
     },
     "dinkster.models.model_merge_wan2_1": {
-      "displayName": ""
+      "displayName": "ModelMergeWAN2_1"
     },
     "dinkster.models.model_merge_cosmos_predict2_2_b": {
-      "displayName": ""
+      "displayName": "ModelMergeCosmosPredict2_2B"
     },
     "dinkster.models.model_merge_cosmos_predict2_14_b": {
-      "displayName": ""
+      "displayName": "ModelMergeCosmosPredict2_14B"
     },
     "dinkster.models.model_merge_qwen_image": {
-      "displayName": ""
+      "displayName": "ModelMergeQwenImage"
     },
     "dinkster.models.model_merge_krea2": {
-      "displayName": ""
+      "displayName": "ModelMergeKrea2"
     },
     "dinkster.models.model_sampling_discrete": {
-      "displayName": ""
+      "displayName": "ModelSamplingDiscrete"
     },
     "dinkster.models.model_sampling_continuous_edm": {
-      "displayName": ""
+      "displayName": "ModelSamplingContinuousEDM"
     },
     "dinkster.models.model_sampling_continuous_v": {
-      "displayName": ""
+      "displayName": "ModelSamplingContinuousV"
     },
     "dinkster.models.model_sampling_stable_cascade": {
-      "displayName": ""
+      "displayName": "ModelSamplingStableCascade"
     },
     "dinkster.models.model_sampling_sd3": {
-      "displayName": ""
+      "displayName": "ModelSamplingSD3"
     },
     "dinkster.models.model_sampling_aura_flow": {
-      "displayName": ""
+      "displayName": "ModelSamplingAuraFlow"
     },
     "dinkster.models.model_sampling_flux": {
-      "displayName": ""
+      "displayName": "ModelSamplingFlux"
     },
     "dinkster.models.model_noise_scale": {
-      "displayName": ""
+      "displayName": "ModelNoiseScale"
     },
     "dinkster.models.rescale_cfg": {
-      "displayName": ""
+      "displayName": "RescaleCFG"
     },
     "dinkster.models.model_compute_dtype": {
-      "displayName": ""
+      "displayName": "ModelComputeDtype"
     },
     "dinkster.models.model_attention_backend": {
       "displayName": "Model Attention Backend"
@@ -145,25 +145,25 @@
       "displayName": "Select VAE Device"
     },
     "dinkster.models.torch_compile_model": {
-      "displayName": ""
+      "displayName": "TorchCompileModel"
     },
     "dinkster.models.free_u": {
-      "displayName": ""
+      "displayName": "FreeU"
     },
     "dinkster.models.free_u_v2": {
-      "displayName": ""
+      "displayName": "FreeU_V2"
     },
     "dinkster.models.tome_patch_model": {
-      "displayName": ""
+      "displayName": "TomePatchModel"
     },
     "dinkster.models.hyper_tile": {
-      "displayName": ""
+      "displayName": "HyperTile"
     },
     "dinkster.models.patch_model_add_downscale": {
       "displayName": "PatchModelAddDownscale (Kohya Deep Shrink)"
     },
     "dinkster.models.scale_rope": {
-      "displayName": ""
+      "displayName": "ScaleROPE"
     },
     "dinkster.models.differential_diffusion": {
       "displayName": "Differential Diffusion"
@@ -289,10 +289,10 @@
       "displayName": "Load LoRA (Bypass, Model Only) (for debugging)"
     },
     "dinkster.models.clip_save": {
-      "displayName": ""
+      "displayName": "CLIPSave"
     },
     "dinkster.models.vae_save": {
-      "displayName": ""
+      "displayName": "VAESave"
     },
     "dinkster.models.lora_save": {
       "displayName": "Extract and Save Lora"
@@ -301,7 +301,7 @@
       "displayName": "Save Checkpoint"
     },
     "dinkster.models.model_save": {
-      "displayName": ""
+      "displayName": "ModelSave"
     }
   },
   "searchTerms": {
@@ -312,6 +312,8 @@
       "UNetCrossAttentionMultiply"
     ],
     "dinkster.models.clip_attention_multiply": [
+      "clip attention scale",
+      "text encoder attention",
       "CLIPAttentionMultiply"
     ],
     "dinkster.models.u_net_temporal_attention_multiply": [
@@ -426,9 +428,15 @@
       "RescaleCFG"
     ],
     "dinkster.models.model_compute_dtype": [
+      "model precision",
+      "change dtype",
       "ModelComputeDtype"
     ],
     "dinkster.models.model_attention_backend": [
+      "comfy kitchen",
+      "attention",
+      "pytorch",
+      "kitchen attention",
       "ModelAttentionBackend"
     ],
     "dinkster.models.hypernetwork_loader": [
@@ -471,24 +479,39 @@
       "ScaleROPE"
     ],
     "dinkster.models.differential_diffusion": [
+      "inpaint gradient",
+      "variable denoise strength",
       "DifferentialDiffusion"
     ],
     "dinkster.models.block_sparse_attention": [
+      "Block Sparse Attention",
+      "sol-attn",
+      "SLA",
+      "FastVideo",
       "BlockSparseAttention"
     ],
     "dinkster.models.set_hook_keyframes": [
       "SetHookKeyframes"
     ],
     "dinkster.models.create_hook_keyframe": [
+      "hook scheduling",
+      "strength animation",
+      "timed hook",
       "CreateHookKeyframe"
     ],
     "dinkster.models.create_hook_keyframes_interpolated": [
+      "ease hook strength",
+      "smooth hook transition",
+      "interpolate keyframes",
       "CreateHookKeyframesInterpolated"
     ],
     "dinkster.models.create_hook_keyframes_from_floats": [
+      "batch keyframes",
+      "strength list to keyframes",
       "CreateHookKeyframesFromFloats"
     ],
     "dinkster.models.combine_hooks2": [
+      "merge hooks",
       "CombineHooks2"
     ],
     "dinkster.models.combine_hooks4": [
@@ -546,15 +569,29 @@
       "VAELoader"
     ],
     "dinkster.models.diffusers_loader": [
+      "load diffusers model",
       "DiffusersLoader"
     ],
     "dinkster.models.checkpoint_loader_simple": [
+      "load model",
+      "checkpoint",
+      "model loader",
+      "load checkpoint",
+      "ckpt",
+      "model",
       "CheckpointLoaderSimple"
     ],
     "dinkster.models.checkpoint_loader": [
+      "load model",
+      "model loader",
       "CheckpointLoader"
     ],
     "dinkster.models.control_net_loader": [
+      "controlnet",
+      "control net",
+      "cn",
+      "load controlnet",
+      "controlnet loader",
       "ControlNetLoader"
     ],
     "dinkster.models.diff_control_net_loader": [
@@ -576,15 +613,35 @@
       "StyleModelLoader"
     ],
     "dinkster.models.lora_loader": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora loader",
+      "lora model",
       "LoraLoader"
     ],
     "dinkster.models.lora_loader_model_only": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora loader",
+      "lora model",
       "LoraLoaderModelOnly"
     ],
     "dinkster.models.load_lora_model": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "lora model",
+      "lora stack",
       "LoadLoraModel"
     ],
     "dinkster.models.load_lora_text_encoder": [
+      "lora",
+      "load lora",
+      "apply lora",
+      "clip lora",
+      "lora stack",
       "LoadLoraTextEncoder"
     ],
     "dinkster.models.lora_loader_bypass": [
@@ -600,12 +657,18 @@
       "VAESave"
     ],
     "dinkster.models.lora_save": [
+      "export lora",
       "LoraSave"
     ],
     "dinkster.models.checkpoint_save": [
+      "save model",
+      "export checkpoint",
+      "merge save",
       "CheckpointSave"
     ],
     "dinkster.models.model_save": [
+      "export model",
+      "checkpoint save",
       "ModelSave"
     ]
   }

@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
 from dinkster_nodes_sampling.noise_guidance import EpsilonScaling, FreSca, TemporalScoreRescaling
 
 
@@ -109,3 +119,59 @@ def test_frequency_guidance_separates_dc_and_high_frequency_and_preserves_tail(
     for conds, outputs in (([None, object()], [cond, uncond]), ([object()], [cond])):
         assert patched.pre({"conds_out": outputs, "conds": conds}) is outputs
     assert source.pre is None
+
+
+class ModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="noise-guidance-fixture.model",
+            outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(MODEL=Patcher())
+
+
+class Result(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="noise-guidance-fixture.result",
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(MODEL_TYPE))
+                for name in ("epsilon", "score", "frequency", "source")
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, epsilon: Patcher, score: Patcher, frequency: Patcher, source: Patcher
+    ) -> Mapping[str, object]:
+        denoised = torch.tensor([3.0, -2.0])
+        assert torch.equal(
+            epsilon.post({"input": torch.tensor([1.0, 4.0]), "denoised": denoised}),
+            torch.tensor([5.0, -8.0]),
+        )
+        assert score.post({"sigma": torch.tensor(0.0), "denoised": denoised}) is denoised
+        x = torch.tensor([[[[-2.0, 5.0, 8.0]]], [[[3.0, -1.0, 7.0]]]])
+        predictions = torch.tensor([[[[2.0, -4.0, 1.0]]], [[[-2.0, 5.0, 3.0]]]])
+        result = score.post(
+            {
+                "input": x,
+                "denoised": predictions,
+                "sigma": torch.tensor([0.0, 0.5]),
+                "model": SimpleNamespace(
+                    current_patcher=SimpleNamespace(get_model_object=lambda _: object())
+                ),
+            }
+        )
+        assert torch.equal(result[0], predictions[0])
+        torch.testing.assert_close(result[1], x[1] * (16 / 33) + predictions[1] * (17 / 33))
+        inputs = [torch.full((1, 1, 4, 4), 4.0), torch.ones(1, 1, 4, 4)]
+        outputs = frequency.pre({"conds_out": inputs, "conds": [object(), object()]})
+        assert torch.equal(outputs[0], torch.full((1, 1, 4, 4), 7.0))
+        assert source.pre is None and source.post is None
+        return cls.outputs(value=7.0)
