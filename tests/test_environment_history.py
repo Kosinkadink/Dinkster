@@ -183,6 +183,7 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
     try:
         legacy_snapshot = history(root)[0]["snapshot"]
         assert _run(root, "stop", "--yes")[0] == 0
+        assert _run(root, "cleanup", "--automatic", "off", "--yes")[0] == 0
         setup_journal = next((root / "journal").glob("*.json"))
         replace(Journal.read(setup_journal), history_entry=None).write(setup_journal)
         (root / "history/00000000000000000001.json").unlink()
@@ -214,6 +215,7 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
         assert imported["id"] == 3 and imported["kind"] == "import"
         assert (root / "current").read_text() == "3\n"
         assert all(path.read_bytes() == payload for path, payload in preserved.items())
+        assert _run(root, "cleanup", "--automatic", "on", "--yes")[0] == 0
         code, result = _run(root, "rollback", "--yes")
         assert code == 0 and result["current"] == 4, result
         assert history(root)[-1]["restoredFrom"] == 1
