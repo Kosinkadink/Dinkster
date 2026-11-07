@@ -138,15 +138,33 @@ def select_packs(
             }
         selected.update(matching)
     if version_changes_only and before != "0" * 40:
+        assert before is not None
+        previous_paths = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "ls-tree",
+                    "-r",
+                    "--name-only",
+                    "-z",
+                    before,
+                    "--",
+                    "packages",
+                ]
+            )
+            .decode()
+            .split("\0")
+        )
         for pack in tuple(selected):
             directory, _, version = packs[pack]
-            previous = subprocess.run(
-                ["git", "-C", str(root), "show", f"{before}:{directory}/dinkster-pack.toml"],
-                capture_output=True,
-                check=False,
-            )
-            if previous.returncode == 0:
-                old = tomllib.loads(previous.stdout.decode("utf-8"))
+            manifest = f"{directory}/dinkster-pack.toml"
+            if manifest in previous_paths:
+                previous = subprocess.check_output(
+                    ["git", "-C", str(root), "show", f"{before}:{manifest}"]
+                )
+                old = tomllib.loads(previous.decode("utf-8"))
                 if old["pack"].get("version") == version:
                     selected.remove(pack)
     return tuple(sorted(selected))
