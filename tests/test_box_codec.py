@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
 from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_assets.value import value_asset_references
 from dinkster_compat_comfy.translate import CompatTranslation, comfy_value_type_id
-from dinkster_nodes_image import register_image_types
+from dinkster_nodes_image import register_types
 from dinkster_values import EncodedPayload, default_encode, register_core_types
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
@@ -224,7 +224,7 @@ def test_all_registration_orders_refuse_pickle_at_real_boundary_admission(
     registry = TypeRegistry()
     registrations = {
         "native": register_inference_types,
-        "image": register_image_types,
+        "image": register_types,
         "compat": _compat_register,
     }
     first = None

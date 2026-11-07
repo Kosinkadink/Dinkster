@@ -3,15 +3,15 @@
 from typing import Any, cast
 
 from dinkster_api.v1 import AUDIO_TYPE, CORE_COMBO, ComboWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.audio_combine import AUDIO_COMBINE_NODES
+from dinkster_nodes_audio import NODES
+from dinkster_nodes_audio.audio_combine import AUDIO_COMBINE_NODES
 
 
 def test_audio_combine_schemas_match_comfyui() -> None:
     expected = (
-        ("JoinAudioChannels", ("audio_left", "audio_right"), ("audio",)),
-        ("AudioConcat", ("audio1", "audio2", "direction"), ("AUDIO",)),
-        ("AudioMerge", ("audio1", "audio2", "merge_method"), ("AUDIO",)),
+        ("dinkster.audio.join_audio_channels", ("audio_left", "audio_right"), ("audio",)),
+        ("dinkster.audio.audio_concat", ("audio1", "audio2", "direction"), ("AUDIO",)),
+        ("dinkster.audio.audio_merge", ("audio1", "audio2", "merge_method"), ("AUDIO",)),
     )
     assert (
         tuple(
@@ -26,14 +26,14 @@ def test_audio_combine_schemas_match_comfyui() -> None:
     )
     for node in AUDIO_COMBINE_NODES:
         schema = node.schema()
-        assert node in COMFY_NODES
+        assert node in NODES
         assert schema.category == "audio"
         assert (
             schema.display_name
             == {
-                "JoinAudioChannels": "Join Audio Channels",
-                "AudioConcat": "Concatenate Audio",
-                "AudioMerge": "Merge Audio",
+                "dinkster.audio.join_audio_channels": "Join Audio Channels",
+                "dinkster.audio.audio_concat": "Concatenate Audio",
+                "dinkster.audio.audio_merge": "Merge Audio",
             }[schema.node_type]
         )
         assert all(item.required for item in schema.inputs)
