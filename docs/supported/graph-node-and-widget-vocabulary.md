@@ -130,7 +130,9 @@
   produces an absent output. The two arms share one type template.
 - Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
   body escape paths, and accumulation controls fed from their own body,
-  including boundaries inside region bodies.
+  including boundaries inside region bodies. Boundaries use
+  `dinkster.utilities.start_loop` and `dinkster.utilities.end_loop`;
+  bare ComfyUI class names must be translated before validation.
 - Native loop boundaries expand simple counts, For ranges, and typed lists
   into run-local body occurrences. They carry values between iterations,
   collect final or accumulated results, and preserve nested occurrence identity.
