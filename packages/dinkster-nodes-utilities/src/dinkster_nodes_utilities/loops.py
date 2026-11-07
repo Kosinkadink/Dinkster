@@ -172,7 +172,7 @@ class StartLoop(Node):
                 iteration.set_input("current_iteration_value", previous_carry)
             if mode == "List":
                 element = builder.node(
-                    "std.list.element",
+                    "dinkster.utilities.list_element",
                     f"item_{position}",
                     list=external(nodes[start_id]["inputs"]["mode.list"]),
                     index=position,
@@ -234,13 +234,15 @@ class StartLoop(Node):
             previous_progress = progress.out("INT")
         if results:
             collected = builder.node(
-                "std.list.make",
+                "dinkster.utilities.make_list",
                 "collected",
                 **{f"items.{i}": value for i, value in enumerate(results)},
             )
             result_value: object = collected.out("list")
             if dynamic_accumulate:
-                final = builder.node("std.list.make", "final", **{"items.0": results[-1]})
+                final = builder.node(
+                    "dinkster.utilities.make_list", "final", **{"items.0": results[-1]}
+                )
                 selection = builder.node(
                     "dinkster.utilities.comfy_switch_node",
                     "accumulation",
