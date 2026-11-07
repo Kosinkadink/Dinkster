@@ -56,6 +56,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_generation_source_staging_cli \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
   tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
+  tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \

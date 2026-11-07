@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path, PurePosixPath
 
 from dinkster_workers import load_manifest
@@ -45,11 +46,17 @@ def publication_selection(root: Path, before: str) -> tuple[str, ...]:
 
 
 def select_packs(
-    root: Path, *, before: str | None = None, tag: str | None = None
+    root: Path,
+    *,
+    before: str | None = None,
+    tag: str | None = None,
+    version_changes_only: bool = False,
 ) -> tuple[str, ...]:
     """Read committed manifests only; an engine-only push selects no pack."""
     if (before is None) == (tag is None):
         raise ValueError("select one push base or pack tag")
+    if version_changes_only and before is None:
+        raise ValueError("version changes require a push base")
     if before is not None and re.fullmatch(r"[0-9a-f]{40}", before) is None:
         raise ValueError("push base must be a full Git commit identity")
     head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
@@ -130,6 +137,18 @@ def select_packs(
                 pack for pack, (directory, _, _) in packs.items() if directory.parent == vision
             }
         selected.update(matching)
+    if version_changes_only and before != "0" * 40:
+        for pack in tuple(selected):
+            directory, _, version = packs[pack]
+            previous = subprocess.run(
+                ["git", "-C", str(root), "show", f"{before}:{directory}/dinkster-pack.toml"],
+                capture_output=True,
+                check=False,
+            )
+            if previous.returncode == 0:
+                old = tomllib.loads(previous.stdout.decode("utf-8"))
+                if old["pack"].get("version") == version:
+                    selected.remove(pack)
     return tuple(sorted(selected))
 
 
