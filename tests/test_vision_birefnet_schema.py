@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import tomllib
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving, default_pack_spec
+from tests.async_scenarios import run_scenario
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -43,7 +43,7 @@ def test_birefnet_pack_declares_cpu_provider_and_pinned_model() -> None:
     assert manifest.sandbox.network is False
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
-        "dinkster-inference==0.1.0",
+        "dinkster-inference==0.1.1",
         "numpy",
         "safetensors==0.8.0",
         "torch",
@@ -102,4 +102,4 @@ def test_birefnet_provider_populates_owner_choice_and_scopes_model() -> None:
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

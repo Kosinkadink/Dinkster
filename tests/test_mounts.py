@@ -43,7 +43,7 @@ from dinkster_assets import (
     parse_mounts,
 )
 from dinkster_assets.integrity import digest_file_with_record as real_digest_file_with_record
-from dinkster_assets.model import AssetRef
+from dinkster_assets.model import AssetRef, LocalAssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
@@ -64,9 +64,70 @@ from dinkster_workers import InProcessWorker, IsolatedWorker, load_manifest
 from dinkster_workers.host import load_pack
 
 from dinkster.mounts_api import MountService, add_mount_routes
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 STRING = TypeExpr.concrete("STRING")
+
+
+def test_engine_relative_selection_keeps_exact_root_and_project_authority(tmp_path: Path) -> None:
+    from dinkster_values.asset_folders import use_asset_folders
+
+    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "indexes")
+    for name, data in (("first", b"first bytes"), ("second", b"different second bytes")):
+        root = tmp_path / name
+        root.mkdir()
+        (root / "shared.bin").write_bytes(data)
+        table.add(MountDef(name, root, kind="media/model3d"))
+    root = tmp_path / "second"
+    selected = table.bind_relative_file("media/model3d", root, "shared.bin")
+    assert selected.read_bytes() == b"different second bytes"
+    named = table.bind_name("shared.bin", "media/model3d")
+    assert named is not None and named.read_bytes() == b"first bytes"
+    for relative in ("../first/shared.bin", "/shared.bin", "./shared.bin", "C:/shared.bin"):
+        with pytest.raises(AssetError, match="safe relative"):
+            table.bind_relative_file("media/model3d", root, relative)
+    with pytest.raises(AssetError, match="not granted"):
+        table.bind_relative_file("media/image", root, "shared.bin")
+    with use_asset_folders(AssetFolderContext(("first",))):
+        with pytest.raises(AssetError, match="not granted"):
+            table.bind_relative_file("media/model3d", root, "shared.bin")
+    table.remove("second")
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        selected.read_bytes()
+
+
+def test_relative_selection_reuses_engine_grant_without_indexing(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef("models", root, kind="media/model3d"))
+    table.scan("models")
+    (root / "sidecar.bin").write_bytes(b"first unindexed resource")
+    granted = table.bind_name("sidecar.bin", "media/model3d")
+    assert isinstance(granted, LocalAssetRef)
+    worker = MountSnapshotResolver(snapshot)
+    selected = worker.bind_relative_file("media/model3d", root, "sidecar.bin")
+    assert isinstance(selected, LocalAssetRef)
+    received = LocalAssetRef.from_wire(selected.to_wire(), table)
+    assert received.read_bytes() == b"first unindexed resource"
+    assert selected.binding == granted.binding
+    (root / "sidecar.bin").write_bytes(b"a changed resource revision")
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        received.read_bytes()
+    replacement = table.bind_name("sidecar.bin", "media/model3d")
+    assert isinstance(replacement, LocalAssetRef)
+    selected = worker.bind_relative_file("media/model3d", root, "sidecar.bin")
+    assert isinstance(selected, LocalAssetRef)
+    received = LocalAssetRef.from_wire(selected.to_wire(), table)
+    assert received.read_bytes() == b"a changed resource revision"
+    assert selected.binding != granted.binding
+    table.remove("models")
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        received.read_bytes()
+    with pytest.raises(AssetError, match="not granted"):
+        worker.bind_relative_file("media/model3d", root, "sidecar.bin")
 
 
 class Echo(Node):
@@ -950,7 +1011,7 @@ def test_public_mount_roots_in_ordinary_hosts(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -1013,7 +1074,7 @@ def test_failed_folder_persistence_preserves_live_and_saved_settings(
             await service.close()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- the API surface ----------------------------------------------------------
@@ -1060,7 +1121,7 @@ def test_selection_options_api_uses_live_grants_without_exposing_paths(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 async def wait_for_state(
@@ -1143,7 +1204,7 @@ def test_mounts_read_surface(tmp_path: Path) -> None:
         assert (await resp.json())["error"] == "mount-changes-disabled"
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1183,7 +1244,7 @@ def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.Mo
             release.set()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_service_does_not_republish_unchanged_elapsed_progress(
@@ -1242,7 +1303,7 @@ def test_mount_service_does_not_republish_unchanged_elapsed_progress(
         assert len(publishes) == 2
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         release.set()
 
@@ -1299,7 +1360,7 @@ def test_mount_service_cancelled_scan_consumes_background_failure(
             release.set()
             loop.set_exception_handler(previous_handler)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_emit_and_filter_semantic_model_kind(tmp_path: Path) -> None:
@@ -1352,7 +1413,7 @@ def test_mount_entries_emit_and_filter_semantic_model_kind(tmp_path: Path) -> No
         assert invalid.status == 400
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _folder_paging_table(tmp_path: Path) -> MountTable:
@@ -1401,7 +1462,7 @@ def test_mount_entries_omitted_params_match_explicit_defaults(tmp_path: Path) ->
                 explicit["cursor"] = json.loads(explicit_payload)["cursor"]
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_recursive_subtree_pages_stay_scoped(tmp_path: Path) -> None:
@@ -1436,7 +1497,7 @@ def test_mount_entries_recursive_subtree_pages_stay_scoped(tmp_path: Path) -> No
         assert "cursor" not in third
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_immediate_children_include_first_page_folders(
@@ -1474,7 +1535,7 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         ]
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_query_composes_with_folder_scope(tmp_path: Path) -> None:
@@ -1492,7 +1553,7 @@ def test_mount_entries_query_composes_with_folder_scope(tmp_path: Path) -> None:
         ]
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_cursor_binds_every_filter(tmp_path: Path) -> None:
@@ -1524,7 +1585,7 @@ def test_mount_entries_cursor_binds_every_filter(tmp_path: Path) -> None:
         assert await resp.json() == {"error": "malformed cursor"}
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_path_errors_match_list_and_unknown_mount_is_404(
@@ -1549,7 +1610,7 @@ def test_mount_entries_path_errors_match_list_and_unknown_mount_is_404(
         assert resp.status == 404
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_entries_scoped_limit_bounds_are_unchanged(tmp_path: Path) -> None:
@@ -1570,7 +1631,7 @@ def test_mount_entries_scoped_limit_bounds_are_unchanged(tmp_path: Path) -> None
             assert await resp.json() == {"error": error}
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_mount_grant_and_revoke_at_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1663,7 +1724,7 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path, monkeypatch: pytest.M
         await ws.close()
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> None:
@@ -1694,7 +1755,7 @@ def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> No
         assert listing["outputMount"] == "renders"
         await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert load_output_mount(config) == "renders"
     assert json.loads(snapshot.read_text("utf-8"))["outputMount"] == "renders"
 
@@ -1755,7 +1816,7 @@ def test_mount_service_keeps_configured_resolution_scopes_in_sync(tmp_path: Path
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     store.close()
 
 
@@ -1803,7 +1864,7 @@ def test_mount_revoke_persists_even_when_catalog_refresh_fails(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     store.close()
 
 
@@ -1878,7 +1939,7 @@ def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_pat
             await service.close()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     restarted_table = MountTable()
     for mount in load_mounts(config):
         restarted_table.add(mount)
@@ -1936,7 +1997,7 @@ def test_project_folder_validation_keeps_previous_settings(tmp_path: Path) -> No
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_project_name_order_never_substitutes_for_digest_identity(tmp_path: Path) -> None:
@@ -2038,7 +2099,7 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("library_state", ("absent", "empty", "escaping"))
@@ -2092,7 +2153,7 @@ def test_operator_location_support_and_vault_containment(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_operator_default_import_destination_matches_upload_and_survives_revocation(
@@ -2153,7 +2214,7 @@ def test_operator_default_import_destination_matches_upload_and_survives_revocat
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) -> None:
@@ -2279,7 +2340,7 @@ def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) 
             await client.close()
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         store.close()
 
@@ -2343,7 +2404,7 @@ def test_sandbox_folder_edits_preserve_live_grants_until_restart(tmp_path: Path)
             await service.close()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert [mount.id for mount in load_mounts(config)] == ["next"]
     restarted = MountTable(output_mount=load_output_mount(config))
     for mount in load_mounts(config):
@@ -2391,7 +2452,7 @@ def test_offline_folder_retry_retains_location_and_digest(tmp_path: Path) -> Non
             await service.close()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) -> None:
@@ -2457,7 +2518,7 @@ def test_resolve_path_catalogs_exact_current_bytes_without_copy(tmp_path: Path) 
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_resolve_path_refusals_validation_and_scope(tmp_path: Path) -> None:
@@ -2543,7 +2604,7 @@ def test_resolve_path_refusals_validation_and_scope(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("change", ("revoke", "exclude", "replace", "persistence"))
@@ -2599,4 +2660,4 @@ def test_resolve_path_rechecks_live_authority_and_reports_storage_errors(
             await pending
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -32,6 +32,8 @@ from dinkster_supervisor import (
 )
 from multidict import CIMultiDict
 
+from tests.async_scenarios import run_scenario
+
 
 def make_engine_app() -> web.Application:
     """A stand-in engine: enough surface to prove the proxy is transparent
@@ -127,7 +129,7 @@ def test_status_and_gating_before_ready() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_status_echoes_launcher_instance() -> None:
@@ -141,7 +143,7 @@ def test_status_echoes_launcher_instance() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_shutdown_requires_matching_instance_and_token() -> None:
@@ -179,7 +181,7 @@ def test_shutdown_requires_matching_instance_and_token() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_proxy_is_transparent_when_ready() -> None:
@@ -221,7 +223,7 @@ def test_proxy_is_transparent_when_ready() -> None:
             await client.close()
             await engine_server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("listener_kind", ("supervisor", "ingress"))
@@ -327,7 +329,7 @@ def test_dns_rebinding_cannot_grant_folders_or_open_websockets(
             await client.close()
             await engine_server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_supervisor_namespace_is_reserved() -> None:
@@ -360,7 +362,7 @@ def test_supervisor_namespace_is_reserved() -> None:
             await client.close()
             await engine_server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_supervisor_cors() -> None:
@@ -445,7 +447,7 @@ def test_supervisor_cors() -> None:
             await client.close()
             await engine_server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_proxy_websocket_events() -> None:
@@ -473,7 +475,7 @@ def test_proxy_websocket_events() -> None:
             await client.close()
             await engine_server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 STUB_ENGINE = textwrap.dedent(
@@ -518,7 +520,7 @@ def test_engine_process_lifecycle(tmp_path: Path) -> None:
         await engine.close()
         assert link.state == "stopped" and link.pid is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_progress_from_health_shapes() -> None:
@@ -568,7 +570,7 @@ def test_status_narrates_composition_progress() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # A stub engine that narrates in-flight composition until a release file
@@ -624,7 +626,7 @@ def test_engine_process_mirrors_composition_progress(tmp_path: Path) -> None:
         await engine.close()
         assert link.state == "stopped" and link.progress is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_engine_process_startup_failure(tmp_path: Path) -> None:
@@ -643,4 +645,4 @@ def test_engine_process_startup_failure(tmp_path: Path) -> None:
         assert "exit code 3" in link.detail
         await engine.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

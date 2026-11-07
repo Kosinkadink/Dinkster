@@ -60,6 +60,8 @@ from dinkster_workers import (
     RoutingWorker,
 )
 
+from tests.async_scenarios import run_scenario
+
 
 class WireExpansionNode(Node):
     @classmethod
@@ -421,7 +423,7 @@ def test_expansion_result_survives_worker_round_trip(
                 if service is not None:
                     await stop_service(service)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def cached_expansion(seed: Value) -> CachedResult:
@@ -517,7 +519,7 @@ def test_cached_expansion_survives_persistence_and_promotion(
             if server is not None:
                 await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -546,7 +548,7 @@ def test_incomplete_cached_expansion_is_a_whole_entry_miss(tmp_path: Path, damag
         assert await cache.get("parent") is None
         assert not path.exists()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path: Path) -> None:
@@ -567,7 +569,7 @@ def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path:
         assert cache.drop_referencing("resident") == 1
         assert await cache.get("parent") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("worker_kind", ["in-process", "governed", "isolated", "remote"])
@@ -664,7 +666,7 @@ def test_expansion_executes_children_through_each_worker(
                 if service is not None:
                     await stop_service(service)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_kind", ["memory", "disk", "layered"])
@@ -722,7 +724,7 @@ def test_engine_replays_cached_expansion_declarations(
         if node_type == "expansion.nested":
             assert "parent.0.0.nested" in second.cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_kind", ["memory", "disk", "layered"])
@@ -761,7 +763,7 @@ def test_expansion_cache_policy_survives_replay_and_controls_nested_children(
                 assert "parent.0.0.second" in result.cached
                 assert "parent.0.0.nested.0.0.child" in result.cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -811,7 +813,7 @@ def test_polymorphic_output_forwards_typed_envelopes_without_losing_ownership(
             assert result.error is not None
             assert "rejects list<INT>" in result.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("index", [-1, 2])
@@ -832,7 +834,7 @@ def test_builder_output_index_is_validated_at_parent(index: int) -> None:
         assert error.value.error.node_id == "parent"
         assert "index" in error.value.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -872,7 +874,7 @@ def test_external_reference_failures_name_the_parent(inputs: dict[str, object]) 
             assert "dynamic cycle" in str(error.value)
         assert not any(event.kind == "node_expanded" for event in events)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_external_reference_reuses_a_completed_non_idempotent_source() -> None:
@@ -931,7 +933,7 @@ def test_external_reference_reuses_a_completed_non_idempotent_source() -> None:
         assert result.outputs["parent"]["seed"].resolve() == 17
         assert calls.count("source") == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_external_references_detect_a_cycle_across_two_expansions() -> None:
@@ -954,7 +956,7 @@ def test_external_references_detect_a_cycle_across_two_expansions() -> None:
         with pytest.raises(ExecutionError, match="dynamic cycle"):
             await asyncio.wait_for(engine.run(graph, ["left", "right"]), 5)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cached_expansion_reads_current_external_values() -> None:
@@ -981,7 +983,7 @@ def test_cached_expansion_reads_current_external_values() -> None:
                 assert "parent" in result.cached
                 assert "parent.0.0.child" in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_expansion_can_reference_an_existing_region_output() -> None:
@@ -1012,7 +1014,7 @@ def test_expansion_can_reference_an_existing_region_output() -> None:
         assert result.outputs["parent"]["seed"].resolve() == 35
         assert result.outputs["parent"]["result"].resolve() == 107
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_builder_can_reference_a_node_outside_its_worker() -> None:
@@ -1031,7 +1033,7 @@ def test_builder_can_reference_a_node_outside_its_worker() -> None:
         assert result.outputs["parent"]["result"].resolve() == 53
         assert "parent.0.0.output" in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("problem", ["cycle", "type", "missing"])
@@ -1052,7 +1054,7 @@ def test_invalid_expansion_names_its_parent(problem: str) -> None:
         expected = "cycle" if problem == "cycle" else "invalid expansion"
         assert expected in error.value.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_coalesced_expansion_parents_have_independent_children() -> None:
@@ -1095,7 +1097,7 @@ def test_coalesced_expansion_parents_have_independent_children() -> None:
             assert child.detail["parentId"] == parent
             assert child.detail["displayNodeId"] == parent
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancelled_expansion_releases_children_and_can_run_again() -> None:
@@ -1134,7 +1136,7 @@ def test_cancelled_expansion_releases_children_and_can_run_again() -> None:
         assert result.outputs["parent"]["result"].resolve() == 53
         assert "parent.0.0.output" in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_expansion_preserves_enclosing_region_ports() -> None:
@@ -1176,4 +1178,4 @@ def test_expansion_preserves_enclosing_region_ports() -> None:
             assert [v.resolve() for v in expanded] == [53, 53]
             assert [v.resolve() for v in ports] == [14, 29]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -9,7 +9,6 @@ connected type against the chosen variant.
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 from collections.abc import Mapping
 
@@ -49,6 +48,8 @@ from dinkster_schema import (
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
+
+from tests.async_scenarios import run_scenario
 
 STRING = TypeExpr.concrete("STRING")
 FLOAT = TypeExpr.concrete("FLOAT")
@@ -679,7 +680,7 @@ def test_slot_executes_with_grouped_slot_value() -> None:
         )
         assert number.outputs["n"]["text"].resolve() == "6.0"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_wraps_matched_slot_output_as_the_selected_type() -> None:
@@ -714,7 +715,7 @@ def test_worker_wraps_matched_slot_output_as_the_selected_type() -> None:
             assert result.outputs["out"].type_id == type_id
             assert result.outputs["out"].resolve() == value
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_slot_variant_switch_is_a_cache_miss_even_with_same_shape() -> None:
@@ -764,7 +765,7 @@ def test_slot_variant_switch_is_a_cache_miss_even_with_same_shape() -> None:
         back = await engine.run(graph("a"), ["n"])
         assert back.cached == ("n",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_connected_type_mismatch_is_diagnosed_never_redispatched() -> None:
@@ -795,7 +796,7 @@ def test_missing_choice_is_a_validation_error_at_run() -> None:
         with pytest.raises(GraphValidationError):
             await engine.run(graph, ["n"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_groups_slot_inputs_via_invocation_schema() -> None:
@@ -824,7 +825,7 @@ def test_worker_groups_slot_inputs_via_invocation_schema() -> None:
         assert result.outputs is not None
         assert result.outputs["text"].resolve() == "* world"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_delivers_open_slot_plain_and_omits_it_when_absent() -> None:
@@ -864,4 +865,4 @@ def test_worker_delivers_open_slot_plain_and_omits_it_when_absent() -> None:
         assert absent.error is None
         assert OpenSlotProbe.seen[-1] == {}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

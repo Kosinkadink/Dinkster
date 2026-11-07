@@ -56,6 +56,8 @@ from dinkster_values import (
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
+from tests.async_scenarios import run_scenario
+
 
 def make_engine(
     events: list[EngineEvent] | None = None,
@@ -125,7 +127,7 @@ def test_end_to_end_and_cache_behavior() -> None:
         assert set(third.executed) == {"b", "s"}
         assert set(third.cached) == {"g", "i"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("reuse", ["fresh", "cached", "coalesced"])
@@ -258,7 +260,7 @@ def test_no_cache_reexecutes_without_replacing_warm_cache_entries() -> None:
             result.outputs["s"]["mean"].resolve() for result in (warmup, first, second, warm)
         ] == pytest.approx([0.5] * 4)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_no_cache_disables_in_run_single_flight_coalescing() -> None:
@@ -276,7 +278,7 @@ def test_no_cache_disables_in_run_single_flight_coalescing() -> None:
         assert set(result.executed) == {"left", "right"}
         assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", (0, 1, "false", None))
@@ -285,7 +287,7 @@ def test_engine_rejects_non_boolean_cache_control(cache_enabled: object) -> None
         with pytest.raises(ValueError, match="cache_enabled"):
             await make_engine().run(image_graph(), ["s"], cache_enabled=cast("bool", cache_enabled))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_provider_resolution_reads_immutable_run_entry_snapshot() -> None:
@@ -310,7 +312,7 @@ def test_provider_resolution_reads_immutable_run_entry_snapshot() -> None:
         assert result.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
         assert calls == 2
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() -> None:
@@ -442,7 +444,7 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
         assert first["producerNodes"] == ["on"]
         assert warm_first["producerNodes"] == ["on"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_computed_selector_keeps_resident_value_in_producer_domain() -> None:
@@ -580,7 +582,7 @@ def test_computed_selector_keeps_resident_value_in_producer_domain() -> None:
         assert ResidentSource.schema().node_type in planned
         assert "inactive" not in result.executed
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_demanded_producer_can_run_its_own_lazy_fixpoint() -> None:
@@ -634,7 +636,7 @@ def test_demanded_producer_can_run_its_own_lazy_fixpoint() -> None:
         }
     )
 
-    result = asyncio.run(engine.run(graph, ["outer"]))
+    result = run_scenario(engine.run(graph, ["outer"]))
     assert result.outputs["outer"]["value"].resolve() == "nested"
     assert set(result.executed) == {"source", "inner"}
     assert result.cached == ("outer",)
@@ -729,7 +731,7 @@ def test_lazy_consumer_hooks_run_before_single_flight_coalesces_the_body() -> No
         assert sum(result.executed == ("lazy",) for result in results) == 1
         assert sum(result.cached == ("lazy",) for result in results) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_cache_identity_tracks_final_demand_and_ignores_undemanded_values() -> None:
@@ -841,7 +843,7 @@ def test_lazy_cache_identity_tracks_final_demand_and_ignores_undemanded_values()
         assert Pick.hooks == 10  # demand round plus final ready round per run
         assert Pick.bodies == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_connected_undemanded_identity_differs_from_omission_and_default() -> None:
@@ -994,7 +996,7 @@ def test_connected_undemanded_identity_differs_from_omission_and_default() -> No
         assert connected_replay.outputs["shape"]["value"].resolve() == "None|None"
         assert Source.runs == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_non_idempotent_lazy_consumer_remains_uncached_and_uncoalesced() -> None:
@@ -1069,7 +1071,7 @@ def test_non_idempotent_lazy_consumer_remains_uncached_and_uncoalesced() -> None
         assert cache.put_calls == 0
         assert not engine._inflight
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_dynamic_members_select_only_one_source_and_cache() -> None:
@@ -1166,7 +1168,7 @@ def test_lazy_dynamic_members_select_only_one_source_and_cache() -> None:
         assert set(undemanded_changed.cached) == {"b", "lazy"}
         assert source_runs == ["B"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_grouped_dynamic_members_are_loud_refusals() -> None:
@@ -1224,7 +1226,7 @@ def test_lazy_grouped_dynamic_members_are_loud_refusals() -> None:
         assert len(failures) == 1
         assert failures[0].detail["message"] == "lazy-dynamic-unsupported"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def grant_save_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -1272,7 +1274,7 @@ def test_non_idempotent_never_cached(tmp_path, monkeypatch) -> None:
         assert (root / "result_00002.pgm").exists()
         assert first.outputs["save"]["path"].resolve() == "mounts/out/result_00001.pgm"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_default_inputs_applied() -> None:
@@ -1284,7 +1286,7 @@ def test_default_inputs_applied() -> None:
         result = await engine.run(graph, ["m"])
         assert result.outputs["m"]["product"].resolve() == pytest.approx(3.0)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_validation_failure_raises() -> None:
@@ -1294,7 +1296,7 @@ def test_validation_failure_raises() -> None:
         with pytest.raises(GraphValidationError):
             await engine.run(graph, ["x"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1320,7 +1322,7 @@ def test_invalid_scalar_literal_is_rejected_before_execution(
             for diagnostic in error.value.diagnostics
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
@@ -1360,7 +1362,7 @@ def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
         assert result.outputs["l"]["length"].resolve() == 3
         assert result.outputs["s"]["image"].type_id == "dev.image"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_typed_literal_unknown_type_fails_validation_not_execution() -> None:
@@ -1380,7 +1382,7 @@ def test_typed_literal_unknown_type_fails_validation_not_execution() -> None:
             await engine.run(graph, ["m"])
         assert any(d.code == "typed-literal-unknown-type" for d in err.value.diagnostics)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_runtime_combo_admission_catches_variable_passthrough() -> None:
@@ -1462,7 +1464,7 @@ def test_runtime_combo_admission_catches_variable_passthrough() -> None:
         with pytest.raises(ExecutionError, match="explicit converter"):
             await engine.run(hidden, ["combo"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() -> None:
@@ -1545,7 +1547,7 @@ def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() ->
         assert replay.cached == ("echo",)
         assert replay.outputs["echo"]["values"].fingerprint == envelopes[0].fingerprint
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def InProcessWorkerFactoryFor(nodes: tuple[type[Node], ...], registry: TypeRegistry):
@@ -1622,7 +1624,7 @@ def test_envelope_observer_cache_tracks_input_metadata(nested: bool) -> None:
             assert result.outputs["observe"]["arm"].resolve() == expected
             assert ("observe" in result.cached) is cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_node_exception_becomes_execution_error() -> None:
@@ -1634,7 +1636,7 @@ def test_node_exception_becomes_execution_error() -> None:
             await engine.run(graph, ["g"])
         assert excinfo.value.error.node_id == "g"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _misses(events: list[EngineEvent]) -> dict[str, dict[str, object]]:
@@ -1674,7 +1676,7 @@ def test_cache_miss_explanations() -> None:
         assert third["s"]["reason"] == "inputs-changed"
         assert third["s"]["changed_inputs"] == ["image"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_miss_never_cacheable_and_evicted(tmp_path, monkeypatch) -> None:
@@ -1696,7 +1698,7 @@ def test_cache_miss_never_cacheable_and_evicted(tmp_path, monkeypatch) -> None:
         assert second["g"]["reason"] == "evicted"
         assert second["save"]["reason"] == "never-cacheable"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_misses_silent_by_default() -> None:
@@ -1706,7 +1708,7 @@ def test_cache_misses_silent_by_default() -> None:
         await engine.run(image_graph(), ["s"])
         assert _misses(events) == {}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_events_emitted_in_order() -> None:
@@ -1719,7 +1721,7 @@ def test_events_emitted_in_order() -> None:
         assert kinds[-1] == "run_finished"
         assert kinds.count("node_finished") == 4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_node_finished_and_cached_carry_output_summary() -> None:
@@ -1760,7 +1762,7 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
         assert hits["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
         assert hits["len"] == {"length": {"typeId": "INT", "value": 2}}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_caller_supplied_run_identity_flows_through_events_result_and_invocations(
@@ -1790,7 +1792,7 @@ def test_caller_supplied_run_identity_flows_through_events_result_and_invocation
             ("job-abc123", 4)
         }
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_default_run_ids_are_unique() -> None:
@@ -1801,7 +1803,7 @@ def test_default_run_ids_are_unique() -> None:
         assert first.run_id
         assert first.run_id != second.run_id
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_empty_run_id_rejected() -> None:
@@ -1810,7 +1812,7 @@ def test_empty_run_id_rejected() -> None:
         with pytest.raises(ValueError, match="run_id"):
             await engine.run(image_graph(), ["s"], run_id="")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("attempt_id", (0, -1, True, 1.5, "1"))
@@ -1819,7 +1821,7 @@ def test_invalid_attempt_id_rejected(attempt_id: object) -> None:
         with pytest.raises(ValueError, match="attempt_id"):
             await make_engine().run(image_graph(), ["s"], attempt_id=attempt_id)  # type: ignore[arg-type]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_concurrent_duplicate_run_id_is_rejected() -> None:
@@ -1834,7 +1836,7 @@ def test_concurrent_duplicate_run_id_is_rejected() -> None:
             await engine.run(image_graph(), ["s"], run_id="shared")
         assert (await first).run_id == "shared"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_raising_listener_is_nonfatal_for_owner_and_coalesced_waiter() -> None:
@@ -1853,7 +1855,7 @@ def test_raising_listener_is_nonfatal_for_owner_and_coalesced_waiter() -> None:
         assert owner.executed or waiter.executed
         assert owner.cached or waiter.cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_announce_schemas_is_additive_and_atomic() -> None:

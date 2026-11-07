@@ -10,7 +10,6 @@ builds.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -53,6 +52,7 @@ from dinkster_values.audio_codec import audio_window, effective_audio_facts
 from dinkster_workers import InProcessWorker
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 
+from tests.async_scenarios import run_scenario
 from tests.test_audio_io import _mount
 from tools.gen_audio_alias_receipts import encode_contract
 
@@ -242,7 +242,7 @@ def _run_case(node_class: str, inputs: dict[str, Any]) -> tuple[dict[str, Any], 
         pin_execution=lambda: runtime,
         cache=MemoryLRUCache(),
     )
-    result = asyncio.run(engine.run(graph, sorted(targets)))
+    result = run_scenario(engine.run(graph, sorted(targets)))
     outputs = {
         source: result.outputs[name][port].resolve()
         for target, source in case.get("outputs", {}).items()

@@ -45,6 +45,7 @@ from dinkster_workers.saved_artifacts import (
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 
@@ -401,7 +402,7 @@ def test_native_save_attachment_requires_open_context_and_snapshots_claim() -> N
         with pytest.raises(RuntimeError, match="closed"):
             await task
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_native_save_attachment_admits_complete_image_batch_and_bounds_overflow() -> None:
@@ -732,4 +733,4 @@ types = "native_save_fixture:register_types"
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -55,6 +55,8 @@ from dinkster_workers import InProcessWorker
 from multidict import MultiDict, MultiDictProxy
 from PIL import Image
 
+from tests.async_scenarios import run_scenario
+
 
 @pytest.fixture(autouse=True)
 def _sufficient_latent_disk_space(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1030,7 +1032,7 @@ def test_streaming_media_bypasses_aiohttp_buffer_limit_while_buffered_routes_rem
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_large_media_classification_does_not_block_event_loop(
@@ -1071,7 +1073,7 @@ def test_large_media_classification_does_not_block_event_loop(
                 upload.cancel()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_upload_spool_write_does_not_block_event_loop(
@@ -1113,7 +1115,7 @@ def test_media_upload_spool_write_does_not_block_event_loop(
                     await upload
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_upload_repeated_cancellation_waits_for_spool_write_before_cleanup(
@@ -1176,7 +1178,7 @@ def test_media_upload_repeated_cancellation_waits_for_spool_write_before_cleanup
                     await task
             library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _media_path(scope: str, kind: str, name: str) -> str:
@@ -1263,7 +1265,7 @@ def test_named_media_upload_uses_project_folder_without_vault_copy(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1323,7 +1325,7 @@ def test_named_media_upload_refuses_destination_without_fallback(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_auth_scope_idempotence_and_canonical_response(
@@ -1450,7 +1452,7 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_ingest_is_classified_scoped_and_idempotent(tmp_path: Path) -> None:
@@ -1493,7 +1495,7 @@ def test_latent_ingest_is_classified_scoped_and_idempotent(tmp_path: Path) -> No
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_ingest_refuses_malformed_and_cleans_startup_orphan(tmp_path: Path) -> None:
@@ -1516,7 +1518,7 @@ def test_latent_ingest_refuses_malformed_and_cleans_startup_orphan(tmp_path: Pat
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_ingest_normalizes_integer_digit_limit_to_invalid_input(tmp_path: Path) -> None:
@@ -1539,7 +1541,7 @@ def test_latent_ingest_normalizes_integer_digit_limit_to_invalid_input(tmp_path:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_ingest_normalizes_bounded_nesting_to_invalid_input(tmp_path: Path) -> None:
@@ -1562,7 +1564,7 @@ def test_latent_ingest_normalizes_bounded_nesting_to_invalid_input(tmp_path: Pat
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_metadata_probe_ignores_integer_limit_vae_hint(tmp_path: Path) -> None:
@@ -1584,7 +1586,7 @@ def test_latent_metadata_probe_ignores_integer_limit_vae_hint(tmp_path: Path) ->
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_metadata_probe_ignores_bounded_nesting_vae_hint(tmp_path: Path) -> None:
@@ -1606,7 +1608,7 @@ def test_latent_metadata_probe_ignores_bounded_nesting_vae_hint(tmp_path: Path) 
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_ingest_requires_auth_scope_and_admission_capacity(tmp_path: Path) -> None:
@@ -1651,7 +1653,7 @@ def test_latent_ingest_requires_auth_scope_and_admission_capacity(tmp_path: Path
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -1681,7 +1683,7 @@ def test_latent_ingest_preserves_filesystem_headroom(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_spool_write_does_not_block_event_loop(
@@ -1723,7 +1725,7 @@ def test_latent_spool_write_does_not_block_event_loop(
                     await upload
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_repeated_cancellation_waits_for_spool_owner_and_cleans_admission(
@@ -1777,7 +1779,7 @@ def test_latent_repeated_cancellation_waits_for_spool_owner_and_cleans_admission
                     await task
             library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_cancellation_before_publication_commit_leaves_nothing(tmp_path: Path) -> None:
@@ -1813,7 +1815,7 @@ def test_latent_cancellation_before_publication_commit_leaves_nothing(tmp_path: 
             library.media_ingest_lock.release()
             library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_cancellation_after_commit_point_settles_publication(
@@ -1858,7 +1860,7 @@ def test_latent_cancellation_after_commit_point_settles_publication(
                     await task
             library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_latent_grant_failure_rolls_back_new_bytes_and_admission(
@@ -1887,7 +1889,7 @@ def test_latent_grant_failure_rolls_back_new_bytes_and_admission(
         library.latent_ingest_slots.release()
         library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_concurrent_same_scope_has_one_creator(tmp_path: Path) -> None:
@@ -1904,7 +1906,7 @@ def test_media_ingest_concurrent_same_scope_has_one_creator(tmp_path: Path) -> N
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(("data", "facts"), MEDIA_CASES)
@@ -1928,7 +1930,7 @@ def test_media_ingest_accepts_every_canonical_format(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_audio_webm_upload_load_and_rendition_use_canonical_asset(tmp_path: Path) -> None:
@@ -1965,7 +1967,7 @@ def test_audio_webm_upload_load_and_rendition_use_canonical_asset(tmp_path: Path
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 async def _assert_media_recorder_audio_webm_upload(tmp_path: Path, codec: str) -> None:
@@ -2003,7 +2005,7 @@ async def _assert_media_recorder_audio_webm_upload(tmp_path: Path, codec: str) -
 def test_media_recorder_audio_webm_publishes_length_and_waveform(
     tmp_path: Path, codec: str
 ) -> None:
-    asyncio.run(_assert_media_recorder_audio_webm_upload(tmp_path, codec))
+    run_scenario(_assert_media_recorder_audio_webm_upload(tmp_path, codec))
 
 
 def test_media_recorder_webm_fixture_encoders_follow_pyav_availability() -> None:
@@ -2020,7 +2022,7 @@ def test_media_recorder_webm_fixture_encoders_follow_pyav_availability() -> None
 
 
 def test_vorbis_webm_upload_remains_admitted(tmp_path: Path) -> None:
-    asyncio.run(_assert_media_recorder_audio_webm_upload(tmp_path, "vorbis"))
+    run_scenario(_assert_media_recorder_audio_webm_upload(tmp_path, "vorbis"))
 
 
 def test_audio_m4a_upload_load_and_rendition_use_canonical_asset(tmp_path: Path) -> None:
@@ -2054,7 +2056,7 @@ def test_audio_m4a_upload_load_and_rendition_use_canonical_asset(tmp_path: Path)
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_audio_m4a_upload_rejects_descriptor_free_track(tmp_path: Path) -> None:
@@ -2072,7 +2074,7 @@ def test_audio_m4a_upload_rejects_descriptor_free_track(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_validation_refuses_without_publication(tmp_path: Path) -> None:
@@ -2109,7 +2111,7 @@ def test_media_ingest_validation_refuses_without_publication(tmp_path: Path) -> 
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_malformed_validator_failure_returns_415_and_cleans_spool(
@@ -2134,7 +2136,7 @@ def test_media_ingest_malformed_validator_failure_returns_415_and_cleans_spool(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
@@ -2197,7 +2199,7 @@ def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_default_media_limits_mirror_frontend_per_kind_bounds(tmp_path: Path) -> None:
@@ -2246,7 +2248,7 @@ def test_media_upload_limit_is_selected_by_claimed_kind(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_default_image_bound_rejects_oversized_content_length_before_reading(
@@ -2283,7 +2285,7 @@ def test_default_image_bound_rejects_oversized_content_length_before_reading(
         finally:
             library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) -> None:
@@ -2388,7 +2390,7 @@ def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) 
             library.store.grant_media_result = original  # type: ignore[method-assign]
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_cancellation_retains_publication_serialization(
@@ -2460,7 +2462,7 @@ def test_media_ingest_cancellation_retains_publication_serialization(
         library.store.grant_media_result = original  # type: ignore[method-assign]
         library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_media_ingest_cancellation_before_publication_handoff_removes_spool(
@@ -2515,7 +2517,7 @@ def test_media_ingest_cancellation_before_publication_handoff_removes_spool(
             library.media_ingest_lock.release()
             library.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_generic_asset_upload_contract_is_unchanged(tmp_path: Path) -> None:
@@ -2532,4 +2534,4 @@ def test_generic_asset_upload_contract_is_unchanged(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -737,6 +737,164 @@ def test_save_stream_batch_repeats_with_next_source_counter(tmp_path: Path) -> N
     ]
 
 
+def test_named_stream_export_preserves_relative_names_bytes_and_publication(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    (root / "scene_00001").mkdir()
+    (root / "scene_00001" / "original.bin").write_bytes(b"existing")
+    LocalAssetLibrary(root, namespace="mounts/out").scan()
+    data = {
+        "model.gltf": b'{"buffers":[{"uri":"mesh/data.bin"}]}',
+        "mesh/data.bin": b"asymmetric buffer\x00\x07",
+        "textures/paint image.png": b"original encoded image",
+    }
+    refs = writer.save_named_streams(
+        {"mount": "out", "prefix": "scene"},
+        {name: io.BytesIO(value) for name, value in data.items()},
+        media_types={"model.gltf": "model/gltf+json"},
+        limit=100,
+    )
+    assert list(refs) == list(data)
+    resolver = IndexedAssetResolver(root)
+    for name, value in data.items():
+        path = root / "scene_00002" / name
+        assert path.read_bytes() == value
+        assert refs[name].digest == digest_bytes(value)
+        assert refs[name].virtual_path == f"mounts/out/scene_00002/{name}"
+        assert resolver.resolve(refs[name].digest) == path
+    assert refs["model.gltf"].media_type == "model/gltf+json"
+    assert refs["mesh/data.bin"].media_type == "application/octet-stream"
+    assert (root / "scene_00001" / "original.bin").read_bytes() == b"existing"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        (),
+        ("../leak",),
+        ("/absolute",),
+        ("a\\b",),
+        ("a//b",),
+        ("CON.txt",),
+        (".dinkster-save-file",),
+        ("bad. ",),
+        ("scene.gltf", "mesh%2Fdata.bin"),
+        ("scene.gltf", "mesh#part.bin"),
+        ("a", "A"),
+        ("mesh", "mesh/data.bin"),
+        ("Mesh/a", "mesh/b"),
+    ],
+)
+def test_named_stream_export_rejects_entire_unsafe_set_before_writing(
+    tmp_path: Path, names: tuple[str, ...]
+) -> None:
+    writer, root = make_writer(tmp_path)
+    with pytest.raises(AssetError):
+        writer.save_named_streams(
+            {"mount": "out", "prefix": "scene"},
+            {name: io.BytesIO(b"must not publish") for name in names},
+            limit=32,
+        )
+    assert list(root.iterdir()) == []
+
+
+@pytest.mark.parametrize("change", ["revoke", "root", "oversize"])
+def test_named_stream_export_rechecks_authority_and_stream_limit(
+    tmp_path: Path, change: str
+) -> None:
+    writer, root = make_writer(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+
+    class ChangedSource(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            if change == "revoke":
+                (tmp_path / "mounts.json").write_text('{"mounts":[]}', encoding="ascii")
+            elif change == "root":
+                one_mount_snapshot(tmp_path, other)
+            return super().read(size)
+
+    with pytest.raises(AssetError):
+        writer.save_named_streams(
+            {"mount": "out", "prefix": "scene"},
+            {"model.bin": ChangedSource(b"too large" if change == "oversize" else b"ok")},
+            limit=2,
+        )
+    assert list(root.rglob("model.bin")) == []
+    assert list(root.rglob(".dinkster-save-*")) == []
+    assert list(other.iterdir()) == []
+
+
+def _save_named_streams_process(snapshot: str, queue: StringQueue) -> None:
+    refs = AssetWriter(MountSnapshotWriter(snapshot)).save_named_streams(
+        {"mount": "out", "prefix": "scene"},
+        {
+            "model.obj": io.BytesIO(b"mtllib materials/surface.mtl\n"),
+            "materials/surface.mtl": io.BytesIO(b"newmtl original\n"),
+        },
+        limit=100,
+    )
+    queue.put(refs["model.obj"].virtual_path)
+
+
+def test_named_stream_export_does_not_rename_or_overwrite_a_claimed_member(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    claimed = root / "scene_00001/model.bin"
+
+    class ContendedSource(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            if not claimed.exists():
+                claimed.write_bytes(b"concurrent bytes")
+            return super().read(size)
+
+    with pytest.raises(AssetError, match="claimed"):
+        writer.save_named_streams(
+            {"mount": "out", "prefix": "scene"},
+            {"model.bin": ContendedSource(b"new bytes")},
+            limit=32,
+        )
+    assert claimed.read_bytes() == b"concurrent bytes"
+    assert list(claimed.parent.iterdir()) == [claimed]
+
+
+def test_named_stream_export_rejects_symlinked_target_outside_mount(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    symlink_or_skip(root / "linked", outside, target_is_directory=True)
+    with pytest.raises(AssetError, match="escapes its mount"):
+        writer.save_named_streams(
+            {"mount": "out", "prefix": "linked/scene"},
+            {"model.bin": io.BytesIO(b"never published")},
+            limit=32,
+        )
+    assert list(outside.iterdir()) == []
+
+
+def test_named_stream_exports_allocate_distinct_directories_across_processes(
+    tmp_path: Path,
+) -> None:
+    _, root = make_writer(tmp_path)
+    context = get_context("spawn")
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_save_named_streams_process, args=(str(tmp_path / "mounts.json"), queue)
+        )
+        for _ in range(4)
+    ]
+    for process in processes:
+        process.start()
+    names = [queue.get(timeout=30) for _ in processes]
+    for process in processes:
+        process.join(timeout=30)
+        assert process.exitcode == 0
+    assert len(set(names)) == 4
+    for name in names:
+        model = root / name.removeprefix("mounts/out/")
+        assert model.read_bytes() == b"mtllib materials/surface.mtl\n"
+        assert (model.parent / "materials/surface.mtl").read_bytes() == b"newmtl original\n"
+
+
 def test_save_stream_batch_rejects_later_oversize_source_without_temp_files(tmp_path: Path) -> None:
     writer, root = make_writer(tmp_path)
     with pytest.raises(AssetError, match="exceeds limit"):

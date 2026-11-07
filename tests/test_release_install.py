@@ -11,7 +11,9 @@ import sys
 import tarfile
 import tomllib
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -23,6 +25,7 @@ from scripts.build_release import (
     check_release,
     development_version,
     extend_release,
+    inputs_changed,
     read_base_manifest,
     release_version,
     select_dependency_wheels,
@@ -153,59 +156,37 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert ".github/workflows/release.yml" in workflow[True]["pull_request"]["paths"]
     assert "src/dinkster/frontend.py" in workflow[True]["pull_request"]["paths"]
     assert set(workflow["jobs"]) == {
+        "changes",
         "validation",
         "build",
-        "pack-locks",
-        "tools",
         "finalize",
         "install",
         "release",
-        "prune",
         "channel",
         "publish",
         "publish-api",
         "publish-supervisor",
     }
     assert workflow["jobs"]["validation"] == {
+        "needs": "changes",
+        "if": "needs.changes.outputs.engine == 'true'",
         "uses": "./.github/workflows/ci.yml",
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
-    assert workflow["jobs"]["tools"]["needs"] == "build"
-    assert workflow["jobs"]["pack-locks"]["needs"] == "build"
-    assert workflow["jobs"]["finalize"]["needs"] == ["build", "tools", "pack-locks"]
+    assert workflow["jobs"]["finalize"]["needs"] == "build"
     assert workflow["jobs"]["install"]["needs"] == "finalize"
-    assert workflow["jobs"]["tools"]["strategy"]["matrix"]["include"] == [
-        {"os": "linux", "runner": "ubuntu-latest"},
-        {"os": "windows", "runner": "windows-latest"},
-        {"os": "macos", "runner": "macos-latest"},
-    ]
-    locks = workflow["jobs"]["pack-locks"]
-    assert locks["runs-on"] == "${{ matrix.runner }}"
-    assert locks["strategy"]["matrix"] == "${{ fromJSON(needs.build.outputs.lock-matrix) }}"
-    assert locks["strategy"]["fail-fast"] is False
-    assert [
-        step["with"]["name"]
-        for step in locks["steps"]
-        if step.get("uses") == "actions/download-artifact@v4"
-    ] == ["wheel-release", "selected-base-manifests"]
-    resolve = [step for step in locks["steps"] if "run" in step]
-    assert {step["if"] for step in resolve} == {
-        "runner.os == 'Windows'",
-        "runner.os != 'Windows'",
-    }
-    for step in resolve:
-        assert "-m scripts.build_release_pack_locks --release dist --base-manifest" in step["run"]
-        assert step["env"] == {"VARIANT": "${{ matrix.variant }}"}
-    admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
-    assert "for manifest in .release/bases/*/manifest.json" in admission
-    assert 'arguments+=(--base-manifest "$manifest")' in admission
-    assert (
-        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
-        in admission
+    commands = "\n".join(
+        step.get("run", "") for job in workflow["jobs"].values() for step in job.get("steps", [])
     )
-    assert "for artifact in .release/pack-locks/*.pack-lock.json" in admission
-    assert 'arguments+=(--artifact "$artifact")' in admission
-    assert '-m scripts.build_release --extend "${arguments[@]}"' in admission
+    assert "build_official_packs" not in commands
+    assert "build_release_pack_locks" not in commands
+    assert "official-packs" not in commands
+    assert "pack-locks" not in commands
+    assert "lock-matrix" not in workflow["jobs"]["build"].get("outputs", {})
+    admission = next(step["run"] for step in workflow["jobs"]["finalize"]["steps"] if "run" in step)
+    assert "uv sync --locked --no-dev --package dinkster-supervisor" in admission
+    assert "build_native_tools" not in commands
+    assert ".release/tools" not in commands
     for job in ("install", "release", "publish", "publish-api", "publish-supervisor"):
         downloads = [
             step["with"]["name"]
@@ -218,25 +199,48 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     channel = workflow["jobs"]["channel"]
     assert channel["needs"] == "release"
-    pruning = workflow["jobs"]["prune"]
-    assert pruning["needs"] == "release"
-    assert pruning["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-    assert pruning["permissions"] == {"contents": "write"}
-    assert not pruning.get("continue-on-error", False)
-    assert any("prune_engine_prereleases.py" in step.get("run", "") for step in pruning["steps"])
-    assert not any(
-        "prune_engine_prereleases.py" in step.get("run", "")
-        for step in workflow["jobs"]["release"]["steps"]
-    )
+    assert channel["permissions"] == {"contents": "write"}
     assert channel["if"] == "github.event_name == 'push'"
     assert channel["concurrency"]["cancel-in-progress"] is False
-    publication = channel["steps"][-1]
+    publication = next(
+        step
+        for step in channel["steps"]
+        if "--command python -m scripts.publish_environment_channel" in step.get("run", "")
+    )
+    retention = next(step for step in channel["steps"] if "--scope engine" in step.get("run", ""))
+    assert channel["steps"].index(retention) > channel["steps"].index(publication)
+    assert retention["if"] == "github.ref == 'refs/heads/main'"
+    assert "--dry-run" not in retention["run"]
+    assert "--old-naming" in retention["run"]
+    assert "--output retention-report.json" in retention["run"]
+    assert "continue-on-error" not in retention
+    assert (
+        sum(
+            "--scope engine" in step.get("run", "")
+            for job in workflow["jobs"].values()
+            for step in job.get("steps", [])
+        )
+        == 1
+    )
+    assert "prune_engine_prereleases" not in commands
+    assert "retention.py" in publication["run"]
+    assert next(
+        step["with"]
+        for step in channel["steps"]
+        if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Environments"
+    ) == {
+        "repository": "Kosinkadink/Dinkster-Environments",
+        "ref": "022b8234976065d0d3344a9717dd150ec6347bfa",
+        "path": ".release/retention",
+        "persist-credentials": False,
+    }
     assert "uv sync --locked --only-group release-publication" in publication["run"]
     groups = tomllib.loads((ROOT / "pyproject.toml").read_text())["dependency-groups"]
     assert "dinkster-supervisor" in groups["release-publication"]
     assert any(requirement.startswith("boto3") for requirement in groups["release-publication"])
     assert "-m scripts.publish_environment_channel" in publication["run"]
     assert "--minimum-desktop-version 0.2.0" in publication["run"]
+    assert publication["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert publication["env"]["R2_ACCESS_KEY_ID"] == "${{ secrets.R2_ACCESS_KEY_ID }}"
     assert any(
         "dinkster_supervisor.environment_channels" in step.get("run", "")
@@ -252,6 +256,12 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert preflight["uses"] == "actions/github-script@v7"
     assert "getReleaseByTag" in preflight["with"]["script"]
     assert "Refusing to overwrite an existing release" in preflight["with"]["script"]
+    release_steps = workflow["jobs"]["release"]["steps"]
+    collision_check = next(step for step in release_steps if "--preflight" in step.get("run", ""))
+    assert release_steps.index(collision_check) < release_steps.index(preflight)
+    assert "R2_BUCKET" in collision_check["env"]
+    assert "digest.slice(0, 8)" in preflight["with"]["script"]
+    assert "`v${manifest.version}`" in preflight["with"]["script"]
     assert next(
         step
         for step in workflow["jobs"]["release"]["steps"]
@@ -270,14 +280,16 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
-def test_release_lock_matrix_uses_each_selected_base_native_host(
+def test_release_acquires_each_selected_base_without_pack_lock_matrix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from scripts import acquire_engine_bases
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     selection = next(
-        step["run"] for step in workflow["jobs"]["build"]["steps"] if step.get("id") == "bases"
+        step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if step.get("name") == "Acquire the selected published base manifests"
     )
     paths = []
     for variant, system in (
@@ -292,23 +304,32 @@ def test_release_lock_matrix_uses_each_selected_base_native_host(
         path.write_text(json.dumps({"variant": variant, "platform": {"os": system}}))
         paths.append(path)
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts/base_bundles.json").write_text("{}")
+    (tmp_path / "scripts/base_bundles.json").write_text(
+        json.dumps({path.stem: str(index) for index, path in enumerate(paths)})
+    )
     output = tmp_path / "outputs"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(acquire_engine_bases, "acquire", lambda *args: paths)
+    requested = []
+
+    def acquire(root, references, destination):
+        requested.extend(references)
+        assert root == tmp_path
+        assert destination == tmp_path / ".release/base-manifests"
+        return paths
+
+    monkeypatch.setattr(acquire_engine_bases, "acquire", acquire)
     script = selection.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     exec(compile(script, "release base selection", "exec"), {})
-    assert json.loads(output.read_text().removeprefix("lock-matrix=")) == {
-        "include": [
-            {"variant": "linux-cpu", "runner": "ubuntu-latest"},
-            {"variant": "linux-nvidia", "runner": "ubuntu-latest"},
-            {"variant": "mac-arm64", "runner": "macos-latest"},
-            {"variant": "win-cpu", "runner": "windows-latest"},
-            {"variant": "win-nvidia", "runner": "windows-latest"},
-            {"variant": "win-nvidia-cu126", "runner": "windows-latest"},
-        ]
-    }
+    assert requested == [
+        "base-linux-cpu-0",
+        "base-linux-nvidia-1",
+        "base-mac-arm64-2",
+        "base-win-cpu-3",
+        "base-win-nvidia-4",
+        "base-win-nvidia-cu126-5",
+    ]
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
@@ -367,10 +388,24 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     )
 
 
+def test_default_pack_admission_uses_complete_version_history() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
+    )
+    checkout = next(
+        step
+        for step in workflow["jobs"]["admission"]["steps"]
+        if step.get("uses") == "actions/checkout@v4"
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+
+
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
     assert build["permissions"] == {"actions": "read", "contents": "read"}
+    checkout = next(step for step in build["steps"] if step.get("uses") == "actions/checkout@v4")
+    assert checkout["with"]["fetch-depth"] == 0
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "-m scripts.build_release" in commands
     assert "--download-external-wheels" not in commands
@@ -383,12 +418,8 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     assert "uvx twine check dist/*.whl" in commands
     assert "scripts/download_frontend.py" in commands
     assert "--frontend-artifact .release/frontend.zip" in commands
-    assert "from scripts.build_official_packs import build" in commands
-    assert 'arguments+=(--artifact "$payload")' in commands
-    assert (
-        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
-        in commands
-    )
+    assert "build_official_packs" not in commands
+    assert "--artifact" not in commands
     assert "pnpm" not in commands
     assert "node" not in commands
     assert all(
@@ -454,7 +485,7 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
         if step.get("name") == "Install and launch from wheels"
     )
     assert 'uv venv --seed --python "$RELEASE_PYTHON"' in command
-    assert '"$python" -m pip install' in command
+    assert 'uv pip install --python "$python"' in command
     assert '"$python" -m pip check' in command
     assert "--require-hashes" in command
     assert "--find-links" in command
@@ -644,6 +675,9 @@ def test_release_version_rejects_non_version_tags(tag: str) -> None:
 
 def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None:
     (tmp_path / "packages/one").mkdir(parents=True)
+    supervisor = tmp_path / "packages/supervisor/pyproject.toml"
+    supervisor.parent.mkdir()
+    supervisor.write_text('[project]\nname = "dinkster-supervisor"\nversion = "7.8.9"\n')
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "root"\nversion = "1.2.3"\n', encoding="utf-8"
     )
@@ -653,6 +687,53 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     package.write_text('[project]\nname = "one"\nversion = "1.2.4"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="one=1.2.4"):
         release_version(tmp_path, "v1.2.3")
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ("supervisor", False),
+        ("supervisor-lock", False),
+        ("engine-lock", True),
+        ("engine", True),
+        ("scripts/build_native_tools.py", False),
+        ("scripts/build_environment_tools.py", False),
+        ("scripts/build_tools_release.py", False),
+        ("scripts/publish_tools_release.py", False),
+        (".github/workflows/release-tools.yml", False),
+    ],
+)
+def test_engine_publication_ignores_only_supervisor_changes(
+    tmp_path: Path, changed: str, expected: bool
+) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    lock = (
+        '[[package]]\nname = "dinkster-supervisor"\nversion = "1.0"\n'
+        '[[package]]\nname = "aiohttp"\nversion = "2.0"\n'
+    )
+    (tmp_path / "uv.lock").write_text(lock)
+
+    def snapshot() -> str:
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        return subprocess.check_output(["git", "write-tree"], cwd=tmp_path, text=True).strip()
+
+    before = snapshot()
+    supervisor = tmp_path / "packages/dinkster-supervisor/client.py"
+    supervisor.parent.mkdir(parents=True)
+    supervisor.write_text("new_behavior = True\n")
+    if changed.endswith("lock"):
+        (tmp_path / "uv.lock").write_text(
+            lock.replace('version = "1.0"', 'version = "1.1"')
+            if changed == "supervisor-lock"
+            else lock.replace('version = "2.0"', 'version = "2.1"')
+        )
+    elif changed == "engine":
+        (tmp_path / "engine.py").write_text("new_engine = True\n")
+    elif "/" in changed:
+        source = tmp_path / changed
+        source.parent.mkdir(parents=True)
+        source.write_text("tools input\n")
+    assert inputs_changed(tmp_path, before, snapshot()) is expected
 
 
 def test_repository_versions_match_first_release_tag() -> None:
@@ -670,6 +751,42 @@ def test_repository_versions_match_first_release_tag() -> None:
     assert set(frontend) == {"repository", "commit", "sha256"}
 
 
+def test_development_version_counts_commits_since_the_last_version_tag(tmp_path: Path) -> None:
+    root = tmp_path / "history"
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    (root / "pyproject.toml").write_text('[project]\nname = "fixture"\nversion = "1.2.3"\n')
+    tree = subprocess.check_output(["git", "-C", str(root), "mktree"], input="", text=True).strip()
+    original = subprocess.check_output(
+        ["git", "-C", str(ROOT), "cat-file", "-p", "HEAD"], text=True
+    )
+    metadata = "\n".join(
+        line for line in original.splitlines() if line.startswith(("author ", "committer "))
+    )
+    head = ""
+    for number in range(3):
+        parent = f"parent {head}\n" if head else ""
+        head = (
+            subprocess.check_output(
+                ["git", "-C", str(root), "hash-object", "-w", "-t", "commit", "--stdin"],
+                input=f"tree {tree}\n{parent}{metadata}\n\nFixture commit {number}\n".encode(),
+            )
+            .decode("ascii")
+            .strip()
+        )
+    subprocess.run(["git", "-C", str(root), "update-ref", "HEAD", head], check=True)
+    assert development_version(root) == f"1.2.4.dev3+g{head}"
+    subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.3", "HEAD~2"], check=True)
+    assert development_version(root) == f"1.2.4.dev2+g{head}"
+    subprocess.run(
+        ["git", "-C", str(root), "update-ref", "refs/tags/main-latest", "HEAD"], check=True
+    )
+    assert development_version(root) == f"1.2.4.dev2+g{head}"
+    subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.4", "HEAD~1"], check=True)
+    assert development_version(root) == f"1.2.4.dev1+g{head}"
+    subprocess.run(["git", "-C", str(root), "update-ref", "refs/tags/v1.2.5", "HEAD"], check=True)
+    assert development_version(root) == f"1.2.4.dev0+g{head}"
+
+
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
 ) -> None:
@@ -681,7 +798,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
-        for project in ("dinkster", "dinkster-api"):
+        for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
                 cwd=staged,
@@ -691,6 +808,10 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
+        supervisor_version = tomllib.loads(
+            (ROOT / "packages/dinkster-supervisor/pyproject.toml").read_text()
+        )["project"]["version"]
+        assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
             name
             for name in archive.namelist()
@@ -712,6 +833,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
                 for name in archive.namelist()
                 if name.startswith(namespace + "/") and name.endswith(".py")
             } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+    [supervisor_wheel] = output.glob("dinkster_supervisor-*.whl")
+    assert supervisor_wheel.name == f"dinkster_supervisor-{supervisor_version}-py3-none-any.whl"
     [api_wheel] = output.glob("dinkster_api-*.whl")
     with zipfile.ZipFile(api_wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
@@ -762,7 +885,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.0\n" in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.1\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [
@@ -1188,8 +1311,19 @@ def test_dependency_metadata_uses_producer_ownership_names_per_variant(
         select_dependency_wheels(tmp_path, "uv", manifests[:1])
 
 
+@pytest.mark.parametrize(
+    ("tag", "version", "public_version"),
+    [
+        ("v1.2.3", "1.2.3", "1.2.3"),
+        (None, "1.2.4.dev412+g" + "a" * 40, "1.2.4.dev412"),
+    ],
+)
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str | None,
+    version: str,
+    public_version: str,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
@@ -1249,20 +1383,23 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
     payloads = [payload, bootstrap, archive, catalog]
-    built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
+    monkeypatch.setattr("scripts.build_release.development_version", lambda root: version)
+    built = build(root, output, tag, frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
+    built_at = datetime.fromisoformat(manifest["builtAt"])
+    assert built_at.tzinfo == UTC
+    assert manifest["label"] == f"{built_at.date().isoformat()}-{public_version}"
+    assert manifest["version"] == version
+    assert "tag" not in manifest
     assert set(manifest["workspaceWheels"]) == {
-        "dinkster-1.2.3-py2.py3-none-any.whl",
-        "dinkster_api-1.2.3-py2.py3-none-any.whl",
+        f"dinkster-{version}-py2.py3-none-any.whl",
+        f"dinkster_api-{version}-py2.py3-none-any.whl",
         "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
-    with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
-        assert {
-            name.removeprefix("dinkster/official_packs/"): wheel.read(name)
-            for name in wheel.namelist()
-            if name.startswith("dinkster/official_packs/")
-        } == {path.name: path.read_bytes() for path in (archive, catalog)}
+    with zipfile.ZipFile(output / f"dinkster-{version}-py2.py3-none-any.whl") as wheel:
+        assert not any(name.startswith("dinkster/official_packs/") for name in wheel.namelist())
+        assert not any(name.endswith((".zip", ".pack-lock.json")) for name in wheel.namelist())
     for candidate in payloads:
         assert (output / candidate.name).read_bytes() == candidate.read_bytes()
         row = next(row for row in manifest["artifacts"] if row["name"] == candidate.name)
@@ -1311,7 +1448,6 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
         "dinkster_api-1.0-py3-none-any.whl",
         "dinkster_supervisor-1.0-py3-none-any.whl",
         "constraints.txt",
-        "dinkster-tools-windows-x86_64.zip",
     ]
     for size, name in enumerate(names, 1):
         (tmp_path / name).write_bytes(b"x" * size)
@@ -1324,8 +1460,18 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
     assert check_release(tmp_path, expected) == expected
     with pytest.raises(ValueError, match="exceeds budget"):
         check_release(tmp_path, expected - 1)
-    (tmp_path / names[-1]).write_bytes(b"large interpreter" * 1000)
-    assert check_release(tmp_path, expected) == expected
+    for name in (
+        "dinkster-tools-windows-x86_64.zip",
+        "official-packs.lock",
+        "dinkster-nodes-foundation-1.0.zip",
+        "dinkster-nodes-foundation-1.0-linux-cpu.pack-lock.json",
+    ):
+        forbidden = tmp_path / name
+        forbidden.write_text('{"packs": []}')
+        write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), forbidden])
+        with pytest.raises(ValueError, match="unexpected release payload"):
+            check_release(tmp_path, 100_000_000)
+        forbidden.unlink()
     external = "numpy-1.0-py3-none-any.whl"
     (tmp_path / external).write_bytes(b"external")
     write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
@@ -1353,7 +1499,8 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
         "format": "dinkster.engine/1",
         "commit": "a" * 40,
         "version": "1.2.3",
-        "tag": "v1.2.3",
+        "label": "2026-10-31-1.2.3",
+        "builtAt": "2026-10-31T12:00:00Z",
         "workerProtocol": 1,
         "workspaceWheels": [wheel.name],
         "artifacts": [
@@ -1416,173 +1563,272 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
     assert json.loads(metadata.read_bytes()) == result
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize(
-    "corruption", [None, "missing", "extra", "pack", "variant", "wheel-url", "index-url"]
+    "corruption", [None, "size", "hash", "upstream-size", "upstream-hash", "missing"]
 )
-def test_finalization_requires_complete_portable_official_dependency_locks(
-    tmp_path: Path, corruption: str | None
+def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, corruption: str | None
 ) -> None:
-    from dinkster_registry.install import LockedPack, Lockfile
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
 
-    from scripts.build_release import write_manifest
+    from scripts import build_release_pack_locks as builder
 
-    output = tmp_path / "release"
-    output.mkdir()
-    catalog = output / "official-packs.lock"
-    catalog.write_text(
-        Lockfile.of(
-            [LockedPack("example", "1.2.3", "blake3:" + "a" * 64, "dinkster", (), "git:test")]
-        ).record_json()
+    release = tmp_path / "release"
+    release.mkdir()
+    filename = "example_dependency-2.0+native-py3-none-any.whl"
+    wheel = release / filename
+    wheel.write_bytes(b"verified native wheel")
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    upstream = "https://files.example.test/locked/example_dependency-2.0%2Bnative-py3-none-any.whl"
+    (tmp_path / "uv.lock").write_text(
+        f'[[package]]\nname="example-dependency"\nversion="2.0+native"\n'
+        f'[[package.wheels]]\nurl="{upstream}"\n'
+        f"size={wheel.stat().st_size + (1 if corruption == 'upstream-size' else 0)}\n"
+        f'hash="sha256:{"a" * 64 if corruption == "upstream-hash" else digest}"\n'
+        if corruption != "missing"
+        else "package=[]\n"
     )
-    write_manifest(output, {"format": "dinkster.engine/1", "version": "1.2.3"}, [catalog])
-    bases = []
-    candidates = []
-    for variant in ("linux-cpu", "win-cpu"):
-        base = {
-            "format": "dinkster.base/1",
-            "variant": variant,
-            "platform": {"os": "linux" if variant == "linux-cpu" else "windows", "arch": "x86_64"},
-            "python": "3.14.10",
-            "interpreter": {},
-            "wheels": [],
-            "replaces": [],
-            "workerProtocol": 11,
-            "nvidia": None,
-            "archive": {"format": "tar+zstd"},
-        }
-        canonical = json.dumps(base, sort_keys=True, separators=(",", ":")).encode("ascii")
-        base["id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
-        base["archive"]["parts"] = []
-        path = tmp_path / f"{variant}.json"
-        path.write_text(json.dumps(base))
-        bases.append(path)
-        path = tmp_path / f"example-1.2.3-{variant}.pack-lock.json"
+    (release / "constraints.txt").write_text("example-dependency==2.0+native\n")
+    engine = {
+        "version": "1.2.3",
+        "label": "2026-10-31-1.2.3",
+        "workerProtocol": 11,
+        "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
+    }
+    if legacy:
+        engine.pop("label")
+        engine["tag"] = "main-" + "c" * 40
+    metadata = release / "release-manifest.json"
+    base = {
+        "id": "sha256:" + "b" * 64,
+        "variant": "linux-cpu",
+        "workerProtocol": 11,
+        "platform": {"os": "linux"},
+        "interpreter": {"executable": "python/bin/python3"},
+        "archive": {"parts": [{"filename": "base.tar.zst.001", "size": 17, "sha256": "a" * 64}]},
+        "wheels": [],
+        "nvidia": None,
+    }
+    engine["dependencies"] = {"linux-cpu": {"base": base["id"], "wheels": []}}
+    metadata.write_text(json.dumps(engine))
+    if not legacy:
+        base["label"] = "2026-10-31-py3.14.10-torch2.14.1-bbbbbbbb"
+    manifest = tmp_path / "base.json"
+    manifest.write_text(json.dumps(base))
+    monkeypatch.setattr(builder, "qualify", lambda *args: base)
+    monkeypatch.setattr(builder.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(builder, "extract_base", lambda *args, **kwargs: None)
+    monkeypatch.setattr(builder, "effective_constraints", lambda *args, **kwargs: "constraints\n")
+
+    def fetch(sources, filename, destination, digest, size):
+        name = base.get("label", "b" * 64)
+        assert sources == (
+            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/"
+            f"base-linux-cpu-{name}",
+        )
+        return destination
+
+    monkeypatch.setattr(builder, "fetch_artifact", fetch)
+
+    def build_pack(root, output, **kwargs):
+        output.mkdir()
+        path = output / "example-1.2.3-linux-cpu.pack-lock.json"
         PackLock(
-            "wrong" if corruption == "pack" else "example",
-            "wrong" if corruption == "variant" else variant,
+            "example",
+            "linux-cpu",
             ">=3.12",
-            ("example-dependency==2.0",),
-            ("file:///resolver/index" if corruption == "index-url" else "https://pypi.org/simple",),
+            ("example-dependency==2.0+native",),
+            ("https://pypi.org/simple",),
             (
                 LockedDistribution(
                     "example-dependency",
-                    "2.0",
+                    "2.0+native",
                     (
                         LockedWheel(
-                            "example_dependency-2.0-py3-none-any.whl",
-                            17,
-                            "b" * 64,
-                            "file:///resolver/wheel.whl"
-                            if corruption == "wheel-url"
-                            else "https://example.test/wheel.whl",
+                            filename,
+                            wheel.stat().st_size + (1 if corruption == "size" else 0),
+                            "a" * 64 if corruption == "hash" else digest,
+                            wheel.as_uri(),
                         ),
                     ),
                 ),
             ),
         ).write(path)
-        candidates.append(path)
-    if corruption == "missing":
-        candidates.pop()
-    elif corruption == "extra":
-        extra = tmp_path / "unlisted-1.2.3-linux-cpu.pack-lock.json"
-        extra.write_bytes(candidates[0].read_bytes())
-        candidates.append(extra)
-    before = {path.name: path.read_bytes() for path in output.iterdir()}
-    if corruption:
-        with pytest.raises(ValueError, match="dependency lock"):
-            extend_release(output, candidates, base_manifests=bases)
-        assert {path.name: path.read_bytes() for path in output.iterdir()} == before
-    else:
-        result = extend_release(output, candidates, base_manifests=bases)
-        rows = result["artifacts"]
-        assert isinstance(rows, list)
-        assert {row["name"] for row in rows} == {
-            "official-packs.lock",
-            *(path.name for path in candidates),
-        }
-        for path in candidates:
-            assert (output / path.name).read_bytes() == path.read_bytes()
+        return (path,)
 
-
-@pytest.mark.parametrize("failure", [None, "recover", "exhaust", "forbidden"])
-def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
-    monkeypatch: pytest.MonkeyPatch, capsys, failure: str | None
-) -> None:
-    from scripts import prune_engine_prereleases as pruner
-
-    releases = {
-        number: {
-            "id": number,
-            "tag_name": f"main-{number:040x}",
-            "published_at": f"2026-10-28T00:00:{number:02d}Z",
-            "prerelease": True,
-            "draft": False,
-        }
-        for number in range(1, 54)
-    }
-    for number, fields in (
-        (101, {"prerelease": False}),
-        (102, {"draft": True}),
-        (103, {"tag_name": "other-prerelease"}),
-    ):
-        releases[number] = {**releases[1], "id": number, **fields}
-
-    attempts = 0
-    sleeps = []
-
-    def read_api(command: list[str], *, text: bool, stderr=None) -> str:
-        nonlocal attempts
-        if "--paginate" in command:
-            attempts += 1
-            if failure in {"exhaust", "forbidden"} or (failure == "recover" and attempts < 3):
-                raise subprocess.CalledProcessError(
-                    1,
-                    command,
-                    stderr=(
-                        "HTTP 403: Resource not accessible"
-                        if failure == "forbidden"
-                        else "stream error: stream ID 1; CANCEL; received from peer"
-                    ),
-                )
-            rows = list(releases.values())
-            return json.dumps([rows[:20], rows[20:]])
-        number = int(command[-1].rsplit("/", 1)[1])
-        if number == 1:
-            releases[number]["prerelease"] = False
-        return json.dumps(releases[number])
-
-    def delete_api(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
-        assert command[:4] == ["gh", "api", "--method", "DELETE"]
-        number = int(command[-1].rsplit("/", 1)[1])
-        del releases[number]
-        return subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setattr(subprocess, "check_output", read_api)
-    monkeypatch.setattr(subprocess, "run", delete_api)
-    monkeypatch.setattr(pruner.time, "sleep", sleeps.append)
-    if failure in {"exhaust", "forbidden"}:
-        with pytest.raises(subprocess.CalledProcessError):
-            pruner.prune("Kosinkadink/Dinkster")
-        assert set(releases) == {*range(1, 54), 101, 102, 103}
-        assert attempts == (4 if failure == "exhaust" else 1)
-        assert sleeps == ([1, 2, 4] if failure == "exhaust" else [])
-        assert ("stream error" if failure == "exhaust" else "HTTP 403") in capsys.readouterr().err
+    monkeypatch.setattr(builder, "build", build_pack)
+    if corruption in ("size", "hash") or (corruption and not legacy):
+        with pytest.raises(ValueError, match="portable.*provenance"):
+            builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+        assert not (tmp_path / "locks").exists()
         return
-    assert set(pruner.prune("Kosinkadink/Dinkster")) == {2, 3}
-    assert attempts == (3 if failure == "recover" else 1)
-    assert sleeps == ([1, 2] if failure == "recover" else [])
-    assert set(releases) == {1, *range(4, 54), 101, 102, 103}
-    assert releases[1]["prerelease"] is False
+    before = hashlib.sha256(metadata.read_bytes()).hexdigest()
+    [first] = builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+    first_lock = PackLock.read(first)
+    expected = (
+        "https://github.com/Kosinkadink/Dinkster/releases/download/main-"
+        + "c" * 40
+        + "/example_dependency-2.0%2Bnative-py3-none-any.whl"
+        if legacy
+        else upstream
+    )
+    assert first_lock.packages[0].wheels[0].url == expected
+    assert first_lock.packages[0].wheels[0].sha256 == digest
+    shutil.copyfile(first, release / first.name)
+    engine["artifacts"].append(
+        {
+            "name": first.name,
+            "sha256": hashlib.sha256(first.read_bytes()).hexdigest(),
+            "size": first.stat().st_size,
+        }
+    )
+    # Adding lock bytes changes identity, but must not change their own provenance.
+    metadata.write_text(json.dumps(engine))
+    assert hashlib.sha256(metadata.read_bytes()).hexdigest() != before
+    [second] = builder.build_locks(tmp_path, release, manifest, tmp_path / "second-locks")
+    assert second.read_bytes() == first.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "mode", ["independent", "legacy", "archive", "catalog", "empty", "engine", "protocol", "host"]
+)
+def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    import platform
+
+    from blake3 import blake3
+    from dinkster_registry import LockedPack, Lockfile
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts import build_release_pack_locks as native
+
+    release, sources = tmp_path / "release", tmp_path / "sources"
+    release.mkdir()
+    sources.mkdir()
+    versions = {"first-pack": "1.2.3", "second-pack": "7.0rc1"}
+    release_versions = {**versions, "unselected-pack": "0.5.0"}
+    (tmp_path / "uv.lock").write_text("package = []\n")
+
+    def artifacts(directory, selected):
+        directory.mkdir(exist_ok=True)
+        paths, entries = [], []
+        for name, version in selected.items():
+            path = directory / f"{name}-{version}.zip"
+            data = f"{name}@{version}".encode()
+            path.write_bytes(data)
+            paths.append(path)
+            entries.append(
+                LockedPack(name, version, "blake3:" + blake3(data).hexdigest(), "dinkster", ())
+            )
+        catalog = directory / "official-packs.lock"
+        catalog.write_text(Lockfile.of(entries).record_json() + "\n")
+        return (*paths, catalog)
+
+    artifacts(sources, versions)
+    artifacts(release, release_versions)
+    if mode == "archive":
+        (sources / "second-pack-7.0rc1.zip").write_bytes(b"changed")
+    elif mode == "catalog":
+        catalog = sources / "official-packs.lock"
+        catalog.write_text(catalog.read_text().replace("7.0rc1", "6.0"))
+    elif mode == "empty":
+        (sources / "official-packs.lock").write_text(Lockfile.of([]).record_json())
+    engine = {
+        "version": "9.0+engine",
+        "tag": "v9.0",
+        "workerProtocol": 11,
+        "artifacts": [
+            {"name": "constraints.txt", "size": 0, "sha256": hashlib.sha256(b"").hexdigest()}
+        ],
+    }
+    (release / "constraints.txt").write_bytes(b"changed" if mode == "engine" else b"")
+    (release / "release-manifest.json").write_text(json.dumps(engine))
+    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
+    wheel = "fixture_dependency-2.0-py3-none-any.whl"
+    base = {
+        "variant": "fixture-base",
+        "id": "sha256:" + "a" * 64,
+        "platform": {"os": "other" if mode == "host" else system},
+        "workerProtocol": 12 if mode == "protocol" else 11,
+        "archive": {"parts": []},
+        "interpreter": {"executable": "python"},
+        "wheels": [
+            {
+                "filename": wheel,
+                "size": 17,
+                "sha256": "b" * 64,
+                "url": "https://example.test/fixture.whl",
+            }
+        ],
+        "nvidia": None,
+    }
+    manifest = tmp_path / "base.json"
+    manifest.write_text(json.dumps(base))
+    monkeypatch.setattr(native, "qualify", lambda *args: base)
+    monkeypatch.setattr(native, "extract_base", lambda *args, **kwargs: None)
+    monkeypatch.setattr(native, "engine_constraints", lambda *args: "constraints")
+    monkeypatch.setattr(native, "effective_constraints", lambda *args, **kwargs: "constraints")
+
+    def build(root, output, *, version=None, packs, variant, **kwargs):
+        selected = {name: version or release_versions[name] for name in packs or release_versions}
+        payloads = artifacts(output, selected)
+        locks = []
+        for name, own_version in selected.items():
+            path = output / f"{name}-{own_version}-{variant}.pack-lock.json"
+            PackLock(
+                name,
+                variant,
+                ">=3.12",
+                (),
+                ("https://pypi.org/simple",),
+                (
+                    LockedDistribution(
+                        "fixture-dependency",
+                        "2.0",
+                        (LockedWheel(wheel, 17, "b" * 64, "file:///native/" + wheel),),
+                    ),
+                ),
+            ).write(path)
+            locks.append(path)
+        return (*payloads, *locks)
+
+    monkeypatch.setattr(native, "build", build)
+    before = {
+        path: path.read_bytes() for directory in (release, sources) for path in directory.iterdir()
+    }
+    output = tmp_path / "locks"
+    if mode not in {"independent", "legacy"}:
+        with pytest.raises(ValueError):
+            native.build_locks(tmp_path, release, manifest, output, sources=sources)
+        assert not output.exists()
+    else:
+        paths = native.build_locks(
+            tmp_path, release, manifest, output, sources=None if mode == "legacy" else sources
+        )
+        expected = release_versions if mode == "legacy" else versions
+        assert {path.name for path in paths} == {
+            f"{name}-{version}-fixture-base.pack-lock.json" for name, version in expected.items()
+        }
+        for path in paths:
+            lock = PackLock.read(path)
+            assert lock.pack in expected and lock.variant == "fixture-base"
+            assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
+    assert {path: path.read_bytes() for path in before} == before
+    assert not list(tmp_path.glob("release-pack-locks-*"))
 
 
 @pytest.mark.parametrize("system", ["windows", "macos", "linux"])
 @pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
+@pytest.mark.parametrize("publication", ["legacy", "labelled", "alias"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str, system: str, publication: str
 ) -> None:
     from copy import deepcopy
+    from io import BytesIO
 
+    from scripts import acquire_engine_bases
     from scripts.acquire_engine_bases import acquire
 
     boundary = tmp_path / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
@@ -1732,6 +1978,18 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         )
         manifest["signature"] = None
         requested = f"base-{variant}-{identity}"
+        if publication != "legacy" or change.startswith("label-"):
+            label = f"2026-10-31-py{python}-torch2.14.1-{identity[:8]}"
+            if change == "label-hash":
+                label = label[:-8] + "0" * 8
+            elif change == "label-path":
+                label = "../" + label
+            manifest["label"] = label
+            requested = f"base-{variant}-{label}"
+            if change == "label-tag":
+                requested = requested.replace("2026-10-31", "2026-10-30")
+            elif change == "label-variant":
+                requested = requested.replace(f"base-{variant}-", "base-other-")
         if change == "identity":
             manifest["workerProtocol"] = 12
         payload = (json.dumps(manifest, indent=3) + "\n").encode()
@@ -1743,11 +2001,33 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         elif change == "extras-format":
             extras["format"] = "dinkster.extras/2"
         extras_payload = b"{" if change == "extras-json" else json.dumps(extras).encode()
-        return requested
+        if change == "pinned-id":
+            return f"base-{variant}-{identity[:8]}{'0' * 56}"
+        return f"base-{variant}-{identity}" if publication == "alias" else requested
+
+    def index_response(request, **kwargs):
+        assert request.full_url == f"https://releases.dinkster.org/base/{variant}/index.json"
+        assert request.get_header("User-agent") == "dinkster-env"
+        manifest = json.loads(payload)
+        identity = manifest["id"]
+        if mutation == "pinned-id":
+            identity = identity[:15] + "0" * 56
+        rows = [{"id": identity, "path": f"base/{variant}/{identity[7:]}"}]
+        if publication == "alias" or mutation == "pinned-id":
+            rows.append(
+                {
+                    "id": identity,
+                    "label": manifest["label"],
+                    "path": f"base/{variant}/{manifest['label']}",
+                }
+            )
+        return BytesIO(json.dumps(rows).encode())
 
     def transport(command: list[str]) -> bytes:
         if "/releases/tags/" not in command[-1]:
             return extras_payload if command[-1].endswith("/2") else payload
+        if mutation in {"valid", "stream", "historical-index", "historical-lock", "pinned-id"}:
+            assert command[-1].endswith("/" + requested)
         if mutation == "missing-release":
             raise subprocess.CalledProcessError(1, command)
         assets: list[dict] = [
@@ -1788,6 +2068,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             )
         ).encode()
 
+    monkeypatch.setattr(acquire_engine_bases, "urlopen", index_response)
     monkeypatch.setattr(subprocess, "check_output", transport)
     popen = subprocess.Popen
 
@@ -1810,6 +2091,8 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     paths = acquire(tmp_path, [prepare("valid")], output)
     assert paths == [output / variant / "manifest.json"]
     assert paths[0].read_bytes() == payload
+    if publication == "alias":
+        assert json.loads(paths[0].read_bytes())["label"] in requested
     streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
     assert streamed[0].read_bytes() == payload
     for change in ("historical-index", "historical-lock"):
@@ -1840,6 +2123,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         "stream-corrupt",
         "stream-short",
         "stream-error",
+        "label-hash",
+        "label-path",
+        "label-tag",
+        "label-variant",
     ):
         destination = tmp_path / change
         with pytest.raises((ValueError, subprocess.CalledProcessError)):
@@ -1852,6 +2139,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     assert not duplicate.exists()
     with pytest.raises(ValueError, match="exact variant/id"):
         acquire(tmp_path, ["latest"], tmp_path / "latest")
+    if publication == "alias":
+        with pytest.raises(ValueError, match="pinned full identity"):
+            acquire(tmp_path, [prepare("pinned-id")], tmp_path / "pinned-id")
+        assert not (tmp_path / "pinned-id").exists()
     assert not list(tmp_path.glob("dinkster-base-selection-*"))
 
 
@@ -1886,3 +2177,378 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         assert {name for name in source.namelist() if not name.endswith("/")} == {
             name for name, content in files.items() if content == "released\n"
         }
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        "initial",
+        "engine-only",
+        "tag",
+        "lockstep",
+        "main-success",
+        "main-failure",
+        "main-skipped",
+        "main-workflow",
+    ],
+)
+def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, event: str
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    trigger = workflow[True]
+    assert trigger["push"] == {"tags": ["pack/**"]}
+    assert trigger["workflow_run"] == {
+        "workflows": ["Versioned wheel release"],
+        "types": ["completed"],
+        "branches": ["main"],
+    }
+    assert "pull_request_target" not in trigger and "workflow_dispatch" not in trigger
+    jobs = workflow["jobs"]
+    checkout = next(
+        step for step in jobs["sources"]["steps"] if step.get("uses") == "actions/checkout@v4"
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+    select = next(step for step in jobs["select"]["steps"] if step.get("id") == "select")
+    script = select["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    manifest = tmp_path / "packages/dinkster-nodes-foundation/dinkster-pack.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        'version = "2.7rc1"\nengine = ">=0.2,<1"\n'
+        '[pack.entry]\nnodes = "nodes:NODES"\n'
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
+    (tmp_path / ".git/HEAD").write_text(tree + "\n")
+    after = tree
+    if event in {"lockstep", "main-success", "main-failure", "main-skipped", "main-workflow"}:
+        changed = tmp_path / (
+            ".github/workflows/official-packs.yml" if event == "main-workflow" else "uv.lock"
+        )
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text("version = 1\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        after = subprocess.check_output(
+            ["git", "-C", str(tmp_path), "write-tree"], text=True
+        ).strip()
+        (tmp_path / ".git/HEAD").write_text(after + "\n")
+        original = subprocess.check_output
+
+        def read(command, **kwargs):
+            if command == ["git", "rev-parse", "HEAD^"]:
+                return tree + "\n"
+            return original(command, **kwargs)
+
+        monkeypatch.setattr(subprocess, "check_output", read)
+    manifest.write_text("invalid uncommitted declaration")
+    output = tmp_path / "outputs"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv(
+        "EVENT",
+        "workflow_run"
+        if event.startswith("main-")
+        else "push"
+        if event == "tag"
+        else "pull_request",
+    )
+    monkeypatch.setenv("CONCLUSION", "failure" if event == "main-failure" else "success")
+    monkeypatch.setenv("ENGINE_PUBLISHED", "false" if event == "main-skipped" else "true")
+    monkeypatch.setenv("BEFORE", "0" * 40 if event == "initial" else tree)
+    monkeypatch.setenv(
+        "PACK_TAG", "pack/dinkster-nodes-foundation/v2.7rc1" if event == "tag" else ""
+    )
+    exec(compile(script, "official-packs.yml", "exec"), {})
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert json.loads(outputs["packs"]) == (
+        []
+        if event in {"engine-only", "main-failure", "main-skipped"}
+        else ["dinkster-nodes-foundation"]
+    )
+    assert outputs["applicable"] == (
+        "false" if event in {"main-failure", "main-skipped"} else "true"
+    )
+    if event in {"tag", "lockstep"}:
+        assert "candidate-head engine dependency pins" in capsys.readouterr().out
+    if event in {"main-failure", "main-skipped"}:
+        assert "same-commit engine release did not succeed" in capsys.readouterr().out
+    if event in {"main-success", "main-workflow"}:
+        assert outputs["engine"] == after
+    assert jobs["sources"]["if"] == (
+        "needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'"
+    )
+    assert jobs["locks"]["needs"] == "sources"
+    assert jobs["locks"]["runs-on"] == "${{ matrix.runner }}"
+    native = next(step for step in jobs["locks"]["steps"] if "--sources" in step.get("run", ""))
+    assert "--release .official-publication/engine" in native["run"]
+    assert '--base-manifest ".official-publication/bases/$VARIANT/manifest.json"' in native["run"]
+    assert "scripts.build_release_pack_locks" in native["run"]
+    prepare = next(step for step in jobs["sources"]["steps"] if step.get("id") == "prepare")
+    assert "scripts.build_release import" not in prepare["run"]
+    assert "prepare_inputs(" in prepare["run"]
+    assert "ENGINE_COMMIT" in prepare["env"]
+    assert prepare["env"]["CANDIDATE"] == "${{ github.event_name != 'workflow_run' }}"
+    assert "version=" not in prepare["run"]
+    assert jobs["publish"]["needs"] == ["sources", "locks"]
+    [submission] = [
+        step for job in jobs.values() for step in job["steps"] if "secrets." in json.dumps(step)
+    ]
+    assert submission["if"] == (
+        "github.repository == 'Kosinkadink/Dinkster' && "
+        "github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && "
+        "github.event.workflow_run.head_branch == 'main' && "
+        "github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && "
+        "github.event.workflow_run.conclusion == 'success'"
+    )
+    assert "--publish" in submission["run"]
+    preflight = next(
+        step
+        for step in jobs["publish"]["steps"]
+        if "--output .official-publication/preflight" in step.get("run", "")
+    )
+    assert "--publish" not in preflight["run"]
+    assert "--check-published" in preflight["run"]
+    assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize(
+    ("repository", "event", "ref", "allowed"),
+    [
+        ("Kosinkadink/Dinkster", "workflow_run", "refs/heads/main", True),
+        ("Kosinkadink/Dinkster", "push", "refs/heads/main", False),
+        ("Kosinkadink/Dinkster", "pull_request", "refs/heads/main", False),
+        ("someone/Dinkster", "push", "refs/heads/main", False),
+        ("Kosinkadink/Dinkster", "push", "refs/tags/pack/demo/v1.0", False),
+        ("Kosinkadink/Dinkster", "push", "refs/heads/feature", False),
+    ],
+)
+def test_official_publication_submits_only_from_trusted_main(
+    repository: str, event: str, ref: str, allowed: bool
+) -> None:
+    from types import SimpleNamespace
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    submission = next(
+        step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
+    )
+    github = SimpleNamespace(
+        repository=repository,
+        event_name=event,
+        ref=ref,
+        event=SimpleNamespace(
+            workflow_run=SimpleNamespace(
+                event="push",
+                head_branch="main" if ref == "refs/heads/main" else "feature",
+                head_repository=SimpleNamespace(full_name=repository),
+                conclusion="success",
+            )
+        ),
+    )
+    assert eval(submission["if"].replace("&&", " and "), {"github": github}) is allowed
+
+
+def test_official_publication_refuses_missing_credential_before_submission(tmp_path: Path) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    submission = next(
+        step for step in workflow["jobs"]["publish"]["steps"] if "secrets." in json.dumps(step)
+    )
+    environment = {**os.environ, "DINKSTER_REGISTRY_TOKEN": ""}
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
+    result = subprocess.run(
+        [bash, "-e", "-c", submission["run"]],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == (
+        "Official pack submission refused: DINKSTER_REGISTRY_TOKEN is unavailable"
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("labelled", [False, True])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "range",
+        "tag",
+        "commit",
+        "missing",
+        "digest",
+        "candidate",
+        "index-commit",
+        "index-digest",
+        "index-path",
+        "index-duplicate",
+    ],
+)
+def test_official_publication_workflow_prepares_verified_published_engine_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None, labelled: bool
+) -> None:
+    from dinkster_registry import Lockfile
+    from dinkster_supervisor import environment_downloads
+    from test_installer import _serve_artifacts
+
+    from scripts import prepare_official_publication as preparation
+
+    tag = "main-" + "c" * 40
+    (tmp_path / "scripts").mkdir()
+    selections = {"linux-cpu": "a" * 64, "win-nvidia": "b" * 64}
+    (tmp_path / "scripts/base_bundles.json").write_text(json.dumps(selections))
+
+    def acquire(root, tags, output):
+        assert set(tags) == {
+            f"base-{variant}-{identity}" for variant, identity in selections.items()
+        }
+        paths = []
+        for variant, system in (("linux-cpu", "linux"), ("win-nvidia", "windows")):
+            path = output / variant / "manifest.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"variant": variant, "platform": {"os": system}}))
+            paths.append(path)
+        return paths
+
+    engine = {
+        "format": "dinkster.engine/1",
+        "repository": "Kosinkadink/Dinkster",
+        "version": "0.1" if problem == "range" else "0.0.3.dev123",
+        "tag": "wrong" if problem == "tag" else tag,
+        "commit": ("d" if problem == "commit" else "c") * 40,
+        "workerProtocol": 11,
+        "artifacts": [
+            {"name": "constraints.txt", "size": 4, "sha256": hashlib.sha256(b"pins").hexdigest()}
+        ],
+    }
+    if labelled:
+        del engine["tag"]
+        engine.update(label="2026-11-03-0.0.3.dev123+build", builtAt="2026-11-03T10:41:18Z")
+    engine_bytes = json.dumps(engine).encode()
+    identity = hashlib.sha256(engine_bytes).hexdigest()
+    indexed_digest = "f" * 64 if problem == "index-digest" else identity
+    if labelled:
+        tag = f"main-2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}"
+    entry = {
+        "commit": ("e" if problem == "index-commit" else "c") * 40,
+        "sha256": indexed_digest,
+        "label": engine.get("label"),
+        "version": engine["version"],
+        "path": "engine/"
+        + (f"2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}" if labelled else indexed_digest),
+    }
+    if problem == "index-path":
+        entry["path"] = "engine/" + "a" * 64
+
+    def metadata(mirror, path):
+        assert problem != "candidate"
+        assert mirror == "https://releases.dinkster.org" and path == "engine/index.json"
+        entries = [{**entry, "commit": "b" * 40}, entry]
+        if problem == "index-duplicate":
+            entries.append(entry)
+        return json.dumps(entries).encode()
+
+    old_check_output, old_run = subprocess.check_output, subprocess.run
+
+    def read(command, **kwargs):
+        if command[0] != "gh":
+            return old_check_output(command, **kwargs)
+        if command[-1] != f"repos/Kosinkadink/Dinkster/releases/tags/{quote(tag, safe='')}":
+            raise subprocess.CalledProcessError(1, command, stderr=b"Not Found (HTTP 404)")
+        return json.dumps(
+            {
+                "tag_name": "wrong" if labelled and problem == "tag" else tag,
+                "draft": problem == "missing",
+                "published_at": "2026-01-01T00:00:00Z",
+            }
+        ).encode()
+
+    def run(command, **kwargs):
+        if command[0] != "gh":
+            return old_run(command, **kwargs)
+        assert command[3] == tag
+        directory = Path(command[-1])
+        directory.mkdir()
+        (directory / "release-manifest.json").write_bytes(engine_bytes)
+        return subprocess.CompletedProcess(command, 0)
+
+    original_fetch = environment_downloads.fetch_artifact
+    server = _serve_artifacts({"/constraints.txt": b"fake" if problem == "digest" else b"pins"}, [])
+
+    def fetch(mirrors, name, destination, digest, size):
+        assert mirrors == (
+            "https://github.com/Kosinkadink/Dinkster/releases/download/" + quote(tag, safe=""),
+        )
+        return original_fetch(
+            (f"http://127.0.0.1:{server.server_port}",), name, destination, digest, size
+        )
+
+    original_build = preparation.build
+    monkeypatch.setattr(preparation, "read_metadata", metadata, raising=False)
+    monkeypatch.setattr(preparation, "acquire", acquire)
+    monkeypatch.setattr(subprocess, "check_output", read)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(preparation, "fetch_artifact", fetch)
+    candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
+    if problem == "candidate":
+        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.3.dev456")
+
+        def candidate_wheels(root, uv, bases):
+            assert root == tmp_path and uv == "uv" and len(bases) == 2
+            return candidate_dependencies
+
+        monkeypatch.setattr(preparation, "select_dependency_wheels", candidate_wheels)
+    monkeypatch.setattr(
+        preparation,
+        "build",
+        lambda root, output, **kwargs: original_build(ROOT, output, **kwargs),
+    )
+    output = tmp_path / "outputs"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("PACKS", '["dinkster-nodes-foundation"]')
+    try:
+        if problem not in {None, "candidate"}:
+            with pytest.raises((ValueError, environment_downloads.DownloadError)):
+                preparation.prepare_inputs(
+                    tmp_path,
+                    tmp_path / ".official-publication",
+                    "c" * 40,
+                    ["dinkster-nodes-foundation"],
+                )
+            assert not output.exists()
+        else:
+            assert preparation.prepare_inputs(
+                tmp_path,
+                tmp_path / ".official-publication",
+                "c" * 40,
+                ["dinkster-nodes-foundation"],
+                candidate=problem == "candidate",
+            ) == [
+                {"variant": "linux-cpu", "runner": "ubuntu-latest"},
+                {"variant": "win-nvidia", "runner": "windows-latest"},
+            ]
+            work = tmp_path / ".official-publication"
+            if problem == "candidate":
+                manifest = json.loads((work / "engine/release-manifest.json").read_bytes())
+                assert manifest["dependencies"] == candidate_dependencies
+                assert manifest["version"] == "0.0.3.dev456"
+                assert manifest["commit"] == "c" * 40
+                assert manifest["artifacts"] == []
+            else:
+                assert (work / "engine/constraints.txt").read_bytes() == b"pins"
+            catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
+            assert [(pack.pack, pack.version) for pack in catalog.packs] == [
+                ("dinkster-nodes-foundation", "0.0.2")
+            ]
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -40,6 +40,8 @@ from dinkster_workers import (
 from dinkster_workers.in_process import attention_route_token_matches_capabilities
 from dinkster_workers.launch import Launcher
 
+from tests.async_scenarios import run_scenario
+
 
 class SlowSyncNode(Node):
     @classmethod
@@ -176,7 +178,7 @@ def test_sync_node_does_not_block_loop_and_reports_from_thread(
             for event in events
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_worker_supplies_invocation_execution_context() -> None:
@@ -213,7 +215,7 @@ def test_in_process_worker_supplies_invocation_execution_context() -> None:
             f"submitted-node-17|native|identity|{digest}|{snapshot.prompt}|True|False"
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert current_export_snapshot() is None
 
 
@@ -315,7 +317,7 @@ def test_worker_requires_exact_optional_startup_attention_evidence() -> None:
                     "attention route token does not match worker startup evidence"
                 )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_attention_tokens_stay_bound_to_restart_and_concurrent_worker_evidence() -> None:
@@ -370,7 +372,7 @@ def test_engine_keeps_export_snapshot_off_non_output_invocations() -> None:
         assert isinstance(value, str)
         assert value.split("|")[4] == "none"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_rejects_combo_boundary_mismatches_both_directions() -> None:
@@ -396,7 +398,7 @@ def test_worker_rejects_combo_boundary_mismatches_both_directions() -> None:
             assert result.error is not None
             assert "explicit converter" in result.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_preserves_combo_list_order_duplicates_and_fingerprint() -> None:
@@ -421,7 +423,7 @@ def test_worker_preserves_combo_list_order_duplicates_and_fingerprint() -> None:
         assert output.resolve() == ["b", "a", "b"]
         assert output.fingerprint == value.fingerprint
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class RaisingLauncher(Launcher):
@@ -446,7 +448,7 @@ def test_launch_failure_cleans_listener_and_temp_directory(tmp_path: Path) -> No
         assert not launcher.endpoint.exists()
         assert worker._listener is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_mapping_dataclasses_snapshot_input(tmp_path: Path) -> None:

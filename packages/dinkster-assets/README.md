@@ -17,9 +17,24 @@ contract is declared explicitly.
 
 Selected indexed files use ordinary `AssetRef` values from the engine-written
 index. The live mounts snapshot remains their resolver, so revoked grants stop
-resolving without a worker restart. Unindexed selections retain invocation-local
-`LocalAssetRef` bindings and cannot be admitted as portable VIDEO until scanned.
+resolving without a worker restart. Unindexed relative selections reuse an existing
+engine-issued `LocalAssetRef` for the same root, relative name and file revision;
+the receiving engine can redeem that binding without indexing. Without an engine
+grant they retain invocation-local bindings. Neither kind can be admitted as
+portable VIDEO until scanned.
 Admission never copies selected input files into the vault or worker scratch.
+`load_file3d(source, resources=...)` preserves a bound source as a canonical
+FILE_3D packet. glTF/GLB buffers and images, OBJ material libraries and their
+textures must have explicit supplied asset identities or belong to the source's
+existing input/model3d mount grant. Supplied resources must match the file's
+declared dependencies. Relative names cannot traverse directories or name URLs.
+Engine-side loading issues ordinary local revision grants for declared companions,
+including files in an unscanned mount. Media/model3d source-filename inputs prepare
+these grants during server admission for both named and already-bound selections;
+workers reuse them and the receiving engine checks them on return. No directory
+scan or separate companion index is required.
+None, an empty string and the source's `none` choice produce canonical None;
+other strings must be bound before loading. No input bytes are copied or rewritten.
 `produced_output_scratch` is only the writable publication store for produced
 outputs; uploads, downloads and remote transfers retain their separate vault paths.
 With pack scratch configured, worker invocations isolate produced bytes by job
@@ -52,6 +67,12 @@ publication. Retrying an interrupted copy preserves the first adoption order;
 already verified destination bytes can complete a pending entry after restart.
 Existing untracked inputs and mounted sources are not added to this inventory.
 Inventory entries describe adoption, not reachability or permission to delete.
+Scratch journals and produced-asset inventories use SQLite WAL with a 30-second
+busy timeout on every connection. Writable opens initialize WAL once per file;
+read-only inspection never changes journal mode or creates a missing database.
+WAL inspection needs readable `-wal`/`-shm` sidecars or a writable containing
+directory where SQLite can create them. A read-only database connection is not
+an immutable snapshot of the file and must not bypass live WAL state.
 Managed engine-vault readers and writers retain vault-wide OS ownership before
 per-digest ownership. `hold_produced_vault()` lets the server extend that
 ownership through result/reference handoff. `claim_inactive_produced_vault()`
@@ -179,6 +200,15 @@ collision, never overwriting an existing file. It uses the same live writable
 mount, containment, bounded streaming and digest-index publication as output
 saves. Portable filename rules also reject reserved writer/index names. Existing
 `save_stream` output naming is unchanged.
+
+`AssetWriter.save_named_streams(target, sources, limit=..., media_types=None)`
+exports a nonempty mapping of canonical relative filenames to held streams into
+one unique counter-named directory under the target prefix. Nested names and
+bytes stay unchanged. The complete portable name set is validated before any
+publication, including case-insensitive and file/directory collisions. Each
+member uses the existing live mount authority and publication records; `limit`
+applies per stream. A later failure returns no group result, but already
+published files remain complete. Resource-free saves retain their flat names.
 
 `AssetWriter.output_target(filename_prefix, mount=None)` combines separate save
 inputs into the writer's target. Omitting `mount` uses the snapshot's configured

@@ -10,7 +10,9 @@ import subprocess
 import tempfile
 import tomllib
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
+from urllib.request import Request, urlopen
 
 from packaging.requirements import Requirement
 from packaging.tags import compatible_tags, cpython_tags, mac_platforms
@@ -21,12 +23,46 @@ from scripts.build_release import LINUX_PLATFORMS, engine_base_interfaces, read_
 
 REPOSITORY = "Kosinkadink/Dinkster-Environments"
 TORCH_PACKAGES = {"torch", "torchvision"}
+BASE_LABEL = (
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}-py[0-9][A-Za-z0-9.]*"
+    r"-torch[0-9][A-Za-z0-9.]*(?:-cu[0-9]+)?-[0-9a-f]{8}"
+)
+
+
+def publication_name(index: object, variant: str, identity: str) -> str:
+    if not isinstance(index, list):
+        raise ValueError("base index must be an array")
+    labelled = []
+    for row in index:
+        if not isinstance(row, dict) or row.get("id") != "sha256:" + identity:
+            continue
+        label = row.get("label")
+        name = identity if label is None else label
+        if (
+            not isinstance(name, str)
+            or (label is not None and re.fullmatch(BASE_LABEL, name) is None)
+            or (label is not None and not name.endswith("-" + identity[:8]))
+            or row.get("path") != f"base/{variant}/{name}"
+        ):
+            raise ValueError("indexed base publication does not match its variant and id")
+        if label is not None:
+            labelled.append(name)
+    if len(labelled) > 1:
+        raise ValueError("base index has multiple labelled publications for pinned id")
+    return labelled[0] if labelled else identity
 
 
 def qualify(root: Path, path: Path, tag: str) -> dict:
     manifest = read_base_manifest(path)
     variant = manifest["variant"]
-    if tag != f"base-{variant}-{manifest['id'].removeprefix('sha256:')}":
+    identity = manifest["id"].removeprefix("sha256:")
+    label = manifest.get("label")
+    if tag != f"base-{variant}-{identity}" and not (
+        isinstance(label, str)
+        and re.fullmatch(BASE_LABEL, label)
+        and label.endswith("-" + identity[:8])
+        and tag == f"base-{variant}-{label}"
+    ):
         raise ValueError("base tag does not match its variant and canonical id")
     platform = manifest["platform"]
     if platform not in (
@@ -147,9 +183,28 @@ def acquire(root: Path, tags: list[str], output: Path) -> list[Path]:
         staged = Path(temporary) / "selected"
         staged.mkdir()
         for tag in tags:
-            selection = re.fullmatch(r"base-([a-z0-9-]+)-[0-9a-f]{64}", tag)
-            if selection is None:
+            if (
+                re.fullmatch(rf"base-[a-z0-9]+(?:-[a-z0-9]+)*-(?:[0-9a-f]{{64}}|{BASE_LABEL})", tag)
+                is None
+            ):
                 raise ValueError("base selection requires an exact variant/id release tag")
+            pinned = re.fullmatch(r"base-(.+)-([0-9a-f]{64})", tag)
+            if pinned is not None:
+                variant, identity = pinned.groups()
+                try:
+                    with urlopen(
+                        Request(
+                            f"https://releases.dinkster.org/base/{variant}/index.json",
+                            headers={"User-Agent": "dinkster-env"},
+                        ),
+                        timeout=120,
+                    ) as response:
+                        index = json.load(response)
+                except HTTPError as error:
+                    if error.code != 404:
+                        raise
+                    index = []
+                tag = f"base-{variant}-{publication_name(index, variant, identity)}"
             endpoint = f"repos/{REPOSITORY}/releases/tags/{tag}"
             release = json.loads(subprocess.check_output(["gh", "api", endpoint]))
             if release["draft"] or not release["published_at"] or release["tag_name"] != tag:
@@ -178,6 +233,8 @@ def acquire(root: Path, tags: list[str], output: Path) -> list[Path]:
             path = staged / "manifest.json"
             path.write_bytes(payload)
             manifest = qualify(root, path, tag)
+            if pinned is not None and manifest["id"] != "sha256:" + pinned[2]:
+                raise ValueError("labelled base manifest differs from pinned full identity")
             asset = assets["extras.json"]
             if type(asset["id"]) is not int:
                 raise ValueError("base release asset id must be numeric")

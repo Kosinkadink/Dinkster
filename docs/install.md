@@ -25,11 +25,12 @@ Each `vX.Y.Z` release contains:
 - `constraints.txt`, exported from `uv.lock` with hashes;
 - `release-manifest.json` with exact per-variant dependency identities and `SHA256SUMS`;
 - `dinkster-source-X.Y.Z.zip`, a maintainer source archive;
-- native tools ZIPs with the installer interpreters; and
-- the existing official pack artifacts and per-variant pack locks.
+- native tools ZIPs with the installer interpreters.
 
-No third-party wheels are release assets. Finalization rejects unexpected
-payloads and fails above 100,000,000 bytes excluding native tools ZIPs.
+Official packs and their per-base dependency locks come from the registry,
+not the engine release or wheel. No third-party wheels are release assets.
+Finalization rejects pack payloads and other unexpected artifacts and fails
+above 100,000,000 bytes excluding native tools ZIPs.
 Confirmed `dinkster-env` setup/update fetches non-base dependencies from their
 locked PyPI artifact URLs into the shared wheel store, checking the exact
 filename, size and SHA256. Base-owned names and exact variant-index wheel pins
@@ -70,6 +71,66 @@ set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
 Dinkster remains a client of that service for browsing, publishing, resolving,
 and downloading exact pack releases.
 
+### Prepare compatible registry pack sources
+
+Run source preparation with the engine interpreter that will load the packs.
+The committed `src/dinkster/default-packs.toml` specifies official ids and
+minimum versions. It does not pin release bytes: the registry client chooses
+the newest active version whose declared engine range admits that interpreter's
+engine version, then verifies the selected archive by size and BLAKE3 digest.
+
+```sh
+python -m dinkster.manager --registry https://registry.dinkster.org prepare-registry-sources --catalog-lock /scratch/dinkster.lock --artifacts /scratch/artifacts --allow-missing
+```
+
+Use writable scratch paths that are separate from an installed generation.
+On Windows, use the target environment's `Scripts\python.exe` and Windows
+paths. The JSON result lists selected ids and an `unavailable` map with a
+reason for each missing pack. With no registry access, `--allow-missing`
+produces an empty source lock; without it, any unavailable pack refuses the
+command. An engine serving an explicitly empty generation remains healthy
+with zero nodes rather than loading checkout defaults.
+
+This command prepares verified sources only. It does not install the engine,
+obtain dependency locks, build a generation or activate it. For an update,
+use `--installed-lock /retained/dinkster.lock` instead of fresh selection;
+the output lock must have a different path. Installed official registry packs
+are re-resolved without downgrading, adding defaults or changing their recorded
+registry. Other installed selections are preserved for admission. Update
+preparation refuses unavailable compatible releases and does not allow
+`--allow-missing`.
+
+For a source lock containing registry packs, `prepare-registry-locks` accepts
+`--catalog-lock`, a new `--output` directory, `--variant` and the exact
+`--base-id sha256:...`. It downloads the dependency locks already published
+for those exact source archives and base, verifies their size, BLAKE3 and
+pack/variant identities, and reports their paths as JSON. It never resolves
+dependencies. Any missing or mismatched lock refuses the whole set without
+creating the output directory or changing an installed generation.
+
+Confirmed published `dinkster-env setup` and `update` run these commands with
+the acquired target engine, in isolated temporary storage before opening an
+activation journal. Fresh setup reports unavailable defaults in
+`unavailablePacks` and on stderr, and can activate an empty generation when
+the registry is offline. Updates re-resolve the installed official selection;
+an unavailable compatible release refuses without changing project settings,
+the current generation or its journal. Non-registry sources are retained and
+checked against their recorded digests and the target engine; their dependency
+locks remain generation-owned. Explicit catalog/artifact and dependency-lock
+inputs override automatic preparation. `--from-scratch` remains a separate
+checkout-only path.
+
+The preparation commands can also be run separately. Source preparation's
+`--retain-sources` requires `--installed-lock` and caches unchanged sources
+from that generation's `pack-sources` tree. Lock preparation's `--registry-only`
+leaves non-registry dependency locks to the retained generation.
+
+Pack versions are independent of engine versions. A pack's `[pack] version`
+and `engine` fields declare its version and PEP 440 engine range; excluded
+engines refuse installation, including an identical-lock no-op. See
+[pack compatibility and dependency locks](environments-and-updates.md#versions-and-engine-compatibility)
+and the [registry client guide](../packages/dinkster-registry/README.md#use).
+
 ## Develop from source
 
 The run scripts above are the default source installation path. For a manual
@@ -94,7 +155,13 @@ Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
 hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
 Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
-content identities from Dinkster-Environments. Hash-locked workspace dependencies
+content identities from Dinkster-Environments. Setup checks the variant's
+`index.json` first and prefers the unique labelled publication for that exact
+pinned id, verifying its manifest before acquiring its archives. It falls back
+to the legacy full-id directory only if the index is absent or has no labelled
+match.
+The index never selects a newer base or overrides a failed verification.
+Hash-locked workspace dependencies
 and editable packages are installed on top without resolving torch again.
 Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;
@@ -143,6 +210,48 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
 
+### User-defined environment variants
+
+User-defined torch versions and indexes are a supported `dinkster-env` path,
+not a development override and not `--from-scratch`. Put `variants.toml` in
+the project root or the shared store, or select it with `--variants PATH`.
+An explicit file wins over the project file, which wins over the store file.
+Use a distinct variant name for your custom base. For example:
+
+```toml
+[variants.linux-custom-cuda]
+os = "linux"
+arch = "x86_64"
+torch = "2.14.1"
+torch-index = "https://download.pytorch.org/whl/cu130"
+extras-index = "https://pypi.org/simple"
+```
+
+Choose an exact torch version that your index supplies for the native Python
+and platform. `torchvision` may also name an exact version; otherwise it is
+resolved with torch. `extras-index` defaults to PyPI. Torch comes only from
+`torch-index`; other base dependencies try that index, then `extras-index`,
+then PyPI. Index URLs must use HTTPS without embedded credentials.
+
+```sh
+dinkster-env --root /absolute/project setup --channel main \
+  --variant linux-custom-cuda --variants /absolute/variants.toml --yes
+```
+
+Setup builds a real content-addressed base in the shared store using a verified
+native interpreter. Its manifest records the source file, definition digest,
+build time and wheel origins. It then installs the selected channel engine
+offline onto that base. Status, doctor and Desktop show the user-defined
+variant, torch version and torch index.
+
+Channel updates retain the custom base rather than replacing it with a
+published one or resolving it again. An engine dependency requiring a newer
+torch refuses before activation, reports required and present versions, and
+explains how to rebuild the custom base. Editing `variants.toml` alone does
+not mutate existing generations. Selecting a rebuilt variant uses the normal
+confirmed update and rollback journal; retained published and custom
+generations can both be reactivated without rebuilding them.
+
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform
@@ -157,7 +266,9 @@ is downloaded and verified from the producer's interpreter definition, or reused
 from the store's download cache. Populate that cache before denying interpreter
 release access. `--python /absolute/python` explicitly selects a host interpreter
 instead, including when a host interpreter row is missing.
-`--variants /absolute/variants.toml` selects alternate producer definitions.
+With `--from-scratch`, `--variants /absolute/variants.toml` selects the
+interpreter and variant definitions used for checkout-local resolution;
+without it, the same option selects the supported custom-base rows above.
 
 Contributor setup exposes the same opt-in with `python scripts/setup_envs.py
 --from-scratch --variant linux-cpu` and the same `--python`/`--variants` overrides.
@@ -171,6 +282,14 @@ generation in a new root without `--from-scratch` to return to channel updates.
 Windows bases use CPython 3.14.10 / cp314 from python-build-standalone 20261026,
 with SQLite 3.53.1 plus the upstream
 [mapped-shm recovery fix](https://sqlite.org/src/info/7c103a0b7d).
+The CPython 3.14.10 pin requires **uv 0.13.6 or newer**, the first uv catalog
+that lists this interpreter. Before running the commands below, check
+`uv --version`; an older uv cannot launch the outer `uv run --python 3.14.10`
+command. Keep uv's managed-interpreter downloads enabled (do not set
+`UV_PYTHON_DOWNLOADS=never` or use `--no-python-downloads`) while acquiring
+the bootstrap interpreter. Move this minimum uv version together with the
+interpreter pin. Setup checks uv before its own downloads or environment
+creation and refuses an unsupported version; it never upgrades uv automatically.
 The unmodified interpreter fails WAL reopening while an old shared-memory
 mapping survives ([upstream report](https://sqlite.org/forum/forumpost/f9c68d01e2d7f638)).
 A version string cannot distinguish the patched library. Acquisition and bundle

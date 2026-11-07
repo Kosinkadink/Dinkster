@@ -164,7 +164,7 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
     return document
 
 
-def _trusted_metadata(mirror: str) -> None:
+def trusted_metadata(mirror: str) -> None:
     parsed = urlparse(mirror)
     if not parsed.scheme or Path(mirror).is_absolute():
         return
@@ -198,7 +198,7 @@ def _sources(
         else:
             prefix, filename = location.path.rsplit("/", 1)
             for mirror in mirrors:
-                _trusted_metadata(mirror)
+                trusted_metadata(mirror)
                 if urlparse(mirror).scheme and not Path(mirror).is_absolute():
                     root = mirror.rstrip("/") + "/" + prefix
                 else:
@@ -211,17 +211,18 @@ def _sources(
     return tuple(sources)
 
 
-def _discover_manifest(
+def discover_manifest(
     locations: tuple[ArtifactLocation, ...],
     mirrors: tuple[str, ...],
     expected: str,
     variant: str | None = None,
-) -> tuple[dict[str, object], tuple[str, ...]]:
+) -> tuple[dict[str, object], tuple[str, ...], bytes]:
     sources = _sources(locations, mirrors)
     for root, filename in sources:
         try:
-            document = validate_manifest(read_metadata(root, filename), expected, variant)
-            return document, tuple(source for source, _ in sources)
+            data = read_metadata(root, filename)
+            document = validate_manifest(data, expected, variant)
+            return document, tuple(source for source, _ in sources), data
         except (OSError, ValueError, HTTPException):
             continue
     raise EnvironmentError("no location supplied an intact expected artifact manifest")
@@ -236,6 +237,7 @@ class EnvironmentCatalog:
     engine_sources: tuple[str, ...]
     bases: dict[str, dict[str, object]]
     base_sources: dict[str, tuple[str, ...]]
+    engine_bytes: bytes
 
     def variants(self) -> list[dict[str, object]]:
         return [
@@ -262,7 +264,7 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     channel: Channel | None = None
     for mirror in mirrors:
         try:
-            _trusted_metadata(mirror)
+            trusted_metadata(mirror)
             document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
             channel = Channel.parse(document)
             break
@@ -270,7 +272,7 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
             continue
     if channel is None or document is None:
         raise EnvironmentError("no mirror supplied a valid trusted channel")
-    engine, engine_sources = _discover_manifest(
+    engine, engine_sources, engine_bytes = discover_manifest(
         channel.engine_locations, mirrors, channel.engine_release
     )
     if engine["version"] != channel.engine_version:
@@ -278,12 +280,12 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     bases: dict[str, dict[str, object]] = {}
     sources: dict[str, tuple[str, ...]] = {}
     for variant, locations in channel.base_locations:
-        base, roots = _discover_manifest(locations, mirrors, channel.base_for(variant), variant)
+        base, roots, _ = discover_manifest(locations, mirrors, channel.base_for(variant), variant)
         if base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError("base and engine workerProtocol mismatch")
         bases[variant], sources[variant] = base, roots
     return EnvironmentCatalog(
-        channel_name, document, channel, engine, engine_sources, bases, sources
+        channel_name, document, channel, engine, engine_sources, bases, sources, engine_bytes
     )
 
 
@@ -338,6 +340,9 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
             fetch_artifact(
                 (str(source.parent),), source.name, destination, sha, cast("int", row["size"])
             )
+        manifest = base_root / "manifest.json"
+        if not manifest.exists():
+            atomic_write(manifest, json.dumps(base, sort_keys=True, ensure_ascii=True) + "\n")
     except BaseException:
         if created:
             shutil.rmtree(base_root)
@@ -462,6 +467,11 @@ def acquire(
     base_sources: tuple[str, ...] | None = None,
 ) -> Path:
     """Populate verified artifacts and merged requirements under a held store writer lock."""
+    if (
+        validate_manifest(catalog.engine_bytes, catalog.channel.engine_release, None)
+        != catalog.engine
+    ):
+        raise EnvironmentError("engine manifest differs from its verified bytes")
     published_base = catalog.bases[variant]
     custom = base is not None
     if custom != (base_sources is not None):
@@ -538,6 +548,7 @@ def acquire(
     identity = f"{variant}-{cast('str', base['id'])[7:]}" if custom else variant
     constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
+    atomic_write(release_root / "release-manifest.json", catalog.engine_bytes)
     return constraints
 
 

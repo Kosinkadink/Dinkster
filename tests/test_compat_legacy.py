@@ -8,7 +8,6 @@ against a real install is in test_compat_live.py."""
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +22,8 @@ from dinkster_compat_comfy import (
 from dinkster_compat_comfy.legacy import LegacyPackReport, _import_pack
 from dinkster_schema import TypeExpr
 from dinkster_values import CORE_INT
+
+from tests.async_scenarios import run_scenario
 
 # --- pack scaffolding ----------------------------------------------------
 
@@ -455,7 +456,7 @@ def test_pure_v3_pack_loads_inside_worker_event_loop(tmp_path: Path) -> None:
     async def load() -> LegacyPackReport:
         return load_legacy_pack(pack, CompatTranslation(), server_instance=None)
 
-    report = asyncio.run(load())
+    report = run_scenario(load())
     assert report.status == "loaded"
     assert report.nodes_translated == 1
 

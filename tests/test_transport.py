@@ -27,6 +27,8 @@ from dinkster_workers.boundary import TransferStat
 from dinkster_workers.transport import TOKEN_ENV
 from test_isolated import DEV_MANIFEST, core_registry, image_graph
 
+from tests.async_scenarios import run_scenario
+
 
 def test_endpoint_parsing_rejects_garbage() -> None:
     async def scenario() -> None:
@@ -34,7 +36,7 @@ def test_endpoint_parsing_rejects_garbage() -> None:
             with pytest.raises(TransportError):
                 await connect_endpoint(endpoint)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:
@@ -67,7 +69,7 @@ def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:
             finally:
                 await listener.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_missing_token_fails_fast_on_child_side() -> None:
@@ -76,7 +78,7 @@ def test_missing_token_fails_fast_on_child_side() -> None:
         with pytest.raises(TransportError, match=TOKEN_ENV):
             await connect_endpoint("tcp:127.0.0.1:1")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unix_listener_where_supported() -> None:
@@ -99,7 +101,7 @@ def test_unix_listener_where_supported() -> None:
             finally:
                 await listener.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path, shm_segments: set[str]) -> None:
@@ -135,7 +137,7 @@ def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path, shm_segments: set
         if unix_endpoints_supported():
             assert over_tcp == await run_with("unix")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     if os.path.isdir("/dev/shm"):
         assert shm_segments
         assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
@@ -183,7 +185,7 @@ def test_cancel_mid_flight_leaves_no_segments(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     if os.path.isdir("/dev/shm"):
         assert shm_segments
         assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]

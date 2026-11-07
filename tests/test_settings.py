@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from collections.abc import Mapping
@@ -24,6 +23,8 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from test_server import SCHEMAS, StubAuthenticator, make_engine
+
+from tests.async_scenarios import run_scenario
 
 
 def settings(
@@ -90,7 +91,7 @@ def test_settings_get_is_ungated_and_reports_mutability() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dtype_policy_maps_to_comfy_flags_without_auto_overrides() -> None:
@@ -140,7 +141,7 @@ def test_memory_headroom_put_pushes_live_persists_and_updates_reload_value(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_settings_put_permission_validation_and_happy_path_matrix() -> None:
@@ -203,7 +204,7 @@ def test_settings_put_permission_validation_and_happy_path_matrix() -> None:
         finally:
             await allowed.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_settings_write_rbac_composes_with_operator_category_grants() -> None:
@@ -265,7 +266,7 @@ def test_settings_write_rbac_composes_with_operator_category_grants() -> None:
         finally:
             await has_capability.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_settings_persistence_round_trip_is_atomic_and_preserves_prior_values(
@@ -378,7 +379,7 @@ def test_worker_comfy_args_put_deny_list_is_structured_and_precedes_mutation(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_comfy_args_put_round_trip_persists_unknown_passthrough(
@@ -403,4 +404,4 @@ def test_worker_comfy_args_put_round_trip_persists_unknown_passthrough(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

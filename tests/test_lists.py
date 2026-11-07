@@ -7,7 +7,6 @@ structural at validation time, and node authors see plain Python lists.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -58,6 +57,8 @@ from dinkster_values import (
 from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import BoundaryError, ValueCodec
 from dinkster_workers.devices import DeviceMap
+
+from tests.async_scenarios import run_scenario
 
 # -- grammar and TypeExpr ---------------------------------------------------
 
@@ -456,7 +457,7 @@ def test_heterogeneous_lists_cross_ordinary_hosts_and_persistent_cache(
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def make_engine() -> Engine:
@@ -488,7 +489,7 @@ def test_engine_runs_list_edges_and_caches() -> None:
         assert second.executed == ()
         assert set(second.cached) == {"r", "s"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_engine_wraps_list_literals() -> None:
@@ -500,7 +501,7 @@ def test_engine_wraps_list_literals() -> None:
         assert result.outputs["s"]["total"].resolve() == 11
         assert SumList.saw == [[5, 6]]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
@@ -632,7 +633,7 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
             d.code == "output-type-invalid" and d.node_id == "fold/label" for d in diagnostics
         )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(("index", "expected", "type_id"), [(0, 7, "INT"), (1, "label", "STRING")])
@@ -696,7 +697,7 @@ def test_worker_projects_tuple_selectors_in_output_families(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_bad_list_output_is_contract_error() -> None:
@@ -715,7 +716,7 @@ def test_bad_list_output_is_contract_error() -> None:
         with pytest.raises(ExecutionError, match="values"):
             await engine.run(graph, ["b"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_tuple_positions_prepare_their_host_types_before_output_wrapping() -> None:
@@ -758,7 +759,7 @@ def test_tuple_positions_prepare_their_host_types_before_output_wrapping() -> No
         assert result.outputs["source"]["value"].type_id == "tuple<test.first,test.second>"
         assert result.outputs["source"]["value"].resolve() == (7, "label")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", [False, True])
@@ -812,7 +813,7 @@ def test_tuple_nodes_preserve_position_types_through_production_hosts(
         finally:
             await composition.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- validation diagnostics -------------------------------------------------
@@ -1024,7 +1025,7 @@ def test_cache_manifest_roundtrips_lists(type_id: str, payload: object) -> None:
         assert rehydrated.fingerprint == outputs["values"].fingerprint
         assert rehydrated.resolve() == payload
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cache_refuses_resource_stubs_inside_lists() -> None:
@@ -1062,4 +1063,4 @@ def test_memory_cache_sees_costs_and_references_through_lists(container: str) ->
         assert cache.drop_referencing("model-q") == 1
         assert await cache.get("k") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

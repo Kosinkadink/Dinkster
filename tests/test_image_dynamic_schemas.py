@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -34,6 +33,8 @@ from dinkster_nodes_image.transition import ImageTransition
 from dinkster_schema import DynamicEntry, build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 NODES = (
     ImageResize,
@@ -515,4 +516,4 @@ def test_resize_v4_binds_image_and_mask_outputs_at_worker_boundary() -> None:
         assert np.asarray(image_output.resolve()).shape == (1, 2, 2, 3)
         assert np.asarray(mask_output.resolve()).shape == (1, 2, 2)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

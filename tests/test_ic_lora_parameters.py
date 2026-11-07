@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 import sys
@@ -26,6 +25,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import EncodedLatentTensor, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> None:
@@ -235,4 +235,4 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

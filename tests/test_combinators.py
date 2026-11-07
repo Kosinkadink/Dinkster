@@ -7,8 +7,6 @@ the worker boundary from input envelope type ids (dinkster_schema.solve).
 
 from __future__ import annotations
 
-import asyncio
-
 import numpy as np
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -39,6 +37,8 @@ from dinkster_values import TypeRegistry, list_children, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
+from tests.async_scenarios import run_scenario
+
 INT = TypeExpr.concrete("INT")
 T = TypeExpr.variable("T")
 
@@ -57,7 +57,7 @@ def make_engine() -> Engine:
 
 def run(graph: Graph, targets: list[str]) -> RunResult:
     engine = make_engine()
-    return asyncio.run(engine.run(graph, targets))
+    return run_scenario(engine.run(graph, targets))
 
 
 def resolved_list(result: RunResult, node_id: str, output_id: str) -> list[object]:
@@ -354,7 +354,7 @@ def test_concat_preserves_heterogeneous_children_and_nested_payloads() -> None:
             ),
         }
     )
-    result = asyncio.run(engine.run(graph, ["cat"]))
+    result = run_scenario(engine.run(graph, ["cat"]))
     value = result.outputs["cat"]["list"]
     assert value.type_id == "list<*>"
     assert list_children(value) == (first, second, nested)
@@ -658,4 +658,4 @@ def test_generic_node_result_is_cached_with_solved_type() -> None:
         assert second.outputs["append"]["list"].type_id == "list<INT>"
         assert resolved_list(second, "append", "list") == [1, 2]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

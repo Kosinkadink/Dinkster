@@ -8,7 +8,6 @@ document diagnostic.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -45,6 +44,8 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import ValueCodec
+
+from tests.async_scenarios import run_scenario
 
 # -- schema declarations ----------------------------------------------------
 
@@ -291,7 +292,7 @@ def test_optional_output_carries_provenance_and_caches() -> None:
         assert again.cached == ("m",)
         assert is_absent(again.outputs["m"]["value"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_absent_on_non_optional_output_is_contract_error() -> None:
@@ -301,7 +302,7 @@ def test_absent_on_non_optional_output_is_contract_error() -> None:
         with pytest.raises(ExecutionError, match="not.*declared optional"):
             await engine.run(graph, ["i"])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [True, False])
@@ -377,7 +378,7 @@ def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, messa
             elif not cache_enabled:
                 assert result.cached == ()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- skip cascade -----------------------------------------------------------
@@ -415,7 +416,7 @@ def test_skip_cascades_with_root_provenance() -> None:
         assert again.cached == ("m",)
         assert set(again.skipped) == {"a", "b"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_skip_does_not_block_produced_branch() -> None:
@@ -433,7 +434,7 @@ def test_skip_does_not_block_produced_branch() -> None:
         assert result.outputs["a"]["out"].resolve() == 43
         assert AddOne.ran == [42]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- accept, omit, fail -----------------------------------------------------
@@ -452,7 +453,7 @@ def test_accept_policy_receives_plain_none() -> None:
         assert result.skipped == ()
         assert result.outputs["c"]["out"].resolve() == 7
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_omit_policy_matches_unconnected_cache_shape() -> None:
@@ -474,7 +475,7 @@ def test_omit_policy_matches_unconnected_cache_shape() -> None:
         second = await engine.run(unconnected, ["w"])
         assert second.cached == ("w",)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_demanded_lazy_absence_uses_existing_policies_and_producer_cache() -> None:
@@ -554,7 +555,7 @@ def test_demanded_lazy_absence_uses_existing_policies_and_producer_cache() -> No
         # failures still create no consumer entry.
         assert len(cache) == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_omit_policy_substitutes_schema_default() -> None:
@@ -579,7 +580,7 @@ def test_omit_policy_substitutes_schema_default() -> None:
         assert second.cached == ("w",)
         assert second.outputs["w"]["out"].resolve() == 105
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_fail_policy_names_the_origin() -> None:
@@ -597,7 +598,7 @@ def test_fail_policy_names_the_origin() -> None:
         assert "m/value" in message  # the producer, not a downstream victim
         assert "nothing to produce" in message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # -- document-time diagnostics ----------------------------------------------
@@ -680,4 +681,4 @@ def test_cached_forwarded_absence_preserves_source_provenance(return_kind: str) 
             assert output.fingerprint == absent.fingerprint
             assert bool(result.cached) == cached
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

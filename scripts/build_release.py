@@ -15,6 +15,7 @@ import tomllib
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -50,6 +51,40 @@ def workspace_projects(root: Path) -> dict[str, Path]:
     return result
 
 
+def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
+    """Supervisor-only changes do not publish another engine."""
+    changed = subprocess.check_output(
+        ["git", "diff", "--name-only", before, after], cwd=root, text=True
+    ).splitlines()
+    tools_inputs = {
+        ".github/workflows/release-tools.yml",
+        "scripts/build_environment_tools.py",
+        "scripts/build_native_tools.py",
+        "scripts/build_tools_release.py",
+        "scripts/publish_tools_release.py",
+    }
+    if any(
+        name != "uv.lock"
+        and name not in tools_inputs
+        and not name.startswith("packages/dinkster-supervisor/")
+        for name in changed
+    ):
+        return True
+    if "uv.lock" not in changed:
+        return False
+
+    def engine_lock(revision: str) -> dict:
+        lock = tomllib.loads(
+            subprocess.check_output(["git", "show", f"{revision}:uv.lock"], cwd=root, text=True)
+        )
+        lock["package"] = [
+            package for package in lock["package"] if package["name"] != "dinkster-supervisor"
+        ]
+        return lock
+
+    return engine_lock(before) != engine_lock(after)
+
+
 def release_version(root: Path, tag: str) -> str:
     match = TAG_PATTERN.fullmatch(tag)
     if match is None:
@@ -58,7 +93,7 @@ def release_version(root: Path, tag: str) -> str:
     mismatches = [
         f"{name}={project_metadata(path)[1]}"
         for name, path in workspace_projects(root).items()
-        if project_metadata(path)[1] != version
+        if name != "dinkster-supervisor" and project_metadata(path)[1] != version
     ]
     if mismatches:
         raise ValueError(
@@ -70,10 +105,26 @@ def release_version(root: Path, tag: str) -> str:
 def development_version(root: Path) -> str:
     _, version = project_metadata(root / "pyproject.toml")
     major, minor, patch = (int(part) for part in version.split("."))
-    timestamp = subprocess.check_output(
-        ["git", "-C", str(root), "show", "-s", "--format=%ct", "HEAD"], text=True
+    tag = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(root),
+            "describe",
+            "--tags",
+            "--match",
+            "v[0-9]*",
+            "--abbrev=0",
+            "--always",
+            "HEAD",
+        ],
+        text=True,
     ).strip()
-    return f"{major}.{minor}.{patch + 1}.dev{timestamp}+g{git_head(root)}"
+    revision = f"{tag}..HEAD" if tag.startswith("v") else "HEAD"
+    count = subprocess.check_output(
+        ["git", "-C", str(root), "rev-list", "--count", revision], text=True
+    ).strip()
+    return f"{major}.{minor}.{patch + 1}.dev{count}+g{git_head(root)}"
 
 
 @contextmanager
@@ -87,9 +138,15 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
         with tarfile.open(fileobj=io.BytesIO(archive)) as source:
             source.extractall(staged, filter="data")
         projects = workspace_projects(staged)
-        for path in projects.values():
+        versions = {
+            name: project_metadata(path)[1] if name == "dinkster-supervisor" else version
+            for name, path in projects.items()
+        }
+        for name, path in projects.items():
             text = path.read_text(encoding="utf-8")
-            text = re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', text, count=1)
+            text = re.sub(
+                r'(?m)^version = "[^"]+"$', f'version = "{versions[name]}"', text, count=1
+            )
             project = tomllib.loads(text)["project"]
             dependencies = list(project.get("dependencies", []))
             for optional in project.get("optional-dependencies", {}).values():
@@ -97,7 +154,7 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
             for dependency in dependencies:
                 match = re.fullmatch(r"([A-Za-z0-9_-]+)(\[[^]]+\])?[^;]*(;.*)?", dependency)
                 if match is not None and match[1] in projects:
-                    pinned = f"{match[1]}{match[2] or ''}=={version}{match[3] or ''}"
+                    pinned = f"{match[1]}{match[2] or ''}=={versions[match[1]]}{match[3] or ''}"
                     text = text.replace(json.dumps(dependency), json.dumps(pinned))
             if path == staged / "pyproject.toml":
                 module = staged / "src/dinkster/__init__.py"
@@ -416,18 +473,6 @@ def build(
         verify_and_extract(
             frontend_artifact.read_bytes(), sources, staged / "src/dinkster/frontend_bundle/static"
         )
-        catalog = next(
-            (path for path in payload_artifacts or [] if path.name == "official-packs.lock"), None
-        )
-        if catalog is not None:
-            bundled = staged / "src/dinkster/official_packs"
-            bundled.mkdir()
-            shutil.copyfile(catalog, bundled / catalog.name)
-            entries = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
-            payloads = {path.name: path for path in payload_artifacts or []}
-            for entry in entries:
-                name = f"{entry['pack']}-{entry['version']}.zip"
-                shutil.copyfile(payloads[name], bundled / name)
         for name in PUBLISHED_PROJECTS:
             subprocess.run(
                 [uv, "build", "--package", name, "--wheel", "--out-dir", str(output)],
@@ -450,10 +495,12 @@ def build(
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
         raise ValueError("worker boundary must declare PROTOCOL_VERSION")
+    built_at = datetime.now(UTC)
     manifest: dict[str, object] = {
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
-        "tag": tag or f"main-{git_head(root)}",
+        "builtAt": built_at.isoformat().replace("+00:00", "Z"),
+        "label": f"{built_at.date().isoformat()}-{version.partition('+')[0]}",
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),
@@ -498,9 +545,7 @@ def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Pa
     )
 
 
-def extend_release(
-    output: Path, candidates: list[Path], *, base_manifests: list[Path] | None = None
-) -> dict[str, object]:
+def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
     """Finalize an existing release only after checking every original asset."""
     manifest_path = output / "release-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -524,50 +569,13 @@ def extend_release(
         raise ValueError("release SHA256SUMS mismatch")
     if {path.name for path in output.iterdir()} != {*expected, "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
-    catalog = next((path for path in artifacts if path.name == "official-packs.lock"), None)
-    locks = {
-        path.name: path
-        for path in [*artifacts, *candidates]
-        if path.name.endswith(".pack-lock.json")
-    }
-    if catalog is not None:
-        from dinkster_registry.install import Lockfile
-        from dinkster_workers.pack_lock import PackLock
-
-        if not base_manifests:
-            raise ValueError("dependency lock admission requires selected base manifests")
-        variants = {read_base_manifest(path)["variant"] for path in base_manifests}
-        packs = Lockfile.from_record_json(catalog.read_text(encoding="utf-8")).packs
-        required = {
-            f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
-            for pack in packs
-            for variant in variants
-        }
-        if locks.keys() != required.keys():
-            raise ValueError(
-                "dependency lock coverage mismatch: "
-                f"missing={sorted(required.keys() - locks.keys())}, "
-                f"extra={sorted(locks.keys() - required.keys())}"
-            )
-        for name, path in locks.items():
-            lock = PackLock.read(path)
-            if (lock.pack, lock.variant) != required[name]:
-                raise ValueError(f"dependency lock identity mismatch: {name}")
-            urls = [*lock.indexes, *(w.url for p in lock.packages for w in p.wheels)]
-            if any(
-                urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc
-                for url in urls
-            ):
-                raise ValueError(f"dependency lock contains a nonportable URL: {name}")
-    elif locks:
-        raise ValueError("dependency locks require an official pack catalog")
     stage_payloads(output, artifacts, candidates)
     write_manifest(output, manifest, artifacts)
     return manifest
 
 
 def check_release(output: Path, maximum_bytes: int) -> int:
-    """Check the finalized payload allowlist and count all bytes except native tools ZIPs."""
+    """Check the engine payload allowlist and its complete byte budget."""
     from packaging.utils import parse_wheel_filename
 
     manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
@@ -581,32 +589,15 @@ def check_release(output: Path, maximum_bytes: int) -> int:
         raise ValueError("release must contain only the three Dinkster workspace wheels")
     if {path.name for path in output.iterdir()} != names | {"release-manifest.json", "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
-    allowed = wheels | {"constraints.txt", "official-packs.lock"}
-    catalog = output / "official-packs.lock"
-    if catalog.is_file():
-        packs = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
-        for pack in packs:
-            allowed.add(f"{pack['pack']}-{pack['version']}.zip")
-            allowed.update(
-                f"{pack['pack']}-{pack['version']}-{variant}.pack-lock.json"
-                for variant in manifest["dependencies"]
-            )
+    allowed = wheels | {"constraints.txt"}
     for name in names - allowed:
-        if (
-            re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", name)
-            or name == f"dinkster-source-{manifest.get('version')}.zip"
-        ):
+        if name == f"dinkster-source-{manifest.get('version')}.zip":
             continue
         raise ValueError(f"unexpected release payload: {name}")
-    total = sum(
-        path.stat().st_size
-        for path in output.iterdir()
-        if re.fullmatch(r"dinkster-tools-(?:linux|windows|macos)-(?:x86_64|arm64)\.zip", path.name)
-        is None
-    )
+    total = sum(path.stat().st_size for path in output.iterdir())
     if total > maximum_bytes:
         raise ValueError(f"release size {total} bytes exceeds budget {maximum_bytes} bytes")
-    print(f"Release size excluding tools ZIPs: {total} / {maximum_bytes} bytes")
+    print(f"Release size: {total} / {maximum_bytes} bytes")
     return total
 
 
@@ -627,7 +618,7 @@ if __name__ == "__main__":
     if args.check:
         check_release(args.output.resolve(), args.max_bytes)
     elif args.extend:
-        extend_release(args.output.resolve(), args.artifact, base_manifests=args.base_manifest)
+        extend_release(args.output.resolve(), args.artifact)
     elif args.frontend_artifact is None:
         parser.error("--frontend-artifact is required when building a release")
     else:

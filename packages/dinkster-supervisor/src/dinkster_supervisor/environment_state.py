@@ -87,13 +87,13 @@ def read_document(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def atomic_write(path: Path, text: str) -> None:
+def atomic_write(path: Path, text: str | bytes) -> None:
     """Flush the new contents before publishing a pointer or journal stage."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8") if isinstance(text, str) else text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
@@ -156,7 +156,18 @@ class ArtifactLocation:
         if row.get("type") == "mirror":
             path = relative_file(row.get("path"))
             if path != expected_path:
-                raise EnvironmentError("mirror manifest path must name its exact content digest")
+                prefix, sha, asset = expected_path.rsplit("/", 2)
+                label = (
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2}-py[0-9][A-Za-z0-9.]*"
+                    r"-torch[0-9][A-Za-z0-9.]*?(?:-cu[0-9]+)?"
+                    if prefix.startswith("base/")
+                    else r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9][A-Za-z0-9._+\-]*"
+                )
+                labelled_path = rf"{re.escape(prefix)}/{label}-{sha[:8]}/{re.escape(asset)}"
+                if re.fullmatch(labelled_path, path) is None:
+                    raise EnvironmentError(
+                        "mirror manifest path must name its exact content digest or labelled hash8"
+                    )
             return cls("mirror", path=path)
         if row.get("type") == "github":
             repository = row.get("repository")

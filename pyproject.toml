@@ -10,7 +10,7 @@ dependencies = [
     "comfy-aimdo==0.6.0",
     "comfy-kitchen==0.2.40",
     "dinkster-api",
-    "dinkster-inference==0.1.0",
+    "dinkster-inference==0.1.1",
     "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
     "numba>=0.67",
@@ -61,6 +61,7 @@ dev = [
     "onnxruntime==1.29.0",
     "pytest>=8",
     "pytest-cov>=6",
+    "pytest-timeout>=2.4",
     "pyyaml>=6",
     "ruff>=0.8",
     "pyright>=1.1.390",
@@ -149,6 +150,8 @@ testpaths = [
 # root on sys.path. `python -m pytest` adds it implicitly; the `pytest`
 # entrypoint (what CI's `uv run pytest` invokes) does not.
 pythonpath = ["."]
+timeout = 300
+timeout_method = "thread"
 # Self-identifying hangs: once any test runs this long, pytest's bundled
 # faulthandler plugin dumps every thread's stack naming the stuck test
 # (comfy-vibe-station#245). Diagnostic only; it never skips, fails, or

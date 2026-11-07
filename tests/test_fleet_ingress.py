@@ -33,6 +33,8 @@ from dinkster_supervisor.limits import (
 )
 from multidict import CIMultiDict
 
+from tests.async_scenarios import run_scenario
+
 
 async def _fleet(
     tmp_path: Path, apps: dict[str, web.Application], *, primary: str | None = None
@@ -93,7 +95,7 @@ def test_two_lease_stores_atomically_claim_one_key(tmp_path: Path) -> None:
             second.claim_key("default", "client", "job", "beta"),
         )
 
-    winners = asyncio.run(claim())
+    winners = run_scenario(claim())
     assert winners[0] == winners[1]
     assert winners[0] in {"alpha", "beta"}
 
@@ -110,7 +112,7 @@ def test_job_owner_conflict_is_never_overwritten(tmp_path: Path) -> None:
         assert await store.delete_job_if_owner("ref", "alpha")
         assert await store.lookup_job("ref") is None
 
-    asyncio.run(check())
+    run_scenario(check())
 
 
 def test_ingress_config_roundtrip() -> None:
@@ -175,7 +177,7 @@ def test_concurrent_same_key_different_content_chooses_one_owner_and_engine_409(
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lost_202_disconnect_retry_stays_owner_and_recovers_duplicate_true(tmp_path: Path) -> None:
@@ -207,7 +209,7 @@ def test_lost_202_disconnect_retry_stays_owner_and_recovers_duplicate_true(tmp_p
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_restart_same_store_preserves_keyed_and_by_ref_routes(tmp_path: Path) -> None:
@@ -241,7 +243,7 @@ def test_restart_same_store_preserves_keyed_and_by_ref_routes(tmp_path: Path) ->
             await first.close()
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_assignment_exists_before_downstream_202(tmp_path: Path) -> None:
@@ -279,7 +281,7 @@ def test_assignment_exists_before_downstream_202(tmp_path: Path) -> None:
             await client.close()
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_legacy_by_ref_fallback_unknown_assignment_and_owner_down_state(tmp_path: Path) -> None:
@@ -311,7 +313,7 @@ def test_legacy_by_ref_fallback_unknown_assignment_and_owner_down_state(tmp_path
             await client.close()
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_aggregates_complete_merge_history_and_fail_closed_on_bad_member(tmp_path: Path) -> None:
@@ -370,7 +372,7 @@ def test_aggregates_complete_merge_history_and_fail_closed_on_bad_member(tmp_pat
         finally:
             await _close(bad, bad_servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_history_merge_honors_global_limit_and_cursor(tmp_path: Path) -> None:
@@ -420,7 +422,7 @@ def test_history_merge_honors_global_limit_and_cursor(tmp_path: Path) -> None:
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_exact_primary_and_local_route_matrix(tmp_path: Path) -> None:
@@ -470,7 +472,7 @@ def test_exact_primary_and_local_route_matrix(tmp_path: Path) -> None:
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_malformed_accepted_wire_and_removed_owner_fail_closed(tmp_path: Path) -> None:
@@ -514,7 +516,7 @@ def test_malformed_accepted_wire_and_removed_owner_fail_closed(tmp_path: Path) -
         finally:
             await stale_client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_accepted_job_store_failure_is_structured_503(tmp_path: Path) -> None:
@@ -540,7 +542,7 @@ def test_accepted_job_store_failure_is_structured_503(tmp_path: Path) -> None:
             await client.close()
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_conditional_delete_requires_owner_and_ambiguous_failures_preserve(tmp_path: Path) -> None:
@@ -567,7 +569,7 @@ def test_conditional_delete_requires_owner_and_ambiguous_failures_preserve(tmp_p
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ws_verbatim_filter_serialized_bounded_merge_and_member_reconnect(tmp_path: Path) -> None:
@@ -628,7 +630,7 @@ def test_ws_verbatim_filter_serialized_bounded_merge_and_member_reconnect(tmp_pa
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_streams_large_bodies_and_strips_hop_headers(tmp_path: Path) -> None:
@@ -714,7 +716,7 @@ def test_streams_large_bodies_and_strips_hop_headers(tmp_path: Path) -> None:
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_request_and_accepted_response_body_caps(tmp_path: Path) -> None:
@@ -780,7 +782,7 @@ def test_submit_request_and_accepted_response_body_caps(tmp_path: Path) -> None:
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_upstream_failure_after_prepare_truncates_downstream(
@@ -819,7 +821,7 @@ def test_upstream_failure_after_prepare_truncates_downstream(
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reconnect_jitter_never_exceeds_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -843,7 +845,7 @@ def test_ws_queue_blocks_on_multiple_large_frames_and_has_heartbeat() -> None:
         assert await queue.get() == (True, large)
         assert await queue.get() == (True, large)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert ingress_module._WS_HEARTBEAT == 30
 
 
@@ -869,7 +871,7 @@ def test_oversized_upstream_ws_frame_loudly_closes_downstream(tmp_path: Path) ->
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_immediate_ws_close_uses_growing_reconnect_backoff(
@@ -910,7 +912,7 @@ def test_immediate_ws_close_uses_growing_reconnect_backoff(
         finally:
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_aggregate_fanout_is_concurrent_and_times_out_by_member(
@@ -965,4 +967,4 @@ def test_aggregate_fanout_is_concurrent_and_times_out_by_member(
             release.set()
             await _close(client, servers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

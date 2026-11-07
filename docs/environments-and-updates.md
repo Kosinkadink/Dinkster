@@ -22,10 +22,10 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive, native tools and official pack artifacts; no third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive and native tools; no official pack artifacts or third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
-| Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-nvidia`, `linux-cpu`, `mac-arm64` | a row in `Dinkster-Environments` |
-| Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
+| Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
+| Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
 | Generation | One base bundle plus one engine release synced into its own directory from the wheel store; immutable once built | `<root>/generations/<n>/` |
 | Pack venv | A small venv over a generation's interpreter holding one pack's extra dependencies | `<root>/generations/<n>/packs/<pack>/` |
@@ -54,13 +54,33 @@ the development `--from-scratch` path remains explicitly opt-in.
 
 ## Environment tools bootstrap
 
-The native client bootstrap is an engine-release artifact named
+The native client bootstrap has its own publication, independent of engine releases, named
 `dinkster-tools-<os>-<arch>.zip` (`linux`, `windows`, `macos`; `x86_64` or
-`arm64`). Its ordinary `artifacts` row in the hash-verified `dinkster.engine/1`
+`arm64`). Its `artifacts` row in the hash-verified `dinkster.tools/1`
 manifest supplies the complete archive size and SHA256. It contains only a
-standalone `python/` tree with the release's supervisor wheel, its locked
+standalone `python/` tree with the independently versioned supervisor wheel, its locked
 runtime dependency closure and pinned uv, not the engine or torch. ZIP is the
 bootstrap container and does not change the base bundle's tar+zstd format.
+
+The supervisor package version supplies the tools version. The manifest records
+`repository`, source `commit`, `version`, UTC `builtAt`, the dated `label`, and
+the three native `artifacts` rows (`name`, `size`, `sha256`). Publication uses
+`tools/YYYY-MM-DD-<public-supervisor-version>-<manifest-hash8>/`,
+`tools/index.json`, and a GitHub prerelease tagged `tools-<publication-label>`.
+`SHA256SUMS` covers all ZIPs and `tools-manifest.json`.
+The `Supervisor tools publication` workflow runs only when supervisor sources,
+native build scripts, publication scripts or their build inputs change.
+Its native jobs verify extraction and relocation without host tools. Engine
+releases do not contain native tools ZIPs; tools acquisition requires the
+channel's independent `tools` pointer.
+
+`dinkster-env --root /absolute/tools-cache tools --channel main --mirror
+https://releases.dinkster.org --yes --json` downloads the native ZIP selected by
+the channel and returns its verified archive path. Without `--yes`, it only
+plans and creates no cache. A channel tools pointer requires neither engine
+nor base payloads; an invalid tools manifest or ZIP fails without falling back
+to engine assets. Extraction and launching use the verified ZIP, not a host
+package resolver.
 
 Desktop verifies the archive bytes before safe extraction into a new owned
 directory, preserving Unix executable mode bits. Internal interpreter aliases
@@ -70,7 +90,7 @@ are materialized, requiring no Windows symlink privilege. It invokes
 that child's PATH for bundled uv. Desktop performs no package installation,
 resolution or fallback to a host Python/package manager.
 
-Desktop installers bundle their platform's tools ZIP and its hash-pinned engine
+Desktop installers bundle their platform's tools ZIP and its hash-pinned tools
 manifest. The tools pin is independent of the engine being installed: the
 supervisor is engine-independent, and a newer engine alone does not require new
 tools. Desktop extracts into its own user-data directory keyed by the tools
@@ -88,9 +108,10 @@ Before setup, update or catalog starts an environment command, packaged Desktop
 checks the selected channel's `minimumDesktopVersion` and refuses with
 `DesktopVersionTooOld` if the shell must update. A trusted channel can explicitly
 select newer tools using an optional `tools` object containing the immutable
-engine `manifest` location, its `sha256`, and the `release` directory. Locations
+tools `manifest` location, its `sha256`, the `release` directory, and its
+publication `label`. Locations
 are absolute paths or credential-free HTTPS, and the selected tools ZIP must
-match its engine manifest's size and hash. Without that object, bundled tools
+match its tools manifest's size and hash. Without that object, bundled tools
 remain the default. This does not change engine artifact selection or updates.
 
 The native build/acquisition command and input pinning are documented in
@@ -137,21 +158,21 @@ The engine environment is immutable and hash-checked. `dinkster-env doctor`
 compares the active generation against its constraints and reports drift.
 Repair re-syncs from the wheel store without network access.
 
-When the selected engine manifest lists `official-packs.lock`, setup/update also
-acquire that existing registry lock and the release's ZIP source payloads. Manifest
-SHA256/size checks verify transport; raw ZIP-byte BLAKE3 identities name the cache
-entries at `engines/<release-id>/artifacts/<digest-hex>.zip`. The supervisor does not
-parse the registry lock or extract sources. Target-interpreter source admission
-consumes that lock/cache pair, verifies artifact identity and claims, and refuses
-the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
-inputs override release-source acquisition. Dependency locks remain distinct from
-source identities. Unless repeated `--pack-lock` inputs override bundled selection,
-setup/update acquire the selected release's existing
-`<pack>-<public-version>-<variant>.pack-lock.json` artifact rows, verify size/SHA256
-and retain original bytes under `engines/<release-id>/`. The target provisioner
-owns their schema and conflict checks; dependency installation is offline, from
-verified local wheels only. Every admitted source pack must have a dependency
-record, including empty closures and in-process packs.
+The engine release and wheel do not supply official pack archives or dependency
+locks. The target engine interpreter resolves the committed default ids and
+minimum versions against the registry, selecting the newest version compatible
+with that engine. It downloads verified BLAKE3-addressed archives and the locks
+published for those exact archives and the selected base. A fresh installation
+reports unavailable defaults and can start with zero packs when the registry is
+offline. Updates re-resolve the installed official selection and refuse an
+unavailable compatible replacement before changing the active generation.
+
+Explicit paired `--catalog-lock`/`--artifacts` inputs select sources directly;
+repeated `--pack-lock` inputs select their dependency records. Source admission
+verifies artifact identity and claims and refuses the whole candidate on errors.
+The target provisioner owns dependency schema and conflict checks; dependency
+installation is offline, from verified local wheels only. Every admitted source
+pack must have a dependency record, including empty closures and in-process packs.
 After dependency doctor and source admission, the target interpreter runs
 `dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
 This selects only admitted generation sources and already-provisioned pack
@@ -213,16 +234,22 @@ active generation; they do not authorize data deletion.
     "release": "sha256:<engine-hex>",
     "tag": "v0.3.1",
     "locations": [
-      { "type": "mirror", "path": "engine/<engine-hex>/release-manifest.json" }
+      { "type": "mirror", "path": "engine/2026-10-31-0.3.1-<hash8>/release-manifest.json" }
     ]
   },
   "base": {
     "win-cpu": {
       "id": "sha256:<base-hex>",
       "locations": [
-        { "type": "mirror", "path": "base/win-cpu/<base-hex>/manifest.json" }
+        { "type": "mirror", "path": "base/win-cpu/2026-10-30-py3.14.10-torch2.14.1-<hash8>/manifest.json" }
       ]
     }
+  },
+  "tools": {
+    "label": "2026-11-05-0.0.2-<tools-hash8>",
+    "manifest": "https://releases.dinkster.org/tools/2026-11-05-0.0.2-<tools-hash8>/tools-manifest.json",
+    "sha256": "<tools-manifest-hex>",
+    "release": "https://releases.dinkster.org/tools/2026-11-05-0.0.2-<tools-hash8>"
   },
   "minimumDesktopVersion": "0.2.0",
   "signature": null
@@ -234,12 +261,20 @@ A channel update is one small file write, so a release that was built earlier
 and kept unpublished becomes live in seconds.
 
 Each selected variant names a base id and ordered location hints. The hex
-placeholders above stand for complete lowercase SHA-256 values. Mirror paths
+identity placeholders above stand for complete lowercase SHA-256 values;
+each path's `hash8` is the first eight digits of that artifact's identity. Mirror paths
 are relative to the configured mirror; an immutable GitHub location is
 `{type: "github", repository, tag, asset}`. A location never overrides digest
 verification. The engine id hashes the final release-manifest.json bytes,
-including its trailing newline; `engine.tag` is copied from that manifest,
-not inferred from its development version. Base ids use the base producer's
+including its trailing newline. New engine manifests carry a readable
+`label: YYYY-MM-DD-<public-version>` and UTC ISO 8601 `builtAt`, not `tag`.
+The label omits the PEP 440 local segment (`+...`); the manifest version and
+wheel filenames retain it. For example, `0.0.3.dev412+g<commit>` uses
+label `2026-11-03-0.0.3.dev412`.
+Publication derives the directory `<label>-<hash8>` and the main prerelease
+tag `main-<label>-<hash8>` after finalizing the bytes. Stable tags stay
+`v<version>`. Old manifests with `tag` and old hash-only paths remain valid;
+existing engine publications are never renamed. Base ids use the base producer's
 canonical identity fields. The local channel builder validates publisher
 manifests, engine payload hashes, worker protocols and effective constraints
 before atomically replacing one channel file. It does not select base releases
@@ -248,8 +283,10 @@ or publish artifacts itself.
 `stable` is written when a `vX.Y.Z` tag's release workflow finishes. `main`
 is written when a push to `main` finishes the same workflow without a
 version: the engine release it names is a prerelease of the next version
-identified by commit. Both channels are served by the same client code path
-and differ only in the channel file. Neither resolves on the user's machine:
+identified by commit. Its development number counts commits since the last
+reachable `v` tag, or the entire history when no such tag exists; release
+checkouts fetch full history and tags. Both channels are served by the same client code path
+and differ only in the channel file. Published-base installs do not resolve on the user's machine:
 base wheels come from the base bundle, Dinkster wheels from the engine
 release, and non-base third-party wheels from their locked package origins
 or a configured package mirror. Every download checks its locked size and hash.
@@ -269,7 +306,11 @@ the push-only channel job checks the selected public base manifests and GitHub
 engine manifest, mirrors missing engine objects, verifies served payload hashes,
 then writes the channel last with no-cache metadata. It uses the base producer's
 `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET` and
-`R2_PUBLIC_BASE_URL` settings; missing settings explicitly skip publication.
+`R2_PUBLIC_BASE_URL` settings. Before any GitHub asset upload, a read-only
+R2 preflight refuses an existing engine directory with the same hash8 but
+a different full identity; unavailable inventory or ambiguous partial
+directories fail closed. It repeats this check before mirroring payloads.
+R2 inventory credentials are therefore required for release publication.
 The serialized main-channel job compares the published engine commit with the
 candidate through GitHub's compare API, not with the live main head. An absent
 channel or an ancestor engine permits publication; the same commit verifies the
@@ -305,14 +346,31 @@ Its build workflow:
    version, every wheel with its filename, size, sha256 and source index,
    the `workerProtocol` the engine wheels in this lock declare, the minimum
    NVIDIA driver and compute capability for the CUDA tag, and
-   `signature: null`.
+   `signature: null`. New manifests also carry `label`, UTC ISO 8601 `builtAt`,
+   exact `torchVersion` and `torchIndex`, and `lockSource` with repository URL
+   and the actual source checkout commit. These display fields do not affect
+   the canonical base id; unchanged builds retain their original metadata.
 4. Archives the interpreter and wheels as one tar stream compressed with zstd,
    byte-split strictly below 2,000,000,000 bytes per part. The manifest carries
    `archive: {"format": "tar+zstd", "parts": [...]}` with ordered filenames,
    sizes and SHA-256 hashes. The canonical identity includes the archive format,
    not its derived part rows.
-5. Publishes to a GitHub release of `Dinkster-Environments` and, when the R2
-   secrets are present, to `releases.dinkster.org/base/<variant>/<id>/`.
+5. Publishes new bases with tag `base-<variant>-<label>` and R2 directory
+   `base/<variant>/<label>/`, where the label is
+   `YYYY-MM-DD-py<python>-torch<torch>[-cu<family>]-<hash8>`. Existing full-id
+   publications remain readable until selected by retention. New publication requires R2 inventory for
+   collision checking before any upload.
+
+Mirror convergence regenerates `base/<variant>/index.json` from bucket
+manifests and matching extras, newest first with undated legacy entries last.
+Rows carry `label`, full `id`, `builtAt`, `python`, `torchVersion`, `torchIndex`,
+total publication `size` and bucket-relative `path`. Size includes declared
+archive parts; metadata without matching extras
+is omitted until convergence completes it. Retained seven-zip metadata is
+listed using its historical identity and volume sizes, without restoring
+seven-zip builds or installation. The index is discovery metadata, never a
+verification or local cache key. A conflicting or unidentifiable hash8 fails
+publication; a retry with the same full identity remains allowed.
 
 The consumer verifies every part before streaming the ordered bytes through
 `zstandard` into Python's tar data extraction filter. Relative internal symlinks
@@ -329,12 +387,55 @@ comfy-kitchen, comfy-aimdo or other non-base dependencies do not produce a base.
 Protocol, archive, hardware or replacement-membership changes still require
 compatible content identity.
 
+### User-defined bases
+
+A user can build a supported base without adding a published channel variant.
+The [complete variants.toml example](install.md#user-defined-environment-variants)
+names an exact torch version, torch index and optional extras index. Definitions
+are selected from `--variants PATH`, `<project>/variants.toml`, or
+`<store>/variants.toml`, in that order. Ordinary setup uses this row to build
+the base, not to resolve a checkout or opt into `--from-scratch`.
+
+The builder reuses a verified native interpreter and resolves the custom base's
+dependency closure. The result uses the published `dinkster.base/1` format,
+content identity and archive verification. Its additional provenance records
+`source: user-defined` and `localBuild` source-file path, definition digest,
+build time, torch index and extras index. The shared store retains its manifest,
+archive parts and exact wheels. Each generation retains its base manifest,
+so labels do not depend on the definitions file remaining present or unchanged.
+
+An engine update keeps that exact custom base and installs the new engine onto
+it using verified engine wheels and effective hashed constraints, even when the
+definitions file changes or disappears. Pass `update --variants PATH` explicitly
+to rebuild from a definition. It does not
+require a published variant with the custom name. Published exact base/wheel
+alignment is unchanged; the explicit custom path checks the engine wheels'
+dependency requirements against the custom base versions. A newer required
+torch is reported with the present version and rebuild instructions before
+changing the project or its active generation. The custom index is not a reason
+to reject an otherwise compatible update.
+
+Custom generations use the ordinary generation format and activation journal,
+not the checkout-local generation source. Selecting a rebuilt custom variant,
+or selecting a published variant again, uses the same confirmed update.
+Rollback reactivates the retained interpreter and project selection without
+resolving or rebuilding either base. Status, doctor and Desktop identify the
+active base as user-defined and show its variant, torch version and index.
+
+The optional per-variant extras index supplies base dependencies not available
+from the torch index; it defaults to PyPI. Torch is bound to its requested
+index. Other packages try the torch index, then the extras index, then PyPI.
+Resolved manifests record each wheel's actual registry origin, not merely the
+configured fallback. Indexes must be credential-free HTTPS URLs.
+
+### Published base pins
+
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
 and are not on PyPI for that triple. A pack that needs a compiled wheel the
 extras index does not carry takes the own-environment path described below.
 
-Every variant shares one set of base pins: Python 3.14, torch 2.14.1 with
+Published variants share one set of base pins: Python 3.14, torch 2.14.1 with
 the matching torchvision, numpy 2.5, `opencv-contrib-python-headless` 5.0.
 Python 3.14 receives bug fixes until late 2027 and security fixes until
 2030; every dependency of the engine and of the popular ComfyUI packs
@@ -560,6 +661,49 @@ wheels.
 
 ## Packs and their dependencies
 
+### Versions and engine compatibility
+
+Official packs have their own versions, independent of engine versions. Each
+versioned pack declares both fields in `dinkster-pack.toml`:
+
+```toml
+[pack]
+name = "my-pack"
+version = "1.2.0"
+engine = ">=0.0.2.dev0,<0.1"
+```
+
+The shared `dinkster-schema` declaration uses public PEP 440 versions and
+specifier sets. The range is evaluated against the target engine, including
+development versions; a refusal names the pack id, pack version, range and
+engine version. A declared range also gates explicit installation and
+identical-lock no-ops. Unpublished local sources may omit both fields, but
+cannot supply just one.
+
+`src/dinkster/default-packs.toml` contains the default official ids and minimum
+versions, not exact versions or byte identities. Target-interpreter source
+preparation resolves each id to the newest active compatible registry version
+at or above its minimum, including eligible prereleases. The resulting source
+lock records exact archive digests for verification; this does not pin the
+default declaration to those bytes.
+
+`dinkster.manager prepare-registry-sources --allow-missing` prepares the
+available defaults and reports unavailable ids with reasons, including an
+empty source lock when the registry cannot be reached. A deliberately empty
+generation starts a healthy zero-node engine without substituting checkout
+defaults. This source-preparation command does not build or activate a
+generation. Without `--allow-missing`, unavailable sources refuse preparation.
+
+Update source preparation uses `--installed-lock` instead of fresh defaults.
+It re-resolves only installed official registry packs, keeps their recorded
+registry and minimum installed version, and preserves third-party, local and
+git selections. It neither adds defaults nor drops or downgrades installed
+packs. An unavailable compatible release refuses the candidate source lock;
+`--allow-missing` is not permitted for updates. See the
+[registry client guide](../packages/dinkster-registry/README.md#use) for commands.
+
+### Published dependency locks
+
 Externally supplied packs run isolated by default ([pack-authoring.md](pack-authoring.md)). A pack
 declares its dependencies in its pack manifest and ships no wheels. At
 publish time the publisher, or the registry on the publisher's behalf,
@@ -676,12 +820,11 @@ directory is the build artifact used by installation checks and publication:
 
 | Asset | Contract |
 |---|---|
-| `*.whl` | Three workspace distributions: `dinkster`, `dinkster-api`, `dinkster-supervisor`; their workspace dependencies require the exact same release version |
+| `*.whl` | `dinkster` and `dinkster-api` use the engine release version; the independently versioned `dinkster-supervisor` wheel supports the engine CLI's install commands |
 | `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the three built workspace wheels |
-| `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
+| `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `label`, UTC ISO 8601 `builtAt`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size`; older manifests carry `tag` instead of label/build date |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
-| `dinkster-tools-<os>-<arch>.zip` | Extraction-only environment client for Linux/Windows x86_64 and macOS arm64; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
 
 The workflow also builds the official pack source ZIPs and `official-packs.lock`
 with `scripts/build_official_packs.py` and admits them through repeated
@@ -692,14 +835,12 @@ release assets but are not `workspaceWheels` and are never uploaded to PyPI.
 The engine wheel also carries these ZIPs and their catalog as package data,
 so a pip-installed engine can stage its defaults without a selected generation.
 
-Native tools jobs use the interpreter definitions pinned from
+The separate tools workflow uses interpreter definitions pinned from
 `Dinkster-Environments`, including its verified SQLite override and functional
-probe on Windows. Each job uses the same supervisor wheel as the engine release
-and checks the extracted client from a relocated path without host tools.
-Finalization verifies the original release, admits the tools ZIPs using the same
-artifact rows, and regenerates the manifest and checksums. Installation checks,
-GitHub release upload and PyPI selection consume this finalized directory.
-The tools ZIPs are not workspace wheels and are never uploaded to PyPI.
+probe on Windows. Native ZIPs are published only with the tools manifest, never
+with the engine release or on PyPI. Engine finalization rejects native tools
+ZIPs. Installation checks, GitHub release upload and PyPI selection consume
+the engine-only directory.
 Finalization also requires one dependency lock for every official catalog pack
 and selected base variant. It uses the registry and worker lock parsers to
 verify identities and refuses local wheel or index URLs before copying payloads
@@ -710,6 +851,26 @@ of the exact `release-manifest.json` bytes. The manifest lists payload assets,
 not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
 basenames relative to the release directory. Clients verify the manifest
 against the channel id before trusting its artifact hashes.
+
+R2 engine payloads live at `engine/<label>-<hash8>/`. Each mirror publication
+rebuilds `engine/index.json` from the paginated bucket inventory, rather than
+appending an entry. Its array lists complete releases newest first, with
+`label`, full manifest `sha256` (hex), source `commit`, `version`, `builtAt`,
+total byte `size` (including manifest and checksums), and bucket-relative
+`path`. Incomplete uploads are omitted until their listed payloads exist
+at the recorded sizes; rerunning fills missing objects and rebuilds the index.
+Legacy rows retain their original hash-only path and have null label/build
+date, sorting after dated releases. Indexes are discovery aids, not identities
+or replacements for manifest verification. Local store paths continue to use
+full hashes only, never labels.
+
+`dinkster-env status` and `doctor` expose installed labels in their human and
+JSON output. The optional `base` descriptor adds a nullable `label`; the
+optional `engine` descriptor contains the active generation's `release`,
+`version` and nullable `label`. These come from identity-matched installed
+manifests, not the current channel. Missing legacy manifests omit the
+descriptor; an unlabelled legacy or custom manifest yields a null label.
+Labels never change the runtime `engines` bindings or local directory names.
 
 The builder uploads no third-party wheels. Repeated `--base-manifest PATH`
 inputs select verified `dinkster.base/1` manifests. Their producer-owned
@@ -748,12 +909,18 @@ no index access. Repair, rollback and move remain offline.
 
 Finalization checks the complete release directory, rejecting third-party
 wheel entries and unlisted payloads. `release.yml` enforces 100,000,000 bytes
-including manifest/checksums and unchanged official pack artifacts/locks,
-excluding only native tools ZIPs, whose interpreters dominate their size.
+including manifest/checksums and every engine payload.
 An over-budget release fails before upload.
 
-`python -m scripts.acquire_engine_bases --tag base-<variant>-<id-hex>`
-accepts repeated exact tags from `Kosinkadink/Dinkster-Environments` and
+`python -m scripts.acquire_engine_bases --tag base-<variant>-<label>`
+accepts repeated exact tags from `Kosinkadink/Dinkster-Environments`, including
+legacy `base-<variant>-<id-hex>` selections. A full-id selection first reads the
+variant index and prefers its unique labelled publication of that exact id;
+an unrelated newer base never changes the pin. Contributor setup uses the same
+selection rule. Without a labelled match (or when the index is absent), both
+use the hash-only publication. Invalid or ambiguous matching rows, broken
+indexes and transport errors refuse rather than silently selecting an alias.
+Acquisition validates the label against the canonical manifest's variant and full identity and
 writes the original documents to `engine-base-manifests/<variant>/manifest.json`.
 The output directory must be new; a failed selection leaves no partial set.
 Acquisition requires a published release, complete archive parts with verified
@@ -771,7 +938,8 @@ otherwise acquisition streams and hashes the part bytes. The adjacent extras
 index must match the selected base and variant; its downloaded size and any
 GitHub asset digest are checked, without inventing an extras hash field in the
 base manifest. Published tags follow the producer's no-reupload convention;
-GitHub's immutable-release setting is not required, since old parts are pruned.
+GitHub's immutable-release setting is not required; channel-aware retention
+removes complete old publications under the rule below.
 The helper does not
 publish, resolve, select latest or turn planning/build-run artifacts into durable
 channel locations. The channel writer consumes these qualified documents, not
@@ -786,14 +954,17 @@ These requirements do not embed an index URL. A torch/torchvision bump must have
 for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.
 
-Tag releases use `vX.Y.Z` and require every workspace project's source
-version to equal `X.Y.Z`. A main commit uses GitHub release tag
-`main-<full commit>` and wheel version
+Tag releases use `vX.Y.Z` and require engine workspace source versions to
+equal `X.Y.Z`; the supervisor retains its own package version. A main commit uses GitHub release tag
+`main-<YYYY-MM-DD>-<version>-<hash8>` and wheel version
 `<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
 prereleases, never PyPI publications. The frontend bundle stays embedded even
 when its pinned frontend commit is unchanged. A temporary source tree gives
-the three published workspace wheels that version and pins
-workspace dependencies to it without rewriting the checkout or its lock.
+the engine and API wheels that version and pins workspace dependencies to
+their selected versions without rewriting the checkout or its lock. The
+supervisor wheel and dependencies on it retain its committed package version.
+Supervisor-only source/version changes, including their lock entry, skip engine
+build and publication; changes to other lock entries still build an engine.
 
 Pull requests changing release machinery run the build and clean-install
 checks without creating a GitHub release or invoking PyPI. Tag publication
@@ -867,14 +1038,27 @@ or the supervisor station, and the same commands work without Desktop.
 GitHub releases host Dinkster artifacts first. R2 under `releases.dinkster.org`
 mirrors them with no egress cost, and clients try artifact mirrors in a configured
 order. Third-party engine wheels come from their locked package origins or an
-explicit package mirror, not the Dinkster artifact mirror. Base bundles are kept for the ten
-newest ids per variant; every base manifest is kept forever. A client that
-needs a base whose archive is gone rebuilds it locally from the base
-manifest: it fetches each listed wheel by hash from the source index the
-manifest names and the interpreter from python-build-standalone. Stable engine
-releases are kept indefinitely. The workflow retains the newest 50
-commit-named main prereleases; stable releases, drafts and other prerelease
-tags are never removed by this cleanup. A region-specific mirror is one more
+explicit package mirror, not the Dinkster artifact mirror. Retention keeps
+every stable engine release, every channel target and the newest ten distinct
+main releases. Older engines carrying third-party wheels are not kept by the
+newest-ten rule, but channel targets remain protected. Per base variant, it
+keeps every channel target, its predecessor by publication order and every
+newer base pending adoption. Labelled aliases share the full content identity;
+hash-only copies remain until channels use verified labelled copies and fresh
+channel installs succeed. Unknown directories and unmatched tags stay.
+
+The engine workflow runs one retention step after verified channel publication;
+the base workflow does the same after all publishers succeed. Both use the
+shared module and tracked retention.json policy from a landed
+Dinkster-Environments pin. Publication/channel writes and retention share a
+conditional bucket lock across repositories. The release-retention workflow
+artifact lists every candidate directory, its bytes and the complete keep set.
+Deletion requires recorded approval and the real dry-run listing posted before
+application. Until then the workflow only reports. Application removes matching
+GitHub releases/tags by exact manifest commit or label, logs already-absent
+releases, updates bucket indexes and reports remaining bytes. There is no
+separate GitHub-only prerelease pruner. Local installed content is not refetched
+or renamed. A region-specific mirror is one more
 entry in the client's mirror list and, when Dinkster does not operate it,
 serves only signed documents.
 
@@ -886,7 +1070,7 @@ Settled:
   `opencv-contrib-python-headless` 5.0; `win-nvidia` on cu132;
   `win-nvidia-cu126` keeps torch 2.14.1 when the other variants move.
 - Default engine installs fetch artifacts named by hash on either channel.
-  Rebuilding an expired base archive uses its retained manifest without resolving.
+  Rebuilding from a saved base manifest verifies the original pins without resolving.
   Explicit `setup --from-scratch` instead resolves the checkout's `uv.lock`
   locally using the selected producer variant's torch index. `--source` selects
   the checkout, `--variants` selects producer definitions, and `--python` explicitly
@@ -940,8 +1124,8 @@ Settled:
 - No telemetry; local journal only.
 - Embargoed releases: artifacts uploaded unreferenced, made live by one
   channel write.
-- Hosting: GitHub releases first, R2 mirror; ten newest bases per variant
-  retained, base manifests and engine releases retained indefinitely.
+- Hosting: GitHub releases first, R2 mirror; channel-aware retention keeps
+  stable engines, newest main engines, base predecessors and pending bases.
 - Manifest signing is a reserved field, required for any mirror Dinkster
   does not operate.
 - A registry is the trusted source for pack browsing, resolution and

@@ -77,6 +77,7 @@ from dinkster_values import CORE_INT, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
 from dinkster.mounts_api import MountService, add_mount_routes
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 MODEL_BYTES = b"tiny model bytes for acquisition tests" * 32
@@ -293,7 +294,7 @@ def test_acquire_uses_packaged_before_http(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acquire_packaged_wrong_bytes_lands_nothing(tmp_path: Path) -> None:
@@ -382,7 +383,7 @@ def test_acquire_remote_verified_and_provenance_recorded(tmp_path: Path) -> None
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acquire_uses_local_before_http_and_fetches_when_absent(tmp_path: Path) -> None:
@@ -422,7 +423,7 @@ def test_acquire_uses_local_before_http_and_fetches_when_absent(tmp_path: Path) 
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acquire_consults_provenance_leads(tmp_path: Path) -> None:
@@ -446,7 +447,7 @@ def test_acquire_consults_provenance_leads(tmp_path: Path) -> None:
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acquire_digestless_is_unverifiable_and_touches_nothing(
@@ -469,7 +470,7 @@ def test_acquire_digestless_is_unverifiable_and_touches_nothing(
         finally:
             await server.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_acquire_no_sources_is_failed(tmp_path: Path) -> None:
@@ -815,7 +816,7 @@ def test_submit_bare_model_name_before_mount_hashing(tmp_path: Path, present: bo
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_missing_asset_returns_plan(tmp_path: Path) -> None:
@@ -844,7 +845,7 @@ def test_submit_missing_asset_returns_plan(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unselected_missing_asset_branch_still_refuses_graph_wide_preflight(
@@ -877,7 +878,7 @@ def test_unselected_missing_asset_branch_still_refuses_graph_wide_preflight(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compiled_literal_asset_is_preflighted_before_queue(
@@ -921,7 +922,7 @@ def test_compiled_literal_asset_is_preflighted_before_queue(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compiled_node_pack_asset_is_preflighted_before_queue(
@@ -976,7 +977,7 @@ def test_compiled_node_pack_asset_is_preflighted_before_queue(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_never_downloads_without_consent(tmp_path: Path) -> None:
@@ -998,7 +999,7 @@ def test_submit_never_downloads_without_consent(tmp_path: Path) -> None:
             await client.close()
             await host.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_preflight_never_calls_fetching_fallback_and_checks_content(tmp_path: Path) -> None:
@@ -1035,7 +1036,7 @@ def test_preflight_never_calls_fetching_fallback_and_checks_content(tmp_path: Pa
             await client.close()
             await host.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_with_consent_acquires_and_runs(tmp_path: Path) -> None:
@@ -1069,7 +1070,7 @@ def test_submit_with_consent_acquires_and_runs(tmp_path: Path) -> None:
             await client.close()
             await host.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ["none", "journal", "catalog", "retry"])
@@ -1144,7 +1145,7 @@ def test_acquisition_catalog_records_verified_source_and_recovers(
             await client.close()
             await host.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_consent_is_digest_exact(tmp_path: Path) -> None:
@@ -1203,7 +1204,7 @@ def test_consent_is_digest_exact(tmp_path: Path) -> None:
             await client.close()
             await host.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_preflight_scans_region_bodies(tmp_path: Path) -> None:
@@ -1237,7 +1238,7 @@ def test_preflight_scans_region_bodies(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_submit_consent_fields_validated(tmp_path: Path) -> None:
@@ -1257,7 +1258,7 @@ def test_submit_consent_fields_validated(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 # --- asset metadata + sources endpoints -----------------------------------------
@@ -1289,7 +1290,7 @@ def test_asset_metadata_endpoint(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_asset_sources_endpoints(tmp_path: Path) -> None:
@@ -1334,4 +1335,4 @@ def test_asset_sources_endpoints(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

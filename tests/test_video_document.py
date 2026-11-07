@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 from fractions import Fraction
 from pathlib import Path
@@ -55,6 +54,7 @@ from dinkster_video.timeline import (
 )
 from dinkster_video.timeline_runtime import CPUKernels, SourceMedia
 
+from tests.async_scenarios import run_scenario
 from tests.test_video_runtime import _packets, _source
 
 FIXTURES = Path(__file__).parent / "fixtures" / "otio"
@@ -475,7 +475,7 @@ def test_document_and_v3_render_match_in_process_and_shared_memory(bound_video):
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -619,7 +619,7 @@ def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_track_blend_keeps_source_color_over_transparent_destination():

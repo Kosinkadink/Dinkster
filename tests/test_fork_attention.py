@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from tests.async_scenarios import run_scenario
+
 torch = cast("Any", pytest.importorskip("torch"))
 
 from dinkster_native import attention  # noqa: E402
@@ -304,7 +306,7 @@ def test_workgroup_attempt_gates_one_invocation_and_releases_attention(
         assert isinstance((await running)[0], WorkUnitResult)
         await handler(ReleaseWorkGroup(**common))  # type: ignore[arg-type]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert events == [("activate", "single-job", 1), ("release", "single-job", 1)]
 
 

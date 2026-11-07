@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from dinkster_api.v1 import (
     InputSpec,
@@ -20,6 +18,8 @@ from dinkster_nodes_foundation import IntPrimitive
 from dinkster_schema import bind_type_variables, build_node_types, build_schemas
 from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 
 def test_list_nodes_preserve_member_order_and_nested_items() -> None:
@@ -71,7 +71,7 @@ def test_list_schemas_roundtrip_without_collapsing_list_types() -> None:
         1,
         10,
     )
-    assert not family.optional_after_minimum
+    assert family.optional_after_minimum
     assert GetItemFromList.schema().inputs[1].default == 0
     assert GetItemFromList.schema().inputs[1].accepts_list
     assert CreateList.schema().outputs[0].type == TypeExpr.list_of(TypeExpr.wildcard())
@@ -137,7 +137,7 @@ def test_native_list_nodes_execute_scalar_and_list_envelopes_without_wrappers() 
         )
         assert any(d.severity == "error" for d in validate(rejected, schemas, ["plain"]))
 
-    asyncio.run(run())
+    run_scenario(run())
 
 
 def test_whole_list_admission_binds_the_declared_element_type() -> None:

@@ -6,6 +6,10 @@
   Fresh `dinkster-env setup` selects `mac-arm64` automatically on Apple Silicon;
   explicit variants and existing project selections take precedence.
   Intel macOS and CUDA on macOS are unsupported.
+- Managed `mac-arm64` generations serve their locked packs and use MPS when
+  checking declared provider devices. A CUDA-only provider remains unavailable.
+- Managed engine status and authenticated stop on macOS do not require Linux
+  procfs. A live supervisor still has to match its recorded instance identity.
 - The Apple Silicon Desktop app is unsigned. Gatekeeper may require
   right-click Open or removal of the quarantine attribute from the verified
   app; [Apple signing and notarization](https://github.com/Kosinkadink/comfy-vibe-station/issues/501)

@@ -46,6 +46,7 @@ from dinkster_workers.boundary import BoundaryError, _decode_preview_artifacts
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def _tiny_mp4(color: int = 0) -> bytes:
@@ -397,7 +398,7 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                 await restarted.close()
                 reopened.store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", [True, False])
@@ -518,7 +519,7 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("existing", ["absent", "pending", "untracked"])
@@ -582,7 +583,7 @@ def test_saved_file_preview_transport_adopts_bytes_before_worker_shutdown(
         path = vault.resolve(digest_bytes(mp4))
         assert path is not None and path.read_bytes() == mp4
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("count,enabled", [(65, True), (4096, True), (65, False)])
@@ -688,7 +689,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
                 (digest_bytes(payload), len(payload), True),
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert calls == (count if enabled else 0)
 
 
@@ -788,7 +789,7 @@ def test_cancelled_async_node_closes_a_threaded_optional_encoder_without_waiting
         assert vault.digests() == []
         assert not list(vault.root.glob(".ingest-*"))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ("", "revoked", "offline", "unselected", "corrupt", "catalog"))
@@ -811,7 +812,7 @@ def test_encoded_retention_requires_live_output_and_recovers_catalog(
             ("renders",), None if failure == "unselected" else "renders"
         ),
     )
-    artifacts = asyncio.run(
+    artifacts = run_scenario(
         PreviewArtifactPublisher(vault)(
             "nested/encode", (EncodedPreviewArtifact(mp4, "movie.mp4", "video/mp4"),)
         )
@@ -900,7 +901,7 @@ def test_copied_preview_context_rejects_publication_after_closing(mp4: bytes) ->
         with pytest.raises(RuntimeError, match="closed"):
             await task
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     with capture_preview_artifacts() as artifacts:
         publish_preview_artifact(mp4, name="preview.mp4", media_type="video/mp4")
     assert artifacts == [EncodedPreviewArtifact(mp4, "preview.mp4", "video/mp4")]
@@ -924,7 +925,7 @@ def test_preview_publisher_rejects_independent_untrusted_claims(
         with pytest.raises((AssetError, ValueError), match=match):
             await publisher("authoritative-node", (claim,))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_preview_publisher_requires_a_host_vault(mp4: bytes) -> None:
@@ -934,7 +935,7 @@ def test_preview_publisher_requires_a_host_vault(mp4: bytes) -> None:
                 "node", (EncodedPreviewArtifact(mp4, "preview.mp4", "video/mp4"),)
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_preview_boundary_rejects_independent_blob_claims(mp4: bytes) -> None:
@@ -993,7 +994,7 @@ def test_failed_batch_preserves_content_adopted_by_an_independent_ingest(
         assert stored is not None and stored.read_bytes() == mp4
         assert list(vault.root.glob(".ingest-*")) == []
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("existing", ["absent", "pending", "untracked"])
@@ -1027,7 +1028,7 @@ def test_concurrent_identical_previews_do_not_delete_the_other_result(
             await publisher("again", (claim,))
             assert ProducedAssetInventory(vault.root).entries() == entries
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancellation_during_staging_discards_before_commit(
@@ -1064,4 +1065,4 @@ def test_cancellation_during_staging_discards_before_commit(
         with claim_inactive_produced_vault(vault.root) as inactive:
             assert inactive
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

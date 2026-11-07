@@ -1,6 +1,5 @@
 """Native format substitutions use persistent diagnostics with actual output facts."""
 
-import asyncio
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -33,6 +32,7 @@ from dinkster_workers import InProcessWorker, IsolatedWorker
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
 
+from tests.async_scenarios import run_scenario
 from tests.test_formats_audio_components import _stereo_samples, _wav_audio
 from tests.test_video_io import _mount
 
@@ -220,4 +220,4 @@ def test_native_saver_emits_actual_format_facts_on_its_output_port(worker_setup,
             if boundary:
                 await boundary.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

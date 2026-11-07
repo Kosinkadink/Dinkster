@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -116,8 +117,11 @@ def setup(
     from dinkster_supervisor.environment_downloads import read_metadata
     from dinkster_supervisor.environment_state import writer_lock
 
+    from scripts.acquire_engine_bases import publication_name
+
     local = None
     base = None
+    base_sources = {}
     if from_scratch:
         from dinkster_supervisor.environment_local import DEFAULT_VARIANTS, local_selection
 
@@ -129,14 +133,28 @@ def setup(
         if python_override is not None or variants is not None:
             raise RuntimeError("--python and --variants require --from-scratch")
         selections = json.loads((root / "scripts/base_bundles.json").read_text())
-        bases = [
-            validate_manifest(
-                read_metadata(mirror, f"base/{name}/{identity}/manifest.json"),
-                "sha256:" + identity,
-                name,
-            )
-            for name, identity in selections.items()
-        ]
+        prefixes = {"Windows": "win-", "Linux": "linux-", "Darwin": "mac-"}
+        other_prefixes = tuple(
+            prefix for host, prefix in prefixes.items() if host != platform.system()
+        )
+        bases = []
+        for name, identity in selections.items():
+            if name.startswith(other_prefixes):
+                continue
+            try:
+                index = json.loads(read_metadata(mirror, f"base/{name}/index.json"))
+            except (FileNotFoundError, HTTPError) as error:
+                if isinstance(error, HTTPError) and error.code != 404:
+                    raise
+                index = []
+            published_name = publication_name(index, name, identity)
+            path = f"base/{name}/{published_name}/manifest.json"
+            data = read_metadata(mirror, path)
+            manifest = validate_manifest(data, "sha256:" + identity, name)
+            if published_name != identity and manifest.get("label") != published_name:
+                raise ValueError("indexed base label differs from its manifest")
+            bases.append(manifest)
+            base_sources[name] = f"{mirror.rstrip('/')}/{path.rsplit('/', 1)[0]}"
         base = select_base(bases, variant)
         print(
             f"Installing {base['variant']} base {base['id']} (Python {base['python']})", flush=True
@@ -158,9 +176,7 @@ def setup(
                     shutil.copyfile(store / "wheels" / wheel["sha256"] / wheel["filename"], target)
         else:
             assert base is not None
-            base_root = acquire_base(
-                base, (f"{mirror.rstrip('/')}/base/{base['variant']}/{base['id'][7:]}",), store
-            )
+            base_root = acquire_base(base, (base_sources[base["variant"]],), store)
         assert base is not None
         requirements = root / ".run/workspace-requirements.txt"
         command(
@@ -266,6 +282,11 @@ def main() -> int:
     args = parser.parse_args()
     if not shutil.which("uv"):
         parser.error("uv is required: https://docs.astral.sh/uv/")
+    sys.path.insert(0, str(ROOT))
+    if platform.system() == "Windows":
+        from scripts.prepare_windows_python import require_uv_version
+
+        require_uv_version()
     if not os.environ.get("DINKSTER_SETUP_BOOTSTRAPPED"):
         python = bootstrap(ROOT)
         command(
@@ -275,7 +296,6 @@ def main() -> int:
             env={"DINKSTER_SETUP_BOOTSTRAPPED": "1"},
         )
         return 0
-    sys.path.insert(0, str(ROOT))
     python = setup(
         ROOT,
         variant=args.variant,

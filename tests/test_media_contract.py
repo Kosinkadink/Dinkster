@@ -1,4 +1,3 @@
-import asyncio
 import io
 import json
 import struct
@@ -43,6 +42,8 @@ from dinkster_values import (
 )
 from dinkster_values.model import PyObjPayload
 from dinkster_workers import InProcessWorker
+
+from tests.async_scenarios import run_scenario
 
 IMAGE = TypeExpr.concrete("IMAGE")
 MASK = TypeExpr.concrete("MASK")
@@ -209,7 +210,7 @@ def test_unexpected_alpha_loss_is_nonblocking_and_replayed_on_cache_hits() -> No
                 {"code": "alpha_dropped", "outputId": "image", "inputIds": ["image"]}
             ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -277,7 +278,7 @@ def test_heterogeneous_list_alpha_loss_is_reported_and_cached(nested: bool) -> N
             original = cast(Any, result.outputs["source"]["image"].resolve())
             assert (original[0] if nested else original)[1].shape[-1] == 3
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("mask", [False, True])
@@ -640,7 +641,7 @@ def test_asset_coercion_loss_is_reported_and_cached_without_manufacturing_loss(
                 3 if drop != "none" and not create else 4
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 class SemanticSource(Node):
@@ -788,4 +789,4 @@ def test_media_contract_through_ordinary_worker_boundaries(tmp_path, isolated):
             if boundary is not None:
                 await boundary.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

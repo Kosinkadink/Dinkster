@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
+from zipfile import BadZipFile, ZipFile
 
 from dinkster_assets import AssetRef, AssetSource, PackagedSource, RemoteSource
 from dinkster_workers import PackManifest
+from packaging.version import Version
 
 VARIANTS = {
     "linux-cpu": "cpu",
     "linux-nvidia": "cuda",
+    "mac-arm64": "mps",
     "win-cpu": "cpu",
     "win-nvidia": "cuda",
     "win-nvidia-cu126": "cuda",
@@ -179,13 +186,138 @@ class WorkflowPlan:
         }
 
 
+def generation_device(generation: Path, variant: str) -> str:
+    """Read a custom target's device family from its verified base, not its name or host."""
+    record = _object(json.loads((generation / "generation.json").read_bytes()), "generation")
+    if record.get("format") != "dinkster.generation/1":
+        raise RequirementError("unsupported generation format")
+    if record.get("variant") != variant:
+        raise RequirementError("generation variant differs from workflow target")
+    files = _object(record.get("files"), "generation files")
+    base_path = generation / "base-manifest.json"
+    base_data = base_path.read_bytes()
+    if base_path.is_symlink() or "sha256:" + hashlib.sha256(base_data).hexdigest() != files.get(
+        "base-manifest.json"
+    ):
+        raise RequirementError("generation base manifest differs from its inventory")
+    base = _object(json.loads(base_data), "generation base")
+    if (
+        base.get("format") != "dinkster.base/1"
+        or base.get("variant") != variant
+        or base.get("id") != record.get("base")
+    ):
+        raise RequirementError("generation base identity differs from its record")
+    wheels = cast("list[dict[str, object]]", base["wheels"])
+    torch = next((wheel for wheel in wheels if wheel["name"] == "torch"), None)
+    if torch is None:
+        raise RequirementError("generation base has no torch device declaration")
+    system = cast("dict[str, object]", base["platform"])["os"]
+    python = Version(cast("str", base["python"]))
+    library = (
+        "Lib/site-packages"
+        if system == "windows"
+        else f"lib/python{python.major}.{python.minor}/site-packages"
+    )
+    name = f"python/{library}/torch/version.py"
+    path = generation / name
+    data = path.read_bytes()
+    if path.is_symlink() or "sha256:" + hashlib.sha256(data).hexdigest() != files.get(name):
+        raise RequirementError("generation torch build metadata differs from its inventory")
+    return _torch_device(data, version=cast("str", torch["version"]), system=cast("str", system))
+
+
+def acquired_base_device(base: Mapping[str, object], wheel: Path) -> str:
+    """Derive preflight device from the verified acquired base's exact retained torch wheel."""
+    wheels = cast("list[dict[str, object]]", base["wheels"])
+    rows = [row for row in wheels if row["name"] == "torch"]
+    if len(rows) != 1:
+        raise RequirementError("acquired base must declare one torch wheel")
+    row = rows[0]
+    if (
+        wheel.is_symlink()
+        or not wheel.is_file()
+        or wheel.name != row["filename"]
+        or wheel.stat().st_size != row["size"]
+    ):
+        raise RequirementError("acquired torch wheel differs from its manifest")
+    with wheel.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != row["sha256"]:
+            raise RequirementError("acquired torch wheel differs from its manifest")
+        stream.seek(0)
+        try:
+            with ZipFile(stream) as archive:
+                members = [row for row in archive.infolist() if row.filename == "torch/version.py"]
+                if len(members) != 1:
+                    raise RequirementError("acquired torch wheel must contain one torch/version.py")
+                data = archive.read(members[0])
+        except BadZipFile as exc:
+            raise RequirementError("acquired torch wheel metadata is invalid") from exc
+    system = cast("dict[str, object]", base["platform"])["os"]
+    return _torch_device(data, version=cast("str", row["version"]), system=cast("str", system))
+
+
+def _torch_device(data: bytes, *, version: str, system: str) -> str:
+    """Read literal torch build declarations without executing the metadata module."""
+    metadata: dict[str, object] = {}
+    fields = {"__version__", "cuda", "hip", "rocm", "xpu"}
+    try:
+        module = ast.parse(data)
+    except (SyntaxError, ValueError) as exc:
+        raise RequirementError("torch build metadata is not valid Python") from exc
+    declarations = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id in fields
+    ]
+    for statement in module.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            target, value = statement.target, statement.value
+        elif (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            target, value = statement.targets[0], statement.value
+        else:
+            continue
+        if target.id not in fields:
+            continue
+        if target.id in metadata:
+            raise RequirementError("torch build metadata has repeated declarations")
+        if not isinstance(value, ast.Constant):
+            raise RequirementError("torch build metadata requires literal declarations")
+        metadata[target.id] = value.value
+    if len(declarations) != len(metadata):
+        raise RequirementError(
+            "torch build metadata requires unique top-level literal declarations"
+        )
+    if metadata.get("__version__") != version:
+        raise RequirementError("torch version differs from its base")
+    devices: set[str] = set()
+    for field, device in (("hip", "rocm"), ("rocm", "rocm"), ("cuda", "cuda"), ("xpu", "xpu")):
+        value = metadata.get(field)
+        if value is not None:
+            if not isinstance(value, str) or not value.strip():
+                raise RequirementError("torch build metadata has an invalid device declaration")
+            devices.add(device)
+    if len(devices) > 1 or (
+        metadata.get("hip") and metadata.get("rocm") and metadata["hip"] != metadata["rocm"]
+    ):
+        raise RequirementError("torch build metadata has conflicting device declarations")
+    if devices:
+        return devices.pop()
+    if "cuda" in metadata and "hip" in metadata:
+        return "mps" if system == "macos" else "cpu"
+    raise RequirementError("torch build has no declared device family")
+
+
 def manifest_unavailability(
-    requirement: PackRequirement, manifest: PackManifest, variant: str
+    requirement: PackRequirement, manifest: PackManifest, variant: str, *, device: str | None = None
 ) -> str | None:
     """Only manifest-declared resource needs can make portable packs hardware-specific."""
-    if variant not in VARIANTS:
+    if device is None and variant not in VARIANTS:
         raise RequirementError(f"unknown engine variant: {variant}")
-    device = VARIANTS[variant]
+    device = VARIANTS[variant] if device is None else device
     if manifest.sandbox.gpu and device == "cpu":
         return "pack.sandbox.gpu requires a GPU"
     for provider in manifest.vision_providers:
@@ -272,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--catalog-lock", type=Path)
         parser.add_argument("--artifacts", type=Path)
         parser.add_argument("--variant", required=True)
+        parser.add_argument("--target-device")
         parser.add_argument("--json", action="store_true", required=True)
         parser.add_argument("--yes", action="store_true")
         args = parser.parse_args(arguments[1:])
@@ -286,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
                 if path is not None and not path.is_absolute():
                     raise RequirementError("project and generation/catalog paths must be absolute")
             if arguments[0] == "project-apply":
+                if args.target_device is not None:
+                    raise RequirementError("project-apply cannot override the sealed target device")
                 if not args.yes or args.generation is None:
                     raise RequirementError("project-apply requires --yes and --generation")
                 approved = dict(_object(json.load(sys.stdin), "approved project plan"))
@@ -303,8 +438,10 @@ def main(argv: list[str] | None = None) -> int:
                     args.project_root,
                     variant=args.variant,
                     source_generation=args.source_generation,
+                    target_generation=args.generation,
                     catalog_lock=args.catalog_lock,
                     artifacts=args.artifacts,
+                    target_device=args.target_device,
                 )
             print(json.dumps(result))
             plan = cast("dict[str, object]", result["plan"])

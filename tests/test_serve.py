@@ -29,6 +29,8 @@ import pytest
 from packaging.requirements import Requirement
 from test_compose import write_iso_manifest
 
+from tests.async_scenarios import run_scenario
+
 TESTS_DIR = Path(__file__).parent
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 _SIGSTOP = getattr(signal, "SIGSTOP", signal.SIGTERM)
@@ -189,7 +191,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
                 assert response.status == 200, await response.text()
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         process.terminate()
         try:
@@ -236,7 +238,7 @@ def test_installed_collaboration_package_registers_session_routes() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_parse_memory_budget() -> None:
@@ -335,7 +337,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
     if pack_name == "dinkster-vision-birefnet":
-        assert "dinkster-inference==0.1.0" in manifest.requires
+        assert "dinkster-inference==0.1.1" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -689,7 +691,7 @@ def test_serve_official_bootstrap_configuration_preserves_identity_and_permissio
             finally:
                 await client.close()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve.ResolverSubscriptionStore, "bootstrap_official", bootstrap)
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
@@ -859,7 +861,7 @@ def test_openai_generation_routes_mount_and_lazy_provider_closes(
             await app.cleanup()
             assert made[0].closed is True
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setenv("DINKSTER_OPENAI_BASE_URL", "https://api.example.test/v1")
     monkeypatch.setenv("DINKSTER_OPENAI_MODEL", "test-model")
@@ -923,7 +925,7 @@ def test_generation_cleanup_failure_does_not_skip_composition_cleanup(
             with pytest.raises(ExceptionGroup, match="server cleanup failed"):
                 await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setenv("DINKSTER_OPENAI_BASE_URL", "https://api.example.test/v1")
     monkeypatch.setenv("DINKSTER_OPENAI_MODEL", "test-model")
@@ -982,7 +984,7 @@ def test_sandbox_mount_edits_require_restart(
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
@@ -1060,7 +1062,7 @@ def test_sandbox_host_grants_reach_composition(
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve, "ServingComposer", recording_composer)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
@@ -1113,7 +1115,7 @@ def test_library_root_configures_pack_scratch(
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     library = tmp_path / "library"
     monkeypatch.setattr(serve, "ServingComposer", recording_composer)
@@ -1149,7 +1151,7 @@ def test_execution_cache_cli_supports_explicit_root_without_library(
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     cache = tmp_path / "cache"
     monkeypatch.setattr(serve, "ServingComposer", recording_composer)
@@ -1236,7 +1238,7 @@ def test_sandbox_protects_configured_auth_outside_library(
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve, "ServingComposer", recording_composer)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
@@ -1546,7 +1548,7 @@ def test_federated_asset_cli_wires_canonical_read_only_composition_and_cleanup(
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve, "ResolutionStore", FakeStore)
     monkeypatch.setattr(serve, "create_app", capture_create_app)
@@ -1613,7 +1615,7 @@ def test_federated_asset_store_closes_when_app_construction_fails(
         raise RuntimeError("app-build-failed")
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        asyncio.run(awaitable)  # type: ignore[arg-type]
+        run_scenario(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "ResolutionStore", FakeStore)
     if failure_site == "create-app":
@@ -1662,7 +1664,7 @@ def test_ordinary_serve_passes_no_federated_routes(monkeypatch: pytest.MonkeyPat
             app.freeze()
             await app.cleanup()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve, "create_app", capture_create_app)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
@@ -1782,7 +1784,7 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
 
     def run_app(awaitable: object, **_kwargs: object) -> None:
         with pytest.raises(RuntimeError, match="captured ordering"):
-            asyncio.run(awaitable)  # type: ignore[arg-type]
+            run_scenario(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
     monkeypatch.setattr(serve, "model_pack_specs", lambda: ())
@@ -2252,7 +2254,7 @@ def test_serve_is_governed_with_declared_budgets(tmp_path: Path) -> None:
             assert "vram:cuda:0" not in report
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         process.terminate()
         try:
@@ -2333,7 +2335,7 @@ def test_unprepared_library_catalog_fails_before_api_binding(
             CompositionError,
             match="schema catalog is missing or stale; run dinkster-pack prepare-catalogs",
         ):
-            asyncio.run(awaitable)  # type: ignore[arg-type]
+            run_scenario(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
     monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: ())
@@ -2570,7 +2572,7 @@ serve.main()
                 assert isinstance(received["seq"], int)
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         process.terminate()
         try:
@@ -2605,19 +2607,81 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
+@pytest.mark.parametrize("failed_pack", [False, True])
+def test_serve_empty_generation_health_distinguishes_failed_selection(
+    tmp_path: Path, failed_pack: bool
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    stage_generation_packs(generation, Lockfile.of(()), {})
+    (generation / "generation.json").write_text(
+        json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+    )
+    extra = (
+        ("--no-default-packs", "--pack", str(write_iso_manifest(tmp_path / "bad", name="core")))
+        if failed_pack
+        else ("--generation", str(generation))
+    )
+    port = free_port()
+    log = tmp_path / "empty-generation.log"
+    with log.open("wb") as output:
+        process = subprocess.Popen(
+            serve_command(port, *extra),
+            cwd=tmp_path,
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            report = wait_for_composition(process, port)
+            packs = report["packs"]
+            assert isinstance(packs, dict)
+            if failed_pack:
+                assert packs["core"]["state"] == "failed"
+            else:
+                assert packs == {}
+
+            async def check() -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(f"http://127.0.0.1:{port}/api/health") as response:
+                        assert response.status == 200
+                        assert (await response.json())["ok"] is (not failed_pack)
+                    async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                        assert response.status == 200
+                        assert (await response.json())["nodes"] == {}
+
+            run_scenario(check())
+        except Exception as exc:
+            exc.add_note(log.read_text())
+            raise
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=30)
+
+
 @pytest.mark.parametrize(
-    ("in_process", "output_configuration", "variant"),
+    ("in_process", "output_configuration", "engine_variant"),
     [
         (False, "fresh", "linux-cpu"),
         (True, "fresh", "linux-cpu"),
         (True, "custom", "linux-cpu"),
         (True, "read-only", "linux-cpu"),
         (True, "removed", "linux-cpu"),
+        (True, "fresh", "linux-custom-cu130"),
         (True, "fresh", "linux-nvidia"),
+        (True, "fresh", "mac-arm64"),
+        (False, "fresh", "mac-arm64"),
     ],
 )
 def test_serve_explicit_generation_uses_only_its_sources(
-    tmp_path: Path, in_process: bool, output_configuration: str, variant: str
+    tmp_path: Path, in_process: bool, output_configuration: str, engine_variant: str
 ) -> None:
     import venv
 
@@ -2639,7 +2703,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
-                "variant": variant,
+                "variant": engine_variant,
                 "inProcessPacks": [pack] if in_process else [],
             }
         )
@@ -2680,7 +2744,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
                 "--generation",
                 str(generation),
                 "--strict-packs",
-                *(["--engine-variant", variant] if in_process else []),
+                *(["--engine-variant", engine_variant] if in_process else []),
             ),
             cwd=tmp_path,
             stdout=output,
@@ -2734,7 +2798,11 @@ def test_serve_explicit_generation_uses_only_its_sources(
                             "packs": {pack: {"version": "1.2.3"}},
                         },
                     }
-                    for plan_variant in (None, "win-nvidia", "linux-nvidia"):
+                    for plan_variant in (
+                        (None, "win-nvidia", "linux-nvidia")
+                        if engine_variant != "linux-custom-cu130"
+                        else ("win-nvidia", "linux-nvidia")
+                    ):
                         body: dict[str, object] = {"workflows": [workflow]}
                         if plan_variant is not None:
                             body["variant"] = plan_variant
@@ -2747,7 +2815,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
                 assert set(data["nodes"]) == {"shutdown57.probe"}, data
                 assert data["nodes"]["shutdown57.probe"]["pack"] == pack
 
-            asyncio.run(check())
+            run_scenario(check())
         except Exception as exc:
             exc.add_note(log.read_text())
             raise
@@ -2763,6 +2831,7 @@ def test_serve_explicit_generation_uses_only_its_sources(
         for selected_variant, explicit_variant, error in (
             ("linux-cpu", "win-nvidia", "--engine-variant differs"),
             (None, "linux-cpu", "generation variant must be a non-empty string"),
+            ("../custom", "linux-cpu", "generation variant must be a portable variant name"),
         ):
             (generation / "generation.json").write_text(
                 json.dumps(
@@ -2823,7 +2892,7 @@ def wait_for_composition(
                         pass
                     await asyncio.sleep(0.05)
 
-    return asyncio.run(wait())
+    return run_scenario(wait())
 
 
 def assert_served_memory_budgets(
@@ -2851,7 +2920,7 @@ def assert_served_memory_budgets(
 
     pending_error: BaseException | None = None
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     except BaseException as error:
         pending_error = error
         raise
@@ -2915,7 +2984,7 @@ def test_event_loop_stall_diagnostics_log_route_templates() -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
     messages = [call.args for call in logger.info.call_args_list]
     assert ("request started: %s %s", "GET", "/api/jobs/{client_id}/{job_id}") in messages
@@ -3039,7 +3108,7 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
                     assert response.status == 200, await response.text()
                     assert await response.json() == {"packs": [], "assets": [], "errors": []}
 
-        asyncio.run(plan())
+        run_scenario(plan())
     except BaseException as error:
         pending_error = error
         raise
@@ -3145,7 +3214,7 @@ def test_library_startup_composes_without_pack_workers(
             assert not server.children(recursive=True)
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         children = terminate_children(process.pid)
         try:
@@ -3223,9 +3292,9 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         assert "dinkster.image.resize" in deltas["dinkster-nodes-image"]
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
-        asyncio.run(composer.close())
+        run_scenario(composer.close())
 
 
 def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> None:
@@ -3251,7 +3320,7 @@ def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> N
     try:
         ordered = serve._order_default_pack_specs(composer, specs, len(specs))
     finally:
-        asyncio.run(composer.close())
+        run_scenario(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
     assert "dinkster-nodes-comfy" in names
@@ -3261,7 +3330,7 @@ def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> N
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
     """The default and explicit packs announce after the diagnostic host binds."""
     manifest = write_iso_manifest(tmp_path / "pack")
-    default_packs = asyncio.run(_default_pack_names())
+    default_packs = run_scenario(_default_pack_names())
     final_epoch = len(default_packs) + 2
     port = free_port()
     env = {**os.environ, "PYTHONPATH": str(TESTS_DIR)}
@@ -3352,7 +3421,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
 
     pending_error: BaseException | None = None
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     except BaseException as error:
         pending_error = error
         raise
@@ -3360,6 +3429,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
         stop_logged_serve(process, log, pending_error)
 
 
+@pytest.mark.timeout(360)
 def test_default_catalog_publishes_only_owned_translation_carriers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3393,7 +3463,8 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
             finally:
                 await client.close()
 
-        asyncio.run(inspect())
+        # Hosted coverage exceeded 120 s; preserve the 300 s composition bound plus cleanup.
+        run_scenario(inspect(), timeout=330)
 
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", ""])
@@ -3481,7 +3552,7 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
             finally:
                 await client.close()
 
-        asyncio.run(inspect())
+        run_scenario(inspect())
 
     monkeypatch.setattr(serve, "default_pack_spec", fail_one_default)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
@@ -3701,7 +3772,7 @@ serve.main()
             assert process.poll() is None, "pack failure must not kill serve"
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         process.terminate()
         try:
@@ -3744,7 +3815,7 @@ def test_serve_retracts_schema_owner_without_execution_provider(tmp_path: Path) 
         error = entry["error"]
         assert isinstance(error, str)
         assert "shutdown99.probe" in error
-        served = asyncio.run(nodes())
+        served = run_scenario(nodes())
         served_nodes = served["nodes"]
         assert isinstance(served_nodes, dict)
         assert "shutdown99.probe" not in served_nodes
@@ -3952,7 +4023,7 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
 
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         process.terminate()
         try:
@@ -4169,7 +4240,7 @@ serve.main()
 
     pending_error: BaseException | None = None
     try:
-        asyncio.run(scenario())
+        run_scenario(scenario())
     except BaseException as error:
         pending_error = error
         raise

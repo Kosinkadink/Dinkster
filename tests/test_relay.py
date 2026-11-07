@@ -38,6 +38,8 @@ from dinkster_workers.in_process import InProcessWorker
 from dinkster_workers.relay import MemoryRelay
 from dinkster_workers.session import BoundarySession, WorkerDied
 
+from tests.async_scenarios import run_scenario
+
 TESTS_DIR = Path(__file__).parent
 
 VRAM0 = "vram:cuda:0"
@@ -224,7 +226,7 @@ def test_relay_announces_reports_and_details(tmp_path: Path) -> None:
         # from the governor's view, not frozen at their last report.
         assert CONSUMER not in governor.status()[VRAM0]["consumers"]  # type: ignore[operator]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_vram_shed_crosses_and_rescores_immediately(tmp_path: Path) -> None:
@@ -261,7 +263,7 @@ def test_vram_shed_crosses_and_rescores_immediately(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compat_vram_reservation_gates_isolated_admission(tmp_path: Path) -> None:
@@ -298,7 +300,7 @@ def test_compat_vram_reservation_gates_isolated_admission(tmp_path: Path) -> Non
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_ram_pressure_is_gated_at_the_proxy(tmp_path: Path) -> None:
@@ -322,7 +324,7 @@ def test_ram_pressure_is_gated_at_the_proxy(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def wire_gate(cache: MemoryLRUCache) -> tuple[ResourcePins, ReleaseGuard]:
@@ -370,7 +372,7 @@ def test_ram_release_crosses_the_gate_and_recomputes(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_visits_all_consumers_and_preserves_worker(
@@ -421,7 +423,7 @@ def test_full_release_visits_all_consumers_and_preserves_worker(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_after_invocation_report_does_not_wait_for_report_drain(
@@ -485,7 +487,7 @@ def test_full_release_after_invocation_report_does_not_wait_for_report_drain(
         finally:
             drain.set()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_consumer_factory_is_enumerated_once_and_shared_with_release(
@@ -521,7 +523,7 @@ def test_consumer_factory_is_enumerated_once_and_shared_with_release(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_acknowledges_worker_with_no_consumers(tmp_path: Path) -> None:
@@ -549,7 +551,7 @@ def test_full_release_acknowledges_worker_with_no_consumers(tmp_path: Path) -> N
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_refuses_active_worker_invocation(tmp_path: Path) -> None:
@@ -594,7 +596,7 @@ def test_full_release_refuses_active_worker_invocation(tmp_path: Path) -> None:
             finish.touch()
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_refuses_pinned_resident(
@@ -633,7 +635,7 @@ def test_full_release_refuses_pinned_resident(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_covers_two_live_worker_processes(
@@ -673,7 +675,7 @@ def test_full_release_covers_two_live_worker_processes(
         finally:
             await asyncio.gather(*(worker.close() for worker, _engine, _token in workers))
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: Path) -> None:
@@ -742,7 +744,7 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
             await asyncio.gather(running, return_exceptions=True)
             await group.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_ignores_late_duplicate_reply() -> None:
@@ -786,7 +788,7 @@ def test_full_release_ignores_late_duplicate_reply() -> None:
         assert result.consumers == ({"consumer": "cache", "status": "complete"},)
         assert sent[0]["requestId"] != sent[1]["requestId"]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_refuses_mismatched_acknowledgement() -> None:
@@ -807,7 +809,7 @@ def test_full_release_refuses_mismatched_acknowledgement() -> None:
         relay = MemoryRelay(send, None, ReleaseGuard(ResourcePins(), ()))
         assert await relay.full_release("operation", "worker-instance") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_aborts_malformed_query_before_reuse() -> None:
@@ -856,7 +858,7 @@ def test_full_release_aborts_malformed_query_before_reuse() -> None:
         assert result is not None
         assert result.status == "complete"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -886,7 +888,7 @@ def test_full_release_rejects_malformed_abort_acknowledgement(
         relay = MemoryRelay(send, None, ReleaseGuard(ResourcePins(), ()))
         assert not await relay._abort_full_release("operation", "worker-instance")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_host_aborts_malformed_query_before_reuse(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -951,7 +953,7 @@ def test_host_aborts_malformed_query_before_reuse(monkeypatch: pytest.MonkeyPatc
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_host_transport_close_clears_only_uncommitted_reservation() -> None:
@@ -1031,7 +1033,7 @@ def test_host_transport_close_clears_only_uncommitted_reservation() -> None:
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_host_malformed_commit_identity_clears_its_reservation_for_reuse() -> None:
@@ -1125,7 +1127,7 @@ def test_host_malformed_commit_identity_clears_its_reservation_for_reuse() -> No
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 async def _exercise_host_duplicate_commit(duplicate_worker_instance: str | None) -> None:
@@ -1269,11 +1271,11 @@ async def _exercise_host_duplicate_commit(duplicate_worker_instance: str | None)
 
 
 def test_host_duplicate_valid_commit_preserves_first_commit_fence() -> None:
-    asyncio.run(_exercise_host_duplicate_commit(None))
+    run_scenario(_exercise_host_duplicate_commit(None))
 
 
 def test_host_duplicate_wrong_instance_commit_preserves_first_commit_fence() -> None:
-    asyncio.run(_exercise_host_duplicate_commit("wrong-instance"))
+    run_scenario(_exercise_host_duplicate_commit("wrong-instance"))
 
 
 def test_cancelled_in_process_invocation_refuses_late_source_materialization() -> None:
@@ -1381,7 +1383,7 @@ def test_cancelled_in_process_invocation_refuses_late_source_materialization() -
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_refuses_malformed_completion_and_retains_condemnation() -> None:
@@ -1436,7 +1438,7 @@ def test_full_release_refuses_malformed_completion_and_retains_condemnation() ->
         assert pins.condemned(resource_id)
         assert not pins.pin(resource_id)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_timeout_waits_for_terminal_acknowledgement(
@@ -1499,7 +1501,7 @@ def test_full_release_timeout_waits_for_terminal_acknowledgement(
         assert result.status == "error"
         assert result.error == "worker full release timed out"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_relay_close_keeps_release_unsettled_until_terminal_acknowledgement() -> None:
@@ -1551,7 +1553,7 @@ def test_relay_close_keeps_release_unsettled_until_terminal_acknowledgement() ->
         with pytest.raises(asyncio.CancelledError):
             await release
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_release_send_drain_failure_waits_for_terminal_acknowledgement() -> None:
@@ -1603,7 +1605,7 @@ def test_release_send_drain_failure_waits_for_terminal_acknowledgement() -> None
         assert result is not None
         assert result.status == "complete"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_release_send_cancellation_waits_for_proven_process_death() -> None:
@@ -1646,7 +1648,7 @@ def test_release_send_cancellation_waits_for_proven_process_death() -> None:
         with pytest.raises(asyncio.CancelledError):
             await release
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("gate_status", ("complete", "busy", "error"))
@@ -1684,7 +1686,7 @@ def test_full_release_consumer_exception_keeps_sent_candidates_condemned(gate_st
             assert pins.condemned(resource_id)
             assert not pins.pin(resource_id)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_full_release_proven_refusal_allows_surviving_reference_reuse() -> None:
@@ -1711,7 +1713,7 @@ def test_full_release_proven_refusal_allows_surviving_reference_reuse() -> None:
             assert not pins.condemned(resource_id)
             assert pins.pin(resource_id)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_legacy_shed_timeout_does_not_cancel_session_close(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1748,7 +1750,7 @@ def test_legacy_shed_timeout_does_not_cancel_session_close(monkeypatch: pytest.M
                 finish.set()
                 await asyncio.gather(release, return_exceptions=True)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pinned_reference_refuses_ram_release(tmp_path: Path) -> None:
@@ -1791,7 +1793,7 @@ def test_pinned_reference_refuses_ram_release(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_item_targeted_shed_resolves_only_real_items(tmp_path: Path) -> None:
@@ -1818,7 +1820,7 @@ def test_item_targeted_shed_resolves_only_real_items(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_admission_sheds_the_child_pool(tmp_path: Path) -> None:
@@ -1841,7 +1843,7 @@ def test_admission_sheds_the_child_pool(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_device_map_translates_snapshot_and_gates_wrong_silicon(
@@ -1884,7 +1886,7 @@ def test_device_map_translates_snapshot_and_gates_wrong_silicon(
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_dead_worker_holds_nothing_and_frees_nothing(tmp_path: Path) -> None:
@@ -1907,7 +1909,7 @@ def test_dead_worker_holds_nothing_and_frees_nothing(tmp_path: Path) -> None:
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_bad_consumers_entry_fails_start(tmp_path: Path) -> None:
@@ -1924,4 +1926,4 @@ def test_bad_consumers_entry_fails_start(tmp_path: Path) -> None:
             await worker.start()
         await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

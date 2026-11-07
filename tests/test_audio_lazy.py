@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import io
 import json
@@ -62,6 +61,7 @@ from dinkster_values.audio_codec import (
 )
 from PIL import Image
 
+from tests.async_scenarios import run_scenario
 from tests.test_audio_io import _bound, _mount
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
@@ -1059,7 +1059,7 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
         finally:
             await worker.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _audio_header(wire: bytes) -> tuple[dict[str, Any], bytes]:

@@ -17,6 +17,8 @@ from dinkster_workers.interpreter import InterpreterPreflightError, preflight_in
 from dinkster_workers.launch import LaunchSpec, SubprocessLauncher
 from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
 
+from tests.async_scenarios import run_scenario
+
 
 def test_preflight_accepts_current_supported_interpreter() -> None:
     assert preflight_interpreter(sys.executable) == sys.version_info[:2]
@@ -62,7 +64,7 @@ def test_worker_bare_interpreter_uses_native_executable_selection(
         )
         assert await asyncio.wait_for(process.wait(), timeout=30) == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
     assert json.loads(result.read_text()) == expected
 
 
@@ -112,7 +114,7 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
             )
             assert await asyncio.wait_for(process.wait(), timeout=30) == 0
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
         result = json.loads(result_path.read_text())
         assert Path(result["prefix"]) == venv_root
         assert result["argv"] == [str(result_path), "two words"]

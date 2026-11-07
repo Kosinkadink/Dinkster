@@ -105,6 +105,7 @@ from dinkster.compose import (
     compose_serving,
 )
 from dinkster.lazy_worker import LazyWorker
+from tests.async_scenarios import run_scenario
 
 
 @dataclass
@@ -451,7 +452,7 @@ def test_single_job_pool_preserves_rank_local_resources_and_rank_zero_events(
             assert received.meta.get(RESOURCE_OWNER_META_KEY) == f"owner-{rank}"
             assert received.meta.get(RESOURCE_PRODUCER_ARM_META_KEY) == f"arm-{rank}"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_selects_requested_lanes_and_resolves_local_ranks(tmp_path: Path) -> None:
@@ -506,7 +507,7 @@ def test_single_job_pool_selects_requested_lanes_and_resolves_local_ranks(tmp_pa
             await pool.invoke(three_rank_sequence)
         assert [len(worker.calls) for worker in workers] == [1, 2, 1, 2]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_cancels_siblings_and_closes_after_rank_error(tmp_path: Path) -> None:
@@ -521,7 +522,7 @@ def test_single_job_pool_cancels_siblings_and_closes_after_rank_error(tmp_path: 
         assert workers[0].cancelled
         assert all(worker.closed for worker in workers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_replaces_every_rank_after_workgroup_failure(
@@ -561,7 +562,7 @@ def test_single_job_pool_replaces_every_rank_after_workgroup_failure(
         assert [worker.unbound for worker in generations[1]] == [1, 1]
         assert all(not worker.closed for worker in generations[1])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_surfaces_rank_reason_when_workgroup_concludes(
@@ -623,7 +624,7 @@ def test_single_job_pool_surfaces_rank_reason_when_workgroup_concludes(
 
         assert all(worker.cancelled for worker in workers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_awaits_rank_replies_after_successful_workgroup(
@@ -689,7 +690,7 @@ def test_single_job_pool_awaits_rank_replies_after_successful_workgroup(
         assert result.outputs["out"].meta.get(RESOURCES_META_KEY) == {"gpu": ("cuda:0", "cuda:1")}
         assert all(not worker.closed for worker in workers)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("rank_exception", [False, True], ids=("node-error", "exception"))
@@ -754,7 +755,7 @@ def test_single_job_pool_preserves_rank_failure_when_coordinator_transport_close
             assert result.error == workers[0].error
         assert workers[1].cancelled
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_retries_failed_replacement_startup(tmp_path: Path) -> None:
@@ -791,7 +792,7 @@ def test_single_job_pool_retries_failed_replacement_startup(tmp_path: Path) -> N
         assert len(generations) == 3
         assert all(worker.started for worker in generations[2])
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_serializes_complete_workgroup_attempts(
@@ -824,7 +825,7 @@ def test_single_job_pool_serializes_complete_workgroup_attempts(
         await asyncio.gather(first, second)
         assert [len(worker.calls) for worker in workers] == [2, 2]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_closes_all_ranks_when_attempt_teardown_fails(tmp_path: Path) -> None:
@@ -847,7 +848,7 @@ def test_single_job_pool_closes_all_ranks_when_attempt_teardown_fails(tmp_path: 
         assert all(worker.closed for worker in workers)
         assert [worker.unbound for worker in workers] == [1, 1]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_replaces_blocked_ranks_when_coordinator_fails(tmp_path: Path) -> None:
@@ -879,7 +880,7 @@ def test_single_job_pool_replaces_blocked_ranks_when_coordinator_fails(tmp_path:
         recovered = await pool.invoke(_single_job_invocation())
         assert recovered.error is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_batches_all_rank_vram_reservations(tmp_path: Path) -> None:
@@ -917,7 +918,7 @@ def test_single_job_pool_batches_all_rank_vram_reservations(tmp_path: Path) -> N
             )
         ]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_single_job_pool_starts_no_rank_when_atomic_admission_is_refused(
@@ -944,7 +945,7 @@ def test_single_job_pool_starts_no_rank_when_atomic_admission_is_refused(
         assert all(not worker.closed for worker in workers)
         assert [worker.unbound for worker in workers] == [1, 1]
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _attention_token(*, policy: str = "auto") -> AttentionRouteToken:
@@ -1298,7 +1299,7 @@ def test_vision_provider_manifest_populates_choices_and_routes_execution(tmp_pat
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_vision_provider_remote_placement_uses_observable_old_peer_fallback() -> None:
@@ -1429,7 +1430,7 @@ def test_vision_provider_choice_mismatch_fails_atomically(tmp_path: Path) -> Non
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_node_cannot_use_both_vision_and_generation_provider_metadata(tmp_path: Path) -> None:
@@ -1453,7 +1454,7 @@ def test_node_cannot_use_both_vision_and_generation_provider_metadata(tmp_path: 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _write_generation_provider_packs(root: Path) -> tuple[Path, Path, Path]:
@@ -1704,7 +1705,7 @@ def test_generation_provider_is_explicit_and_suppresses_lazy_native_inputs(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("with_policy", [False, True])
@@ -1764,7 +1765,7 @@ def test_composer_fallback_propagates_arm_attention_policy_and_token(
         assert "'requestedPolicy': 'sage'" in selected.attention_diagnostic
         assert "unet=sdpa" in selected.attention_diagnostic
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("remote", [None, "remote-utility"])
@@ -1817,7 +1818,7 @@ def test_composer_keeps_utility_arms_for_explicit_attention(remote: str | None) 
             assert "default auto route without an attention token" in selected.attention_diagnostic
             assert config.requested_policy in selected.attention_diagnostic
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("existing_token", [False, True])
@@ -1869,7 +1870,7 @@ def test_composer_keeps_arm_when_requested_route_derivation_fails(
         assert "['flux', 'sage']" in selected.attention_diagnostic
         assert "flux=sdpa" in selected.attention_diagnostic
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composer_propagates_default_route_derivation_failure(
@@ -1909,7 +1910,7 @@ def test_composer_propagates_default_route_derivation_failure(
                 topology={"fallback.echo": (arm,)},
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None:
@@ -1967,7 +1968,7 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
             assert selected.attention_route_token is not None
             assert selected.attention_route_token.version == (3 if preferred == "weak" else 1)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composer_replans_attention_when_concurrent_node_starts_selected_lazy_worker() -> None:
@@ -2071,7 +2072,7 @@ def test_composer_replans_attention_when_concurrent_node_starts_selected_lazy_wo
         assert second.attention_route_token == worker._token
         assert worker.starts == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composer_follows_resident_producer_without_native_policy() -> None:
@@ -2116,7 +2117,7 @@ def test_composer_follows_resident_producer_without_native_policy() -> None:
         assert selected.target == "dinkster-compat-comfy@native"
         assert selected.cache_tag == "identity:dinkster-compat-comfy@native"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
@@ -2206,7 +2207,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
         assert execution_worker.tokens[0].version == 3
         assert execution_worker.tokens[1].version == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _env(*roots: Path) -> dict[str, str]:
@@ -2321,7 +2322,7 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_enrollment_publishes_dispatch_and_keeps_claimed_schema_private(
@@ -2385,7 +2386,7 @@ def test_enrollment_publishes_dispatch_and_keeps_claimed_schema_private(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cross_pack_provider_may_publish_same_session_body_arms(tmp_path: Path) -> None:
@@ -2434,7 +2435,7 @@ def test_cross_pack_provider_may_publish_same_session_body_arms(tmp_path: Path) 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("optional_execution", [False, True])
@@ -2513,7 +2514,7 @@ def test_schema_only_owner_routes_only_after_provider_composes(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _fixture_alias_registry(carrier: str) -> ComfyAliasRegistry:
@@ -2590,7 +2591,7 @@ def test_schema_only_owner_delta_carries_its_registry_before_the_provider(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_revalidates_registry_carriers_against_the_staged_attribution(
@@ -2637,7 +2638,7 @@ def test_reload_revalidates_registry_carriers_against_the_staged_attribution(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_add_pack_rejects_registry_carrier_the_pack_never_declares(tmp_path: Path) -> None:
@@ -2660,7 +2661,7 @@ def test_add_pack_rejects_registry_carrier_the_pack_never_declares(tmp_path: Pat
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_in_process_schema_owner_and_provider_share_the_native_pack_path(
@@ -2695,7 +2696,7 @@ def test_in_process_schema_owner_and_provider_share_the_native_pack_path(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_atomic_composition_refuses_schema_owner_without_provider(tmp_path: Path) -> None:
@@ -2714,7 +2715,7 @@ def test_atomic_composition_refuses_schema_owner_without_provider(tmp_path: Path
                 worker_env=_env(root),
             )
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_schema_only_owner_reload_adds_and_retracts_its_body(tmp_path: Path) -> None:
@@ -2748,7 +2749,7 @@ def test_schema_only_owner_reload_adds_and_retracts_its_body(tmp_path: Path) -> 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_incomplete_generation_removes_dependents_before_schema_owner(tmp_path: Path) -> None:
@@ -2792,7 +2793,7 @@ def test_incomplete_generation_removes_dependents_before_schema_owner(tmp_path: 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_incomplete_generation_removes_execution_provider_before_owner(tmp_path: Path) -> None:
@@ -2832,7 +2833,7 @@ def test_incomplete_generation_removes_execution_provider_before_owner(tmp_path:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_incomplete_generation_rechecks_for_newly_stranded_schema_owner(tmp_path: Path) -> None:
@@ -2890,7 +2891,7 @@ def test_incomplete_generation_rechecks_for_newly_stranded_schema_owner(tmp_path
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_schema_only_owner_allows_provider_owned_lazy_inputs(tmp_path: Path) -> None:
@@ -2911,7 +2912,7 @@ def test_schema_only_owner_allows_provider_owned_lazy_inputs(tmp_path: Path) -> 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_claim_validation_is_atomic_for_mismatch_missing_and_core(
@@ -2944,7 +2945,7 @@ def test_claim_validation_is_atomic_for_mismatch_missing_and_core(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_owner_dependencies_and_alternative_reload_are_revalidated(
@@ -3008,7 +3009,7 @@ def test_owner_dependencies_and_alternative_reload_are_revalidated(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_execution_identity_and_dead_owner_fail_loudly(tmp_path: Path) -> None:
@@ -3063,7 +3064,7 @@ def test_execution_identity_and_dead_owner_fail_loudly(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_reload_rotates_current_owner_token(tmp_path: Path) -> None:
@@ -3086,7 +3087,7 @@ def test_reload_rotates_current_owner_token(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_policy_selected_native_arm_is_liveness_validated(tmp_path: Path) -> None:
@@ -3137,7 +3138,7 @@ def test_policy_selected_native_arm_is_liveness_validated(tmp_path: Path) -> Non
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_same_session_body_arm_routes_without_selector_bleed(tmp_path: Path) -> None:
@@ -3211,7 +3212,7 @@ def test_same_session_body_arm_routes_without_selector_bleed(tmp_path: Path) -> 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
@@ -3242,7 +3243,7 @@ def test_replica_topology_exposes_one_native_arm_per_requested_device(
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
@@ -3305,7 +3306,7 @@ def test_single_job_topology_follows_replacement_rank_workers(tmp_path: Path) ->
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
@@ -3345,7 +3346,7 @@ def test_single_job_provider_arms_share_the_pool_domain(tmp_path: Path) -> None:
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_worker_host_stamps_nested_residents_for_selected_body(tmp_path: Path) -> None:
@@ -3386,4 +3387,4 @@ def test_worker_host_stamps_nested_residents_for_selected_body(tmp_path: Path) -
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

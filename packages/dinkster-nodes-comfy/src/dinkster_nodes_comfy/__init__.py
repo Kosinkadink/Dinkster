@@ -86,6 +86,7 @@ from .image_file_tools import (
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
+    Painter,
     PreviewImage,
     SaveAnimatedPNG,
     SaveAnimatedWEBP,
@@ -111,6 +112,8 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
 from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
+from .load3d import Load3DAdvanced
+from .load3d_captures import Load3D
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_extract_save import LoraSave
@@ -136,6 +139,7 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
+from .mediapipe_detection import LoadMediaPipeFaceLandmarker, MediaPipeFaceLandmarker
 from .mesh import MESH_NODES
 from .mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from .mesh_decimate import DecimateMesh
@@ -177,7 +181,7 @@ from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
 from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning
 from .post_processing import POST_PROCESSING_NODES
-from .preview3d import Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud
+from .preview3d import Preview3D, Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -198,7 +202,10 @@ from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
-from .sam3d_body import SAM3DBody_Smooth
+from .sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
+from .sam3d_export import BuildPoseFile
+from .sam3d_expression import SAM3DBody_FaceExpression
+from .sam3d_prediction import SAM3DBody_Predict
 from .sam3d_render import SAM3DBody_Render
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
@@ -530,6 +537,9 @@ COMFY_NODES: tuple[type[Node], ...] = (
     GetVideoComponents,
     ConditioningLoader,
     SaveConditioning,
+    SAM3DBody_Loader,
+    SAM3DBody_Predict,
+    SAM3DBody_FaceExpression,
     SAM3DBody_Smooth,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
@@ -541,6 +551,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
     SaveSVGNode,
     SaveImage,
     PreviewImage,
+    Painter,
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
@@ -583,6 +594,9 @@ COMFY_NODES: tuple[type[Node], ...] = (
     Save3DAdvanced,
     SaveGaussianSplat,
     SavePointCloud,
+    Preview3D,
+    Load3DAdvanced,
+    Load3D,
     Preview3DAdvanced,
     PreviewGaussianSplat,
     PreviewPointCloud,
@@ -592,6 +606,9 @@ COMFY_NODES: tuple[type[Node], ...] = (
     ImageHistogram,
     TextOverlay,
     SAM3DBody_Render,
+    LoadMediaPipeFaceLandmarker,
+    MediaPipeFaceLandmarker,
+    BuildPoseFile,
 )
 
 

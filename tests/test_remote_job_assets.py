@@ -10,7 +10,6 @@ a daemon that predates staging is refused the same way."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -34,6 +33,8 @@ from dinkster_workers import RemoteWorker
 from test_declared_assets import MODEL_BYTES, MODEL_DIGEST
 from test_remote import TOKEN, start_service, stop_service
 from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost, vault_files
+
+from tests.async_scenarios import run_scenario
 
 
 def write_assetpack_manifest(tmp_path: Path) -> Path:
@@ -126,7 +127,7 @@ def test_empty_daemon_stages_job_asset_then_executes(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def spy_on_asset_queries(worker: RemoteWorker, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
@@ -173,7 +174,7 @@ def test_held_job_asset_short_circuits_without_transfer(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("media_type", [None, AUDIO_TYPE, "dinkster.layers", "custom.media"])
@@ -239,7 +240,7 @@ def test_assets_query_once_deduplicated(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_missing_endpoint_refuses_at_dispatch(tmp_path: Path) -> None:
@@ -269,7 +270,7 @@ def test_missing_endpoint_refuses_at_dispatch(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_unverified_local_asset_refuses_remote_dispatch(tmp_path: Path) -> None:
@@ -297,7 +298,7 @@ def test_unverified_local_asset_refuses_remote_dispatch(tmp_path: Path) -> None:
         assert "unverified local-only asset" in result.error.message
         assert "granting host" in result.error.message
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pre_staging_daemon_refused_when_job_assets_needed(tmp_path: Path) -> None:
@@ -324,4 +325,4 @@ def test_pre_staging_daemon_refused_when_job_assets_needed(tmp_path: Path) -> No
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

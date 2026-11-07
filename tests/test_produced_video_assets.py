@@ -7,12 +7,15 @@ import json
 import multiprocessing
 import os
 import shutil
+import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
+from multiprocessing.synchronize import Barrier
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +32,7 @@ from dinkster_assets import (
     register_video_value_type,
     resolver_from_env,
 )
+from dinkster_assets._sqlite import connect_journal
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
@@ -58,6 +62,8 @@ from produced_video_nodes import ProduceAudio, ProduceVideo
 from test_remote import TOKEN, start_service, stop_service
 from test_reservations import core_registry, make_invocation
 
+from tests.async_scenarios import run_scenario
+
 
 @pytest.fixture
 def vaults(tmp_path: Path) -> tuple[AssetVault, AssetVault]:
@@ -70,6 +76,175 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
+
+
+def _open_new_journals(channel: Connection, root: Path, barrier: Barrier) -> None:
+    results = []
+    try:
+        for index in range(32):
+            barrier.wait(timeout=60)
+            try:
+                with closing(connect_journal(root / f"journal-{index}.sqlite")) as db:
+                    results.append(db.execute("PRAGMA journal_mode").fetchone())
+            except sqlite3.Error as exc:
+                results.append(repr(exc))
+        channel.send(results)
+    finally:
+        channel.close()
+
+
+def test_produced_journal_concurrent_first_open(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(8)
+    channels = [context.Pipe() for _ in range(8)]
+    processes = [
+        context.Process(target=_open_new_journals, args=(child, tmp_path, barrier))
+        for _, child in channels
+    ]
+    assert not list(tmp_path.iterdir())
+    for process in processes:
+        process.start()
+    for _, child in channels:
+        child.close()
+    try:
+        for parent, _ in channels:
+            assert parent.poll(120), "concurrent journal creator did not finish"
+            assert parent.recv() == [("wal",)] * 32
+    finally:
+        barrier.abort()
+        for process in processes:
+            process.join(60)
+        for parent, _ in channels:
+            parent.close()
+    assert [process.exitcode for process in processes] == [0] * 8
+
+
+def _publish_with_database_lock(channel: Connection, root: Path, hold: bool) -> None:
+    state = ProducedScratchState(root)
+    data = b"lock holder" if hold else b"contending publisher"
+    try:
+        if hold:
+            state.published(digest_bytes(data), len(data))
+            with sqlite3.connect(root / ".produced-scratch.sqlite") as db:
+                db.execute("BEGIN IMMEDIATE")
+                channel.send("locked")
+                assert channel.poll(60), "lock holder was not released"
+                assert channel.recv() == "release"
+        else:
+            channel.send("publishing")
+            state.published(digest_bytes(data), len(data))
+            state.offer((digest_bytes(data),))
+        channel.send(None)
+    except Exception as exc:
+        channel.send(repr(exc))
+    finally:
+        channel.close()
+
+
+def test_produced_scratch_process_publication_waits_for_busy_writer(tmp_path: Path) -> None:
+    state = ProducedScratchState(tmp_path)
+    state.bind("contended job", 1)
+    context = multiprocessing.get_context("spawn")
+    holder_channel, holder_child = context.Pipe()
+    writer_channel, writer_child = context.Pipe()
+    holder = context.Process(
+        target=_publish_with_database_lock, args=(holder_child, tmp_path, True)
+    )
+    writer = context.Process(
+        target=_publish_with_database_lock, args=(writer_child, tmp_path, False)
+    )
+    holder.start()
+    try:
+        assert holder_channel.poll(60)
+        assert holder_channel.recv() == "locked"
+        writer.start()
+        assert writer_channel.poll(60)
+        assert writer_channel.recv() == "publishing"
+        # Force a lock window beyond SQLite's original five-second wait.
+        # This controls contention, not a performance assertion on the writer.
+        writer_channel.poll(7)
+    finally:
+        holder_channel.send("release")
+        holder.join(60)
+        if writer.pid is not None:
+            writer.join(60)
+    assert holder.exitcode == writer.exitcode == 0
+    assert holder_channel.recv() is None
+    assert writer_channel.recv() is None
+    assert state.publications() == tuple(
+        sorted(
+            (
+                (digest_bytes(b"lock holder"), len(b"lock holder"), False),
+                (digest_bytes(b"contending publisher"), len(b"contending publisher"), True),
+            )
+        )
+    )
+
+
+@pytest.mark.parametrize("kind", ["scratch", "inventory"])
+def test_produced_journal_read_only_wal_snapshots(tmp_path: Path, kind: str) -> None:
+    digest = digest_bytes(b"committed bytes")
+    scratch = ProducedScratchState(tmp_path)
+    inventory = ProducedAssetInventory(tmp_path)
+    if kind == "scratch":
+        scratch.bind("WAL job", 1)
+        scratch.published(digest, 15)
+        path = tmp_path / ".produced-scratch.sqlite"
+        table = "publications"
+    else:
+        inventory.pending(digest, 15)
+        path = tmp_path / ".produced-assets.sqlite"
+        table = "adoptions"
+
+    # Last writer closed and checkpointed: a read-only connection can create
+    # the sidecars in a writable directory without making the database writable.
+    assert not Path(str(path) + "-wal").exists()
+    with closing(connect_journal(path, mode="ro")) as reader:
+        assert reader.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+        assert reader.execute("PRAGMA busy_timeout").fetchone() == (30000,)
+        assert reader.execute(f"SELECT digest, size FROM {table}").fetchall() == [(digest, 15)]
+        assert Path(str(path) + "-wal").is_file()
+        assert Path(str(path) + "-shm").is_file()
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader.execute(f"UPDATE {table} SET size = 99")
+
+    with closing(sqlite3.connect(path)) as writer, writer:
+        writer.execute(f"UPDATE {table} SET size = 99")
+        # Public readers see the committed snapshot, not the open writer's data.
+        if kind == "scratch":
+            assert scratch.owner() == ("WAL job", 1)
+            assert scratch.publications() == ((digest, 15, False),)
+        else:
+            assert [(row.digest, row.size, row.adopted_at_ns) for row in inventory.entries()] == [
+                (digest, 15, None)
+            ]
+        writer.rollback()
+
+    # Existing rollback journals remain readable and migrate on the next write.
+    with closing(sqlite3.connect(path)) as legacy:
+        assert legacy.execute("PRAGMA journal_mode=DELETE").fetchone() == ("delete",)
+    if kind == "scratch":
+        assert scratch.publications() == ((digest, 15, False),)
+    else:
+        assert inventory.entries()[0].size == 15
+    with closing(sqlite3.connect(path)) as legacy:
+        assert legacy.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+    if kind == "scratch":
+        scratch.offer((digest,))
+        assert scratch.publications() == ((digest, 15, True),)
+    else:
+        inventory.adopted(digest, 15)
+        assert inventory.entries()[0].adopted_at_ns is not None
+    with closing(connect_journal(path, mode="rw")) as migrated:
+        assert migrated.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+        assert migrated.execute("PRAGMA busy_timeout").fetchone() == (30000,)
+
+    # mode=ro and mode=rw must never create missing recovery state.
+    path.unlink()
+    for mode in ("ro", "rw"):
+        with pytest.raises(sqlite3.OperationalError):
+            connect_journal(path, mode=mode)
+    assert not path.exists()
 
 
 def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
@@ -327,7 +502,7 @@ def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) 
             10,
         )
 
-    paths = asyncio.run(scenario())
+    paths = run_scenario(scenario())
     assert len(set(paths)) == 3
     assert all(
         path.is_relative_to(tmp_path / "scratch" / "produced-assets" / "jobs") for path in paths
@@ -400,7 +575,7 @@ def test_completed_produced_scope_refuses_detached_tasks_and_held_writers(
                 assert not owns
             assert _publish(vault, data).read_bytes() == data
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("configured_vault", [False, True])
@@ -461,7 +636,7 @@ def test_in_process_produced_sources_require_durable_adoption(
         assert source.local_path() == engine.resolve(digests[0])
         assert source.read_bytes() == original
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("configured_vault", [False, True])
@@ -570,7 +745,7 @@ def test_in_process_control_sources_are_adopted_before_publication(
             await saved_contexts[0].publish_run_value("target", {})
         state.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:
@@ -987,7 +1162,7 @@ def test_produced_video_survives_shutdown_and_transfer_eviction(
             if proc is not None:
                 await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cancel", [False, True], ids=["resume", "repeated-cancel"])
@@ -1152,7 +1327,7 @@ def test_produced_video_adoption_owns_source_until_finished(
             await worker.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("pressure", [False, True])
@@ -1232,7 +1407,7 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
             await session.close()
             await asyncio.gather(pending, return_exceptions=True)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("expanded", [False, True])

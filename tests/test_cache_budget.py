@@ -44,6 +44,8 @@ from dinkster_values.model import PyObjPayload
 from dinkster_values.storage import array_storage_meta, image_input
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
+
 
 def entry(nbytes: int, *, device: str = "ram", text: str = "payload") -> dict[str, Value]:
     return {
@@ -103,7 +105,7 @@ def test_ram_budget_evicts_lru_without_dropping_other_devices() -> None:
         assert cache.footprint("ram") == 90
         assert cache.footprint("vram:cuda:0") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_budgeted_batch_workflow_matches_unbounded_output_and_peak_stays_bounded() -> None:
@@ -182,7 +184,7 @@ def test_budgeted_batch_workflow_matches_unbounded_output_and_peak_stays_bounded
         assert constrained.peak_ram <= constrained.max_bytes
         assert constrained.peak_ram == batch_bytes
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_entry_bound_retains_uncosted_and_unknown_types() -> None:
@@ -203,7 +205,7 @@ def test_entry_bound_retains_uncosted_and_unknown_types() -> None:
         assert len(cache) == 2
         assert await cache.get("b") == {}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_replacement_and_invalidation_account_all_residencies() -> None:
@@ -228,7 +230,7 @@ def test_replacement_and_invalidation_account_all_residencies() -> None:
         assert cache.clear() == 2
         assert cache.footprint("ram") == cache.footprint("vram:cuda:0") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_spill_threshold_replay_and_clean_promotion(
@@ -260,7 +262,7 @@ def test_lazy_spill_threshold_replay_and_clean_promotion(
         assert manifest.read_bytes() == content
         assert await disk_store(tmp_path).get("large") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("threshold", [0, 50])
@@ -288,7 +290,7 @@ def test_uncosted_unknown_outputs_write_through_and_evict_without_rewriting(
         assert await memory.get("key") is None
         assert await disk_store(tmp_path).get("key") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_failed_eager_replacement_keeps_previous_ram_copy_retryable(
@@ -317,7 +319,7 @@ def test_failed_eager_replacement_keeps_previous_ram_copy_retryable(
         replay = await disk_store(tmp_path).get("key")
         assert replay is not None and replay["out"].fingerprint == "old"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_pressure_cannot_overwrite_an_eager_replacement(
@@ -352,7 +354,7 @@ def test_pressure_cannot_overwrite_an_eager_replacement(
         replay = await disk_store(tmp_path).get("key")
         assert replay is not None and replay["out"].fingerprint == "new"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_default_spill_threshold_and_oversized_admission(tmp_path: Path) -> None:
@@ -368,7 +370,7 @@ def test_default_spill_threshold_and_oversized_admission(tmp_path: Path) -> None
         assert await cache.get("large") is not None
         assert len(memory) == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_lazy_spill_keeps_content_addressed_deduplication(tmp_path: Path) -> None:
@@ -385,7 +387,7 @@ def test_lazy_spill_keeps_content_addressed_deduplication(tmp_path: Path) -> Non
         assert first["outputs"]["out"]["digest"] == second["outputs"]["out"]["digest"]
         assert len(list(disk._cas.digests())) == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("operation", ["shed", "admit", "replace"])
@@ -417,7 +419,7 @@ def test_failed_spill_retains_dirty_victim_and_accounting(
         assert await memory.shed(PressureSignal("ram", 50)) == 50
         assert await disk_store(tmp_path).get("dirty") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_replacing_persisted_value_cannot_resurrect_old_result(tmp_path: Path) -> None:
@@ -435,7 +437,7 @@ def test_replacing_persisted_value_cannot_resurrect_old_result(tmp_path: Path) -
         replay = await cache.get("key")
         assert replay is not None and replay["out"].fingerprint == "new"
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_clear_discards_dirty_values_without_persisting(tmp_path: Path) -> None:
@@ -448,7 +450,7 @@ def test_clear_discards_dirty_values_without_persisting(tmp_path: Path) -> None:
         assert await memory.shed(PressureSignal("ram", 100)) == 0
         assert await disk_store(tmp_path).get("dirty") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("invalidate", ["clear", "replace"])
@@ -494,7 +496,7 @@ def test_invalidation_cancels_queued_spill(
             assert await disk_store(tmp_path).get("key") is None
             assert await cache.get("key") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("other_process", [False, True])
@@ -556,7 +558,7 @@ def test_shared_root_invalidation_serializes_without_cancelling_other_owners(
         writer.clear()
         assert await fresh.get("key") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_clear_during_slow_hit_does_not_promote_stale_result(tmp_path: Path) -> None:
@@ -584,7 +586,7 @@ def test_clear_during_slow_hit_does_not_promote_stale_result(tmp_path: Path) -> 
         assert len(memory) == 0
         assert await disk.get("key") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_slow_miss_does_not_block_other_keys_or_duplicate_promotion() -> None:
@@ -617,7 +619,7 @@ def test_slow_miss_does_not_block_other_keys_or_duplicate_promotion() -> None:
         assert requests == ["cold"]
         assert not cache._key_locks
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("device", ["ram", "vram:cuda:0"])
@@ -651,7 +653,7 @@ def test_shared_payload_shedding_credits_only_actual_footprint_delta(
         assert await cache.shed(PressureSignal(device, 1)) == 50
         assert cache.footprint(device) == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("new_envelope", [False, True])
@@ -682,7 +684,7 @@ def test_shared_view_charges_full_backing_without_duplicate_shedding(new_envelop
         assert await cache.shed(PressureSignal("ram", 1)) == backing.nbytes
         assert cache.footprint("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_list_aliases_and_replacements_count_shared_payload_once() -> None:
@@ -707,7 +709,7 @@ def test_list_aliases_and_replacements_count_shared_payload_once() -> None:
         assert cache.clear() == 2
         assert cache.footprint("ram") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_distinct_equal_allocations_are_not_deduplicated() -> None:
@@ -727,7 +729,7 @@ def test_distinct_equal_allocations_are_not_deduplicated() -> None:
         assert await cache.get("first") is None
         assert await cache.get("second") is not None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("as_list", [False, True])
@@ -765,4 +767,4 @@ def test_cache_rehydration_charges_receiver_ram_per_leaf(tmp_path: Path, as_list
         assert cache.footprint("ram") == len(data) * len(leaves)
         assert cache.footprint("vram:cuda:0") == 0
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

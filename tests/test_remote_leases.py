@@ -19,6 +19,8 @@ from test_isolated import DEV_MANIFEST, core_registry, image_graph
 from test_relay import eventually
 from test_remote import TOKEN, make_engine, remote_worker, start_service, stop_service
 
+from tests.async_scenarios import run_scenario
+
 _SIGSTOP = getattr(signal, "SIGSTOP", signal.SIGTERM)
 
 
@@ -28,13 +30,13 @@ def test_lease_ttl_below_the_heartbeat_floor_is_refused() -> None:
     refuses it up front. Only 0 (disabled) or >= the minimum is valid."""
     for bad in (0.5, -1.0, float("nan"), float("inf")):
         with pytest.raises(ServiceError, match="lease-ttl"):
-            asyncio.run(run_service("127.0.0.1", 0, "unused", b"x" * 16, lease_ttl=bad))
+            run_scenario(run_service("127.0.0.1", 0, "unused", b"x" * 16, lease_ttl=bad))
 
 
 def test_resume_grace_must_be_finite_and_non_negative() -> None:
     for bad in (-1.0, float("nan"), float("inf")):
         with pytest.raises(ServiceError, match="resume-grace"):
-            asyncio.run(run_service("127.0.0.1", 0, "unused", b"x" * 16, resume_grace=bad))
+            run_scenario(run_service("127.0.0.1", 0, "unused", b"x" * 16, resume_grace=bad))
 
 
 async def zombie_client(
@@ -114,7 +116,7 @@ def test_engine_identity_alone_cannot_supersede_a_live_transport(tmp_path: Path)
                 first_writer.close()
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_refusal_names_the_holder_and_heartbeats_keep_an_idle_lease(
@@ -162,7 +164,7 @@ def test_refusal_names_the_holder_and_heartbeats_keep_an_idle_lease(
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_silent_holder_is_evicted_and_the_next_engine_attaches(tmp_path: Path) -> None:
@@ -207,7 +209,7 @@ def test_silent_holder_is_evicted_and_the_next_engine_attaches(tmp_path: Path) -
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires POSIX signals")
@@ -234,4 +236,4 @@ def test_engine_treats_a_silent_daemon_as_dead(tmp_path: Path) -> None:
         finally:
             await stop_service(proc)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

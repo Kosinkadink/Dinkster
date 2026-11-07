@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,6 +11,7 @@ from dinkster_graph import Graph, GraphNode
 from dinkster_nodes_comfy.color_resolution import ColorToRGBInt, ResolutionSelector
 
 from dinkster.compose import PackSpec, ServingComposer
+from tests.async_scenarios import run_scenario
 
 
 def test_color_and_resolution_schemas_preserve_public_types_and_positional_inputs() -> None:
@@ -101,4 +101,4 @@ def test_color_and_resolution_execute_twice_through_the_native_pack(in_process: 
         finally:
             await composer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

@@ -52,7 +52,7 @@ jobs:
     if: needs.changes.outputs.comfy == 'true'
     name: CPU comfy gate (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -66,6 +66,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Install the CPU software shader renderer
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
+        timeout-minutes: 5
       - uses: ./.github/actions/torch-cpu-suite
         with:
           suite: comfy
@@ -86,18 +89,18 @@ jobs:
           cache-dependency-glob: uv.lock
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
-      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py
+      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py tests/test_release_install.py::test_development_version_counts_commits_since_the_last_version_tag
       - name: Verify published setup and bounded subprocess diagnostics
         run: uv run --no-sync python -m pytest -q tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal tests/test_supervisor_subprocess.py
-      - name: Verify produced source adoption before publication
-        run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py::test_in_process_control_sources_are_adopted_before_publication
+      - name: Verify produced assets and shared SQLite journals
+        run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py tests/test_environment_downloads.py tests/test_asset_cleanup.py
 
   fast:
     needs: [changes, torch-cpu]
     if: always()
     name: format, lint, types and unit subset
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"

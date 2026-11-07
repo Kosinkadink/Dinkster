@@ -25,6 +25,8 @@ from dinkster_values import (
     make_tuple_value,
 )
 
+from tests.async_scenarios import run_scenario
+
 
 def test_cas_put_restores_corrupt_existing_blob(tmp_path: Path) -> None:
     cas = DiskCAS(tmp_path)
@@ -60,7 +62,7 @@ def test_malformed_pickled_metadata_is_a_cache_miss() -> None:
 
             assert await entry_from_wire(wire, fetch, registry) is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_disk_trim_remeasures_shared_blobs(tmp_path: Path) -> None:
@@ -89,7 +91,7 @@ def test_disk_trim_remeasures_shared_blobs(tmp_path: Path) -> None:
         assert await tight.get("old-a") is None
         assert await tight.get("old-b") is None
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_value_meta_copies_source_mappings_and_residency_sequences() -> None:
@@ -130,7 +132,7 @@ def test_memory_cache_hit_cannot_mutate_stored_outputs() -> None:
         assert second is not None
         assert second["out"].resolve() == 1
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("declared", [None, False, True])
@@ -244,7 +246,7 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
         async with memory.hold_asset_references(registry) as roots:
             assert roots == set()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("link", ["directory", "manifest"])
@@ -269,7 +271,7 @@ def test_cache_asset_roots_refuse_linked_reference_state(tmp_path: Path, link: s
                 pytest.fail("linked reference state was followed")
         assert target.exists()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -331,4 +333,4 @@ def test_cache_asset_roots_refuse_unreadable_state(tmp_path: Path, corrupt: str)
             with disk.hold_asset_references():
                 pytest.fail("unreadable references were treated as empty")
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

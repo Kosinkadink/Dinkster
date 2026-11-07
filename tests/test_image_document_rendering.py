@@ -25,6 +25,8 @@ from dinkster_server.library import ServerLibrary, add_library_routes
 from dinkster_server.preflight import asset_preflight
 from PIL import Image
 
+from tests.async_scenarios import run_scenario
+
 MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
 IDENTITY = {"a": 1_000_000, "b": 0, "c": 0, "d": 1_000_000, "tx": 0, "ty": 0}
 
@@ -420,7 +422,7 @@ def test_render_endpoint_persists_output_and_provenance_cache(tmp_path: Path) ->
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("stage", ["render", "cached"])
@@ -650,7 +652,7 @@ def test_v2_render_api_and_flatten_are_pixel_identical(tmp_path: Path) -> None:
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_render_api_and_flatten_node_rendition_are_byte_identical(
@@ -767,4 +769,4 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

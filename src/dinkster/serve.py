@@ -168,7 +168,6 @@ from .resolver_api import add_resolver_index_routes
 from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
-from .workflow_requirements import VARIANTS
 from .workflow_requirements_api import add_workflow_requirement_routes
 
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
@@ -1124,7 +1123,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--engine-variant",
-        choices=VARIANTS,
         help="declared engine generation variant for workflow-open planning; "
         "never inferred from hardware",
     )
@@ -1802,8 +1800,6 @@ def main(argv: list[str] | None = None) -> None:
     if args.generation is not None:
         try:
             selected_variant, generation_specs = load_generation_packs(args.generation)
-            if selected_variant not in VARIANTS:
-                raise CompositionError(f"unsupported generation variant: {selected_variant}")
             if args.engine_variant is not None and args.engine_variant != selected_variant:
                 raise CompositionError("--engine-variant differs from selected generation variant")
             args.engine_variant = selected_variant
@@ -2193,6 +2189,7 @@ def main(argv: list[str] | None = None) -> None:
                 for name, spec in composer.pack_specs().items()
             },
             engine_variant=args.engine_variant,
+            generation=args.generation,
         )
         if installer is not None:
             # Live install activation: reconcile the served surface with
@@ -2235,10 +2232,14 @@ def main(argv: list[str] | None = None) -> None:
         # Every intended pack and remote gets a report row up front
         # ("pending"), so /api/composition tells the whole startup story
         # from the first request - including what has not landed yet.
-        keys = state.seed_composition(
-            [*default_pack_failures]
-            + [_spec_label(entry) for entry in specs]
-            + [spec.name for spec in remote_specs]
+        keys = (
+            state.seed_composition(
+                [*default_pack_failures]
+                + [_spec_label(entry) for entry in specs]
+                + [spec.name for spec in remote_specs]
+            )
+            if total
+            else []
         )
         default_failure_keys = keys[:default_failure_count]
         pack_start = default_failure_count

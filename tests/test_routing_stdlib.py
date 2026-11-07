@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 from collections.abc import Mapping
@@ -37,6 +36,7 @@ from dinkster_schema.replace import rule_from_wire, rule_to_wire
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
 
+from tests.async_scenarios import run_scenario
 from tools.generate_foundation_comfy_aliases import ROUTING_EVIDENCE, build_aliases
 
 ALIAS_PATH = (
@@ -142,7 +142,7 @@ def test_value_select_and_gate_do_not_execute_unselected_sources() -> None:
         assert result.outputs["named"]["value"].resolve() == "right"
         assert set(result.executed) == {"on", "select", "gate", "right", "named"}
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_named_route_graph_wire_persists_only_stable_member_ids() -> None:

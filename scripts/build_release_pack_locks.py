@@ -6,10 +6,12 @@ import argparse
 import json
 import platform
 import tempfile
+import tomllib
 from dataclasses import replace
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
+from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_archives import extract_base
 from dinkster_supervisor.environment_artifacts import engine_constraints
 from dinkster_supervisor.environment_constraints import effective_constraints
@@ -21,16 +23,26 @@ from scripts.build_official_packs import build
 from scripts.build_release import sha256
 
 
-def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tuple[Path, ...]:
+def build_locks(
+    root: Path, release: Path, manifest: Path, output: Path, *, sources: Path | None = None
+) -> tuple[Path, ...]:
     """Keep source payloads unchanged while adding native per-variant lock bytes."""
     raw = json.loads(manifest.read_bytes())
     variant = raw["variant"]
-    base = qualify(root, manifest, f"base-{variant}-{raw['id'][7:]}")
+    base_tag = f"base-{variant}-{raw.get('label', raw['id'][7:])}"
+    base = qualify(root, manifest, base_tag)
     system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
     if base["platform"]["os"] != system:
         raise ValueError("pack locks must be resolved on the selected base's native host")
     if output.exists():
         raise ValueError("pack lock output must be a new directory")
+    catalog = (
+        Lockfile.from_record_json((sources / "official-packs.lock").read_text())
+        if sources is not None
+        else None
+    )
+    if catalog is not None and not catalog.packs:
+        raise ValueError("independent pack publication requires selected sources")
     engine = json.loads((release / "release-manifest.json").read_bytes())
     for row in engine["artifacts"]:
         path = release / row["name"]
@@ -43,8 +55,7 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
         work = Path(directory)
         archive = base["archive"]
         mirror = (
-            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/"
-            f"base-{variant}-{base['id'][7:]}"
+            "https://github.com/Kosinkadink/Dinkster-Environments/releases/download/" + base_tag
         )
         parts = tuple(
             fetch_artifact(
@@ -69,21 +80,35 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
             effective_constraints(engine_constraints(engine, variant), base, strict=True),
             encoding="ascii",
         )
-        wheel_urls = {row["filename"]: row["url"] for row in base["wheels"]}
-        wheel_urls.update(
-            {
-                row["name"]: (
+        wheel_urls = {
+            (row["filename"], row["size"], row["sha256"]): row["url"] for row in base["wheels"]
+        }
+        upstream = {
+            (
+                unquote(urlsplit(wheel["url"]).path.rsplit("/", 1)[-1]),
+                wheel["size"],
+                wheel["hash"].removeprefix("sha256:"),
+            ): wheel["url"]
+            for package in tomllib.loads((root / "uv.lock").read_text())["package"]
+            for wheel in package.get("wheels", [])
+            if urlsplit(wheel["url"]).scheme == "https"
+        }
+        for row in engine["artifacts"]:
+            if not row["name"].endswith(".whl"):
+                continue
+            key = (row["name"], row["size"], row["sha256"])
+            if "tag" in engine:
+                wheel_urls[key] = (
                     "https://github.com/Kosinkadink/Dinkster/releases/download/"
                     f"{quote(engine['tag'], safe='')}/{quote(row['name'], safe='')}"
                 )
-                for row in engine["artifacts"]
-                if row["name"].endswith(".whl")
-            }
-        )
+            elif key in upstream:
+                # Lock bytes contribute to the final engine id, so cannot name its tag.
+                wheel_urls[key] = upstream[key]
         built = build(
             root,
             work / "packs",
-            version=engine["version"].split("+", 1)[0],
+            packs=tuple(pack.pack for pack in catalog.packs) if catalog is not None else (),
             variant=variant,
             python=tree / base["interpreter"]["executable"],
             constraints=constraints,
@@ -98,27 +123,28 @@ def build_locks(root: Path, release: Path, manifest: Path, output: Path) -> tupl
         for path in built:
             if path in locks:
                 lock = PackLock.read(path)
-                # Resolver-local find-links paths cannot escape into a published lock.
+                packages = []
+                for package in lock.packages:
+                    wheels = []
+                    for wheel in package.wheels:
+                        if urlsplit(wheel.url).scheme == "file":
+                            key = (wheel.filename, wheel.size, wheel.sha256)
+                            if key not in wheel_urls:
+                                raise ValueError(
+                                    "local wheel has no verified portable URL provenance: "
+                                    f"{wheel.filename}"
+                                )
+                            wheel = replace(wheel, url=wheel_urls[key])
+                        wheels.append(wheel)
+                    packages.append(replace(package, wheels=tuple(wheels)))
                 replace(
                     lock,
-                    packages=tuple(
-                        replace(
-                            package,
-                            wheels=tuple(
-                                replace(wheel, url=wheel_urls[wheel.filename])
-                                if urlsplit(wheel.url).scheme == "file"
-                                else wheel
-                                for wheel in package.wheels
-                            ),
-                        )
-                        for package in lock.packages
-                    ),
+                    packages=tuple(packages),
                 ).write(staged / path.name)
-            elif (
-                not (release / path.name).is_file()
-                or path.read_bytes() != (release / path.name).read_bytes()
-            ):
-                raise ValueError(f"native pack build changed source artifact: {path.name}")
+            else:
+                original = (sources if sources is not None else release) / path.name
+                if not original.is_file() or path.read_bytes() != original.read_bytes():
+                    raise ValueError(f"native pack build changed source artifact: {path.name}")
         if not locks:
             raise ValueError("native pack build produced no dependency locks")
         staged.rename(output)
@@ -130,11 +156,15 @@ if __name__ == "__main__":
     parser.add_argument("--release", required=True, type=Path)
     parser.add_argument("--base-manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--sources", type=Path, help="Independent official source catalog directory"
+    )
     args = parser.parse_args()
     for path in build_locks(
         Path(__file__).resolve().parents[1],
         args.release.resolve(),
         args.base_manifest.resolve(),
         args.output.resolve(),
+        sources=args.sources.resolve() if args.sources is not None else None,
     ):
         print(path)

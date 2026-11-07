@@ -1,0 +1,231 @@
+name: Independent official pack publication
+
+on:
+  workflow_run:
+    workflows: ["Versioned wheel release"]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["pack/**"]
+  pull_request:
+    paths:
+      - .github/workflows/official-packs.yml
+      - pyproject.toml
+      - uv.lock
+      - scripts/select_official_packs.py
+      - scripts/prepare_official_publication.py
+      - scripts/build_official_packs.py
+      - scripts/build_release_pack_locks.py
+      - scripts/publish_official_packs.py
+      - scripts/base_bundles.json
+      - packages/**/pyproject.toml
+      - packages/dinkster-nodes-*/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-packs-${{ github.event.workflow_run.head_sha || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  select:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster')
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      packs: ${{ steps.select.outputs.packs }}
+      engine: ${{ steps.select.outputs.engine }}
+      applicable: ${{ steps.select.outputs.applicable }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
+      - name: Check whether the triggering run published an engine
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+        id: engine_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: context.payload.workflow_run.id, per_page: 100,
+            });
+            core.setOutput('published', jobs.some(job => job.name === 'release' && job.conclusion === 'success'));
+      - name: Select committed pack changes or an exact pack tag
+        id: select
+        env:
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PACK_TAG: ${{ startsWith(github.ref, 'refs/tags/pack/') && github.ref_name || '' }}
+          EVENT: ${{ github.event_name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          ENGINE_PUBLISHED: ${{ steps.engine_release.outputs.published }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from scripts.select_official_packs import publication_selection, select_packs
+          root = Path.cwd()
+          tag = os.environ['PACK_TAG']
+          event = os.environ['EVENT']
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          before = subprocess.check_output(['git', 'rev-parse', 'HEAD^'], text=True).strip() if event == 'workflow_run' else os.environ['BEFORE']
+          if event == 'workflow_run' and (os.environ['CONCLUSION'] != 'success' or os.environ['ENGINE_PUBLISHED'] != 'true'):
+              print('No official packs published: same-commit engine release did not succeed')
+              packs, applicable = (), False
+          elif tag:
+              packs, applicable = select_packs(root, tag=tag), True
+          else:
+              packs, applicable = publication_selection(root, before), True
+          if event != 'workflow_run':
+              print('Preflight uses candidate-head engine dependency pins; it does not claim a published engine release')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('packs=' + json.dumps(packs) + '\n')
+              output.write('engine=' + head + '\n')
+              output.write('applicable=' + str(applicable).lower() + '\n')
+          PY
+
+  sources:
+    needs: select
+    if: needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+      - name: Prepare own-version sources and every supported base
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKS: ${{ needs.select.outputs.packs }}
+          ENGINE_COMMIT: ${{ needs.select.outputs.engine }}
+          CANDIDATE: ${{ github.event_name != 'workflow_run' }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from scripts.prepare_official_publication import prepare_inputs
+          root = Path.cwd()
+          rows = prepare_inputs(root, root / '.official-publication', os.environ['ENGINE_COMMIT'], json.loads(os.environ['PACKS']), candidate=os.environ['CANDIDATE'] == 'true')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps({'include': rows}) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: |
+            .official-publication/sources/
+            .official-publication/bases/
+            .official-publication/engine/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  locks:
+    needs: sources
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.sources.outputs.matrix) }}
+    steps:
+      - name: Expose Git Bash on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+          if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+            throw 'Git Bash is required for the native pack lock build'
+          }
+          $bashDirectory >> $env:GITHUB_PATH
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: .official-publication
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+      - name: Resolve native supported-base locks without rebuilding the engine
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          uv run --no-sync python -m scripts.build_release_pack_locks \
+            --release .official-publication/engine --sources .official-publication/sources \
+            --base-manifest ".official-publication/bases/$VARIANT/manifest.json" \
+            --output ".official-publication/locks/$VARIANT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publication-locks-${{ matrix.variant }}
+          path: .official-publication/locks/${{ matrix.variant }}/*.pack-lock.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  publish:
+    needs: [sources, locks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: .official-publication
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: publication-locks-*
+          merge-multiple: true
+          path: .official-publication/locks
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - name: Validate the complete publication set without credentials
+        shell: bash
+        run: |
+          arguments=()
+          for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
+          for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
+          uv run --no-sync python -m scripts.publish_official_packs \
+            --sources .official-publication/sources "${arguments[@]}" \
+            --output .official-publication/preflight --check-published
+      - name: Submit own-version packs to the official registry
+        if: github.repository == 'Kosinkadink/Dinkster' && github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success'
+        shell: bash
+        env:
+          DINKSTER_REGISTRY_TOKEN: ${{ secrets.DINKSTER_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$DINKSTER_REGISTRY_TOKEN" ]; then
+            echo 'Official pack submission refused: DINKSTER_REGISTRY_TOKEN is unavailable' >&2
+            exit 1
+          fi
+          arguments=()
+          for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
+          for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
+          uv run --no-sync python -m scripts.publish_official_packs \
+            --sources .official-publication/sources "${arguments[@]}" \
+            --output .official-publication/submitted --publish

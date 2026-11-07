@@ -72,6 +72,7 @@ from test_server import (
     wait_for_state,
 )
 
+from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 
@@ -116,7 +117,7 @@ def test_cancelled_publication_retains_vault_until_reference_commit(tmp_path: Pa
             async with library.media_ingest_lock:
                 store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("failure", ["", "missing", "corrupt", "size"])
@@ -522,7 +523,7 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
             release.set()
             await queue.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
@@ -654,7 +655,7 @@ def test_terminal_jobs_recover_only_their_offered_publications(
             other.close()
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
@@ -713,7 +714,7 @@ def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
             history.close()
             store.close()
 
-    asyncio.run(clear(retained=True))
+    run_scenario(clear(retained=True))
     unlink = Path.unlink
 
     def verify_owned_unlink(candidate: Path, missing_ok: bool = False) -> None:
@@ -730,7 +731,7 @@ def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
     held = vault.resolve(digest)
     assert held is not None and held.read_bytes() == data
     assert recover_produced_publications(vault, scratch)["reclaimedFiles"] == 0
-    asyncio.run(clear(retained=False))
+    run_scenario(clear(retained=False))
 
 
 def _crash_after_offering(channel: Connection, scratch: str) -> None:
@@ -784,7 +785,7 @@ def test_startup_recovers_publication_after_producer_process_crash(tmp_path: Pat
             finally:
                 await client.close()
 
-        asyncio.run(scenario())
+        run_scenario(scenario())
     finally:
         parent.close()
         if process.is_alive():
@@ -824,6 +825,10 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
             with vault.writer(digest) as writer:
                 writer.write(data)
                 writer.commit()
+        if not collect:
+            # Read-only WAL inspection creates SQLite sidecars in this writable
+            # directory. Include them in the unchanged recovery-state snapshot.
+            assert len(ProducedScratchState(source.root).publications()) == 2
         before = {
             p.relative_to(source.root): p.read_bytes()
             for p in source.root.rglob("*")
@@ -864,7 +869,9 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
                     if p.is_file()
                 }
                 if collect:
-                    assert set(remaining) == {Path(".produced-scratch.sqlite")}
+                    assert set(remaining) == {
+                        Path(".produced-scratch.sqlite" + suffix) for suffix in ("", "-wal", "-shm")
+                    }
                     state = ProducedScratchState(source.root)
                     assert state.owner() == ("interrupted job", 3)
                     assert state.publications() == ()
@@ -883,7 +890,7 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -965,7 +972,7 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
             if live_writer is not None:
                 live_writer.__exit__(None, None, None)
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_storage_accounting_combines_held_owners_without_enabling_collection(
@@ -1036,7 +1043,7 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("scope", ["packs", "groups"])
@@ -1103,7 +1110,7 @@ def test_scratch_accounting_waits_for_host_and_store_owners_without_deleting(
             host.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_collection_holds_one_job_across_multiple_pack_stores(
@@ -1162,7 +1169,7 @@ def test_collection_holds_one_job_across_multiple_pack_stores(
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_cancelled_accounting_keeps_all_reference_owners_until_inspection_settles(
@@ -1230,7 +1237,7 @@ def test_cancelled_accounting_keeps_all_reference_owners_until_inspection_settle
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("kind", ["operator", "reader", "agent", "delegated"])
@@ -1291,7 +1298,7 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("limit", [None, 37, 2**53 - 1])
@@ -1357,7 +1364,7 @@ def test_cleanup_policy_persists_without_authorizing_collection(
             finally:
                 await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("limit", [None, 17])
@@ -1458,7 +1465,7 @@ def test_automatic_policy_reloads_limits_and_preserves_owned_assets(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("limit", [None, 16, 19])
@@ -1586,7 +1593,7 @@ def test_vault_collection_holds_roots_and_preserves_untracked_bytes(
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
@@ -1646,9 +1653,12 @@ def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
             assert not vault.has(digest_bytes(b"unfinished result"))
             assert not any(p.exists() for p in scratch_files)
             assert ProducedScratchState(source.root).publications() == ()
-            assert (
-                result["temporaryBytes"]
-                == (source.root / ".produced-scratch.sqlite").stat().st_size
+            assert {p.name for p in source.root.iterdir()} == {
+                ".produced-scratch.sqlite" + suffix for suffix in ("", "-wal", "-shm")
+            }
+            assert result["temporaryBytes"] == sum(
+                (source.root / (".produced-scratch.sqlite" + suffix)).stat().st_size
+                for suffix in ("", "-wal", "-shm")
             )
             response = await client.post("/api/library/storage/clear", json={})
             assert response.status == 200
@@ -1676,7 +1686,7 @@ def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
         finally:
             await client.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_collection_keeps_reference_barriers_until_delete_settles(
@@ -1741,7 +1751,7 @@ def test_collection_keeps_reference_barriers_until_delete_settles(
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("damage", ["corrupt", "linked-sidecar", "pending"])
@@ -1793,7 +1803,7 @@ def test_collection_refuses_unsafe_adoptions(
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_storage_accounting_refuses_escaping_vault_shard(tmp_path: Path) -> None:
@@ -1813,7 +1823,7 @@ def test_storage_accounting_refuses_escaping_vault_shard(tmp_path: Path) -> None
         finally:
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def _directory_junction(link: Path, target: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1931,4 +1941,4 @@ def test_collection_refuses_directory_junctions_without_removing_external_bytes(
             history.close()
             store.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

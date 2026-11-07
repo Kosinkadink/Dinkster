@@ -11,7 +11,6 @@ own argparse.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import subprocess
 import sys
@@ -20,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from dinkster.cli import main
+from tests.async_scenarios import run_scenario
 
 HEALTHY_MANIFEST = """\
 [pack]
@@ -145,4 +145,4 @@ def test_demo_does_not_import_isolated_default_packs(monkeypatch) -> None:
         return real_load_pack(manifest, **kwargs)
 
     monkeypatch.setattr(demo, "load_pack", checked_load_pack)
-    asyncio.run(demo.run_demo())
+    run_scenario(demo.run_demo())

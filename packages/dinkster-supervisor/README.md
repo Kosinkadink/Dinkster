@@ -180,8 +180,9 @@ The channel format is `dinkster.channel/1`, with
 `minimumDesktopVersion`, and `signature`. Locations are a nonempty ordered array:
 `{type: "mirror", path}` names the complete manifest path relative to a configured
 mirror; `{type: "github", repository, tag, asset}` names an immutable release asset.
-Mirror paths are `engine/<release hex>/release-manifest.json` and
-`base/<variant>/<base hex>/manifest.json`. GitHub assets use those same manifest
+New mirror paths are `engine/<YYYY-MM-DD>-<version>-<hash8>/release-manifest.json`
+and `base/<variant>/<YYYY-MM-DD>-py<python>-torch<torch>[-cu<nnn>]-<hash8>/manifest.json`.
+Legacy full-hash directory paths remain supported. GitHub assets use those same manifest
 basenames, never alias tags. Both stable and main name exact content digests,
 never a latest-release lookup. Location hints do not replace digest verification.
 A null signature is acceptable only for a Dinkster-operated mirror; signed
@@ -207,8 +208,9 @@ uv run --locked python -m scripts.build_environment_tools \
 `--interpreter` also accepts an HTTPS download URL; the complete size and hash
 are checked before extraction or execution. Obtain those values from the
 selected standalone interpreter's verified producer input, not a latest alias.
-The supervisor wheel is the same wheel passed to the engine release builder,
-not a separately resolved PyPI version. The command downloads only compatible
+The independent tools workflow builds the supervisor wheel at this package's
+own version, not an engine release version or a separately resolved PyPI version.
+The command downloads only compatible
 wheels whose filenames, versions, sizes and hashes occur in `uv.lock` and its
 supervisor/tools export. uv is pinned by the supervisor's `environment-tools`
 dependency group. Installation into the owned standalone tree is offline,
@@ -217,16 +219,28 @@ confirm that the supplied supervisor wheel and every installed dependency
 have a satisfied closure before packaging. No engine or torch is installed.
 
 The output is `dinkster-tools-<os>-<arch>.zip`, where os is `linux`, `windows`
-or `macos`, and arch is `x86_64` or `arm64`. stdout is its existing engine
+or `macos`, and arch is `x86_64` or `arm64`. stdout is the
 artifact row `{name,size,sha256}`; `SHA256SUMS` records the same archive hash.
-The release builder accepts the archive using its existing `--artifact` flag,
-which includes that row in `dinkster.engine/1`. Release publication owns calling
-the native builder and attaching all platform archives. There is no separate
-tools manifest or extra PyPI distribution. An unpublished local output is not
-a production download pin.
+`scripts/build_tools_release.py` finalizes all three native ZIPs into the
+hash-verified `dinkster.tools/1` manifest and complete `SHA256SUMS`.
+The `Supervisor tools publication` workflow runs when supervisor sources,
+native build/publication scripts or tools build inputs change. It publishes
+`tools/<date>-<public-supervisor-version>-<manifest-hash8>/`, `tools/index.json`
+and the corresponding `tools-<label>` GitHub prerelease, verifies both sources,
+then moves the main channel's `tools` pointer without changing its engine/base
+selection. An unpublished local output is not a production download pin.
 
-Desktop selects that exact basename from the hash-verified engine manifest,
-downloads it from the same release directory, verifies its full size/SHA256,
+`dinkster-env --root /absolute/tools-cache tools --channel main --mirror
+https://releases.dinkster.org --yes --json` acquires the channel's native ZIP
+using its tools manifest hash and archive size/hash, without acquiring engine
+or base payloads. Omit `--yes` to inspect the selection without creating a cache.
+Channels must supply an independent `tools` pointer for acquisition. A missing
+or invalid pointer fails without falling back to engine assets; engine
+releases do not carry native tools ZIPs.
+
+Desktop selects that exact basename from its pinned tools manifest or the
+channel's tools publication, downloads it from the selected release directory,
+verifies its full size/SHA256,
 and safely extracts it into a new owned directory. ZIP is only the bootstrap
 container: it needs no Python/zstandard decoder before the tools exist and
 does not change the producer's tar+zstd base contract. Internal interpreter
@@ -250,7 +264,8 @@ tools or release artifacts.
 --base-manifest BASE_MANIFEST --channel main --output-root MIRROR_DIRECTORY
 --minimum-desktop-version X.Y.Z` builds a local channel document. Repeat
 `--base-manifest` for every selected variant; `--channel stable` uses the same
-builder. It hashes the final release manifest bytes, retains its exact tag,
+builder. It hashes the final release manifest bytes, derives the labelled location
+for a new manifest or retains the embedded tag for a legacy manifest,
 verifies every listed local engine artifact, validates each unchanged base
 manifest and checks worker protocol and effective constraint compatibility.
 Only after all inputs pass does it atomically replace `channels/<name>.json`.
@@ -270,11 +285,14 @@ sha256, size)` downloads a known artifact from ordered local directories or
 HTTPS mirrors (HTTP is limited to loopback fixtures). Its digest argument is
 bare lowercase hexadecimal, not a `sha256:` identifier. Transfers hash bytes
 while streaming, retain interrupted `.part` files and validate exact HTTP
-range offsets on resume. A corrupt saved prefix retries once from zero;
-an ignored Range also restarts from zero. Final publication requires both
-the expected size and digest. Signed query redirects are allowed without
-logging their URLs; external non-TLS redirects and credential-bearing mirror
-URLs are rejected. Calls have a bounded per-socket network timeout.
+range offsets on resume. Remote size/digest failures share the three-attempt
+network retry budget: short bodies resume, full corrupt bodies restart from
+zero, and every failed attempt appears in terminal errors. Local mirrors do
+not use that retry loop. An ignored Range also restarts from zero. Final
+publication requires both the expected size and digest. Signed query redirects
+are allowed without logging their URLs; external non-TLS redirects and
+credential-bearing mirror URLs are rejected. Calls have a bounded per-socket
+network timeout.
 
 `environment_artifacts.discover(mirrors, channel)` reads bounded metadata
 without creating a project, cache or store. It verifies engine manifest bytes
@@ -287,11 +305,18 @@ corrupt metadata falls through to the next configured location.
 
 Under the caller's store writer lock, `acquire(catalog, variant, store)` fetches
 and verifies base parts, safely extracts a missing base, verifies its selected
-wheels and populates `wheels/<sha256 hex>/<filename>`. Engine-owned wheel and
-constraints artifacts are verified through the same downloader. Base-owned
+wheels and populates `wheels/<sha256 hex>/<filename>`. After wheel verification,
+it atomically retains the producer base document at `bases/<base hex>/manifest.json`
+if absent, preserving an existing document's custom provenance. Base identity
+remains the producer's canonical fields, independent of JSON formatting.
+Engine-owned wheel and constraints artifacts are verified through the same
+downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
 the generation. Effective constraints are stored under
-`engines/<release hex>/constraints-<variant>.txt`. A base without hosted parts
+`engines/<release hex>/constraints-<variant>.txt`. The original verified engine
+manifest bytes are atomically retained at `engines/<release hex>/release-manifest.json`,
+without reserialization or another metadata fetch. Missing or inconsistent
+catalog bytes refuse acquisition before cache creation. A base without hosted parts
 currently reports that manifest reconstruction is required; it never resolves
 or substitutes dependencies silently.
 
@@ -345,6 +370,22 @@ the target before activation. Catalogs enter the sealed file inventory even
 though their `__pycache__/dinkster-schema-catalog` location is excluded from
 source artifact identities. Additional `prepare_packs` staging runs before sealing.
 
+For a custom base, the target interpreter can run that same source command with
+`--prepare-locks ABS --variant NAME` to prepare standard dependency locks in a
+new caller-owned scratch directory. It verifies the selected lock's exact
+archives and manifest claims, then resolves their declared requirements against
+the unsealed target's `constraints.txt`, using repeated `--index` and
+`--find-links` inputs and optional `--accelerator`. JSON adds `locks`, the output
+paths. This mode does not admit sources, change the source lock or seal the
+generation. The caller retains the scratch directory through provisioning and
+removes it afterward; no custom lock schema or store path is introduced.
+`environment_custom.prepare_custom_pack_locks` invokes this mode in the acquired
+target interpreter with cached constraint wheels, the custom extras index and
+PyPI fallback. The engine's accelerator selection honors `DINKSTER_ACCELERATOR`
+before host detection when including pack extras. It returns scratch lock paths
+only; the existing generation builder still owns preflight, provisioning, source
+admission and sealing.
+
 `environment_archives.extract_base(parts, destination, platform=..., executable=...,
 expected_parts=...)` verifies every ordered part's size and SHA-256 before streaming
 one zstd decoder into tar extraction with the data filter. The caller supplies the
@@ -368,8 +409,8 @@ verification or extraction removes staging trees.
 generation; `update` plans the configured channel's next generation. Both require
 `--yes` or terminal confirmation before creating project/store state or acquiring
 payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
-write a journal before registration/acquisition, sync offline, check the candidate
-engine's health, publish `current`, then stop the old engine. Update preserves
+acquire and preflight target inputs before journaling and registration, sync
+offline, check the candidate engine's health, publish `current`, then stop the old engine. Update preserves
 existing engine bindings; setup accepts `--engine`, `--port` and repeatable `--gpu`.
 The setup confirmation plan includes that binding name, loopback port and ordered
 `CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
@@ -384,31 +425,64 @@ commands do not acquire these options.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 
+`environment_generations.prepare_engine_interpreter` prepares a new,
+caller-owned directory from an acquired base and effective hashed constraints.
+It returns the target Python after the same offline sync used by generation
+construction. The caller holds the store writer lock and owns directory cleanup,
+including failures. This operation does not acquire inputs, prepare packs or
+write project, journal or generation metadata. Generation construction separately
+retains base provenance, prepares packs and seals the inventory.
+
+Generation construction copies a cached `engines/<release hex>/release-manifest.json`
+byte-for-byte into `engine-manifest.json` before pack preparation and inventory.
+The retained bytes must hash to the selected engine release. A missing legacy
+cache is tolerated; present but unreadable or corrupt content refuses the build
+and removes the incomplete target.
+
 Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
 and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the
-target interpreter. Without those overrides, a selected release carrying
-`official-packs.lock` supplies its source inputs automatically. The client downloads
-that lock and the release's ZIP payloads with the manifest's SHA256/size checks,
-then caches each ZIP as `engines/<release-id>/artifacts/<blake3-hex>.zip`.
-It does not parse the registry lock or unpack sources; target-interpreter admission
-still verifies identity and claims before sealing. A missing admission command
-refuses the generation rather than omitting sources. Without explicit `--pack-lock`
-inputs, the client acquires release artifacts named
-`<pack>-<public-version>-<variant>.pack-lock.json` for its selected variant with
-manifest SHA256/size verification. It stores original bytes under
-`engines/<release-id>/` and passes their paths to the existing provisioner.
-Explicit lock inputs replace this bundled selection; no supervisor dependency
-parser or resolver is involved.
-Update plans with registered workflows or explicit additions call the active generation's
-`dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
-inputs take precedence; otherwise selected-release sources must already exist in
-the cache with verified SHA256/size and BLAKE3 archive names. Planning never
-downloads or repairs source payloads. Pack and asset actions appear in the existing
-plan strings; unavailable saved versions refuse planning. The core adapter retains
-ownership of requirement derivation. SQLite read-only planning can touch WAL
-coordination files without changing logical records or project content.
-On confirmation, the target interpreter consumes the approved plan, checks its
+target interpreter. Without source overrides, confirmed published operations
+prepare a temporary target interpreter from the acquired constraints under the
+store lock, before allocating a generation or opening its journal. Isolated
+`-I -B -m dinkster.manager` commands resolve fresh registry defaults or re-resolve
+the installed official source set, and acquire exact-base published dependency
+locks. The supervisor checks the target version, returned paths and diagnostics;
+the target engine owns source/lock parsing and verification. Temporary inputs
+survive candidate construction and are removed on success or failure.
+
+Fresh setup reports unavailable defaults as `unavailablePacks` and on stderr;
+an offline registry can produce a healthy empty generation. Update refuses a
+missing compatible selection before journal/project mutation, retains other
+source provenance and verifies reconstructed non-registry source bytes.
+Explicit dependency locks replace automatic registry lock acquisition. With an
+explicit source catalog but no dependency locks, legacy release-carried locks
+remain usable. No supervisor dependency parser or resolver is involved.
+
+`prepare_registry_inputs` accepts an optional `prepare_locks` callback after
+source selection, before published lock retrieval. It receives the acquired
+scratch engine directory with effective constraints, selected catalog lock,
+exact archive cache and new output directory. A custom-base caller can resolve
+standard locks from those inputs without a published base binding or a second
+source selector. Returning an empty tuple still replaces published retrieval;
+raising refuses preparation and removes the scratch tree. Returned files must
+belong to the output directory. Explicit `pack_locks` take precedence. The optional
+`preflight(engine, catalog, artifacts)` runs after source selection and before
+either automatic or explicit dependency locks are used.
+
+Update plans with registered workflows or explicit additions use the active
+generation's requirements reader to snapshot requirements and input revisions.
+Unconfirmed plans explicitly report source feasibility as pending; they never
+download payloads or install a planning interpreter. SQLite read-only planning can
+touch WAL coordination files without changing logical records or project content.
+After confirmation, the acquired target interpreter runs
+`dinkster.workflow_requirements project-plan` against the sole selected registry
+catalog and archive cache, before a generation or journal exists. Explicit
+catalog/cache inputs take precedence and use the same target preparation. Changed
+requirements/revisions and unavailable saved versions refuse admission. Pack and
+asset actions appear in the existing plan strings. Catalog digests and input
+revisions are checked again before journaling and application.
+The sealed target interpreter then consumes the approved plan, checks its
 admitted pack identities and acquires only approved assets. Workflow input
 revisions are checked before publication and after candidate health checks;
 activation also requires an empty target requirement plan. Failure retains the

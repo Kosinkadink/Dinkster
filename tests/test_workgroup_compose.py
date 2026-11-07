@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import FrozenInstanceError, replace
@@ -45,6 +44,8 @@ from dinkster_workers.workgroup_session import (
     WorkGroupTransportClosed,
 )
 from test_isolated import TESTS_DIR, core_registry, write_workgroup_manifest
+
+from tests.async_scenarios import run_scenario
 
 
 class Boundary:
@@ -340,4 +341,4 @@ def test_launched_isolated_and_group_member_compose_real_endpoints(tmp_path: Pat
             await group.close()
             await isolated.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

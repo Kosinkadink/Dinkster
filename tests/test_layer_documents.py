@@ -71,6 +71,8 @@ from dinkster_workers.boundary import ValueCodec, decode_result_outputs, encode_
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
 
+from tests.async_scenarios import run_scenario
+
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 
@@ -142,7 +144,7 @@ def execute_graph_node(node: type[Node], inputs: dict[str, object]) -> dict[str,
         result = await engine.run(graph, ["node"])
         return {name: value.resolve() for name, value in result.outputs["node"].items()}
 
-    return asyncio.run(run())
+    return run_scenario(run())
 
 
 def test_split_layer_integer_regions_survive_the_worker_boundary() -> None:
@@ -665,7 +667,7 @@ def test_layer_creation_normalizes_premultiplied_pixels_before_png_storage() -> 
         assert isinstance(value, ImageDocument)
         return value
 
-    layered = asyncio.run(run())
+    layered = run_scenario(run())
     assert isinstance(expected, ImageDocument)
     assert layered.data == expected.data
     record = layered.to_record()
@@ -2383,4 +2385,4 @@ def test_isolated_worker_shm_flatten_matches_in_process(
         finally:
             await group.close()
 
-    asyncio.run(run())
+    run_scenario(run())

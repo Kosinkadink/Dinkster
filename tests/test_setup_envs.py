@@ -8,11 +8,122 @@ import shlex
 import shutil
 import subprocess
 import sys
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
 from scripts import setup_envs
+
+
+@pytest.mark.parametrize("publication", ["legacy", "labelled", "both", "wrong-manifest"])
+def test_setup_uses_pinned_full_id_and_same_archive_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publication: str
+) -> None:
+    from test_environment_artifacts import _mirror
+
+    from scripts import build_release
+
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    (root / "uv.lock").write_text("package=[]\n")
+    mirror = tmp_path / "mirror"
+    base, _, _ = _mirror(mirror)
+    identity = base["id"][7:]
+    legacy = mirror / "base" / base["variant"] / identity
+    label = f"2026-10-31-py3.14.10-torch1.0-{identity[:8]}"
+    if publication != "legacy":
+        base["label"] = label
+        if publication == "wrong-manifest":
+            base["python"] = "3.14.9"
+        published = legacy.with_name(label)
+        if publication == "both":
+            shutil.copytree(legacy, published)
+            (legacy / "manifest.json").write_text("not valid JSON")
+        else:
+            legacy.rename(published)
+        (published / "manifest.json").write_text(json.dumps(base))
+        index = [
+            {"id": "sha256:" + "f" * 64, "path": "base/fixture-cpu/newer-unpinned"},
+            {"id": base["id"], "label": label, "path": f"base/{base['variant']}/{label}"},
+        ]
+        if publication == "both":
+            index.insert(0, {"id": base["id"], "path": f"base/{base['variant']}/{identity}"})
+        (published.parent / "index.json").write_text(json.dumps(index))
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: identity}))
+    monkeypatch.setenv("DINKSTER_EVIDENCE_ROOT", str(tmp_path / "no-evidence"))
+    monkeypatch.setattr(build_release, "workspace_projects", lambda *args: {})
+
+    def command(*args, **kwargs):
+        if args[:2] == ("uv", "export"):
+            (root / ".run/workspace-requirements.txt").write_text("")
+
+    monkeypatch.setattr(setup_envs, "command", command)
+    if publication == "wrong-manifest":
+        with pytest.raises(ValueError, match="base manifest digest mismatch"):
+            setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+        assert not (root / ".run").exists()
+        return
+    result = setup_envs.setup(root, mirror=str(mirror), variant=base["variant"])
+    assert result == root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    receipt = json.loads((root / ".run/environment-base.json").read_text())
+    assert receipt["id"] == base["id"]
+    store = root / ".run/environment-store"
+    assert (store / "bases" / identity / base["interpreter"]["executable"]).is_file()
+    for wheel in base["wheels"]:
+        assert (store / "wheels" / wheel["sha256"] / wheel["filename"]).read_bytes() == (
+            store / "bases" / identity / "wheels" / wheel["filename"]
+        ).read_bytes()
+    assert {path.name for path in (store / "bases").iterdir()} == {identity}
+    if publication in {"labelled", "both"}:
+        assert all(label not in path.parts for path in store.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    "failure", ["forbidden", "transport", "corrupt", "wrong-id", "path", "variant", "duplicate"]
+)
+def test_setup_index_cannot_bypass_source_errors_or_full_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from dinkster_supervisor import environment_downloads
+
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: "x86_64")
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    identity = "a" * 64
+    (root / "scripts/base_bundles.json").write_text(json.dumps({"linux-cpu": identity}))
+    label = "2026-10-31-py3.14.10-torch2.14.1-aaaaaaaa"
+    row = {"id": "sha256:" + identity, "label": label, "path": f"base/linux-cpu/{label}"}
+    if failure == "wrong-id":
+        row["id"] = "sha256:" + "b" * 64
+    elif failure == "path":
+        row["path"] = f"base/linux-cpu/../{label}"
+    elif failure == "variant":
+        row["path"] = f"base/win-cpu/{label}"
+    index_reads = []
+
+    def metadata(mirror, relative):
+        if relative == "base/linux-cpu/index.json":
+            index_reads.append(relative)
+            if failure == "forbidden":
+                raise HTTPError("https://example.invalid", 403, "forbidden", Message(), None)
+            if failure == "transport":
+                raise TimeoutError("metadata transport failed")
+            if failure == "corrupt":
+                return b"not valid JSON"
+            return json.dumps([row, row] if failure == "duplicate" else [row]).encode()
+        if failure == "wrong-id":
+            assert relative == f"base/linux-cpu/{identity}/manifest.json"
+            raise HTTPError("https://example.invalid", 404, "missing", Message(), None)
+        pytest.fail(f"unsafe/unpinned fetch: {relative}")
+
+    monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
+    with pytest.raises((ValueError, OSError)):
+        setup_envs.setup(root, mirror="https://example.invalid")
+    assert len(index_reads) == 1
+    assert not (root / ".run").exists()
 
 
 @pytest.fixture
@@ -127,6 +238,41 @@ def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Pa
     assert json.loads((root / ".run/environment-base.json").read_text())["id"] == base["id"]
 
 
+@pytest.mark.parametrize(
+    "host,arch,variant",
+    [
+        ("Linux", "x86_64", "linux-cpu"),
+        ("Windows", "AMD64", "win-cpu"),
+        ("Darwin", "arm64", "mac-arm64"),
+    ],
+)
+def test_setup_reads_only_host_manifests(tmp_path, monkeypatch, host, arch, variant):
+    from dinkster_supervisor import environment_artifacts
+    from test_environment_artifacts import _mirror
+
+    mirror, root = tmp_path / "mirror", tmp_path / "checkout"
+    target = {
+        "Linux": ("linux", "x86_64"),
+        "Windows": ("windows", "x86_64"),
+        "Darwin": ("macos", "arm64"),
+    }[host]
+    base, _, _ = _mirror(mirror, variant=variant, target=target)
+    (root / "scripts").mkdir(parents=True)
+    selections = {name: "0" * 64 for name in ("linux-cpu", "win-cpu", "mac-arm64")}
+    selections[variant] = base["id"][7:]
+    (root / "scripts/base_bundles.json").write_text(json.dumps(selections))
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: host)
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: arch)
+
+    def stop_after_selection(selected, mirrors, store):
+        assert selected["id"] == base["id"]
+        raise RuntimeError("selected host base acquired")
+
+    monkeypatch.setattr(environment_artifacts, "acquire_base", stop_after_selection)
+    with pytest.raises(RuntimeError, match="selected host base acquired"):
+        setup_envs.setup(root, mirror=str(mirror), variant=variant)
+
+
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
 def test_apple_silicon_selects_mac_bundle_without_cuda_probe(bases, monkeypatch, arch):
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
@@ -150,6 +296,9 @@ def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
     script.write_text(
         "import json, os, sys\n"
         "from pathlib import Path\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('uv 0.13.6 (fixture)')\n"
+        "    sys.exit(0)\n"
         "Path(os.environ['SETUP_PROBE']).write_text(json.dumps({\n"
         "'project': os.environ.get('UV_PROJECT'),\n"
         "'environment': os.environ.get('UV_PROJECT_ENVIRONMENT'),\n"
@@ -188,6 +337,61 @@ def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):
     assert not (tmp_path / "wrong-environment").exists()
 
 
+@pytest.mark.parametrize(
+    "version,accepted",
+    [
+        ("uv 0.12.5 (9d8136592 2026-09-01)\n", False),
+        ("uv 0.13.5\n", False),
+        ("uv 0.13.6 (abc123456 2026-10-27)\n", True),
+        ("uv 0.13.6\r\n", True),
+        ("uv 0.14.0 (Homebrew)\n", True),
+        ("uv 0.13.60\n", True),
+    ],
+)
+def test_windows_uv_minimum_names_required_interpreter(monkeypatch, version, accepted):
+    from scripts.prepare_windows_python import require_uv_version
+
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: version)
+    if accepted:
+        require_uv_version()
+    else:
+        with pytest.raises(RuntimeError) as error:
+            require_uv_version()
+        assert version.strip() in str(error.value)
+        assert "uv >= 0.13.6" in str(error.value)
+        assert "CPython 3.14.10" in str(error.value)
+
+
+@pytest.mark.parametrize("entry", ["setup", "bootstrapped-setup", "prepare"])
+def test_old_uv_refuses_before_setup_side_effects(tmp_path, monkeypatch, entry):
+    from scripts import prepare_windows_python
+
+    calls = []
+
+    def uv_version(arguments, **kwargs):
+        calls.append(arguments)
+        assert arguments == ["uv", "--version"]
+        return "uv 0.12.5 (fixture)\n"
+
+    monkeypatch.setattr(subprocess, "check_output", uv_version)
+    monkeypatch.setattr(setup_envs, "ROOT", tmp_path)
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    monkeypatch.setattr(sys, "argv", ["setup_envs.py"])
+    monkeypatch.delenv("DINKSTER_SETUP_BOOTSTRAPPED", raising=False)
+    if entry == "bootstrapped-setup":
+        monkeypatch.setenv("DINKSTER_SETUP_BOOTSTRAPPED", "1")
+    with pytest.raises(RuntimeError, match="CPython 3.14.10"):
+        if entry == "prepare":
+            prepare_windows_python.prepare(tmp_path / "python", "uv")
+        else:
+            setup_envs.main()
+    assert calls == [["uv", "--version"]]
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows runtime admission")
 @pytest.mark.parametrize("matching_base", [False, True])
 def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, matching_base):
@@ -224,7 +428,7 @@ def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, mat
     (root / ".run").mkdir()
     receipt = root / ".run/environment-base.json"
     receipt.write_text(json.dumps(base))
-    monkeypatch.setattr(environment_downloads, "read_metadata", lambda *args: b"")
+    monkeypatch.setattr(environment_downloads, "read_metadata", lambda *args: b"[]")
     monkeypatch.setattr(environment_artifacts, "validate_manifest", lambda *args: base)
     monkeypatch.setattr(environment_artifacts, "acquire_base", lambda *args: base_root)
     monkeypatch.setattr(setup_envs, "select_base", lambda *args: base)

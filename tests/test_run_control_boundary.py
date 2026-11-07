@@ -19,6 +19,7 @@ from dinkster_schema import RunExecutionContext, build_schemas, report_progress
 from dinkster_values import TypeRegistry, Value, ValueMeta, is_absent, register_core_types
 from dinkster_workers import IsolatedWorker, RemoteWorker
 
+from tests.async_scenarios import run_scenario
 from tests.test_run_control import NODES, Publisher, Waiter
 
 
@@ -190,4 +191,4 @@ def test_control_round_trip_releases_admission_and_updates_only_its_run(
         assert retained_source is not None
         assert retained_source.read_bytes() == source_data
 
-    asyncio.run(scenario())
+    run_scenario(scenario())

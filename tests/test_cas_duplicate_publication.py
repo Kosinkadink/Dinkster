@@ -11,6 +11,8 @@ from dinkster_caches import BudgetedDiskCAS, DiskCAS
 from dinkster_workers import blobs as blobs_module
 from dinkster_workers.blobs import BlobTransfer
 
+from tests.async_scenarios import run_scenario
+
 
 def test_duplicate_path_transfers_publish_with_bounded_hashing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -91,7 +93,7 @@ def test_duplicate_path_transfers_publish_with_bounded_hashing(
             for transfer in [*senders, *receivers]:
                 transfer.close()
 
-    asyncio.run(scenario())
+    run_scenario(scenario())
 
 
 def test_publication_fallback_and_existing_put_hash_without_read_bytes(
