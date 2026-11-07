@@ -105,12 +105,20 @@ def run_selected_tests(
         tracked = subprocess.check_output(
             ["git", "-C", str(root), "ls-files", "-z"], text=True
         ).split("\0")
-        # Tests retain their checkout-relative manifests and helpers, but no
-        # official implementation or manifest is copied from the engine tree.
+        # Retain tests and distribution metadata for multi-pack projects, but
+        # never copy official implementations or manifests from the engine tree.
         for name in filter(None, tracked):
             relative = Path(name)
             official = len(relative.parts) > 1 and relative.parts[1] in distributions
-            if official and "tests" not in relative.parts:
+            if (
+                official
+                and "tests" not in relative.parts
+                and not (
+                    len(relative.parts) == 3
+                    and relative.name == "pyproject.toml"
+                    and not (root / relative.parent / "dinkster-pack.toml").is_file()
+                )
+            ):
                 continue
             source = root / relative
             destination = checkout / relative
