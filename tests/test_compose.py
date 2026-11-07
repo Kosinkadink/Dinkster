@@ -1699,7 +1699,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:f5a5119c694602068645d04ee4887c86af68651b216e549a2eda948abd0aeaf1")
+    assert expected == ("blake3:c9bc906f97e7ea168dc04dcf10a51d7aa33523ce8a0b3e204b2df846603aedc9")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
