@@ -813,11 +813,26 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
     monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
     fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
+    second = tmp_path / "other-project"
     setup = fixture["commands"]["setup"]
     code, installed = _run(root, *setup[setup.index("setup") : -1])
     assert code == 0, installed
     try:
+        second_setup = setup[setup.index("setup") : -1]
+        second_setup[second_setup.index("--port") + 1] = str(free_port())
+        code, other_installed = _run(second, *second_setup)
+        assert code == 0 and other_installed["current"] == 1, other_installed
+        assert Path((second / "store").read_text().strip()) == store
+        other_engine = _run(second, "status")[1]["engines"][0]
+        assert other_engine["state"] == "ready", other_engine
+        other_history = history(second)
         protected = {}
+        for path in (
+            second / "project.json",
+            second / "runtime/1/main.json",
+            *(second / "history").glob("*.json"),
+        ):
+            protected[path] = path.read_bytes()
         for name in ("workflows", "models", "outputs", "mounts"):
             directory = root / name
             directory.mkdir(exist_ok=True)
@@ -853,6 +868,10 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
             assert all(path.read_bytes() == data for path, data in preserved.items())
             assert len(history(root)) == number
             assert all(path.read_bytes() == data for path, data in protected.items())
+            assert history(second) == other_history
+            assert _run(second, "status")[1]["engines"] == [other_engine]
+            with urlopen(f"{other_engine['url']}/api/health", timeout=5) as response:
+                assert json.load(response) == {"ok": True}
         entries = history(root)
         preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         executable_release(mirror, base, "5.0", 113)
@@ -883,8 +902,26 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
             == b"41"
         )
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
+        assert history(second) == other_history
+        assert _run(second, "status")[1]["engines"] == [other_engine]
+        assert sorted(path.name for path in (second / "generations").iterdir()) == ["1"]
+        with urlopen(f"{other_engine['url']}/api/health", timeout=5) as response:
+            assert json.load(response) == {"ok": True}
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(second / "generations/1")),
+                    "-B",
+                    "-c",
+                    "import fixture_engine; print(fixture_engine.VALUE)",
+                ]
+            ).strip()
+            == b"41"
+        )
     finally:
         assert _run(root, "stop", "--yes")[0] == 0
+        if (second / "current").exists():
+            assert _run(second, "stop", "--yes")[0] == 0
 
 
 def test_pending_launch_without_runtime_binding_keeps_its_generation(tmp_path: Path):
