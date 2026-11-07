@@ -1054,19 +1054,22 @@ def test_inherited_stopped_assignment_does_not_pin_an_unused_generation(
         stop_engine(tmp_path, "parked", generation=4)
 
 
+@pytest.mark.parametrize("command", ["gc", "cleanup"])
 def test_collection_defers_while_an_old_generation_is_being_acquired(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, command: str
 ):
     from dinkster_supervisor import environment_runtime as runtime
-    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+    from dinkster_supervisor.environment_state import EnvironmentError
 
-    for number in (1, 2, 3):
-        _generation(tmp_path, number)
-    python = interpreter(tmp_path / "generations/1")
-    python.parent.mkdir(exist_ok=True)
-    python.write_bytes(b"unused fixture interpreter")
-    (tmp_path / "current").write_text("3\n")
-    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    tmp_path = cleanup_project
+    if command == "gc":
+        (tmp_path / "store").unlink()
+    protected = {
+        p: p.read_bytes()
+        for name in ("generations", "history", "workflows", "models", "outputs", "mounts", "cache")
+        for p in (tmp_path / name).rglob("*")
+        if p.is_file()
+    }
     entered, release = Event(), Event()
     prepare = runtime.prepare_process
     launch = subprocess.Popen
@@ -1084,38 +1087,46 @@ def test_collection_defers_while_an_old_generation_is_being_acquired(
     monkeypatch.setattr(runtime, "prepare_process", acquiring)
     monkeypatch.setattr(runtime.subprocess, "Popen", cancel_launch)
     with ThreadPoolExecutor(max_workers=1) as threads:
-        pending = threads.submit(runtime.start_engine, tmp_path, 1, "old", 3639)
+        pending = threads.submit(runtime.start_engine, tmp_path, 2, "old", 3639)
         try:
             assert entered.wait(20), "engine did not reach acquisition"
-            code, refused = _run(tmp_path, "gc", "--yes")
-            assert code == 1 and "another environment writer holds" in refused["error"], refused
-            assert (tmp_path / "generations/1/generation.json").is_file()
+            code, refused = _run(tmp_path, command, "--yes")
+            if command == "cleanup":
+                assert code == 0 and refused["status"] == "deferred", refused
+                assert (
+                    "another environment writer holds" in refused["cleanupAttempt"]["warnings"][0]
+                )
+            else:
+                assert code == 1 and "another environment writer holds" in refused["error"], refused
+            assert {p: p.read_bytes() for p in protected} == protected
             assert not list((tmp_path / ".garbage").glob("*"))
         finally:
             release.set()
         with pytest.raises(OSError, match="fixture did not launch"):
             pending.result(timeout=20)
-    code, applied = _run(tmp_path, "gc", "--yes")
-    assert code == 0 and applied["status"] == "applied", applied
-    assert not (tmp_path / "generations/1").exists()
-    assert (tmp_path / "generations/2/generation.json").is_file()
-    assert (tmp_path / "generations/3/generation.json").is_file()
+    code, applied = _run(tmp_path, command, "--yes")
+    assert code == 0 and applied["status"] == ("complete" if command == "cleanup" else "applied"), (
+        applied
+    )
+    assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["1", "3"]
     with pytest.raises(EnvironmentError, match="cannot read generation.json"):
-        runtime.start_engine(tmp_path, 1, "old", 3639)
+        runtime.start_engine(tmp_path, 2, "old", 3639)
 
 
+@pytest.mark.parametrize("cleanup_project", [True], indirect=True)
+@pytest.mark.parametrize("command", ["gc", "cleanup"])
+@pytest.mark.parametrize("operation", ["update", "restore"])
 def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
-    tmp_path: Path,
+    cleanup_project: Path, command: str, operation: str
 ):
     from dinkster_supervisor.environment_collection import collect_generations, collection_plan
     from dinkster_supervisor.environment_state import EnvironmentError, read_current, writer_lock
     from dinkster_supervisor.environment_transactions import activate, begin_activation
     from test_environment_transactions import _target
 
-    for number in (1, 2, 3):
-        _target(tmp_path, number)
-    (tmp_path / "current").write_text("3\n")
-    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
+    tmp_path = cleanup_project
+    if command == "gc":
+        (tmp_path / "store").unlink()
     approved = collection_plan(tmp_path)
     entered, release = Event(), Event()
 
@@ -1125,7 +1136,9 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
 
     def activation():
         with writer_lock(tmp_path):
-            path = begin_activation(tmp_path, 4, "update")
+            path = begin_activation(
+                tmp_path, 4, operation, restored_from=1 if operation == "restore" else None
+            )
             _target(tmp_path, 4)
             activate(tmp_path, path, revalidate=revalidate)
 
@@ -1135,11 +1148,24 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
             assert entered.wait(20), "activation did not reach validation"
             lock = tmp_path / ".lock"
             assert lock.is_file()
-            before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and p != lock}
-            code, refused = _run(tmp_path, "gc", "--yes")
-            assert code == 1 and "another environment writer holds" in refused["error"], refused
+            maintenance = tmp_path / "runtime/maintenance"
+            before = {
+                p: p.read_bytes()
+                for p in tmp_path.rglob("*")
+                if p.is_file() and p != lock and not p.is_relative_to(maintenance)
+            }
+            code, refused = _run(tmp_path, command, "--yes")
+            if command == "cleanup":
+                assert code == 0 and refused["status"] == "deferred", refused
+                assert (
+                    "another environment writer holds" in refused["cleanupAttempt"]["warnings"][0]
+                )
+            else:
+                assert code == 1 and "another environment writer holds" in refused["error"], refused
             assert {
-                p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and p != lock
+                p: p.read_bytes()
+                for p in tmp_path.rglob("*")
+                if p.is_file() and p != lock and not p.is_relative_to(maintenance)
             } == before
             assert lock.is_file()
             assert not list((tmp_path / ".garbage").glob("*"))
@@ -1150,29 +1176,30 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
     with writer_lock(tmp_path):
         with pytest.raises(EnvironmentError, match="collection changed after planning"):
             collect_generations(tmp_path, approved)
-    assert all((tmp_path / "generations" / str(number)).is_dir() for number in (1, 2, 3, 4))
-    code, collected = _run(tmp_path, "gc", "--yes")
-    assert code == 0 and collected["status"] == "applied", collected
+    assert all((tmp_path / "generations" / str(number)).is_dir() for number in (1, 2, 3, 4, 7))
+    code, collected = _run(tmp_path, command, "--yes")
+    assert code == 0 and collected["status"] == (
+        "complete" if command == "cleanup" else "applied"
+    ), collected
     assert sorted(p.name for p in (tmp_path / "generations").iterdir()) == ["3", "4"]
 
 
+@pytest.mark.parametrize("cleanup_project", [True], indirect=True)
+@pytest.mark.parametrize("command", ["gc", "cleanup"])
 def test_collection_defers_during_move_without_touching_source_generations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, command: str
 ):
     from dinkster_supervisor import environment_move as move
     from dinkster_supervisor.environment_stores import register_project
-    from test_environment_transactions import _target
 
+    root = cleanup_project
     for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(name, str(tmp_path / "user-data"))
-    root, store, destination = (tmp_path / name for name in ("project", "store", "destination"))
-    root.mkdir()
+        monkeypatch.setenv(name, str(root.parent / (root.name + "-user-data")))
+    store, destination = (
+        root.parent / (root.name + suffix) for suffix in ("-store", "-destination")
+    )
     store.mkdir()
-    for number in (1, 2, 3):
-        _target(root, number)
-    (root / "current").write_text("3\n")
     (root / "store").write_text(str(store) + "\n")
-    Journal("update", 2, 3, "complete").write(root / "journal/100.json")
     register_project(root, store)
     entered, release = Event(), Event()
 
@@ -1189,11 +1216,24 @@ def test_collection_defers_during_move_without_touching_source_generations(
             assert entered.wait(20), "move did not reach destination preparation"
             lock = root / ".lock"
             assert lock.is_file()
-            before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file() and p != lock}
-            code, refused = _run(root, "gc", "--yes")
-            assert code == 1 and "another environment writer holds" in refused["error"], refused
+            maintenance = root / "runtime/maintenance"
+            before = {
+                p: p.read_bytes()
+                for p in root.rglob("*")
+                if p.is_file() and p != lock and not p.is_relative_to(maintenance)
+            }
+            code, refused = _run(root, command, "--yes")
+            if command == "cleanup":
+                assert code == 0 and refused["status"] == "deferred", refused
+                assert (
+                    "another environment writer holds" in refused["cleanupAttempt"]["warnings"][0]
+                )
+            else:
+                assert code == 1 and "another environment writer holds" in refused["error"], refused
             assert {
-                p: p.read_bytes() for p in root.rglob("*") if p.is_file() and p != lock
+                p: p.read_bytes()
+                for p in root.rglob("*")
+                if p.is_file() and p != lock and not p.is_relative_to(maintenance)
             } == before
             assert lock.is_file()
             assert not list((root / ".garbage").glob("*"))
@@ -1202,9 +1242,16 @@ def test_collection_defers_during_move_without_touching_source_generations(
         with pytest.raises(OSError, match="interrupted destination preparation"):
             pending.result(timeout=20)
     assert (root / "current").read_text() == "3\n"
-    assert all((root / "generations" / str(number)).is_dir() for number in (1, 2, 3))
+    assert all((root / "generations" / str(number)).is_dir() for number in (1, 2, 3, 7))
     assert not destination.exists()
     assert all(not Journal.read(path).incomplete for path in (root / "journal").glob("*.json"))
+    if command == "gc":
+        (root / "store").unlink()
+    code, collected = _run(root, command, "--yes")
+    assert code == 0 and collected["status"] == (
+        "complete" if command == "cleanup" else "applied"
+    ), collected
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
 
 
 @pytest.mark.parametrize(
