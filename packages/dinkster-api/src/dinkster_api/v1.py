@@ -505,10 +505,10 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import types
 
         value = getattr(types, name)
-    elif name == "initialize_inference_process":
-        from dinkster_inference_wire.process import initialize_inference_process
+    elif name in {"inference_nodes", "initialize_inference_process"}:
+        from dinkster_inference_wire import process
 
-        value = initialize_inference_process
+        value = getattr(process, name)
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     globals()[name] = value
@@ -534,6 +534,7 @@ def __dir__() -> list[str]:
             "materialize_splat",
             "materialize_vision_packet",
             "materialize_voxel",
+            "inference_nodes",
             "initialize_inference_process",
         }
     )
@@ -563,7 +564,7 @@ if TYPE_CHECKING:
     )
     from dinkster_image_document.interchange import export_ora, export_psd, load_document
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
-    from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.process import inference_nodes, initialize_inference_process
     from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
@@ -615,6 +616,7 @@ __all__ = [
     "ExpansionOutput",
     "LatentStream",
     "MultiStreamLatent",
+    "inference_nodes",
     "initialize_inference_process",
     "prepare_sampling_model",
     "materialize_audio",
