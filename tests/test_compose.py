@@ -1265,44 +1265,38 @@ def test_default_pack_refuses_version_outside_suite_lock(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = Path(__file__).parent.parent / "packages/dinkster-nodes-foundation"
+    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
     copied = tmp_path / "source"
     copied.mkdir()
     manifest = copied / "dinkster-pack.toml"
     manifest.write_text(
         (source / "dinkster-pack.toml")
         .read_text()
-        .replace('version = "0.0.2"', 'version = "9.0.0"')
+        .replace('version = "0.0.1"', 'version = "9.0.0"')
     )
-    shutil.copytree(
-        source / "src/dinkster_nodes_foundation", copied / "src/dinkster_nodes_foundation"
-    )
+    shutil.copytree(source / "src/dinkster_nodes_text", copied / "src/dinkster_nodes_text")
     monkeypatch.setattr(
         compose.importlib.util,
         "find_spec",
-        lambda _name: SimpleNamespace(
-            origin=str(copied / "src/dinkster_nodes_foundation/__init__.py")
-        ),
+        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_nodes_text/__init__.py")),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.2"):
-        default_pack_spec("dinkster-nodes-foundation")
+    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.1"):
+        default_pack_spec("dinkster-text")
 
 
 @pytest.mark.parametrize("mismatch", [None, "pack", "distribution", "distribution-name"])
-def test_shared_distribution_pack_uses_manifest_version(
+def test_pack_manifest_version_and_distribution_provenance_are_independent(
     monkeypatch: pytest.MonkeyPatch, mismatch: str | None
 ) -> None:
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    pack = lock.get("dinkster-vision-birefnet")
+    pack = lock.get("dinkster-text")
     assert pack is not None
-    assert pack.version == "0.0.4"
-    assert pack.artifact_digest == (
-        "blake3:8d786a9df8cd6dc959358ca39b48bea2e6b5c2d8f3d02fd0fa118a9e493e518f"
-    )
+    assert pack.version == "0.0.1"
+    assert pack.source == "python:dinkster-nodes-text==0.0.2"
     if mismatch == "pack":
         pack = replace(pack, version="0.0.2")
     elif mismatch == "distribution-name":
@@ -1315,23 +1309,19 @@ def test_shared_distribution_pack_uses_manifest_version(
 
     def distribution(name: str):
         installed = real_distribution(name)
-        if name == "dinkster-nodes-vision" and mismatch == "distribution":
+        if name == "dinkster-nodes-text" and mismatch == "distribution":
             return SimpleNamespace(version="9.0.0", locate_file=installed.locate_file)
         return installed
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
     if mismatch is not None:
-        with pytest.raises(CompositionError, match="default suite locks dinkster-vision-birefnet"):
-            default_pack_spec("dinkster-vision-birefnet")
+        with pytest.raises(CompositionError, match="default suite locks dinkster-text"):
+            default_pack_spec("dinkster-text")
         return
-    spec = default_pack_spec("dinkster-vision-birefnet")
-    sibling = default_pack_spec("dinkster-vision-hed")
+    spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert sibling.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.4"
-    assert spec.packs[pack.pack].source == "python:dinkster-nodes-vision==0.0.2"
-    assert sibling.packs["dinkster-vision-hed"].version == "0.0.3"
-    assert sibling.packs["dinkster-vision-hed"].source == "python:dinkster-nodes-vision==0.0.2"
+    assert spec.packs[pack.pack].version == "0.0.1"
+    assert spec.packs[pack.pack].source == "python:dinkster-nodes-text==0.0.2"
 
 
 def test_undeclared_pack_version_uses_distribution_version(
@@ -1339,12 +1329,13 @@ def test_undeclared_pack_version_uses_distribution_version(
 ) -> None:
     from dinkster import compose
 
-    pack_id = "dinkster-nodes-foundation"
+    pack_id = "dinkster-text"
+    distribution_id = "dinkster-nodes-text"
     lock = compose._default_pack_lock()
     changed = replace(
         lock,
         packs=tuple(
-            replace(row, version="2.3.4", source=f"python:{pack_id}==2.3.4")
+            replace(row, version="2.3.4", source=f"python:{distribution_id}==2.3.4")
             if row.pack == pack_id
             else row
             for row in lock.packs
@@ -1355,7 +1346,7 @@ def test_undeclared_pack_version_uses_distribution_version(
 
     def distribution(name: str):
         installed = real_distribution(name)
-        if name == pack_id:
+        if name == distribution_id:
             return SimpleNamespace(version="2.3.4", locate_file=installed.locate_file)
         return installed
 
@@ -1367,7 +1358,7 @@ def test_undeclared_pack_version_uses_distribution_version(
     spec = default_pack_spec(pack_id)
     assert spec.packs is not None
     assert spec.packs[pack_id].version == "2.3.4"
-    assert spec.packs[pack_id].source == f"python:{pack_id}==2.3.4"
+    assert spec.packs[pack_id].source == f"python:{distribution_id}==2.3.4"
 
 
 def test_default_pack_refuses_bytes_outside_suite_lock(
@@ -1376,25 +1367,15 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = Path(__file__).parent.parent / "packages/dinkster-nodes-foundation"
+    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
     copied = tmp_path / "source"
     copied.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", copied / "dinkster-pack.toml")
-    shutil.copytree(
-        source / "src/dinkster_nodes_foundation", copied / "src/dinkster_nodes_foundation"
-    )
-    module = copied / "src/dinkster_nodes_foundation/__init__.py"
+    shutil.copytree(source / "src/dinkster_nodes_text", copied / "src/dinkster_nodes_text")
+    module = copied / "src/dinkster_nodes_text/__init__.py"
     module.write_text(
         module.read_text(encoding="utf-8") + "\nLOCK_DRIFT = True\n",
         encoding="utf-8",
-    )
-    distribution = SimpleNamespace(
-        version="0.0.2",
-        locate_file=lambda _path: tmp_path / "missing/dinkster-pack.toml",
-    )
-
-    monkeypatch.setattr(
-        "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
     monkeypatch.setattr(
@@ -1402,8 +1383,8 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
         lambda _name: SimpleNamespace(origin=str(module)),
     )
 
-    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation artifact"):
-        default_pack_spec("dinkster-nodes-foundation")
+    with pytest.raises(CompositionError, match="locks dinkster-text artifact"):
+        default_pack_spec("dinkster-text")
 
 
 def test_default_suite_refuses_malformed_managed_lock(
@@ -1434,7 +1415,7 @@ def test_default_suite_refuses_malformed_managed_lock(
         (
             '{"format":"dinkster.lock/1","packs":[{'
             '"artifactDigest":"blake3:1111111111111111111111111111111111111111111111111111111111111111",'
-            '"claims":["dinkster"],"pack":"dinkster-nodes-generation","publisher":"other",'
+            '"claims":["dinkster-text"],"pack":"dinkster-text","publisher":"other",'
             '"source":"registry","version":"1.0.0"}]}',
             "contains non-Dinkster publishers",
         ),
