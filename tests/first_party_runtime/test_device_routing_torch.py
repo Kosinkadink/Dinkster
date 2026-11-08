@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,15 +22,17 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.device_routing import (
-    DEVICE_ROUTING_NODES,
+from dinkster_nodes_models import NODES
+from dinkster_nodes_models.device_routing import (
     MultiGPUWorkUnits,
     SelectCLIPDevice,
     SelectModelDevice,
     SelectVAEDevice,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
+
+DEVICE_ROUTING_NODES = (MultiGPUWorkUnits, SelectModelDevice, SelectCLIPDevice, SelectVAEDevice)
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
 _FLOAT32 = object()
@@ -122,12 +123,13 @@ class DeviceManagement:
         return Device("cpu")
 
 
-def test_schemas_are_torch_free_and_accept_portable_gpu_values() -> None:
+def test_pack_schemas_accept_portable_gpu_values() -> None:
+    assert set(DEVICE_ROUTING_NODES) <= set(NODES)
     assert tuple(node.schema().node_type for node in DEVICE_ROUTING_NODES) == (
-        "MultiGPU_WorkUnits",
-        "SelectModelDevice",
-        "SelectCLIPDevice",
-        "SelectVAEDevice",
+        "dinkster.models.multi_gpu_work_units",
+        "dinkster.models.select_model_device",
+        "dinkster.models.select_clip_device",
+        "dinkster.models.select_vae_device",
     )
     model, clip, vae = (node.schema() for node in DEVICE_ROUTING_NODES[1:])
     assert tuple(option.value for option in cast(Any, model.inputs[1].widget).options) == (
@@ -144,7 +146,7 @@ def test_schemas_are_torch_free_and_accept_portable_gpu_values() -> None:
 def test_device_routing_preserves_sources_restores_defaults_and_syncs_wrappers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import dinkster_nodes_comfy.device_routing as routing
+    import dinkster_nodes_models.device_routing as routing
 
     monkeypatch.setattr(routing, "_model_management", DeviceManagement)
     gpu0 = Device("meta")
@@ -184,7 +186,7 @@ def test_device_routing_preserves_sources_restores_defaults_and_syncs_wrappers(
 def test_unavailable_devices_and_multigpu_work_units_use_runtime_seams(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import dinkster_nodes_comfy.device_routing as routing
+    import dinkster_nodes_models.device_routing as routing
 
     class MultiGPU:
         def create_multigpu_deepclones(
@@ -303,8 +305,6 @@ def test_all_device_nodes_run_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
-        manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         module = "device_routing_fixture_" + str(int(in_process))
         (tmp_path / f"{module}.py").write_text(
             "from test_device_routing_torch import Consumer, Source\n"
@@ -329,15 +329,20 @@ def test_all_device_nodes_run_twice_through_both_production_hosts(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": str(Path(__file__).parent),
             }
         )
         try:
-            manifests = (manifest, fixture)
+            models = _installed_pack_spec(
+                "dinkster-models", "dinkster_nodes_models", in_process=in_process
+            )
+            manifests = (Path(models.manifest), fixture)
             worker_group = "device-routing" if not in_process else None
             await composer.add_pack(
                 PackSpec(
-                    manifest=manifest,
+                    manifest=models.manifest,
+                    packs=models.packs,
+                    trust_reserved=True,
                     in_process=in_process,
                     worker_group=worker_group,
                     group_manifests=manifests if worker_group else (),
@@ -355,16 +360,20 @@ def test_all_device_nodes_run_twice_through_both_production_hosts(
                 nodes={
                     "source": GraphNode("device-routing-fixture.source"),
                     "split": GraphNode(
-                        "MultiGPU_WorkUnits", {"model": Link("source", "model"), "max_gpus": 3}
+                        "dinkster.models.multi_gpu_work_units",
+                        {"model": Link("source", "model"), "max_gpus": 3},
                     ),
                     "route": GraphNode(
-                        "SelectModelDevice", {"model": Link("split", "MODEL"), "device": "cpu"}
+                        "dinkster.models.select_model_device",
+                        {"model": Link("split", "MODEL"), "device": "cpu"},
                     ),
                     "clip": GraphNode(
-                        "SelectCLIPDevice", {"clip": Link("source", "clip"), "device": "cpu"}
+                        "dinkster.models.select_clip_device",
+                        {"clip": Link("source", "clip"), "device": "cpu"},
                     ),
                     "vae": GraphNode(
-                        "SelectVAEDevice", {"vae": Link("source", "vae"), "device": "default"}
+                        "dinkster.models.select_vae_device",
+                        {"vae": Link("source", "vae"), "device": "default"},
                     ),
                     "consumer": GraphNode(
                         "device-routing-fixture.consumer",
