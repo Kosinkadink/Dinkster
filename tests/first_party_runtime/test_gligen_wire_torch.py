@@ -30,7 +30,7 @@ from dinkster_values import (
     resident_resource_id,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def _gligen() -> Any:
@@ -162,11 +162,7 @@ def test_gligen_conditioning_reaches_native_consumer_through_complete_manifest(
     tmp_path: Path, in_process: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        manifest = root / "dinkster-pack.toml"
-        source_root = str(root / "src")
         monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
-        monkeypatch.syspath_prepend(source_root)
         fixture_manifest = tmp_path / "dinkster-pack.toml"
         fixture_manifest.write_text(
             "[pack]\n"
@@ -180,43 +176,30 @@ def test_gligen_conditioning_reaches_native_consumer_through_complete_manifest(
         )
         (tmp_path / "gligen_fixture.py").write_text(
             "from test_gligen_wire_torch import GLIGEN_FIXTURES\n"
-            "from dinkster_nodes_comfy import register_inference_types\n",
+            "from dinkster_api.v1 import register_inference_types\n",
             encoding="ascii",
         )
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), source_root)
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
             }
         )
         try:
-            if in_process:
-                await composer.add_pack(PackSpec(manifest=manifest, in_process=True))
-                await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=True))
-            else:
-                group_manifests = (manifest, fixture_manifest)
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+            ):
                 await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest,
-                        worker_group="gligen-fixture",
-                        group_manifests=group_manifests,
-                    )
+                    _installed_pack_spec(identity, module, in_process=in_process)
                 )
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=fixture_manifest,
-                        worker_group="gligen-fixture",
-                        group_manifests=group_manifests,
-                    )
-                )
+            await composer.add_pack(PackSpec(fixture_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("gligen-fixture.source", {}),
                     "native": GraphNode(
-                        "ConditioningSetAreaStrength",
+                        "dinkster.conditioning.conditioning_set_area_strength",
                         {"conditioning": Link("source", "conditioning"), "strength": 0.25},
                     ),
                     "inspect": GraphNode(
