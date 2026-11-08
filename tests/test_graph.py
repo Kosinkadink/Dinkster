@@ -167,8 +167,8 @@ def test_validation_codes() -> None:
 def test_type_mismatch_is_warning_not_error() -> None:
     graph = Graph(
         nodes={
-            "a": GraphNode("std.math.add_ints", {"a": 1, "b": 2}),
-            "i": GraphNode("dev.image.invert", {"image": Link("a", "sum")}),
+            "a": GraphNode("dinkster.utilities.primitive_int", {"value": 3}),
+            "i": GraphNode("dev.image.invert", {"image": Link("a", "INT")}),
         }
     )
     diags = validate(graph, SCHEMAS, ["i"])
@@ -373,7 +373,7 @@ def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
         nodes={
             "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
             "l": GraphNode(
-                "std.list.length",
+                "dinkster.utilities.list_element",
                 {"list": TypedLiteral("list<INT>", [1, 2, 3])},
             ),
         }
@@ -480,7 +480,7 @@ def test_typed_literal_cardinality_is_structural() -> None:
                 "dev.gallery.sockets",
                 {"union2": TypedLiteral("list<INT>", [1])},
             ),
-            "l": GraphNode("std.list.length", {"list": TypedLiteral("INT", 7)}),
+            "l": GraphNode("dinkster.utilities.list_element", {"list": TypedLiteral("INT", 7)}),
         }
     )
     codes = {d.code for d in validate(graph, SCHEMAS, ["s", "l"], known_types={"INT"})}
