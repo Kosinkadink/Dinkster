@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
-import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -23,14 +22,28 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_inference_wire.latents import MultiStreamLatent
-from dinkster_nodes_comfy.video_latent import VIDEO_LATENT_NODES
-from dinkster_nodes_comfy.video_latent_ops import (
-    LTXVFreezeLatent,
+from dinkster_nodes_cosmos.video_latent import EmptyCosmosLatentVideo
+from dinkster_nodes_hunyuan.video_latent import (
+    EmptyHunyuanLatentVideo,
+    EmptyHunyuanVideo15Latent,
+)
+from dinkster_nodes_latent.video_latent_ops import (
     NormalizeVideoLatentStart,
     TrimVideoLatent,
 )
+from dinkster_nodes_ltx.video_latent import EmptyLTXVLatentVideo
+from dinkster_nodes_ltx.video_latent_ops import LTXVFreezeLatent
+from dinkster_nodes_misc_models.video_latent import EmptyARVideoLatent
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
+
+VIDEO_LATENT_NODES = (
+    EmptyHunyuanLatentVideo,
+    EmptyHunyuanVideo15Latent,
+    EmptyLTXVLatentVideo,
+    EmptyCosmosLatentVideo,
+    EmptyARVideoLatent,
+)
 
 
 class VideoLatentInspect(Node):
@@ -70,38 +83,43 @@ class VideoLatentInspect(Node):
 @pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_video_latents_twice(in_process: bool, tmp_path: Path) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": str(Path(__file__).parent),
             }
         )
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "video_latent_fixture.py").write_text(
                 "from test_video_latent_torch import VideoLatentInspect\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, VideoLatentInspect)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (VideoLatentInspect,)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["video-latent-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "video_latent_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "video_latent_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "video_latent_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "video-latent-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["video-latent-fixture"]\n[pack.entry]\n'
+                'nodes = "video_latent_fixture:NODES"\n'
+                'types = "video_latent_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-video", "dinkster_nodes_video"),
+                ("dinkster-models", "dinkster_nodes_models"),
+                ("dinkster-llm", "dinkster_nodes_llm"),
+                ("dinkster-qwen", "dinkster_nodes_qwen"),
+                ("dinkster-hunyuan", "dinkster_nodes_hunyuan"),
+                ("dinkster-ltx", "dinkster_nodes_ltx"),
+                ("dinkster-cosmos", "dinkster_nodes_cosmos"),
+                ("dinkster-misc-models", "dinkster_nodes_misc_models"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             inputs = (
                 {"width": 151, "height": 95, "length": 8, "batch_size": 2},
@@ -349,50 +367,54 @@ def test_ordinary_manifest_executes_video_latent_transforms_twice(
     in_process: bool, tmp_path: Path
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": str(Path(__file__).parent),
             }
         )
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "video_latent_transform_fixture.py").write_text(
                 "from test_video_latent_torch import (\n"
                 "    VideoLatentTransformInspect, VideoLatentTransformSource,\n"
                 ")\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, VideoLatentTransformSource, VideoLatentTransformInspect)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (VideoLatentTransformSource, VideoLatentTransformInspect)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["video-latent-transform-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "video_latent_transform_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "video_latent_transform_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "video_latent_transform_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "video-latent-transform-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["video-latent-transform-fixture"]\n[pack.entry]\n'
+                'nodes = "video_latent_transform_fixture:NODES"\n'
+                'types = "video_latent_transform_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-video", "dinkster_nodes_video"),
+                ("dinkster-models", "dinkster_nodes_models"),
+                ("dinkster-llm", "dinkster_nodes_llm"),
+                ("dinkster-ltx", "dinkster_nodes_ltx"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("video-latent-transform-fixture.source", {}),
                     "trim": GraphNode(
-                        "TrimVideoLatent", {"samples": Link("source", "video"), "trim_amount": 2}
+                        "dinkster.latent.trim_video_latent",
+                        {"samples": Link("source", "video"), "trim_amount": 2},
                     ),
-                    "freeze": GraphNode("LTXVFreezeLatent", {"latent": Link("source", "audio")}),
+                    "freeze": GraphNode(
+                        "dinkster.ltx.ltxv_freeze_latent", {"latent": Link("source", "audio")}
+                    ),
                     "normalize": GraphNode(
-                        "NormalizeVideoLatentStart",
+                        "dinkster.latent.normalize_video_latent_start",
                         {
                             "latent": Link("source", "normalization"),
                             "start_frame_count": 2,
