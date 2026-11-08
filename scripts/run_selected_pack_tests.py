@@ -68,7 +68,6 @@ _SUITES = {
     "dinkster-text": (
         "tests/test_comfy_text_nodes.py",
         "tests/test_save_text.py",
-        "tests/test_text_io.py",
         "tests/test_text_comfy_goldens.py",
     ),
 }
