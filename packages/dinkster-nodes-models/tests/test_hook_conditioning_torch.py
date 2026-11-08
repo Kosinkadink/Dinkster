@@ -417,7 +417,7 @@ def test_hook_conditioning_reaches_native_reference_consumer(
                         manifest=manifest,
                         in_process=True,
                         packs={"dinkster-latent": PackInfo(display_name="Latent", version="0.0.1")}
-                        if manifest.parent.name == "dinkster-latent"
+                        if manifest.parent.name == "dinkster-nodes-latent"
                         else None,
                     )
                     if in_process

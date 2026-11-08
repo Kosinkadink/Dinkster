@@ -136,7 +136,6 @@ from .benchmark import (
     instrument_engine_factory,
     write_record,
 )
-from .comfy_translations_api import add_comfy_translation_routes
 from .compose import (
     CompositionError,
     PackDelta,
@@ -2071,7 +2070,6 @@ def main(argv: list[str] | None = None) -> None:
         # accepting one is the client's explicit gesture. Always registered -
         # an empty composition answers with empty candidates, not a 404.
         add_guess_routes(app)
-        add_comfy_translation_routes(app)
         if mount_service is not None:
             # GET routes serve everyone; the mutation half answers 403
             # mount-changes-disabled unless --allow-mount-changes opted in.

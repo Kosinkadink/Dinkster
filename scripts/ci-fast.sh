@@ -69,7 +69,8 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
   tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
-  tests/test_pack_archive.py::test_registry_archive_admission_requires_canonical_bytes \
+  tests/test_pack_archive.py::test_registry_archive_admission_requires_verified_wheel \
+  tests/test_pack_wheel.py \
   tests/test_pack_archive.py::test_registry_archive_security_preserves_block_and_review \
   tests/test_pack_archive.py::test_registry_manifest_admission_preserves_engine_range \
   tests/test_pack_archive.py::test_registry_manifest_admission_refuses_invalid_metadata \

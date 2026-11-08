@@ -177,9 +177,9 @@ def http_registry_fetcher(
             fields = static_pack_release(
                 registry, entry.pack, entry.version, timeout=timeout, token=token
             )
-            if fields.get("digest") != entry.artifact_digest:
+            wheel, digest = static_release_wheel(registry, fields)
+            if digest != entry.artifact_digest:
                 raise ValueError("wheel.digest-mismatch: index differs from locked release")
-            wheel = static_release_wheel(registry, fields)
             request = urllib.request.Request(wheel.url, headers=headers)
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                 data = response.read(wheel.size + 1)
@@ -1574,6 +1574,8 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
+                    trust_reserved=_is_registry_source(entry.source)
+                    and entry.publisher == "dinkster",
                     packs={manifest.name: info},
                     worker_group=group[0] if group is not None else None,
                     group_manifests=(

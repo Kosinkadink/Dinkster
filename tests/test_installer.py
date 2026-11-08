@@ -460,6 +460,29 @@ def test_packs_for_serving_reads_the_immutable_store(tmp_path: Path) -> None:
     assert served.artifact_digest == entry.artifact_digest
 
 
+@pytest.mark.parametrize(
+    ("source", "publisher", "trusted"),
+    [
+        ("registry", "dinkster", True),
+        ("registry:official", "dinkster", True),
+        ("registry:official", "other", False),
+        ("local:fixture", "dinkster", False),
+        ("git:fixture", "dinkster", False),
+    ],
+)
+def test_reserved_trust_requires_registry_publisher(
+    tmp_path: Path, source: str, publisher: str, trusted: bool
+) -> None:
+    installer = make_installer(tmp_path)
+    pack_dir = write_pack(tmp_path / "demo", "demo")
+    installer.apply(local_lockfile(installer, pack_dir))
+    installed = installer.current_lockfile()
+    assert installed is not None
+    entry = replace(installed.packs[0], source=source, publisher=publisher)
+    installer.apply(Lockfile.of([entry]))
+    assert installer.packs_for_serving()[0].trust_reserved is trusted
+
+
 def test_archived_manifest_inspection_keeps_declared_template(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     pack_dir = write_pack(tmp_path / "demo", "demo")

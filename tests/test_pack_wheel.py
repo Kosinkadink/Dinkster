@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import zipfile
+from dataclasses import replace
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,12 +29,15 @@ from dinkster_workers.pack_wheel import (
     installed_pack_manifests,
 )
 
+from dinkster.generation_packs import generation_pack_specs, stage_generation_packs
 from dinkster.installer import http_registry_fetcher
 from dinkster.registries import (
     NamedRegistry,
     RegistryConfig,
     prepare_registry_pack_locks,
+    registry_source_lock,
     resolve_release,
+    static_release_wheel,
 )
 
 
@@ -43,6 +47,7 @@ def wheel_pack(root: Path, *, requires: str = "demo-core>=2") -> Path:
     (package / "__init__.py").write_text("NODES = []\nVALUE = 37\n")
     (root / "dinkster-pack.toml").write_text(
         '[pack]\nname = "demo-nodes"\nversion = "1.2.3"\nengine = ">=0.0.2"\n'
+        'publisher = "demo"\n'
         f"requires = [{json.dumps(requires)}]\n"
         '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
     )
@@ -145,7 +150,9 @@ def test_manifest_drives_installable_wheel_and_record(tmp_path: Path) -> None:
         assert (extracted / "locales/en.json").read_bytes() == b'{"hello":"world"}\n'
 
 
-@pytest.mark.parametrize("change", ["tampered-file", "extra-package", "legacy-zip", "traversal"])
+@pytest.mark.parametrize(
+    "change", ["tampered-file", "extra-package", "legacy-zip", "traversal", "platform-tag"]
+)
 def test_wheel_admission_refuses_bad_records_and_layouts(tmp_path: Path, change: str) -> None:
     root = wheel_pack(tmp_path / "source")
     output = tmp_path / "dist/demo_nodes-1.2.3-py3-none-any.whl"
@@ -158,6 +165,19 @@ def test_wheel_admission_refuses_bad_records_and_layouts(tmp_path: Path, change:
         files["other/__init__.py"] = b""
     elif change == "traversal":
         files["../outside"] = b"outside"
+    elif change == "platform-tag":
+        files["demo_nodes-1.2.3.dist-info/WHEEL"] = (
+            b"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp314-cp314-win_amd64\n"
+        )
+        record_path = "demo_nodes-1.2.3.dist-info/RECORD"
+        record = io.StringIO()
+        writer = csv.writer(record)
+        for name, payload in files.items():
+            if name != record_path:
+                digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+                writer.writerow((name, "sha256=" + digest.decode(), len(payload)))
+        writer.writerow((record_path, "", ""))
+        files[record_path] = record.getvalue().encode()
     else:
         files = {"dinkster-pack.toml": (root / "dinkster-pack.toml").read_bytes()}
     buffer = io.BytesIO()
@@ -168,6 +188,8 @@ def test_wheel_admission_refuses_bad_records_and_layouts(tmp_path: Path, change:
     verdict = run_ingest_integrity(data, len(data), artifact_digest(data))
     assert verdict.blocked
     assert verdict.findings[0].code == "integrity.invalid-archive"
+    if change == "platform-tag":
+        assert "wheel.platform-tag" in verdict.findings[0].message
     with pytest.raises(PackArchiveError):
         with extracted_archive(data):
             pytest.fail("invalid wheel was extracted")
@@ -238,8 +260,35 @@ def test_doctor_only_permits_declared_public_pack_helpers(
     ]
 
 
+@pytest.mark.parametrize("problem", ["singular", "empty", "multiple", "tags", "filename"])
+def test_static_release_refuses_nonuniversal_or_missing_wheel_array(problem: str) -> None:
+    filename = "demo_nodes-1.2.3-py3-none-any.whl"
+    if problem == "filename":
+        filename = "demo_nodes-1.2.3-cp314-cp314-win_amd64.whl"
+    wheel = {
+        "filename": filename,
+        "sha256": "a" * 64,
+        "digest": "blake3:" + "b" * 64,
+        "size": 123,
+        "url": f"wheels/{'a' * 64}/{filename}",
+        "tags": ["cp314-cp314-win_amd64"] if problem == "tags" else ["py3-none-any"],
+    }
+    row: dict[str, object] = {"name": "demo-nodes", "version": "1.2.3", "wheels": [wheel]}
+    if problem == "singular":
+        del row["wheels"]
+        row.update(wheel)
+    elif problem == "empty":
+        row["wheels"] = []
+    elif problem == "multiple":
+        row["wheels"] = [wheel, wheel]
+    with pytest.raises(InstallError, match="wheel.platform-tag|one universal wheel"):
+        static_release_wheel(NamedRegistry("demo", "https://registry.example"), row)
+
+
+@pytest.mark.parametrize("publisher", ["demo", None])
 def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
     tmp_path: Path,
+    publisher: str | None,
 ) -> None:
     root = wheel_pack(tmp_path / "source")
     (root / "src/demo_nodes/__init__.py").write_text("from demo_core import VALUE\nNODES = []\n")
@@ -325,12 +374,17 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
         base_id = "sha256:" + "b" * 64
         pack_digest = artifact_digest(pack_file.read_bytes())
         release = {
-            **wheel_rows[0],
-            "url": str(wheel_rows[0]["url"]).removeprefix(endpoint + "/static/"),
+            "wheels": [
+                {
+                    **wheel_rows[0],
+                    "url": str(wheel_rows[0]["url"]).removeprefix(endpoint + "/static/"),
+                    "digest": pack_digest,
+                    "tags": ["py3-none-any"],
+                }
+            ],
             "name": "demo-nodes",
             "version": "1.2.3",
-            "digest": pack_digest,
-            "publisher": "demo",
+            "publisher": publisher,
             "engine": ">=0.0.2",
             "library": False,
             "requires": ["demo-core>=2"],
@@ -353,6 +407,18 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
             ).encode()
         registry = NamedRegistry("demo", endpoint)
         entry = resolve_release(registry, "demo-nodes", "1.2.3", engine_version="0.0.2")
+        assert entry.publisher == (publisher or "")
+        entry = registry_source_lock(entry, pack_file, engine_version="0.0.2")
+        assert entry.publisher == (publisher or "")
+        assert Lockfile.from_record_json(Lockfile.of([entry]).record_json()).packs == (entry,)
+        assert (
+            registry_source_lock(
+                replace(entry, publisher="authenticated-operator"),
+                pack_file,
+                engine_version="0.0.2",
+            ).publisher
+            == "authenticated-operator"
+        )
         assert (
             http_registry_fetcher(endpoint, token="fixture-token")(entry) == pack_file.read_bytes()
         )
@@ -399,8 +465,17 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
             text=True,
         )
         assert actual.strip() == "83 2.4 1.2.3"
+        generation = tmp_path / "generation"
+        stage_generation_packs(generation, Lockfile.of([entry]), {entry.pack: pack_file})
+        (spec,) = generation_pack_specs(generation)
+        assert Path(spec.manifest) == (
+            generation / "pack-sources/demo-nodes/demo_nodes/dinkster-pack.toml"
+        )
+        assert spec.python == str(python)
+        assert spec.packs is not None and spec.packs[entry.pack].publisher == (publisher or "")
+        assert not spec.trust_reserved
         assert requested and all(path.startswith("/static/") for path in requested)
-        routes["/static/" + str(release["url"])] = b"corrupt"
+        routes[str(wheel_rows[0]["url"]).removeprefix(endpoint)] = b"corrupt"
         with pytest.raises(InstallError, match="wheel.hash-mismatch"):
             http_registry_fetcher(endpoint)(entry)
         routes["/static/" + lock_path] = b"corrupt"

@@ -86,6 +86,8 @@ from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
 from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
 from packaging.specifiers import SpecifierSet
+from packaging.tags import sys_tags
+from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
 from dinkster.installer import RegistryFetcher, http_registry_fetcher
@@ -494,18 +496,30 @@ def static_pack_releases(
     return tuple(releases)
 
 
-def static_release_wheel(registry: NamedRegistry, row: Mapping[str, object]) -> LockedWheel:
-    """Validate a wheel identity and constrain its URL to this registry's static prefix."""
+def static_release_wheel(
+    registry: NamedRegistry, row: Mapping[str, object]
+) -> tuple[LockedWheel, str]:
+    """Select compatible indexed bytes and constrain their URL to the static prefix."""
+    candidates = row.get("wheels")
+    if not isinstance(candidates, list) or len(candidates) != 1:
+        raise InstallError("registry release must contain one universal wheel in wheels")
+    value = candidates[0]
+    if not isinstance(value, dict):
+        raise InstallError("registry release wheel must be an object")
+    fields = cast("dict[str, object]", value)
     filename, sha256, size, relative = (
-        row.get("filename"),
-        row.get("sha256"),
-        row.get("size"),
-        row.get("url"),
+        fields.get("filename"),
+        fields.get("sha256"),
+        fields.get("size"),
+        fields.get("url"),
     )
+    digest = fields.get("digest")
     name, version = row.get("name"), row.get("version")
     if (
         not isinstance(filename, str)
         or not isinstance(sha256, str)
+        or not isinstance(digest, str)
+        or validate_artifact_digest(digest) is not None
         or type(size) is not int
         or not isinstance(name, str)
         or not isinstance(version, str)
@@ -513,6 +527,11 @@ def static_release_wheel(registry: NamedRegistry, row: Mapping[str, object]) -> 
     ):
         raise InstallError("registry static release has invalid wheel fields")
     try:
+        tags = parse_wheel_filename(filename)[3]
+        if fields.get("tags") != ["py3-none-any"] or {str(tag) for tag in tags} != {"py3-none-any"}:
+            raise ValueError("wheel.platform-tag: only py3-none-any packs are supported")
+        if not tags.intersection(sys_tags()):
+            raise ValueError("wheel.incompatible: no wheel matches this interpreter")
         wheel = LockedWheel(
             filename,
             cast("int", size),
@@ -522,7 +541,7 @@ def static_release_wheel(registry: NamedRegistry, row: Mapping[str, object]) -> 
         LockedDistribution(name, version, (wheel,))
     except (ValueError, ProvisionError) as exc:
         raise InstallError(f"registry static release has invalid wheel identity: {exc}") from exc
-    return wheel
+    return wheel, digest
 
 
 def static_pack_release(
@@ -557,18 +576,20 @@ def resolve_release(
     fields = static_pack_release(registry, wanted_pack, version, timeout=timeout)
     answered_pack = fields.get("name")
     answered_version = fields.get("version")
-    digest = fields.get("digest")
+    _, digest = static_release_wheel(registry, fields)
     publisher = fields.get("publisher")
     if (
         not isinstance(answered_pack, str)
         or not isinstance(answered_version, str)
         or not isinstance(digest, str)
-        or not isinstance(publisher, str)
+        or "publisher" not in fields
+        or publisher is not None
+        and not isinstance(publisher, str)
     ):
         raise InstallError(
             f"registry {registry.label} answered {wanted_pack}@{version} with a "
             f"malformed release record (need name/version, artifact digest, "
-            f"and publishing principal strings)"
+            f"and a publishing principal string or null)"
         )
     if answered_pack != wanted_pack or answered_version != version:
         raise InstallError(
@@ -597,7 +618,7 @@ def resolve_release(
         pack=wanted_pack,
         version=version,
         artifact_digest=digest,
-        publisher=canonical_name(publisher),
+        publisher=canonical_name(publisher) if publisher is not None else "",
         claims=(),
         source=registry.source,
     )
@@ -658,9 +679,8 @@ def resolve_compatible_release(
 def registry_source_lock(selected: LockedPack, archive: Path, *, engine_version: str) -> LockedPack:
     """Bind the selected release to its safely unpacked, digest-verified manifest.
 
-    Publisher and namespace claims describe the selected content, not the
-    publishing audit actor. They are not proof of authenticated authority:
-    reserved-name/grant admission belongs to the trusted registry's promotion.
+    Preserve the registry's authenticated publishing principal. A manifest's
+    self-declared publisher cannot grant reserved-namespace authority.
     """
     try:
         with tempfile.TemporaryDirectory(prefix="dinkster-registry-source-") as directory:
@@ -678,7 +698,6 @@ def registry_source_lock(selected: LockedPack, archive: Path, *, engine_version:
                 raise ValueError("archive manifest has no publisher")
             return replace(
                 selected,
-                publisher=canonical_name(manifest.publisher),
                 claims=tuple(canonical_claim(claim) for claim in manifest.namespaces),
             )
     except (ArtifactError, ManifestError, OSError, ValueError, zipfile.BadZipFile) as exc:
@@ -819,13 +838,14 @@ def prepare_registry_pack_locks(
                 registry = config.registry_for(entry, selected)
                 subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
                 fields = static_pack_release(registry, entry.pack, entry.version, timeout=timeout)
+                wheel, wheel_digest = static_release_wheel(registry, fields)
                 bindings = fields.get("installLocks")
                 binding = (
                     cast("dict[str, object]", bindings).get(variant)
                     if isinstance(bindings, dict)
                     else None
                 )
-                if fields.get("digest") != entry.artifact_digest or not isinstance(binding, dict):
+                if wheel_digest != entry.artifact_digest or not isinstance(binding, dict):
                     raise InstallError(f"{subject}: selected release or published binding differs")
                 facts = cast("dict[str, object]", binding)
                 digest, size = facts.get("digest"), facts.get("size")
@@ -860,7 +880,6 @@ def prepare_registry_pack_locks(
                     raise InstallError(f"{subject}: dependency lock pack or variant differs")
                 if any(package.name == entry.pack for package in lock.packages):
                     raise InstallError(f"{subject}: dependency lock repeats the outer pack wheel")
-                wheel = static_release_wheel(registry, fields)
                 replace(
                     lock,
                     indexes=(registry.endpoint + f"/static/{variant}/simple/",),

@@ -18,6 +18,7 @@ from dinkster_registry import (
     InstallError,
     LockedPack,
     Lockfile,
+    artifact_digest,
     build_artifact,
     unpack_artifact,
 )
@@ -26,6 +27,7 @@ from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.pack_lock import resolve_pack_lock
+from dinkster_workers.pack_wheel import build_pack_archive, pack_manifest_path, wheel_filename
 from dinkster_workers.provision import ProvisionError
 
 from . import __version__ as engine_version
@@ -34,12 +36,16 @@ from .packs import pack_info_from_manifest
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
-    manifest = load_manifest(root / "dinkster-pack.toml")
+    manifest = load_manifest(pack_manifest_path(root))
     if canonical_name(manifest.name) != entry.pack:
         raise CompositionError(f"generation pack {entry.pack!r} manifest names {manifest.name!r}")
     if tuple(canonical_claim(claim) for claim in manifest.namespaces) != entry.claims:
         raise CompositionError(f"generation pack {entry.pack!r} manifest claims differ from lock")
-    if manifest.publisher and canonical_name(manifest.publisher) != entry.publisher:
+    if (
+        entry.publisher
+        and manifest.publisher
+        and canonical_name(manifest.publisher) != entry.publisher
+    ):
         raise CompositionError(f"generation pack {entry.pack!r} publisher differs from lock")
     if manifest.compatibility is not None:
         try:
@@ -150,13 +156,18 @@ def generation_pack_specs(
         root = generation / "pack-sources" / entry.pack
         if not root.resolve().is_relative_to(generation / "pack-sources"):
             raise CompositionError(f"generation pack {entry.pack!r} source escapes generation")
+        manifest = _manifest(root, entry)
         with tempfile.TemporaryDirectory(prefix="dinkster-generation-verify-") as directory:
-            actual = build_artifact(root, Path(directory) / "pack.zip")
+            if manifest.root == root:
+                actual = build_artifact(root, Path(directory) / "pack.zip")
+            else:
+                output = Path(directory) / wheel_filename(manifest)
+                build_pack_archive(manifest.root, output)
+                actual = artifact_digest(output.read_bytes())
         if actual != entry.artifact_digest:
             raise CompositionError(
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
-        manifest = _manifest(root, entry)
         in_process = entry.pack in in_process_packs
         python = (
             generation
@@ -182,7 +193,8 @@ def generation_pack_specs(
                 env={"PYTHONPATH": str(root)},
                 packs={entry.pack: info},
                 in_process=in_process,
-                trust_reserved=entry.publisher == "dinkster",
+                trust_reserved=entry.publisher == "dinkster"
+                and (entry.source == "registry" or entry.source.startswith("registry:")),
                 require_catalog=True,
                 asset_vault_write=(
                     entry.pack == "dinkster-nodes-remote"

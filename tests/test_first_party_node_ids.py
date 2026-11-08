@@ -11,23 +11,18 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
 from dinkster_schema import Node, NodeSchema, claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
 from dinkster_schema.wire import schema_from_wire, schema_to_wire
-from dinkster_server.auth import Principal, StaticBearerAuthenticator, install_auth
 from dinkster_text.text import StringConcatenate, StringFormat
 from dinkster_workers import load_manifest
 from dinkster_workers.manifest import resolve_entry, validate_registration_claims
 
-from dinkster.comfy_translations_api import add_comfy_translation_routes
 from dinkster.compose import default_pack_specs
 from tests.async_scenarios import run_scenario
 from tools.compare_nodes import SCOPE_RULES, compare_registry
-from tools.gen_comfy_translations import OUTPUT, generate
 
 
 def _source_schemas() -> dict[str, NodeSchema]:
@@ -64,55 +59,6 @@ def test_default_install_set_contains_every_comfy_origin_pack() -> None:
     assert {load_manifest(spec.manifest).name for spec in specs} == expected
     assert len(specs) == len(expected)
     assert all(not spec.in_process for spec in specs)
-
-
-@pytest.mark.parametrize("authenticated", [False, True])
-def test_offline_translation_route_without_registered_packs(authenticated: bool) -> None:
-    assert OUTPUT.read_bytes() == generate()
-
-    async def scenario() -> None:
-        app = web.Application()
-        add_comfy_translation_routes(app)
-        install_auth(
-            app,
-            StaticBearerAuthenticator({"test-token": Principal("reader", {"scope": frozenset()})})
-            if authenticated
-            else None,
-        )
-        async with TestClient(TestServer(app)) as client:
-            if authenticated:
-                denied = await client.get("/api/comfy-translations")
-                assert denied.status == 401
-                client.session.headers["Authorization"] = "Bearer test-token"
-            response = await client.get("/api/comfy-translations")
-            assert response.status == 200
-            assert await response.read() == OUTPUT.read_bytes()
-            index = await response.json()
-            items = {item["rule"]["from"]: item for item in index["items"]}
-            assert len(items) == 644
-            assert len({item["pack"] for item in items.values()}) == 35
-            assert items["StringFormat"]["pack"] == "dinkster-text"
-            assert items["UpscaleModelLoader"]["pack"] == "dinkster-upscale"
-            assert items["StringFormat"]["schema"]["nodeType"] == "dinkster.text.string_format"
-            etag = response.headers["ETag"]
-            for match in (etag, f'"unrelated", W/{etag}', "*"):
-                unchanged = await client.get(
-                    "/api/comfy-translations", headers={"If-None-Match": match}
-                )
-                assert unchanged.status == 304
-                assert await unchanged.read() == b""
-                assert unchanged.headers["ETag"] == etag
-            changed = await client.get(
-                "/api/comfy-translations", headers={"If-None-Match": '"unrelated"'}
-            )
-            assert changed.status == 200
-            assert await changed.json() == index
-            head = await client.head("/api/comfy-translations")
-            assert head.status == 200
-            assert head.headers["ETag"] == etag
-            assert await head.read() == b""
-
-    run_scenario(scenario())
 
 
 def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
@@ -514,7 +460,7 @@ def test_geometry_and_vision_hooks_do_not_register_unrelated_family_codecs(
 
     registry = TypeRegistry()
     register_core_types(registry)
-    hook = import_module(f"dinkster_nodes_{pack}").register_types
+    hook = import_module(f"dinkster_{pack}").register_types
     hook(registry)
     assert required <= set(registry.type_ids())
     assert not {

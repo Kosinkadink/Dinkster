@@ -46,8 +46,8 @@ plus standard METADATA, WHEEL and SHA-256 RECORD files. Installed discovery
 reads distribution metadata without importing node code.
 
 Wheels are the only publishable format: no source distributions or Dinkster
-ZIP archives. Native code requires correctly platform-tagged wheels rather
-than the pure-Python authoring command. Admission refuses `.pth` files,
+ZIP archives. A release contains one `py3-none-any` wheel; admission refuses
+Python ABI and platform tags with `wheel.platform-tag`. Admission refuses `.pth` files,
 entry points (including console scripts), and import names already owned by
 another admitted pack or library. Doctor reports `wheel.distribution-name`
 and `wheel.import-name` for identity violations.
@@ -59,10 +59,13 @@ omitted at every depth.
 
 The registry alone writes `/static/<variant>/simple/<normalized-name>/`.
 Its PEP 503 links identify wheel filenames and whole-file `#sha256=` hashes.
-Pack metadata, schemas, locales, translations and install locks share the
+Pack metadata, schemas, locales, replacements and install locks share the
 `/static/` prefix. The host installs the registry's exact pins with uv and
 hash verification; it does not freely resolve dependencies against the index.
 Per-pack virtual environments remain isolated.
+Each `/static/packs/index.json` release contains a `wheels` array with
+`filename`, `sha256`, `url`, `size`, `digest` and `tags` on its single wheel.
+The host selects compatible tags and verifies the selected wheel's hashes.
 
 Shared implementation belongs in a library wheel without a pack manifest or
 node/type claims, such as `my-core`, listed in the pack's `requires`.
@@ -781,12 +784,12 @@ chooses default installations, not which publishers are official. Every
 other publisher uses each pack's own pack-name prefix, for example
 `my-pack.SEGS`, not `SEGS` or `IMAGE`.
 
-For packs loaded from a repository checkout, the host trusts the manifest's
-`publisher` field. An omitted publisher grants no first-party privileges.
-Registry-installed packs must instead use the registry's authenticated
-publisher record, carried into local registration by the installer. That
-installer authority is not implemented by the checkout manifest contract;
-do not treat a downloaded manifest's self-declared publisher as authenticated.
+Registry-installed packs use the registry's authenticated publisher record,
+carried into registration by the installer. Only registry entries published
+by `dinkster` receive reserved-namespace trust. Local-path and git installs
+never receive that trust from a manifest's self-declared publisher.
+An operator release with no authenticated principal keeps an empty publisher
+in the install lock and receives no first-party privileges.
 
 A shared type has one definition and one owner. Request promotion of a
 widely shared concept to a bare built-in with an official codec in

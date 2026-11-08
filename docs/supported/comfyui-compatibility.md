@@ -1,10 +1,8 @@
 ## ComfyUI compatibility
 
-- The offline ComfyUI import index includes all 644 frozen classes from the
-  35 first-party packs with their versions, replacement rules and interfaces.
-  It is available without installing those packs at `GET /api/comfy-translations`,
-  with conditional ETag responses. This metadata does not install or register
-  executable nodes. The two Dinkster-only utility support nodes are not imports.
+- Installed first-party packs expose their replacement rules and interfaces
+  through `/api/nodes`. The host does not ship a separate translation snapshot
+  or serve an offline translation route for packs that are not installed.
 - ImageScaleToMaxDimension declares the deprecated ResizeImagesByLongerEdge
   replacement, preserving the image connection and requested longer edge,
   selecting lanczos and forwarding the image output. The retired training

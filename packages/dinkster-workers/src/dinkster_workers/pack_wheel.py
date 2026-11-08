@@ -137,6 +137,9 @@ def validate_pack_wheel(archive: zipfile.ZipFile) -> str:
         or f"{dist_info}/WHEEL" not in names
     ):
         raise PackArchiveError("wheel.distribution-name: invalid wheel metadata directory")
+    wheel_metadata = email.parser.BytesParser().parsebytes(archive.read(f"{dist_info}/WHEEL"))
+    if wheel_metadata.get_all("Tag") != ["py3-none-any"]:
+        raise PackArchiveError("wheel.platform-tag: only py3-none-any packs are supported")
     if (
         manifest_path != f"{package}/{MANIFEST_FILENAME}"
         or f"{package}/__init__.py" not in names
