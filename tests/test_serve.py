@@ -2401,14 +2401,27 @@ def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(
 def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) -> None:
     import hashlib
 
+    import av
+    import numpy as np
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 
     from tests.test_pack_surfaces import PROOF_EVENT, PROOF_PACK, PROOF_ROOT, PROOF_ROUTE
-    from tests.test_video_runtime import _source
 
     source = tmp_path / "source"
     source.mkdir()
-    (source / "clip.mp4").write_bytes(_source())
+    with av.open(str(source / "clip.mp4"), "w") as output:
+        stream = output.add_stream("libx264", rate=10)
+        stream.width, stream.height = 64, 32
+        stream.pix_fmt = "yuv420p"
+        stream.codec_context.thread_count = 1
+        for index in range(20):
+            frame = av.VideoFrame.from_ndarray(
+                np.full((32, 64, 3), index * 10, np.uint8), format="rgb24"
+            )
+            for packet in stream.encode(frame):
+                output.mux(packet)
+        for packet in stream.encode():
+            output.mux(packet)
     (source / "dinkster-pack.toml").write_text("""
 [pack]
 name = "preview-source"
@@ -2445,9 +2458,7 @@ NODES = [Source]
     bootstrap = """
 from dinkster import serve
 
-serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
-serve.model_pack_specs = lambda: ()
-serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.default_pack_ids = lambda: ("dinkster-video",)
 serve.main()
 """
     process = subprocess.Popen(
@@ -2483,7 +2494,7 @@ serve.main()
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/composition") as response:
                 report = await response.json()
-            assert report["packs"]["dinkster-nodes-media-io"]["state"] == "announced"
+            assert report["packs"]["dinkster-video"]["state"] == "announced"
             async with session.get(base + PROOF_ROUTE) as response:
                 assert response.status == 200
                 assert await response.json() == {
@@ -4073,19 +4084,12 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
         "NODES = [Gradient, Save]\n"
     )
     port = free_port()
-    bootstrap = """
-from dinkster import serve
-
-serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
-serve.model_pack_specs = lambda: ()
-serve.comfy_compat_specs = lambda *args, **kwargs: ()
-serve.main()
-"""
     process, log = start_logged_serve(
         [
             sys.executable,
-            "-c",
-            bootstrap,
+            "-m",
+            "dinkster.serve",
+            "--no-default-packs",
             "--host",
             "127.0.0.1",
             "--port",

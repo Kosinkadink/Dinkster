@@ -58,10 +58,12 @@ from typing import Any, Literal, TypeVar, cast
 
 from dinkster_assets import (
     ASSET_TYPE,
+    SAVE_TARGET_TYPE,
     AssetVault,
     DeclaredAsset,
     PackAssetCatalog,
     register_asset_type,
+    register_save_target_type,
     resolver_from_env,
 )
 from dinkster_assets.scratch import hold_produced_job
@@ -7621,6 +7623,8 @@ class ServingComposer:
             register_asset_type(registry, resolver_from_env())
         if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:
             register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
+        if SAVE_TARGET_TYPE in type_ids and SAVE_TARGET_TYPE not in registry:
+            register_save_target_type(registry)
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
