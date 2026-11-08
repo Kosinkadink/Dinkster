@@ -146,7 +146,7 @@ def test_splat_crosses_ordinary_hosts_without_model_or_reference_execution(
             "SOURCE_NODES = (SplatSource,)\nCONSUMER_NODES = (SplatConsumer,)\n",
             encoding="ascii",
         )
-        manifests = [Path(__file__).resolve().parents[1] / "dinkster-pack.toml"]
+        manifests: list[Path] = []
         for name, nodes in (("splat-source", "SOURCE_NODES"), ("splat-consumer", "CONSUMER_NODES")):
             manifest = tmp_path / f"{name}.toml"
             manifest.write_text(
