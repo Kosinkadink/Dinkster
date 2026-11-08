@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 class TensorEncoder:
@@ -77,37 +76,31 @@ TENSOR_FIXTURES = (TensorEncoderSource, TensorConditioningInspect)
 @pytest.mark.parametrize("in_process", (True,))
 def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        composer = ServingComposer(
-            worker_env={
-                "PYTHONPATH": os.pathsep.join(
-                    (str(Path(__file__).parent), str(Path(__file__).resolve().parents[1] / "src"))
-                )
-            }
-        )
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "sdxl_tensor_fixture.py").write_text(
                 "from test_clip_sdxl_torch import TENSOR_FIXTURES\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, *TENSOR_FIXTURES)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = TENSOR_FIXTURES\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["sdxl-tensor",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "sdxl_tensor_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "sdxl_tensor_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "sdxl_tensor_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "sdxl-tensor"\npublisher = "dinkster"\n'
+                'namespaces = ["sdxl-tensor"]\n[pack.entry]\n'
+                'nodes = "sdxl_tensor_fixture:NODES"\n'
+                'types = "sdxl_tensor_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-sampling", "dinkster_nodes_sampling"),
+                ("dinkster-sd", "dinkster_nodes_sd"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             size = {
                 "width": 768,
@@ -121,7 +114,7 @@ def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: 
                 nodes={
                     "source": GraphNode("sdxl-tensor.source"),
                     "base": GraphNode(
-                        "CLIPTextEncodeSDXL",
+                        "dinkster.sd.clip_text_encode_sdxl",
                         {
                             "clip": Link("source", "CLIP"),
                             "text_g": "A",
@@ -130,7 +123,7 @@ def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: 
                         },
                     ),
                     "refiner": GraphNode(
-                        "CLIPTextEncodeSDXLRefiner",
+                        "dinkster.sd.clip_text_encode_sdxl_refiner",
                         {
                             "clip": Link("source", "CLIP"),
                             "text": "B",
