@@ -54,7 +54,7 @@ def _load_angle() -> tuple[Any, Any]:
 
             ctypes.util.find_library = find_angle_library
         opengl = importlib.import_module("OpenGL")
-        opengl.USE_ACCELERATE = False
+        cast(Any, opengl).USE_ACCELERATE = False
         return importlib.import_module("OpenGL.EGL"), importlib.import_module("OpenGL.GLES3")
     except (ImportError, OSError, AttributeError) as exc:
         raise AngleUnavailable(f"ANGLE runtime unavailable: {exc}") from exc
@@ -422,7 +422,7 @@ def _run_cases(
 
 def main() -> None:
     egl, gl = _load_angle()
-    image_module = importlib.import_module("dinkster_nodes_image")
+    image_module = importlib.import_module("dinkster_nodes_image._draft_initialization")
     adjust_module = importlib.import_module("dinkster_nodes_image.adjust")
     filter_module = importlib.import_module("dinkster_nodes_image.filters")
     declared = {
