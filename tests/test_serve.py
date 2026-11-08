@@ -726,7 +726,7 @@ def test_serve_official_bootstrap_requires_persistent_library(
     assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flag", ("--comfy-root", "--legacy-pack"))
+@pytest.mark.parametrize("flag", ("--comfy-root", "--legacy-pack", "--comfy-python"))
 def test_serve_rejects_removed_compatibility_arguments(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -741,33 +741,6 @@ def test_serve_rejects_removed_compatibility_arguments(
 
     assert caught.value.code == 2
     assert f"unrecognized arguments: {flag}" in capsys.readouterr().err
-
-
-def test_retired_comfy_python_flag_exits_naming_the_replacement(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from dinkster import serve
-
-    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--comfy-python", "/x/python"])
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert "--comfy-python is retired; pass --execution-python instead" in capsys.readouterr().err
-
-
-def test_retired_comfy_python_env_exits_naming_the_replacement(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from dinkster import serve
-
-    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/x/python")
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve"])
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert (
-        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
-        in capsys.readouterr().err
-    )
 
 
 def test_settings_gate_unknown_is_startup_parser_error(
@@ -1684,6 +1657,8 @@ def test_serve_without_comfy_configures_first_party_workers(
         argv.extend(("--single-job-multi-gpu-devices", devices))
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.delenv("DINKSTER_COMFYUI_ROOT", raising=False)
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/unused/removed-python")
 
     serve.main()
     assert len(captured) == len(default_pack_ids())
