@@ -1,4 +1,8 @@
-"""CPU VIDEO value/save memory gate: python tools/video_conformance.py --rss."""
+"""CPU VIDEO value/save memory gate: python tools/video_conformance.py --rss.
+
+Warm the pack's inference boundary before measuring load/trim/save growth;
+report its fixed initialization cost separately from the video memory budget.
+"""
 
 from __future__ import annotations
 
@@ -27,9 +31,10 @@ def _peak_rss() -> int:
     return int(peak if sys.platform == "darwin" else peak * 1024)
 
 
-def _rss_usage(baseline: int) -> dict[str, int]:
+def _rss_usage(baseline: int, inference_init_rss: int) -> dict[str, int]:
     peak = _peak_rss()
     usage = {
+        "inference_init_rss": inference_init_rss,
         "baseline_rss": baseline,
         "peak_rss": peak,
         "rss_growth": peak - baseline,
@@ -66,6 +71,7 @@ def _source(path: Path) -> None:
 def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]:
     import av
     from dinkster_assets import AssetRef, MountSnapshotResolver, digest_file
+    from dinkster_inference_wire.process import inference_mode
     from dinkster_nodes_video.video_load import LoadVideo
     from dinkster_nodes_video.video_save import SaveVideo
     from dinkster_schema.reporting import capture_saved_artifacts
@@ -75,11 +81,15 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
         def resolve(self, digest: str) -> Path:
             return path
 
+    cold_rss = _peak_rss()
+    with inference_mode():
+        pass
     baseline = _peak_rss()
+    inference_init_rss = baseline - cold_rss
     if self_test_allocation_mib:
         allocation = bytearray(self_test_allocation_mib * 1024 * 1024)
         allocation[::4096] = b"x" * len(allocation[::4096])
-        return dict(_rss_usage(baseline))
+        return dict(_rss_usage(baseline, inference_init_rss))
     ref = AssetRef(digest_file(path), path.name, path.stat().st_size, resolver=Resolver())
     value = LoadVideo.execute(file=ref)["VIDEO"]
     value = edit_video(value, {"trim": {"start_time": 1.01, "duration": 7.5}})
@@ -120,7 +130,7 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
             else:
                 os.environ["DINKSTER_MOUNTS_SNAPSHOT"] = previous
     result = {
-        **_rss_usage(baseline),
+        **_rss_usage(baseline, inference_init_rss),
         "encoded_bytes": size,
         "frames": frames,
         "suffix": suffix,
