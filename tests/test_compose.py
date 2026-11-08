@@ -1452,23 +1452,7 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
     compose._default_pack_lock.cache_clear()
-    expected = (
-        "dinkster-nodes-foundation",
-        "dinkster-nodes-image",
-        "dinkster-nodes-media-io",
-        "dinkster-nodes-remote",
-        "dinkster-text",
-        "dinkster-upscale",
-        "dinkster-vision-birefnet",
-        "dinkster-vision-depth-anything-v2",
-        "dinkster-vision-depth-anything-v3",
-        "dinkster-vision-detr",
-        "dinkster-vision-efficient-sam",
-        "dinkster-vision-hed",
-        "dinkster-vision-rtdetr",
-        "dinkster-vision-sam31",
-        "dinkster-vision-upscale",
-    )
+    expected = tuple(sorted(set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}))
     try:
         assert compose.default_pack_ids() == expected
         for pack_id in expected:
@@ -2207,7 +2191,7 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
 
 
 def test_composed_server_end_to_end(tmp_path: Path) -> None:
-    """One server: std nodes in-process, the pack isolated, both executing
+    """One server: text nodes in-process, the pack isolated, both executing
     through the same queue; /api/nodes attributes each side truthfully and
     carries the manifest's declared presentation."""
 
@@ -2215,8 +2199,8 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         manifest = write_iso_manifest(tmp_path)
         composition = await compose_serving(
             [
-                default_pack_spec("dinkster-nodes-foundation"),
-                default_pack_spec("dinkster-nodes-media-io"),
+                replace(default_pack_spec("dinkster-text"), in_process=True),
+                default_pack_spec("dinkster-models"),
                 manifest,
             ],
             include_default_packs=False,
@@ -2225,12 +2209,12 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         published_schemas = {
             node_type: schema
             for node_type, schema in composition.schemas.items()
-            if node_type.startswith("iso.") or node_type == "std.math.add_ints"
+            if node_type.startswith("iso.") or node_type == "dinkster.text.string_concatenate"
         }
         published_packs = {
             pack_id: replace(info, comfy_aliases=None, comfy_groups=None)
             for pack_id, info in composition.packs.items()
-            if pack_id in {"isopack", "dinkster-nodes-foundation"}
+            if pack_id in {"isopack", "dinkster-text"}
         }
         app = create_app(
             composition.make_engine,
@@ -2265,7 +2249,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "source": f"local:{Path(manifest).parent.resolve()}",
             }
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
-            assert data["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
+            assert data["nodes"]["dinkster.text.string_concatenate"]["pack"] == "dinkster-text"
             blob_size = next(
                 item
                 for item in data["nodes"]["iso.blob_out"]["interface"]
@@ -2278,18 +2262,18 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "unit": "bytes",
             }
 
-            # The in-process media-io pack's lazy device route serves per
-            # fetch: no capture provider configured means an empty list,
-            # not a missing route.
-            devices = await client.get("/api/choices/dinkster.devices.audio_inputs")
+            devices = await client.get("/api/choices/devices.gpu")
             assert devices.status == 200, await devices.text()
-            assert await devices.json() == []
+            assert "cpu" in await devices.json()
 
-            # One graph spanning both workers: the std add runs
+            # One graph spanning both workers: text concatenation runs
             # in-process, iso.chatty in the pack process, one job.
             graph = Graph(
                 nodes={
-                    "g": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
+                    "g": GraphNode(
+                        "dinkster.text.string_concatenate",
+                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
+                    ),
                     "c": GraphNode("iso.chatty", {"value": "hi"}),
                     "b": GraphNode("iso.blob_out", {"size": 3}),
                 }
@@ -2309,6 +2293,16 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                     break
                 await asyncio.sleep(0.05)
             assert status.get("state") == "completed", status
+
+            for node_id, output_id, expected in (
+                ("g", "STRING", "left:right"),
+                ("c", "value", "HI"),
+            ):
+                response = await client.get(
+                    f"/api/values?clientId=c1&jobId=j1&nodeId={node_id}&outputId={output_id}"
+                )
+                assert response.status == 200, await response.text()
+                assert (await response.json())["descriptor"]["value"] == expected
 
             value_url = "/api/values?clientId=c1&jobId=j1&nodeId=b&outputId=blob"
             discovery = await client.get(value_url)
