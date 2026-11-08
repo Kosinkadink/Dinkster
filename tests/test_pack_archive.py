@@ -1540,9 +1540,14 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem is None:
         package_tests = engine / "packages/dinkster-nodes-image/tests"
         package_tests.mkdir(parents=True)
+        (tests / "selected_root_helper.py").write_text("VALUE = 17\n")
+        (package_tests / "selected_package_helper.py").write_text("VALUE = 29\n")
         (package_tests / "test_image_nodes.py").write_text(
             "from dinkster_nodes_image import VALUE\n"
-            "def test_package_selected_value():\n    assert VALUE == 47\n"
+            "from selected_root_helper import VALUE as ROOT_VALUE\n"
+            "from selected_package_helper import VALUE as PACKAGE_VALUE\n"
+            "def test_package_selected_value():\n"
+            "    assert (VALUE, ROOT_VALUE, PACKAGE_VALUE) == (47, 17, 29)\n"
         )
         monkeypatch.setattr(
             "scripts.run_selected_pack_tests._SUITES",

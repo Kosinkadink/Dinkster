@@ -130,6 +130,9 @@ def main() -> int:
         report = prepare_catalog(spec.manifest, interpreter=sys.executable, environment=spec.env)
         if not report.ok:
             raise RuntimeError(f"selected {name} runtime catalog refused: {report.to_json()}")
+    # Importlib collection isolates duplicate test names; sibling helpers still need search paths.
+    for directory in dict.fromkeys(str(Path(test).resolve().parent) for test in config["tests"]):
+        sys.path.append(directory)
     select_available_tests(config["tests"], config["modules"])
 
     class RequireExecutedTests:
