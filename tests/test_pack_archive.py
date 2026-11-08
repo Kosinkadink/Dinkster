@@ -1537,6 +1537,22 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + ("COLLECTION_VALUE = Unpublished.execute()\n" if problem == "collection" else "")
         + ("def teardown_function():\n    Unpublished.execute()\n" if problem == "teardown" else "")
     )
+    if problem is None:
+        package_tests = engine / "packages/dinkster-nodes-image/tests"
+        package_tests.mkdir(parents=True)
+        (package_tests / "test_image_nodes.py").write_text(
+            "from dinkster_nodes_image import VALUE\n"
+            "def test_package_selected_value():\n    assert VALUE == 47\n"
+        )
+        monkeypatch.setattr(
+            "scripts.run_selected_pack_tests._SUITES",
+            {
+                "dinkster-nodes-image": (
+                    "tests/test_image_nodes.py",
+                    "packages/dinkster-nodes-image/tests/test_image_nodes.py",
+                )
+            },
+        )
     subprocess.run(["git", "init", "-q", str(engine)], check=True)
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
     source = tmp_path / "selected"
@@ -1576,7 +1592,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem is None:
         run_selected_tests(engine, catalog, artifacts)
         output = capfd.readouterr().out
-        assert "2 passed" in output
+        assert "3 passed" in output
         assert "2 skipped" in output
         assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
         assert (
