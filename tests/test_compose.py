@@ -92,9 +92,9 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
         specs = tuple(
             replace(default_pack_spec(pack), in_process=False, python=sys.executable)
             for pack in (
-                "dinkster-nodes-foundation",
-                "dinkster-nodes-media-io",
-                "dinkster-nodes-image",
+                "dinkster-utilities",
+                "dinkster-video",
+                "dinkster-image",
             )
         )
         composition = await compose_serving(
@@ -115,19 +115,26 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                 if source == "image-list":
                     nodes = {
                         "source": GraphNode(
-                            "dinkster.image.generate",
-                            {"width": 7, "height": 3, "batch_size": 2},
-                            slot_variants={"color_source": "hex", "operation": "solid"},
+                            "dinkster.image.empty_image",
+                            {"width": 7, "height": 3, "batch_size": 1},
                         ),
-                        "split": GraphNode(
-                            "dinkster.image.batch.to_list", {"image": Link("source", "image")}
+                        "other": GraphNode(
+                            "dinkster.image.empty_image",
+                            {"width": 11, "height": 5, "batch_size": 2},
+                        ),
+                        "list": GraphNode(
+                            "dinkster.utilities.make_list",
+                            {"items.0": Link("other", "IMAGE"), "items.1": Link("source", "IMAGE")},
                         ),
                         "select": GraphNode(
-                            "std.list.element", {"list": Link("split", "images"), "index": -1}
+                            "dinkster.utilities.list_element",
+                            {"list": Link("list", "list"), "index": -1},
                         ),
-                        "info": GraphNode("dinkster.image.info", {"image": Link("select", "item")}),
+                        "info": GraphNode(
+                            "dinkster.image.get_image_size", {"image": Link("select", "item")}
+                        ),
                     }
-                    expected = {"width": 7, "height": 3, "count": 1}
+                    expected = {"width": 7, "height": 3, "batch_size": 1}
                 else:
                     path = tmp_path / "input.mp4"
                     with av.open(str(path), "w") as container:
@@ -145,27 +152,25 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                     uploaded = await response.json()
                     nodes = {
                         "source": GraphNode(
-                            "dinkster.load_video_value",
-                            {"video": TypedLiteral("asset<VIDEO>", {"digest": uploaded["digest"]})},
+                            "dinkster.video.load_video",
+                            {"file": TypedLiteral("ASSET", {"digest": uploaded["digest"]})},
                         ),
                         "frames": GraphNode(
-                            "dinkster.video.disassemble", {"video": Link("source", "video")}
+                            "dinkster.video.get_video_components",
+                            {"video": Link("source", "VIDEO")},
                         ),
                         "info": GraphNode(
-                            "dinkster.image.info", {"image": Link("frames", "images")}
-                        ),
-                        "compare": GraphNode(
-                            "dinkster.image.compare", {"image_a": Link("frames", "images")}
+                            "dinkster.image.get_image_size", {"image": Link("frames", "images")}
                         ),
                     }
-                    expected = {"width": 32, "height": 16, "count": 2}
+                    expected = {"width": 32, "height": 16, "batch_size": 2}
                 response = await client.post(
                     "/api/jobs",
                     json={
                         "clientId": "cross-pack",
                         "jobId": source,
                         "graph": graph_to_wire(Graph(nodes=nodes)),
-                        "targets": ["info", "compare"] if source == "video-asset" else ["info"],
+                        "targets": ["info", "frames"] if source == "video-asset" else ["info"],
                     },
                 )
                 assert response.status == 202, await response.text()
@@ -185,8 +190,8 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                         params={
                             "clientId": "cross-pack",
                             "jobId": source,
-                            "nodeId": "compare",
-                            "outputId": "image_a",
+                            "nodeId": "frames",
+                            "outputId": "images",
                             "rendition": "png",
                         },
                     )
