@@ -259,16 +259,16 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     package_data = checkout / "src/dinkster"
     package_data.mkdir(parents=True)
     (checkout / "pyproject.toml").write_text("")
-    pack = tmp_path / "dinkster_nodes_foundation_pack"
+    pack = tmp_path / "dinkster_nodes_text_pack"
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
         'namespaces = ["official"]\n'
-        '[pack.entry]\nnodes = "dinkster_nodes_foundation:NODES"\n',
+        '[pack.entry]\nnodes = "fixture_text_pack:NODES"\n',
         encoding="utf-8",
     )
-    module = pack / "dinkster_nodes_foundation"
+    module = pack / "fixture_text_pack"
     module.mkdir()
     origin = module / "__init__.py"
     origin.write_text("NODES = ()\n", encoding="utf-8")
@@ -277,7 +277,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     lock = Lockfile.of(
         [
             LockedPack(
-                "dinkster-nodes-foundation",
+                "dinkster-text",
                 "1.2.3",
                 digest,
                 "dinkster",
@@ -301,14 +301,14 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     compose._default_pack_lock.cache_clear()
     compose.default_pack_specs.cache_clear()
     try:
-        assert compose.default_pack_ids() == ("dinkster-nodes-foundation",)
-        spec = compose.default_pack_spec("dinkster-nodes-foundation")
+        assert compose.default_pack_ids() == ("dinkster-text",)
+        spec = compose.default_pack_spec("dinkster-text")
         assert spec.require_catalog
-        assert spec.in_process
+        assert not spec.in_process
         assert spec.packs is not None
-        assert spec.packs["dinkster-nodes-foundation"].version == "1.2.3"
-        assert spec.packs["dinkster-nodes-foundation"].artifact_digest == digest
-        assert spec.packs["dinkster-nodes-foundation"].source == "registry:https://registry.invalid"
+        assert spec.packs["dinkster-text"].version == "1.2.3"
+        assert spec.packs["dinkster-text"].artifact_digest == digest
+        assert spec.packs["dinkster-text"].source == "registry:https://registry.invalid"
         assert Path(spec.manifest).parent == pack
 
         async def catalog_is_required() -> None:
@@ -325,7 +325,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
         run_scenario(catalog_is_required())
         origin.write_text("NODES = ()\nVALUE = 'tampered'\n", encoding="utf-8")
         with pytest.raises(CompositionError, match="installed artifact is"):
-            compose.default_pack_spec("dinkster-nodes-foundation")
+            compose.default_pack_spec("dinkster-text")
     finally:
         compose.default_pack_specs.cache_clear()
         compose._default_pack_lock.cache_clear()
@@ -1313,43 +1313,32 @@ def test_compose_serving_default_resolution_is_atomic(
 
 
 @pytest.mark.parametrize(
-    ("pack_id", "expected_version", "expected_digest"),
+    ("pack_id", "directory", "expected_version"),
     [
-        (
-            "dinkster-nodes-foundation",
-            "0.0.2",
-            "blake3:c3eccc6a6e2a8f6f51a571454d502fd79c6f01f40c60b6167b388cac5f9a11cf",
-        ),
-        (
-            "dinkster-nodes-media-io",
-            "0.0.3",
-            "blake3:9c3b0c9d3d5ceab2568e86d17538a4d1380adbdfaa1db1931b0e3b5f310d025e",
-        ),
-        (
-            "dinkster-nodes-image",
-            "0.0.5",
-            "blake3:8d9f65db6c7a3a6b39cba378afe9686da1967319b94ea914e86f89d0815bab1a",
-        ),
-        (
-            "dinkster-nodes-remote",
-            "0.0.2",
-            "blake3:e4d4f3234b1aff19f8f5802485f21659ef8b83929faaefd84f2b12477e8fc22e",
-        ),
+        ("dinkster-text", "dinkster-nodes-text", "0.0.1"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.1"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.1"),
+        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.3"),
     ],
 )
 def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     pack_id: str,
+    directory: str,
     expected_version: str,
-    expected_digest: str,
 ) -> None:
-    source_root = Path(__file__).parent.parent / "packages" / pack_id
+    source_root = TESTS_DIR.parent / "packages" / directory
+    lock = Lockfile.from_record_json(
+        (TESTS_DIR.parent / "src/dinkster/checkout-packs.lock").read_text()
+    )
+    locked = lock.get(pack_id)
+    assert locked is not None
     spec = default_pack_spec(pack_id)
     assert Path(spec.manifest).resolve() == (source_root / "dinkster-pack.toml").resolve()
     assert spec.packs is not None
     info = spec.packs[pack_id]
-    assert info.source == f"python:{pack_id}==0.0.2"
+    assert info.source == locked.source
     assert info.version == expected_version
-    assert info.artifact_digest == expected_digest
+    assert info.artifact_digest == locked.artifact_digest
 
 
 def test_foundation_default_pack_ships_docs() -> None:
