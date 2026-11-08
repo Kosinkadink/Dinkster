@@ -180,6 +180,56 @@ def test_standard_sampling_consumes_prepared_clone(
     assert model.model_options == prepared.model_options
 
 
+def test_ksampler_switches_from_patched_clone_to_base_without_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model, _ = _model()
+    from dinkster_inference import model_management, sample
+
+    patched = model.clone()
+    source = _latent()
+    normalized = source["samples"] + 3.0
+
+    def normalize(actual: object, latent: object, spatial: int, temporal: int) -> object:
+        assert actual is patched or actual is model
+        assert latent is source["samples"]
+        assert (spatial, temporal) == (8, 1)
+        return normalized
+
+    def noise(latent: object, seed: int, batch_index: object) -> torch.Tensor:
+        assert latent is normalized
+        assert seed == 459 and batch_index == (2, 0)
+        return torch.zeros_like(normalized)
+
+    def sample_model(actual: object, *_args: object, **_kwargs: object) -> torch.Tensor:
+        assert actual is patched or actual is model
+        return normalized + (2.5 if actual is patched else 0.0)
+
+    monkeypatch.setattr(sample, "fix_empty_latent_channels", normalize)
+    monkeypatch.setattr(sample, "prepare_noise", noise)
+    monkeypatch.setattr(sample, "sample", sample_model)
+    monkeypatch.setattr(
+        model_management,
+        "unload_model_and_clones",
+        lambda _model: pytest.fail("sampler evicted a resident model"),
+    )
+    for selected, offset in ((patched, 2.5), (model, 0.0), (patched, 2.5)):
+        result = KSampler.execute(
+            model=selected,
+            seed=459,
+            steps=5,
+            cfg=7.0,
+            sampler_name="euler",
+            scheduler="normal",
+            positive=_conditioning(),
+            negative=_conditioning(),
+            latent_image=source,
+            denoise=1.0,
+        )["LATENT"]
+        torch.testing.assert_close(result["samples"], source["samples"] + 3.0 + offset)
+        assert result["preserved"] == "metadata"
+
+
 @pytest.mark.parametrize("denoise", (1.0, 0.5, 0.0))
 def test_ksampler_runs_pinned_cpu_engine_with_seed_batch_mask_and_source_preservation(
     denoise: float,
