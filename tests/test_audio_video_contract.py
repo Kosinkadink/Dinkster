@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from aiohttp import web
 from dinkster_api.v1 import (
+    ABSENT,
     AUDIO_TYPE,
     VIDEO_TYPE,
     InputSpec,
@@ -138,8 +139,13 @@ def decoded_audio_samples(monkeypatch, tmp_path):
 
 
 @pytest.fixture(params=["node", "native-value"])
-def extract_audio(request, monkeypatch):
-    if request.param == "node":
+def extraction_kind(request):
+    return request.param
+
+
+@pytest.fixture
+def extract_audio(extraction_kind, monkeypatch):
+    if extraction_kind == "node":
         return lambda video: GetVideoComponents.execute(video=video)["audio"]
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(from_numpy=FakeTensor))
     monkeypatch.setitem(
@@ -218,7 +224,7 @@ def test_extraction_callers_publish_inline_video_before_lazy_audio(
 
 @pytest.mark.parametrize("components", [False, True])
 def test_silent_video_extraction_needs_no_vault(
-    monkeypatch, extract_audio, decoded_audio_samples, components
+    monkeypatch, extract_audio, extraction_kind, decoded_audio_samples, components
 ) -> None:
     monkeypatch.delenv("DINKSTER_ASSET_VAULT")
     video = (
@@ -227,7 +233,7 @@ def test_silent_video_extraction_needs_no_vault(
         else video_from_source(mp4_bytes())
     )
     audio = extract_audio(video)
-    assert audio is None
+    assert audio is (ABSENT if extraction_kind == "node" else None)
     assert disassemble_video(video)["audio"] is None
     assert decoded_audio_samples == []
 
@@ -244,7 +250,7 @@ def test_extraction_binding_preserves_standalone_silent_video_above_inline_limit
     with pytest.raises(AssetError, match="DINKSTER_ASSET_VAULT"):
         bind_video_value(video)
     assert bind_video_value(video, for_audio_extraction=True)["source"] is data
-    assert GetVideoComponents.execute(video=video)["audio"] is None
+    assert GetVideoComponents.execute(video=video)["audio"] is ABSENT
     assert decoded_audio_samples == []
 
 
