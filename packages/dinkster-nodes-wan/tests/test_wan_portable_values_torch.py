@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_wan import register_types
 from wan_pack_fixtures import compose_wan_packs
 
 from dinkster.compose import ServingComposer
@@ -112,11 +113,12 @@ def test_wan_portable_value_codecs_preserve_cpu_tensors_and_source_storage(
     include_visibility: bool, layers_as_tuple: bool
 ) -> None:
     registry = TypeRegistry()
-    registered = register_inference_types(registry)
+    registered = register_types(registry)
     assert registry.spec(WAN_CAMERA_EMBEDDING_TYPE) in registered
     assert registry.spec(TRACKS_TYPE) in registered
-    assert registry.spec(AUDIO_ENCODER_OUTPUT_TYPE) in registered
-    assert register_inference_types(registry) == registered
+    assert registry.spec(AUDIO_ENCODER_OUTPUT_TYPE) not in registered
+    assert registry.spec(AUDIO_ENCODER_OUTPUT_TYPE).encode is not None
+    assert register_types(registry) == registered
 
     camera = _camera()
     tracks = _tracks(include_visibility)
@@ -177,7 +179,7 @@ def test_existing_wan_type_registration_is_not_replayed() -> None:
     registry = TypeRegistry()
     existing = registry.register(WAN_CAMERA_EMBEDDING_TYPE)
 
-    register_inference_types(registry)
+    register_types(registry)
 
     assert registry.spec(WAN_CAMERA_EMBEDDING_TYPE) is existing
 
@@ -254,16 +256,18 @@ def test_wan_portable_values_cross_ordinary_hosts_twice_with_cache(
         module = "wan_portable_values_fixture"
         (tmp_path / f"{module}.py").write_text(
             "from test_wan_portable_values_torch import WanPortableConsumer, WanPortableSource\n"
-            "from dinkster_api.v1 import register_inference_types\n"
+            "from wan_pack_fixtures import register_wan_types\n"
             "NODES = (WanPortableSource, WanPortableConsumer)\n",
             encoding="ascii",
         )
         fixture_manifest = tmp_path / "wan-portable-values-dinkster-pack.toml"
         fixture_manifest.write_text(
             '[pack]\nname = "wan-portable-values-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["wan-portable-fixture"]\n\n[pack.entry]\n'
+            'namespaces = ["wan-portable-fixture"]\n'
+            '[pack.dependencies]\n"dinkster-wan" = ">=0.0.1"\n'
+            '"dinkster-vision-sam3" = ">=0.0.1"\n\n[pack.entry]\n'
             f'nodes = "{module}:NODES"\n'
-            f'types = "{module}:register_inference_types"\n',
+            f'types = "{module}:register_wan_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
