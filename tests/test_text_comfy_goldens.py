@@ -13,7 +13,11 @@ import json
 from pathlib import Path
 
 import pytest
-from dinkster_nodes_media_io.text import _TEXT_FORMATS, render_text
+from dinkster_nodes_text.save_text import SaveText
+
+from tests.test_save_text import _snapshot
+
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 _GOLDENS = json.loads(
     (Path(__file__).parent / "goldens" / "text_io_e20d433a.json").read_text("utf-8")
@@ -27,28 +31,28 @@ def test_goldens_are_pinned_to_the_audited_revision() -> None:
 
 
 def test_every_pinned_case_confirms_the_passthrough_output() -> None:
-    """The pinned SaveTextNode returned its input text alongside the file;
-    that passthrough output is a declared gap on the alias record, so every
-    golden must attest the pinned run actually produced it."""
+    """The pinned SaveTextNode returned its input text alongside the file."""
     assert all(_GOLDENS["cases"][name]["passthrough"] is True for name in _FILE_CASES)
 
 
 @pytest.mark.parametrize("name", _FILE_CASES)
-def test_rendered_bytes_match_pinned_save_exactly(name: str) -> None:
+def test_saved_bytes_name_and_passthrough_match_pinned_save_exactly(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    roots = _snapshot(tmp_path, monkeypatch)
     case = _GOLDENS["cases"][name]
     text = base64.b64decode(case["textB64"]).decode("utf-8")
-    assert render_text(text, case["format"]) == base64.b64decode(case["fileB64"])
+    assert SaveText.execute(text=text, filename_prefix=name, format=case["format"]) == {
+        "text": text
+    }
+    assert (roots["default"] / case["filename"]).read_bytes() == base64.b64decode(case["fileB64"])
 
 
-@pytest.mark.parametrize("name", _FILE_CASES)
-def test_pinned_suffixes_match_the_native_format_table(name: str) -> None:
-    case = _GOLDENS["cases"][name]
-    suffix, _media_type = _TEXT_FORMATS[case["format"]]
-    assert case["filename"].endswith(suffix)
-
-
-def test_pinned_counter_naming_matches_the_native_writer_convention() -> None:
-    """Both sides name saves {prefix}_{counter:05}{suffix}; the pinned second
-    save under one prefix lands on _00002 exactly like the native writer
-    (see test_text_io.py deterministic-name test)."""
-    assert _GOLDENS["cases"]["counter_second_save"]["filename"] == "counter_00002.txt"
+def test_pinned_counter_naming_matches_the_native_writer_convention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    roots = _snapshot(tmp_path, monkeypatch)
+    SaveText.execute(text="first", filename_prefix="counter")
+    SaveText.execute(text="second", filename_prefix="counter")
+    filename = _GOLDENS["cases"]["counter_second_save"]["filename"]
+    assert (roots["default"] / filename).read_bytes() == b"second"
