@@ -2270,37 +2270,41 @@ def test_rootless_native_runtime_configuration(
 
 
 @pytest.mark.parametrize("in_process", (False, True))
-def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
+def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
     tmp_path: Path, in_process: bool
 ) -> None:
-    from dinkster_nodes_comfy import COMFY_NODES
+    from dinkster_nodes_utilities import NODES
 
-    claims = tuple(node.schema().node_type for node in COMFY_NODES)
-    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-    assert load_manifest(manifest).namespaces == ("devices", *claims)
+    claims = tuple(node.schema().node_type for node in NODES)
+    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
+    assert load_manifest(manifest).namespaces == ("dinkster.utilities",)
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
         '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
-        'namespaces = ["PrimitiveString"]\n'
+        'namespaces = ["dinkster.utilities"]\n'
         '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
     )
     (tmp_path / "other_owner_fixture.py").write_text(
-        "from dinkster_nodes_comfy.primitive import PrimitiveString\nNODES = (PrimitiveString,)\n"
+        "from dinkster_nodes_utilities.primitive import PrimitiveString\n"
+        "NODES = (PrimitiveString,)\n"
     )
 
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
+            )
             assert set(composer.composition.schemas) == set(claims)
-            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
-            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+            assert set(composer.composition.node_packs.values()) == {"dinkster-utilities"}
+            assert not composer.composition.lazy_choices
             if in_process:
                 with pytest.raises(CompositionError, match="cannot reload in-process pack"):
-                    await composer.reload_pack("dinkster-nodes-comfy")
+                    await composer.reload_pack("dinkster-utilities")
             else:
-                await composer.reload_pack("dinkster-nodes-comfy")
-            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+                await composer.reload_pack("dinkster-utilities")
+            assert set(composer.composition.schemas) == set(claims)
+            assert not composer.composition.lazy_choices
             await composer.add_pack(
                 PackSpec(
                     manifest=TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml",
@@ -2312,30 +2316,34 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
-                    "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                    "text": GraphNode(
+                        "dinkster.utilities.primitive_string", {"value": "a\U0001f600"}
+                    ),
                     "length": GraphNode(
                         "dinkster.text.string_length", {"string": Link("text", "STRING")}
                     ),
-                    "false": GraphNode("PrimitiveBoolean", {"value": False}),
-                    "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
+                    "false": GraphNode("dinkster.utilities.primitive_boolean", {"value": False}),
+                    "not": GraphNode(
+                        "dinkster.utilities.comfy_not_node", {"value": Link("length", "length")}
+                    ),
                     "and": GraphNode(
-                        "ComfyAndNode",
+                        "dinkster.utilities.comfy_and_node",
                         {
                             "values.value0": Link("length", "length"),
                             "values.value1": Link("false", "BOOLEAN"),
                         },
                     ),
                     "or": GraphNode(
-                        "ComfyOrNode",
+                        "dinkster.utilities.comfy_or_node",
                         {
                             "values.value0": Link("false", "BOOLEAN"),
                             "values.value1": Link("length", "length"),
                         },
                     ),
-                    "combo_default": GraphNode("CustomCombo", {"choice": ""}),
-                    "combo_index": GraphNode("PrimitiveInt", {"value": 205}),
+                    "combo_default": GraphNode("dinkster.utilities.custom_combo", {"choice": ""}),
+                    "combo_index": GraphNode("dinkster.utilities.primitive_int", {"value": 205}),
                     "combo": GraphNode(
-                        "CustomCombo",
+                        "dinkster.utilities.custom_combo",
                         {
                             "choice": "outside-menu",
                             "index": Link("combo_index", "INT"),
@@ -2362,14 +2370,19 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
             assert "combo" in repeated.cached
             assert repeated.outputs["combo"]["INDEX"].resolve() == 205
             changed = Graph(
-                nodes={**graph.nodes, "combo_index": GraphNode("PrimitiveInt", {"value": -7})}
+                nodes={
+                    **graph.nodes,
+                    "combo_index": GraphNode("dinkster.utilities.primitive_int", {"value": -7}),
+                }
             )
             changed_result = await engine.run(changed, ["combo"])
             assert changed_result.outputs["combo"]["STRING"].resolve() == "outside-menu"
             assert changed_result.outputs["combo"]["INDEX"].resolve() == -7
             assert "combo" in changed_result.executed
-            with pytest.raises(CompositionError, match="overlaps"):
-                await composer.add_pack(PackSpec(manifest=other_manifest))
+            with pytest.raises(
+                CompositionError, match="declared by both 'dinkster-utilities' and 'other-owner'"
+            ):
+                await composer.add_pack(PackSpec(manifest=other_manifest, trust_reserved=True))
             assert set(composer.composition.schemas) == combined_claims
         finally:
             await composer.close()
@@ -2530,7 +2543,7 @@ def test_asset_literals_use_host_and_worker_resolvers(
 
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("verified", (False, True))
-def test_comfy_manifest_registers_bound_assets_with_host(
+def test_models_pack_preserves_host_bound_assets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:
     from dinkster_api.v1 import ASSET_TYPE
@@ -2551,7 +2564,7 @@ def test_comfy_manifest_registers_bound_assets_with_host(
         table.scan("models")
     ref = table.bind_name("weights.bin", "model/checkpoint")
     assert isinstance(ref, AssetRef if verified else LocalAssetRef)
-    comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-models/dinkster-pack.toml"
     env = {
         **WORKER_ENV,
         "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
@@ -2560,10 +2573,19 @@ def test_comfy_manifest_registers_bound_assets_with_host(
 
     async def scenario() -> None:
         registry = TypeRegistry()
+        assert ASSET_TYPE not in registry
         composer = ServingComposer(registry=registry, worker_env=env)
         try:
-            assert ASSET_TYPE not in registry
-            await composer.add_pack(PackSpec(comfy, in_process=in_process, env=env))
+            asset_type = registry.spec(ASSET_TYPE)
+            await composer.add_pack(
+                PackSpec(manifest, in_process=in_process, env=env, trust_reserved=True)
+            )
+            assert registry.spec(ASSET_TYPE) is asset_type
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+            if not in_process:
+                await composer.reload_pack("dinkster-models")
+                assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+                assert registry.spec(ASSET_TYPE) is asset_type
             for _ in range(2):
                 bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
                 restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
