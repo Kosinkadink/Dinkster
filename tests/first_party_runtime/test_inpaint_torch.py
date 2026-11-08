@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +23,10 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.inpaint import InpaintModelConditioning, VAEEncodeForInpaint
+from dinkster_nodes_conditioning.inpaint import InpaintModelConditioning
+from dinkster_nodes_latent.inpaint import VAEEncodeForInpaint
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
@@ -164,47 +164,35 @@ def test_manifest_executes_inpainting_nodes_with_decoded_inputs(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
-        composer = ServingComposer(
-            worker_env={
-                "PYTHONPATH": os.pathsep.join(
-                    (
-                        str(Path(__file__).parent),
-                        str(source_root),
-                    )
-                )
-            }
-        )
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "inpaint_fixture.py").write_text(
                 "from test_inpaint_torch import InpaintInspect, InpaintSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, InpaintSource, InpaintInspect)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (InpaintSource, InpaintInspect)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["inpaint-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "inpaint_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "inpaint_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "inpaint_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "inpaint-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["inpaint-fixture"]\n[pack.entry]\n'
+                'nodes = "inpaint_fixture:NODES"\n'
+                'types = "inpaint_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("inpaint-fixture.source"),
                     "encode": GraphNode(
-                        "VAEEncodeForInpaint",
+                        "dinkster.latent.vae_encode_for_inpaint",
                         {
                             "vae": Link("source", "vae"),
                             "pixels": Link("source", "pixels"),
@@ -217,7 +205,7 @@ def test_manifest_executes_inpainting_nodes_with_decoded_inputs(
                         {"image": Link("source", "pixels"), "mask": Link("source", "mask")},
                     ),
                     "conditioning": GraphNode(
-                        "InpaintModelConditioning",
+                        "dinkster.conditioning.inpaint_model_conditioning",
                         {
                             "positive": Link("source", "positive"),
                             "negative": Link("source", "negative"),
