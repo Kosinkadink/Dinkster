@@ -360,9 +360,22 @@ def test_invalid_cleanup_policy_refuses_preview_and_policy_changes(tmp_path: Pat
     Journal("setup", None, 1, "complete").write(tmp_path / "journal/100.json")
     policy = tmp_path / "cleanup.json"
     target = tmp_path / "keep-policy"
+    payload = policy
     if condition == "linked":
-        target.write_text('{"format":"dinkster.cleanup/1","automatic":false}')
-        policy.symlink_to(target)
+        if os.name == "nt":
+            target.mkdir()
+            payload = target / "policy.json"
+        else:
+            payload = target
+        payload.write_text('{"format":"dinkster.cleanup/1","automatic":false}')
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(policy), str(target)],
+                capture_output=True,
+                check=True,
+            )
+        else:
+            policy.symlink_to(target)
     elif condition == "json":
         policy.write_text("broken")
     else:
@@ -376,20 +389,24 @@ def test_invalid_cleanup_policy_refuses_preview_and_policy_changes(tmp_path: Pat
                 }
             )
         )
-    before = policy.read_bytes()
+    before = payload.read_bytes()
     for arguments in (("--plan",), ("--automatic", "on", "--yes")):
         code, refused = _run(tmp_path, "cleanup", *arguments)
         assert code == 1, refused
         assert "policy" in refused["error"] or "cannot read cleanup.json" in refused["error"], (
             refused
         )
-        assert policy.read_bytes() == before
+        if condition == "linked":
+            assert "linked" in refused["error"], refused
+        assert payload.read_bytes() == before
         assert (tmp_path / "generations/1/generation.json").is_file()
     code, status = _run(tmp_path, "status")
     assert code == 0 and status["cleanup"]["warnings"], status
     assert "policy" not in status["cleanup"]
-    assert policy.read_bytes() == before
-    assert policy.is_symlink() == (condition == "linked")
+    if condition == "linked":
+        assert any("linked" in warning for warning in status["cleanup"]["warnings"]), status
+    assert payload.read_bytes() == before
+    assert (policy.is_symlink() or policy.is_junction()) == (condition == "linked")
 
 
 @pytest.mark.parametrize(
