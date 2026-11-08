@@ -1064,9 +1064,9 @@ def test_default_pack_publishes_alias_registry_from_manifest(
         return replace(real_load_manifest(path), comfy_aliases=aliases)
 
     monkeypatch.setattr(compose, "load_manifest", load_manifest_with_aliases)
-    spec = default_pack_spec("dinkster-nodes-foundation")
+    spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert spec.packs["dinkster-nodes-foundation"].comfy_aliases is aliases
+    assert spec.packs["dinkster-text"].comfy_aliases is aliases
 
 
 def test_default_pack_publishes_group_registry_from_manifest(
@@ -1081,9 +1081,9 @@ def test_default_pack_publishes_group_registry_from_manifest(
         return replace(real_load_manifest(path), comfy_groups=groups)
 
     monkeypatch.setattr(compose, "load_manifest", load_manifest_with_groups)
-    spec = default_pack_spec("dinkster-nodes-foundation")
+    spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert spec.packs["dinkster-nodes-foundation"].comfy_groups is groups
+    assert spec.packs["dinkster-text"].comfy_groups is groups
 
 
 def test_default_pack_uses_embedded_wheel_artifact(
@@ -1092,16 +1092,14 @@ def test_default_pack_uses_embedded_wheel_artifact(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = Path(__file__).parent.parent / "packages/dinkster-nodes-media-io"
-    module = tmp_path / "site/dinkster_nodes_media_io/__init__.py"
-    shutil.copytree(source / "src/dinkster_nodes_media_io", module.parent)
-    bundled = tmp_path / "site/dinkster_nodes_media_io_pack/dinkster-pack.toml"
+    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    module = tmp_path / "site/dinkster_nodes_text/__init__.py"
+    shutil.copytree(source / "src/dinkster_nodes_text", module.parent)
+    bundled = tmp_path / "site/dinkster_text_pack/dinkster-pack.toml"
     bundled.parent.mkdir(parents=True)
     shutil.copy2(source / "dinkster-pack.toml", bundled)
-    shutil.copy2(source / "comfy-aliases.json", bundled.parent / "comfy-aliases.json")
-    shutil.copytree(
-        source / "src/dinkster_nodes_media_io", bundled.parent / "dinkster_nodes_media_io"
-    )
+    shutil.copytree(source / "src/dinkster_nodes_text", bundled.parent / "dinkster_nodes_text")
+    shutil.copytree(source / "locales", bundled.parent / "locales")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
         sidecar = source / filename
         if sidecar.is_file():
@@ -1117,12 +1115,12 @@ def test_default_pack_uses_embedded_wheel_artifact(
         lambda _name: SimpleNamespace(origin=str(module)),
     )
 
-    spec = default_pack_spec("dinkster-nodes-media-io")
+    spec = default_pack_spec("dinkster-text")
     assert spec.manifest == bundled
     assert spec.packs is not None
-    info = spec.packs["dinkster-nodes-media-io"]
-    assert info.source == "python:dinkster-nodes-media-io==0.0.2"
-    locked = lock.get("dinkster-nodes-media-io")
+    info = spec.packs["dinkster-text"]
+    assert info.source == "python:dinkster-nodes-text==0.0.2"
+    locked = lock.get("dinkster-text")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
 
@@ -1231,8 +1229,10 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     bundled.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", bundled / "dinkster-pack.toml")
     shutil.copytree(source / "src/dinkster_nodes_image", bundled / "dinkster_nodes_image")
+    shutil.copytree(source / "locales", bundled / "locales")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
-        shutil.copy2(source / filename, bundled / filename)
+        if (source / filename).is_file():
+            shutil.copy2(source / filename, bundled / filename)
 
     source_digest = compose._installed_pack_digest(
         source / "dinkster-pack.toml", source / "src/dinkster_nodes_image"
