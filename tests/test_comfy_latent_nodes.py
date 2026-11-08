@@ -7,13 +7,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import dinkster_nodes_3d_models
+import dinkster_nodes_flux
+import dinkster_nodes_hidream
+import dinkster_nodes_hunyuan
+import dinkster_nodes_latent
+import dinkster_nodes_misc_models
+import dinkster_nodes_qwen
+import dinkster_nodes_sd
 import numpy as np
 import pytest
 from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.latent import (
-    LATENT_NODES,
+from dinkster_nodes_latent.latent import (
     LatentBlend,
     LatentComposite,
     LatentCrop,
@@ -22,18 +28,17 @@ from dinkster_nodes_comfy.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
-from dinkster_nodes_comfy.latent_model_specific import MODEL_LATENT_NODES
-from dinkster_nodes_comfy.mochi import EmptyMochiLatentVideo
+from dinkster_nodes_misc_models.mochi import EmptyMochiLatentVideo
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 from tests.async_scenarios import run_scenario
 
 
 def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
     schema = EmptyMochiLatentVideo.schema()
-    assert EmptyMochiLatentVideo in COMFY_NODES
-    assert schema.node_type == "EmptyMochiLatentVideo"
+    assert EmptyMochiLatentVideo in dinkster_nodes_misc_models.NODES
+    assert schema.node_type == "dinkster.misc.models.empty_mochi_latent_video"
     assert schema.category == "model/latent/mochi"
     assert [(spec.id, spec.default) for spec in schema.inputs] == [
         ("width", 848),
@@ -47,81 +52,118 @@ def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
 @pytest.mark.parametrize(
     ("node_id", "display", "category", "inputs"),
     [
-        ("EmptyLatentImage", "Empty Latent Image", "", ("width", "height", "batch_size")),
         (
-            "EmptySD3LatentImage",
+            "dinkster.latent.empty_latent_image",
+            "Empty Latent Image",
+            "",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "dinkster.sd.empty_sd3_latent_image",
             "EmptySD3LatentImage",
             "/stable diffusion",
             ("width", "height", "batch_size"),
         ),
         (
-            "EmptyFlux2LatentImage",
+            "dinkster.flux.empty_flux2_latent_image",
             "Empty Flux 2 Latent",
             "/flux",
             ("width", "height", "batch_size"),
         ),
         (
-            "EmptyChromaRadianceLatentImage",
+            "dinkster.misc.models.empty_chroma_radiance_latent_image",
             "EmptyChromaRadianceLatentImage",
             "/chroma radiance",
             ("width", "height", "batch_size"),
         ),
         (
-            "EmptyHiDreamO1LatentImage",
+            "dinkster.hidream.empty_hi_dream_o1_latent_image",
             "Empty HiDream-O1 Latent Image",
             "/hidream",
             ("width", "height", "batch_size"),
         ),
         (
-            "EmptyQwenImageLayeredLatentImage",
+            "dinkster.qwen.empty_qwen_image_layered_latent_image",
             "Empty Qwen Image Layered Latent",
             "/qwen",
             ("width", "height", "layers", "batch_size"),
         ),
         (
-            "EmptyLatentHunyuan3Dv2",
+            "dinkster.hunyuan.empty_latent_hunyuan3_dv2",
             "Empty Hunyuan 3D v2 Latent",
             "/hunyuan 3d",
             ("resolution", "batch_size"),
         ),
         (
-            "EmptyTrellis2LatentStructure",
+            "dinkster.3d.models.empty_trellis2_latent_structure",
             "Empty Trellis2 Latent Structure",
             "/trellis",
             ("batch_size",),
         ),
         (
-            "LatentFromBatch",
+            "dinkster.latent.latent_from_batch",
             "Get Latent From Batch",
             "/batch",
             ("samples", "batch_index", "length"),
         ),
-        ("RepeatLatentBatch", "Repeat Latent Batch", "/batch", ("samples", "amount")),
         (
-            "LatentUpscale",
+            "dinkster.latent.repeat_latent_batch",
+            "Repeat Latent Batch",
+            "/batch",
+            ("samples", "amount"),
+        ),
+        (
+            "dinkster.latent.latent_upscale",
             "Upscale Latent",
             "",
             ("samples", "upscale_method", "width", "height", "crop"),
         ),
-        ("LatentUpscaleBy", "Upscale Latent By", "", ("samples", "upscale_method", "scale_by")),
-        ("LatentRotate", "Rotate Latent", "/transform", ("samples", "rotation")),
-        ("LatentFlip", "Flip Latent", "/transform", ("samples", "flip_method")),
-        ("SetLatentNoiseMask", "Set Latent Noise Mask", "", ("samples", "mask")),
         (
-            "LatentComposite",
+            "dinkster.latent.latent_upscale_by",
+            "Upscale Latent By",
+            "",
+            ("samples", "upscale_method", "scale_by"),
+        ),
+        ("dinkster.latent.latent_rotate", "Rotate Latent", "/transform", ("samples", "rotation")),
+        ("dinkster.latent.latent_flip", "Flip Latent", "/transform", ("samples", "flip_method")),
+        ("dinkster.latent.set_latent_noise_mask", "Set Latent Noise Mask", "", ("samples", "mask")),
+        (
+            "dinkster.latent.latent_composite",
             "Latent Composite",
             "",
             ("samples_to", "samples_from", "x", "y", "feather"),
         ),
-        ("LatentBlend", "Latent Blend", "experimental", ("samples1", "samples2", "blend_factor")),
-        ("LatentCrop", "Crop Latent", "/transform", ("samples", "width", "height", "x", "y")),
+        (
+            "dinkster.latent.latent_blend",
+            "Latent Blend",
+            "experimental",
+            ("samples1", "samples2", "blend_factor"),
+        ),
+        (
+            "dinkster.latent.latent_crop",
+            "Crop Latent",
+            "/transform",
+            ("samples", "width", "height", "x", "y"),
+        ),
     ],
 )
 def test_latent_schemas_use_exact_core_interfaces(
     node_id: str, display: str, category: str, inputs: tuple[str, ...]
 ) -> None:
     node = next(
-        node for node in (*LATENT_NODES, *MODEL_LATENT_NODES) if node.schema().node_type == node_id
+        node
+        for pack in (
+            dinkster_nodes_latent,
+            dinkster_nodes_sd,
+            dinkster_nodes_flux,
+            dinkster_nodes_hidream,
+            dinkster_nodes_misc_models,
+            dinkster_nodes_qwen,
+            dinkster_nodes_hunyuan,
+            dinkster_nodes_3d_models,
+        )
+        for node in pack.NODES
+        if node.schema().node_type == node_id
     )
     schema = node.schema()
     assert schema.display_name == display
@@ -322,36 +364,29 @@ def test_manifest_executes_latent_and_mask_without_host_types(
     async def scenario() -> None:
         composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
-            manifest = (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-            )
             (tmp_path / "latent_fixture_sources.py").write_text(
                 "from test_comfy_latent_nodes import PortableLatentSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
+                "from dinkster_api.v1 import register_inference_types\n"
                 "import sys, numpy as np\n"
                 "from types import SimpleNamespace\n"
                 "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray, "
                 "cuda=SimpleNamespace(is_available=lambda: False), "
                 "version=SimpleNamespace(hip=None)))\n"
-                "NODES = (*COMFY_NODES, PortableLatentSource)\n",
+                "NODES = (PortableLatentSource,)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["latent-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "latent_fixture_sources:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "latent_fixture_sources:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "latent_fixture_sources:register_inference_types",
-                ),
+                '[pack]\nname="latent-fixture"\npublisher="dinkster"\n'
+                'namespaces=["latent-fixture"]\n[pack.entry]\n'
+                'nodes="latent_fixture_sources:NODES"\n'
+                'types="latent_fixture_sources:register_inference_types"\n',
                 encoding="ascii",
+            )
+            await composer.add_pack(
+                _installed_pack_spec(
+                    "dinkster-latent", "dinkster_nodes_latent", in_process=in_process
+                )
             )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             tensor = EncodedLatentTensor(
@@ -363,7 +398,7 @@ def test_manifest_executes_latent_and_mask_without_host_types(
                     nodes={
                         "source": GraphNode("latent-fixture.source"),
                         "masked": GraphNode(
-                            "SetLatentNoiseMask",
+                            "dinkster.latent.set_latent_noise_mask",
                             {"samples": Link("source", "samples"), "mask": Link("source", "mask")},
                         ),
                     }
