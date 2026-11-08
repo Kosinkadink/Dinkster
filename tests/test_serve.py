@@ -1973,33 +1973,28 @@ def test_serve_single_job_and_replica_multi_gpu_are_mutually_exclusive(
     assert exc.value.code == 2
 
 
-def test_serve_headroom_cli_reaches_compat_specs(
-    tmp_path: Path,
+def test_serve_headroom_cli_reaches_first_party_workers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    captured: list[dict[str, object]] = []
-
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.append(dict(kwargs))
-        return []
+    captured: list[PackSpec] = []
+    budgets: list[dict[str, int]] = []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
+        budgets.append(frame.f_locals["memory_budgets"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             "",
             "--reserve-vram",
@@ -2013,11 +2008,13 @@ def test_serve_headroom_cli_reaches_compat_specs(
 
     serve.main()
 
-    assert captured[0]["reserve_vram"] == 128 * 1024**2
-    assert captured[0]["memory_budgets"] == {
-        "vram:cuda:0": 20 * 1024**3,
-        "ram": 8 * 1024**3,
-    }
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.reserve_vram == 128 * 1024**2
+            assert spec.vram_budgets == {"vram:cuda:0": 20 * 1024**3}
+    assert budgets == [{"vram:cuda:0": 20 * 1024**3, "ram": 8 * 1024**3}]
 
 
 def test_serve_comfy_arg_cli_beats_persisted_settings(
@@ -2025,33 +2022,27 @@ def test_serve_comfy_arg_cli_beats_persisted_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     library_root = tmp_path / "library"
     library_root.mkdir()
     (library_root / "settings.json").write_text(
         '{"worker-comfy-args":["--preview-size","111"]}\n', "utf-8"
     )
-    captured: list[dict[str, object]] = []
-
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.append(dict(kwargs))
-        return []
+    captured: list[PackSpec] = []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             str(library_root),
             "--comfy-arg=--preview-size",
@@ -2061,7 +2052,11 @@ def test_serve_comfy_arg_cli_beats_persisted_settings(
 
     serve.main()
 
-    assert captured[0]["comfy_args"] == ("--preview-size", "321")
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.comfy_args == ("--preview-size", "321")
 
 
 def test_serve_bare_comfy_arg_clears_persisted_settings(
@@ -2069,33 +2064,27 @@ def test_serve_bare_comfy_arg_clears_persisted_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     library_root = tmp_path / "library"
     library_root.mkdir()
     (library_root / "settings.json").write_text(
         '{"worker-comfy-args":["--preview-size","111"]}\n', "utf-8"
     )
-    captured: list[dict[str, object]] = []
-
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.append(dict(kwargs))
-        return []
+    captured: list[PackSpec] = []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             str(library_root),
             "--comfy-arg",
@@ -2104,35 +2093,35 @@ def test_serve_bare_comfy_arg_clears_persisted_settings(
 
     serve.main()
 
-    assert captured[0]["comfy_args"] == ()
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.comfy_args == ()
 
 
-def test_serve_component_dtype_flags_reach_compat_workers(
+def test_serve_component_dtype_flags_reach_first_party_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    captured: list[dict[str, object]] = []
-
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.append(dict(kwargs))
-        return []
+    captured: list[PackSpec] = []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
+            "--library-root",
+            str(tmp_path / "library"),
             "--diffusion-dtype",
             "bfloat16",
             "--text-encoder-dtype",
@@ -2144,11 +2133,15 @@ def test_serve_component_dtype_flags_reach_compat_workers(
 
     serve.main()
 
-    assert captured[0]["comfy_args"] == (
-        "--bf16-unet",
-        "--fp16-text-enc",
-        "--fp32-vae",
-    )
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.comfy_args == (
+                "--bf16-unet",
+                "--fp16-text-enc",
+                "--fp32-vae",
+            )
 
 
 def test_serve_aimdo_cli_rejects_unknown_mode(
