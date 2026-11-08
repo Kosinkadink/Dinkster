@@ -31,7 +31,7 @@ from dinkster_values import (
 )
 from dinkster_values.audio_codec import audio_from_source
 from dinkster_values.storage import image_input
-from dinkster_video import assemble_video, concatenate_video, disassemble_video, save_video_stream
+from dinkster_video_runtime import assemble_video, concatenate_video, disassemble_video, save_video_stream
 
 from tests.async_scenarios import run_scenario
 
@@ -429,7 +429,7 @@ def test_asset_codec_does_not_open_and_rebinds_at_destination(
 def test_exact_closed_trim_copies_packet_payloads(
     depth: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_video import runtime
+    from dinkster_video_runtime import runtime
 
     data = _source(depth=depth)
     value = edit_video(video_from_source(data), {"trim": {"start_time": 0.5, "duration": 1}})
@@ -459,7 +459,7 @@ def test_non_packet_aligned_trim_transcodes_without_snapping() -> None:
 @pytest.mark.parametrize("first", [0, 4])
 @pytest.mark.parametrize("origin", [0, 2])
 def test_fractional_encoded_trim_uses_half_open_stream_ticks(first: int, origin: int) -> None:
-    from dinkster_video import iter_video_pixels
+    from dinkster_video_runtime import iter_video_pixels
 
     rate = Fraction(30000, 1001)
     pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
@@ -514,8 +514,8 @@ def test_fractional_encoded_trim_uses_half_open_stream_ticks(first: int, origin:
 
 @pytest.mark.parametrize("encoded", [False, True])
 def test_fractional_trim_keeps_rational_timeline_and_audio_samples(encoded: bool) -> None:
-    from dinkster_video import iter_video_pixels
-    from dinkster_video.runtime import iter_video_audio
+    from dinkster_video_runtime import iter_video_pixels
+    from dinkster_video_runtime.runtime import iter_video_audio
 
     rate = Fraction(30000, 1001)
     pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
@@ -604,7 +604,7 @@ def test_deferred_components_are_exact_across_codec_and_cropped() -> None:
 
 @pytest.mark.parametrize("channels,layout", [(3, "3.0"), (6, "5.1")])
 def test_component_audio_encoder_frames_retain_samples_layout_and_timing(channels, layout) -> None:
-    from dinkster_video.runtime import _audio_frames, _plan
+    from dinkster_video_runtime.runtime import _audio_frames, _plan
 
     pcm = np.arange(channels * 48000, dtype=np.float32).reshape(1, channels, 48000) / 524288
     value = assemble_video(
@@ -703,7 +703,7 @@ def test_complete_soundtrack_follows_post_concat_trims(
 ) -> None:
     from dinkster_assets.value import bind_video_value
     from dinkster_values.audio_codec import audio_window
-    from dinkster_video.runtime import iter_video_audio
+    from dinkster_video_runtime.runtime import iter_video_audio
 
     # Hand-derived local fixture: two one-second clips, 48kHz mono audio
     # changing every quarter second. The windows select [1,2) or [1.5,2).
@@ -1200,7 +1200,7 @@ def test_source_decode_and_spatial_encode_use_source_matrix_and_range(
 
 
 def test_spatial_decode_preserves_known_frame_local_matrix_and_range(monkeypatch) -> None:
-    import dinkster_video.runtime as runtime
+    import dinkster_video_runtime.runtime as runtime
 
     source = video_from_source(_source())
     cropped = edit_video(source, {"crop": {"width": 32, "height": 16}})

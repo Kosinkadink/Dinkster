@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import av
-import dinkster_video.runtime as video_module
+import dinkster_video_runtime.runtime as video_module
 import numpy as np
 import pytest
 from av.codec import Codec as AvCodec
@@ -27,7 +27,7 @@ from dinkster_assets import (
 from dinkster_nodes_video.video_load import LoadVideo
 from dinkster_nodes_video.webm_save import EncodedVideoSpool
 from dinkster_values import edit_video
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
+from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -117,7 +117,7 @@ def test_public_video_admission_respects_bound_sources(
     from dinkster_api.v1 import admit_video_source
     from dinkster_assets import AssetError, LocalAssetRef, MountDef, MountTable
     from dinkster_values import video_source
-    from dinkster_video import save_video_stream
+    from dinkster_video_runtime import save_video_stream
 
     root = tmp_path / "input"
     root.mkdir()
@@ -173,10 +173,10 @@ def test_indexed_video_over_one_gib_is_admitted_without_copy(
     from dinkster_native.video import register_video_type
     from dinkster_values import GIBIBYTE, TypeRegistry, decode_video, encode_video, video_source
     from dinkster_values.video_document import video_reference
-    from dinkster_video import save_video_stream
-    from dinkster_video.document import clip, make, mutate
-    from dinkster_video.timeline import single_clip_video
-    from dinkster_video.timeline_runtime import SourceMedia
+    from dinkster_video_runtime import save_video_stream
+    from dinkster_video_runtime.document import clip, make, mutate
+    from dinkster_video_runtime.timeline import single_clip_video
+    from dinkster_video_runtime.timeline_runtime import SourceMedia
 
     root = tmp_path / "input"
     root.mkdir()

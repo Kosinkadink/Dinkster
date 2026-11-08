@@ -443,7 +443,7 @@ from dinkster_values.audio_codec import (
 )
 from dinkster_values.audio_lazy import channel_layout as audio_channel_layout
 from dinkster_values.resident import comfy_resident_meta
-from dinkster_video import (
+from dinkster_video_runtime import (
     DITHERS,
     FRAME_FORMATS,
     assemble_video,
@@ -499,9 +499,9 @@ def __getattr__(name: str) -> object:
     elif name in _PACK_MEDIA_EXPORTS:
         value = getattr(import_module(_PACK_MEDIA_EXPORTS[name]), name)
     elif name in _VIDEO_MODULE_EXPORTS:
-        import dinkster_video
+        import dinkster_video_runtime
 
-        value = getattr(dinkster_video, name)
+        value = getattr(dinkster_video_runtime, name)
     elif name in {"LatentStream", "MultiStreamLatent"}:
         from dinkster_inference_wire import latents
 
@@ -613,9 +613,9 @@ if TYPE_CHECKING:
         register_vision_packet_types,
     )
     from dinkster_inference_wire.voxel_wire import register_voxel_type
-    from dinkster_video import document as timeline_document
-    from dinkster_video import image_math, timeline_runtime
-    from dinkster_video import timeline as timeline_render
+    from dinkster_video_runtime import document as timeline_document
+    from dinkster_video_runtime import image_math, timeline_runtime
+    from dinkster_video_runtime import timeline as timeline_render
     from dinkster_workers.execution import current_execution_context
 
 __all__ = [

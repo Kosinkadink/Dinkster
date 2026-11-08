@@ -31,7 +31,7 @@ from dinkster_values.video_codec import (
     video_fingerprint,
     video_meta,
 )
-from dinkster_video import assemble_video
+from dinkster_video_runtime import assemble_video
 from PIL import Image
 
 

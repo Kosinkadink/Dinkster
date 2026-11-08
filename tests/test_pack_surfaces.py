@@ -32,7 +32,7 @@ from dinkster.compose import PackSpec, ServingComposer
 from dinkster.extension_assets import read_module, resolve_frontend_modules
 from tests.async_scenarios import run_scenario
 
-PROOF_ROOT = Path(__file__).resolve().parents[1] / "packages/dinkster-video/preview"
+PROOF_ROOT = Path(__file__).resolve().parents[1] / "packages/dinkster-video-runtime/preview"
 PROOF_PACK = "dinkster-video-preview"
 PROOF_EVENT = "video-preview.initialized"
 PROOF_ROUTE = f"/api/extensions/{PROOF_PACK}/routes/preview-policy"

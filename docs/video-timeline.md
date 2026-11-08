@@ -125,7 +125,7 @@ include `invalid_document`, `document_limit`, `unsupported_version`,
 `unsupported_transition`, `unsupported_effect`, `unsupported_time_effect`,
 `source_range_unavailable`, `unknown_duration`, `geometry_mismatch`, `color_space_mismatch`,
 `audio_rate_mismatch`, `audio_layout_mismatch`, and `invalid_opacity`.
-`dinkster_video.timeline.diagnostics(document)` reports unbound clips and opaque
+`dinkster_video_runtime.timeline.diagnostics(document)` reports unbound clips and opaque
 effects without resolving media. Render errors retain their diagnostic code.
 
 ## Interchange fidelity and conformance

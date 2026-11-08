@@ -17,7 +17,7 @@ from dinkster_values import (
     effective_video_facts,
 )
 from dinkster_values.audio_lazy import LazyAudio
-from dinkster_video import assemble_video, save_video_stream
+from dinkster_video_runtime import assemble_video, save_video_stream
 
 
 def test_declared_six_channel_component_audio_encodes_through_shared_windows() -> None:
@@ -88,7 +88,7 @@ def test_asset_audio_saver_reads_only_selected_canonical_windows(
 def test_discrete_audio_fails_before_unsafe_pyav_frame_conversion(
     monkeypatch: pytest.MonkeyPatch, channels: int, audio_layout: str
 ) -> None:
-    import dinkster_video.runtime as runtime
+    import dinkster_video_runtime.runtime as runtime
 
     value = assemble_video(
         np.full((3, 64, 64, 3), 0.4, np.float32),
@@ -293,7 +293,7 @@ def test_exact_pcm_edits_retain_shortest_audio(published, tmp_path, monkeypatch)
 def test_unbounded_component_audio_and_video_reject_before_reader(
     estimated_audio, monkeypatch, trim, bound
 ) -> None:
-    import dinkster_video.runtime as runtime
+    import dinkster_video_runtime.runtime as runtime
 
     estimated_audio["probe"] = {
         **estimated_audio["probe"],

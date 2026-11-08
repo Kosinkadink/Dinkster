@@ -24,7 +24,7 @@ from dinkster_values import (
     video_from_source,
 )
 from dinkster_values.storage import BFLOAT16_FIELD, image_input
-from dinkster_video import (
+from dinkster_video_runtime import (
     assemble_video,
     concatenate_video,
     disassemble_video,

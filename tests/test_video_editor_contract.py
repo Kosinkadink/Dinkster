@@ -32,7 +32,7 @@ from dinkster_values import (
     video_meta,
 )
 from dinkster_values.audio_codec import audio_window
-from dinkster_video import disassemble_video
+from dinkster_video_runtime import disassemble_video
 from dinkster_workers import (
     BoundaryDiagnostic,
     InProcessWorker,

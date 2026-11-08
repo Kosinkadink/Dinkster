@@ -97,7 +97,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_image_document",
         "dinkster_schema",
         "dinkster_values",
-        "dinkster_video",
+        "dinkster_video_runtime",
         "dinkster_assets",
         "dinkster_memory",
         "dinkster_graph",
@@ -106,7 +106,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_workers",
     },
     # Shared materialization consumes portable values, never packs or the scheduler.
-    "dinkster_video": {"dinkster_values", "dinkster_image_document"},
+    "dinkster_video_runtime": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},
     # The door (DESIGN 3.6): re-exports the pack-author surface from the
     # bottom layers, the RPC-clean protocol leaf and the worker's task-local
@@ -114,7 +114,7 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_api": {
         "dinkster_schema",
         "dinkster_values",
-        "dinkster_video",
+        "dinkster_video_runtime",
         "dinkster_protocol",
         "dinkster_inference_wire",
         "dinkster_memory",
@@ -360,7 +360,7 @@ def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
 
 
 def test_bundled_video_preview_imports_only_the_pack_api() -> None:
-    source = REPO_ROOT / "packages/dinkster-video/preview/src/dinkster_video_preview"
+    source = REPO_ROOT / "packages/dinkster-video-runtime/preview/src/dinkster_video_preview"
     modules = list(source.rglob("*.py"))
     assert modules
     for module in modules:
@@ -371,14 +371,14 @@ def test_media_packages_share_comfyuis_pyav_runtime() -> None:
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     assert packages["av"]["version"] == "18.1.0"
-    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video"):
+    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video-runtime"):
         project = tomllib.loads(
             (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
         )
         requirements = [Requirement(value) for value in project["project"]["dependencies"]]
         (av,) = [requirement for requirement in requirements if requirement.name == "av"]
         assert Version(packages["av"]["version"]) in av.specifier
-        if package == "dinkster-video":
+        if package == "dinkster-video-runtime":
             assert str(av.specifier) == "==18.1.0"
 
 

@@ -979,7 +979,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_schema.first_party as first_party
     import dinkster_values
     import dinkster_values.resident as resident_codec
-    import dinkster_video
+    import dinkster_video_runtime
     import dinkster_workers.execution as worker_execution
 
     document_sources = {
@@ -1026,7 +1026,7 @@ def test_reexports_are_the_internal_objects() -> None:
         dinkster_protocol,
         dinkster_memory,
         dinkster_assets,
-        dinkster_video,
+        dinkster_video_runtime,
     )
     for name in GOLDEN_V1_SURFACE:
         exported = getattr(api, name)

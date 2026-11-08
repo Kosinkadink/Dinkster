@@ -1,4 +1,4 @@
-# dinkster-video
+# dinkster-video-runtime
 
 `save_video_stream` consumes the shared lazy VIDEO edit plan and writes one
 encoded container. `save_video_frames` writes GIF, animated WebP, or a ZIP of
@@ -170,7 +170,7 @@ load/trim/transcode path in a fresh process (less than 200 MiB RSS growth).
 The opt-in `dinkster-video-preview` pack is included in this package. Its
 code is isolated under `preview/`: the pack imports the API, while the video
 library remains a lower-layer API dependency and does not import the pack.
-The Python wheel includes the complete pack under `dinkster_video/preview`.
+The Python wheel includes the complete pack under `dinkster_video_runtime/preview`.
 The `video-preview.initialize` node accepts and returns `VIDEO` unchanged.
 It folds portable video metadata, bounds preview size to 512 pixels wide and
 120 frames, and emits `video-preview.initialized` with `fps`, `frameCount`,
@@ -179,7 +179,7 @@ It folds portable video metadata, bounds preview size to 512 pixels wide and
 From a workspace installed with `uv sync --all-packages`:
 
 ```console
-uv run dinkster-serve --pack packages/dinkster-video/preview/dinkster-pack.toml --port 8199
+uv run dinkster-serve --pack packages/dinkster-video-runtime/preview/dinkster-pack.toml --port 8199
 ```
 
 Connect a VIDEO-producing node to `video-preview.initialize`. The host-owned

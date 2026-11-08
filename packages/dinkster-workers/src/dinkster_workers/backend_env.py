@@ -68,7 +68,7 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-workers",
     "packages/dinkster-inference-wire",
     "packages/dinkster-image-document",
-    "packages/dinkster-video",
+    "packages/dinkster-video-runtime",
     "packages/dinkster-api",
     "packages/dinkster-nodes-generation",
     "packages/dinkster-native",

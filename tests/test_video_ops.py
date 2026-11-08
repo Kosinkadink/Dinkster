@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode
 from dinkster_values import video_from_source
-from dinkster_video import save_video_stream
+from dinkster_video_runtime import save_video_stream
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
