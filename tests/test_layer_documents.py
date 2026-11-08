@@ -2367,7 +2367,7 @@ def test_isolated_worker_shm_flatten_matches_in_process(
             resource = next(iter(published.to_record()["resources"].values()))
             assert "inline" not in resource
             expected = cast(ImageDocument, AddLayer.execute(image=source)["layers"])
-            assert published.datacted.data
+            assert published.data == expected.data
             np.testing.assert_array_equal(flatten(published)[0], flatten(expected)[0])
             graph = Graph(
                 nodes={
