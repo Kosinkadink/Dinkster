@@ -974,9 +974,12 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
 
     saved = tmp_path / "workflow.json"
     original = (
-        b'{"nodes":{"length":{"nodeType":"StringLength","inputs":{"string":"source packs"}},'
-        b'"region":{"nodeType":"dinkster.region.make",'
-        b'"inputs":{"x":2.0,"y":3.0,"width":4.0,"height":5.0}}}}'
+        b'{"nodes":{"length":{"nodeType":"dinkster.text.string_length",'
+        b'"inputs":{"string":"source packs"}},'
+        b'"image":{"nodeType":"dinkster.image.empty_image",'
+        b'"inputs":{"width":4,"height":5,"batch_size":2}},'
+        b'"size":{"nodeType":"dinkster.image.get_image_size",'
+        b'"inputs":{"image":{"$link":{"node":"image","output":"IMAGE"}}}}}}'
     )
     saved.write_bytes(original)
     payloads = build_official_packs(
@@ -1026,23 +1029,20 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
             for spec in ordered:
                 await composer.add_pack(spec)
             composition = composer.composition
-            assert composition.node_packs["StringLength"] == "dinkster-nodes-comfy"
-            assert composition.node_packs["dinkster.region.make"] == "dinkster-nodes-image"
-            assert composition.packs["dinkster-nodes-comfy"].version == "0.1.2"
-            assert composition.packs["dinkster-nodes-image"].version == "0.1.2"
+            assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
+            assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
+            assert composition.packs["dinkster-text"].version == "0.1.2"
+            assert composition.packs["dinkster-image"].version == "0.1.2"
             result = await composition.make_engine(lambda _event: None).run(
-                graph_from_wire(json.loads(saved.read_bytes())), ["length", "region"]
+                graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )
             assert result.diagnostics == ()
             assert result.outputs["length"]["length"].resolve() == 12
-            assert result.outputs["region"]["region"].meta.entries == {
-                "x": 2.0,
-                "y": 3.0,
-                "width": 4.0,
-                "height": 5.0,
-            }
+            assert result.outputs["size"]["width"].resolve() == 4
+            assert result.outputs["size"]["height"].resolve() == 5
+            assert result.outputs["size"]["batch_size"].resolve() == 2
             assert saved.read_bytes() == original
-            source = tmp_path / "sources" / "dinkster-nodes-comfy"
+            source = tmp_path / "sources" / "dinkster-text"
             (source / "changed.txt").write_text("source drift")
             with pytest.raises(CompositionError, match="missing or stale"):
                 composer.validate_catalogs(ordered)
