@@ -262,7 +262,7 @@ class SaveAudioOpus(Node):
         *,
         audio: object,
         filename_prefix: str = "ComfyUI",
-        quality: str = "V3",
+        quality: str = "128k",
         mount: str | None = None,
     ) -> Mapping[str, object]:
         if audio is None:

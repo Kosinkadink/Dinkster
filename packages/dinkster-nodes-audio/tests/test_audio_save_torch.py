@@ -64,6 +64,7 @@ def _snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (
         (SaveAudio, {}, ".flac", 22_050),
         (SaveAudioMP3, {"quality": "320k"}, ".mp3", 22_050),
+        (SaveAudioOpus, {}, ".opus", 48_000),
         (SaveAudioOpus, {"quality": "96k"}, ".opus", 48_000),
         (SaveAudioAdvanced, {"format": "opus", "quality": "192k"}, ".opus", 48_000),
     ),

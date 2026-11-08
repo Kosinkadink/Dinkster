@@ -1,5 +1,6 @@
 ## Media I/O
 
+- Save Audio (Opus) uses its declared 128k quality when callers omit quality.
 - First-party utility lists transport whole IMAGE values between isolated
   workers without decoding their pixels in the utilities worker.
 - Get Video Components preserves silent video frames and reports an absent
