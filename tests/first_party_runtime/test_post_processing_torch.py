@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -29,15 +28,15 @@ from dinkster_api.v1 import (  # noqa: E402
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link  # noqa: E402
-from dinkster_nodes_comfy.post_processing import (  # noqa: E402
+from dinkster_nodes_image.ported.post_processing import (  # noqa: E402
     BatchImagesNode,
-    BatchLatentsNode,
     BatchMasksNode,
     ColorTransfer,
     ResizeImageMaskNode,
 )
+from dinkster_nodes_latent.post_processing import BatchLatentsNode  # noqa: E402
 
-from dinkster.compose import PackSpec, ServingComposer  # noqa: E402
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec  # noqa: E402
 
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -275,49 +274,38 @@ def test_ordinary_manifest_executes_post_processing_dynamic_nodes_with_decoded_n
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
-        composer = ServingComposer(
-            worker_env={
-                "PYTHONPATH": os.pathsep.join(
-                    (str(Path(__file__).parent), str(source_root), str(Path.cwd() / "src"))
-                )
-            }
-        )
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "post_processing_fixture_sources.py").write_text(
                 "from test_post_processing_torch import (\n"
                 "    PostProcessingInspect, PostProcessingSource,\n"
                 ")\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, PostProcessingSource, PostProcessingInspect)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (PostProcessingSource, PostProcessingInspect)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["post-processing-fixture",')
-                .replace(
-                    "dinkster_nodes_comfy:COMFY_NODES", "post_processing_fixture_sources:NODES"
-                )
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "post_processing_fixture_sources:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "post_processing_fixture_sources:register_inference_types",
-                ),
+                '[pack]\nname = "post-processing-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["post-processing-fixture"]\n[pack.entry]\n'
+                'nodes = "post_processing_fixture_sources:NODES"\n'
+                'types = "post_processing_fixture_sources:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-image", "dinkster_nodes_image"),
+                ("dinkster-latent", "dinkster_nodes_latent"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
                         "source": GraphNode("post-processing-fixture.source"),
                         "resize": GraphNode(
-                            "ResizeImageMaskNode",
+                            "dinkster.image.resize_image_mask_node",
                             {
                                 "input": Link("source", "target"),
                                 "scale_method": "nearest-exact",
@@ -326,28 +314,28 @@ def test_ordinary_manifest_executes_post_processing_dynamic_nodes_with_decoded_n
                             slot_variants={"resize_type": "scale width"},
                         ),
                         "images": GraphNode(
-                            "BatchImagesNode",
+                            "dinkster.image.batch_images_node",
                             {
                                 "images.image0": Link("source", "image"),
                                 "images.image1": Link("source", "target"),
                             },
                         ),
                         "masks": GraphNode(
-                            "BatchMasksNode",
+                            "dinkster.image.batch_masks_node",
                             {
                                 "masks.mask0": Link("source", "mask"),
                                 "masks.mask1": Link("source", "mask"),
                             },
                         ),
                         "latents": GraphNode(
-                            "BatchLatentsNode",
+                            "dinkster.latent.batch_latents_node",
                             {
                                 "latents.latent0": Link("source", "latent"),
                                 "latents.latent1": Link("source", "latent"),
                             },
                         ),
                         "transfer": GraphNode(
-                            "ColorTransfer",
+                            "dinkster.image.color_transfer",
                             {
                                 "image_target": Link("source", "target"),
                                 "image_ref": Link("source", "reference"),
