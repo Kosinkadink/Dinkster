@@ -17,13 +17,20 @@ from pathlib import Path
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
+from dinkster_workers.pack_wheel import pack_import_name, pack_manifest_path
 
 from dinkster.compose import _FIRST_PARTY_PACK_DISTRIBUTIONS, _installed_pack_digest
 
+_PACK_DIRECTORIES = {
+    pack: distribution
+    if distribution.startswith("dinkster-nodes-")
+    else distribution.replace("dinkster-", "dinkster-nodes-", 1)
+    for pack, distribution in _FIRST_PARTY_PACK_DISTRIBUTIONS.items()
+}
 _SUITES = {
     **{
-        pack: (f"packages/{distribution}/tests/test_*.py",)
-        for pack, distribution in _FIRST_PARTY_PACK_DISTRIBUTIONS.items()
+        pack: (f"packages/{directory}/tests/test_*.py",)
+        for pack, directory in _PACK_DIRECTORIES.items()
     },
     "dinkster-utilities": (
         "packages/dinkster-nodes-utilities/tests/test_*.py",
@@ -86,27 +93,19 @@ def run_selected_tests(
         raise ValueError("selected pack tests require a nonempty catalog")
     if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
         raise ValueError(f"requested test packs are not in the selected catalog: {sorted(missing)}")
-    distributions = {_FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack, pack) for pack in _SUITES}
+    directories = set(_PACK_DIRECTORIES.values())
+    import_packages = {pack_import_name(pack) for pack in _PACK_DIRECTORIES}
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
         work = Path(directory)
         checkout = work / "engine"
         tracked = subprocess.check_output(
             ["git", "-C", str(root), "ls-files", "-z"], text=True
         ).split("\0")
-        # Retain tests and distribution metadata for multi-pack projects, but
-        # never copy official implementations or manifests from the engine tree.
+        # Tests come from the engine; implementations and metadata come from wheels.
         for name in filter(None, tracked):
             relative = Path(name)
-            official = len(relative.parts) > 1 and relative.parts[1] in distributions
-            if (
-                official
-                and "tests" not in relative.parts
-                and not (
-                    len(relative.parts) == 3
-                    and relative.name == "pyproject.toml"
-                    and not (root / relative.parent / "dinkster-pack.toml").is_file()
-                )
-            ):
+            official = len(relative.parts) > 1 and relative.parts[1] in directories
+            if official and "tests" not in relative.parts:
                 continue
             source = root / relative
             destination = checkout / relative
@@ -116,46 +115,28 @@ def run_selected_tests(
         modules: dict[str, str] = {}
         checkout_packs = []
         for pack in catalog.packs:
-            distribution = _FIRST_PARTY_PACK_DISTRIBUTIONS[pack.pack]
-            package = checkout / "packages" / distribution
-            destination = work / "packs" / pack.pack
+            package = checkout / "packages" / _PACK_DIRECTORIES[pack.pack]
+            destination = package / "src"
             archive = pack_archive_path(artifacts, pack.artifact_digest)
             unpack_artifact(archive, destination, pack.artifact_digest)
-            manifest = load_manifest(destination / "dinkster-pack.toml")
+            manifest = load_manifest(pack_manifest_path(destination))
             if manifest.name != pack.pack:
                 raise ValueError(f"selected test archive names {manifest.name}, not {pack.pack}")
-            package.mkdir(parents=True, exist_ok=True)
-            for source in destination.iterdir():
-                if source.name == "tests":
-                    raise ValueError(f"selected {pack.pack} cannot replace engine tests")
-                target = package / source.name
-                if source.is_dir():
-                    shutil.copytree(source, target)
-                else:
-                    shutil.copy2(source, target)
-            destination = package
-            # Keep manifest-relative assets and src imports on the same selected bytes.
-            src = package / "src"
-            src.mkdir(exist_ok=True)
-            for module in destination.glob("dinkster_*"):
-                if module.is_dir() and not (src / module.name).exists():
-                    target = src / module.name
-                    shutil.move(module, target)
-                    module.symlink_to(target, target_is_directory=True)
-            module_roots.append(str(src))
+            # Checkout discovery uses these two files; execution uses the wheel's RECORD.
+            (package / "pyproject.toml").write_text(
+                f'[project]\nname = "{pack.pack}"\n', encoding="utf-8"
+            )
+            shutil.copy2(manifest.path, package / "dinkster-pack.toml")
+            module_roots.append(str(destination))
             entry = manifest.nodes_entry.partition(":")[0]
-            modules[entry] = str(src / entry.replace(".", "/"))
+            modules[entry] = str(destination / entry.replace(".", "/"))
             if not Path(modules[entry]).is_dir():
                 raise ValueError(f"selected {pack.pack} archive is missing declared module {entry}")
-            # A checkout excludes publication metadata and relocates modules.
-            # Its local identity is not the selected registry archive identity.
             checkout_packs.append(
                 replace(
                     pack,
-                    artifact_digest=_installed_pack_digest(
-                        destination / "dinkster-pack.toml", Path(modules[entry])
-                    ),
-                    source=f"local:{destination}",
+                    artifact_digest=_installed_pack_digest(manifest.path, Path(modules[entry])),
+                    source=f"local:{package}",
                 )
             )
         (checkout / "src/dinkster/checkout-packs.lock").write_text(
@@ -180,12 +161,17 @@ def run_selected_tests(
                         continue
                     if candidate.is_relative_to(root):
                         candidate = checkout / candidate.relative_to(root)
-                    elif any(part in distributions for part in candidate.parts):
+                    elif any(part in directories for part in candidate.parts):
                         continue
                     if candidate.exists():
                         paths.append(str(candidate))
                 continue
-            if source.name.startswith(("dinkster_nodes_", "dinkster_vision_", "_editable_")):
+            if source.name.startswith("_editable_") or any(
+                source.name == name
+                or source.name.startswith(name + "-")
+                and source.name.endswith(".dist-info")
+                for name in import_packages
+            ):
                 continue
             (site / source.name).symlink_to(source, target_is_directory=source.is_dir())
         (site / "selected.pth").write_text("\n".join(paths) + "\n", encoding="utf-8")
