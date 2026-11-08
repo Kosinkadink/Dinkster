@@ -1,5 +1,6 @@
 """Native format substitutions use persistent diagnostics with actual output facts."""
 
+import io
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -8,13 +9,19 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import VIDEO_TYPE
-from dinkster_assets import AssetRef
+from dinkster_api.v1 import (
+    ASSET_TYPE,
+    VIDEO_TYPE,
+    attach_saved_artifact,
+    register_asset_type,
+    register_video_value_type,
+    report_value_diagnostic,
+    resolver_from_env,
+)
+from dinkster_assets import AssetRef, AssetWriter, MountSnapshotWriter
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_media_io import register_media_types
-from dinkster_nodes_media_io.video import SaveVideo, SaveVideoFrames, SaveVideoValue
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     InputSpec,
@@ -27,7 +34,7 @@ from dinkster_schema import (
 )
 from dinkster_server.events import engine_event_to_wire
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_video import assemble_video
+from dinkster_video import assemble_video, save_video_frames, save_video_stream
 from dinkster_workers import InProcessWorker, IsolatedWorker
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
@@ -56,7 +63,72 @@ class FormatSource(Node):
         return cls.outputs(video=assemble_video(pixels, fps=10, audio=soundtrack))
 
 
-DIAGNOSTIC_NODES = (FormatSource, SaveVideo, SaveVideoFrames, SaveVideoValue)
+class FormatSave(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.format-save",
+            inputs=(
+                InputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),
+                InputSpec("format", TypeExpr.concrete("STRING"), default=""),
+                InputSpec("container", TypeExpr.concrete("STRING"), default="auto"),
+                InputSpec("codec", TypeExpr.concrete("STRING"), default="auto"),
+                InputSpec("trim_to_audio", TypeExpr.concrete("BOOLEAN"), default=False),
+            ),
+            outputs=(OutputSpec("asset", TypeExpr.concrete(ASSET_TYPE)),),
+            output_node=True,
+            idempotent=False,
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        video: object,
+        format: str = "",
+        container: str = "auto",
+        codec: str = "auto",
+        trim_to_audio: bool = False,
+    ) -> Mapping[str, object]:
+        def report(record: Mapping[str, object]) -> None:
+            report_value_diagnostic(
+                str(record["code"]),
+                {
+                    "outputId": "asset",
+                    **{key: value for key, value in record.items() if key != "code"},
+                },
+            )
+
+        with io.BytesIO() as encoded:
+            if format:
+                suffix, mime = save_video_frames(
+                    video, encoded, format=format, on_diagnostic=report
+                )
+            else:
+                suffix, mime = save_video_stream(
+                    video,
+                    encoded,
+                    container=container,
+                    codec=codec,
+                    trim_to_audio=trim_to_audio,
+                    on_diagnostic=report,
+                )
+            writer = AssetWriter(MountSnapshotWriter(os.environ["DINKSTER_MOUNTS_SNAPSHOT"]))
+            ref = writer.save_bytes(
+                {"mount": "comfy-output", "prefix": "video/diagnostic"},
+                encoded.getvalue(),
+                suffix=suffix,
+                media_type=mime,
+            )
+        attach_saved_artifact(ref.to_wire())
+        return cls.outputs(asset=ref)
+
+
+DIAGNOSTIC_NODES = (FormatSource, FormatSave)
+
+
+def register_types(registry: TypeRegistry) -> None:
+    register_asset_type(registry, resolver_from_env())
+    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
 
 
 @pytest.fixture(params=[False, True], ids=["in-process", "isolated"])
@@ -64,13 +136,13 @@ def worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytes
     _, snapshot = _mount(tmp_path, monkeypatch)
     registry = TypeRegistry()
     register_core_types(registry)
-    register_media_types(registry)
+    register_types(registry)
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         '[pack]\nname="video-diagnostics"\npublisher="dinkster"\n'
         "[pack.entry]\n"
         'nodes="tests.test_video_diagnostics:DIAGNOSTIC_NODES"\n'
-        'types="dinkster_nodes_media_io:register_media_types"\n'
+        'types="tests.test_video_diagnostics:register_types"\n'
     )
     return registry, manifest, snapshot, request.param
 
@@ -78,7 +150,9 @@ def worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytes
 @pytest.mark.parametrize(
     "kind", ["webm_h264", "mp4_rgba", "gif_rgba", "value_rgba", "audio_endpoint"]
 )
-def test_native_saver_emits_actual_format_facts_on_its_output_port(worker_setup, kind: str) -> None:
+def test_runtime_format_facts_survive_worker_output_and_event_transport(
+    worker_setup, kind: str
+) -> None:
     async def scenario() -> None:
         registry, manifest, snapshot, isolated = worker_setup
         boundary = (
@@ -128,13 +202,6 @@ def test_native_saver_emits_actual_format_facts_on_its_output_port(worker_setup,
             )
             if audio_endpoint:
                 settings = {"container": "mkv", "codec": "ffv1", "trim_to_audio": True}
-            node_type = (
-                "dinkster.save_video_frames"
-                if animated
-                else "dinkster.save_video_value"
-                if value_only
-                else "dinkster.save_video"
-            )
             result = await engine.run(
                 Graph(
                     nodes={
@@ -146,7 +213,7 @@ def test_native_saver_emits_actual_format_facts_on_its_output_port(worker_setup,
                             },
                         ),
                         "save": GraphNode(
-                            node_type, {"video": Link("source", "video"), **settings}
+                            "test.format-save", {"video": Link("source", "video"), **settings}
                         ),
                     }
                 ),
@@ -157,7 +224,7 @@ def test_native_saver_emits_actual_format_facts_on_its_output_port(worker_setup,
             wire = engine_event_to_wire(event, client_id="client", job_id="job")
             assert wire["type"] == "value_diagnostics" and wire["nodeId"] == "save"
             (record,) = cast(dict[str, Any], wire["detail"])["diagnostics"]
-            output_id = "video" if value_only else "asset"
+            output_id = "asset"
             assert record["code"] == "media_format_fallback"
             assert record["outputId"] == output_id and record["nodeId"] == "save"
             assert record["reason"] == (
