@@ -58,6 +58,11 @@ async def _default_pack_names() -> tuple[str, ...]:
 def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_path: Path) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
 
+    from dinkster.compose import default_pack_ids
+    from dinkster.packs import first_party_pack_metadata
+
+    metadata = first_party_pack_metadata(TESTS_DIR.parent)
+    packages = sorted({metadata[pack_id][1] for pack_id in default_pack_ids()})
     environment = tmp_path / "core-environment"
     sync_environment = {
         **os.environ,
@@ -71,18 +76,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
             "--no-dev",
             "--package",
             "dinkster",
-            "--package",
-            "dinkster-nodes-foundation",
-            "--package",
-            "dinkster-nodes-media-io",
-            "--package",
-            "dinkster-nodes-image",
-            "--package",
-            "dinkster-nodes-remote",
-            "--package",
-            "dinkster-nodes-vision",
-            "--package",
-            "dinkster-nodes-comfy",
+            *(argument for package in packages for argument in ("--package", package)),
             "--no-install-package",
             "dinkster-supervisor",
         ],
@@ -155,7 +149,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
                 isinstance(node_id, str) and isinstance(schema, dict)
                 for node_id, schema in nodes.items()
             )
-            assert any(node_id.startswith("std.") for node_id in nodes)
+            assert "dinkster.utilities.primitive_int" in nodes
             for method, path in (
                 ("GET", "/api/compat/comfy/schemas"),
                 ("POST", "/api/compat/comfy/prompt"),
@@ -163,21 +157,23 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
             ):
                 async with session.request(method, base + path) as response:
                     assert response.status == 404, await response.text()
-            graph = Graph(nodes={"sum": GraphNode("std.math.add_ints", {"a": 2, "b": 3})})
+            graph = Graph(
+                nodes={"integer": GraphNode("dinkster.utilities.primitive_int", {"value": 7})}
+            )
             async with session.post(
                 base + "/api/jobs",
                 json={
                     "clientId": "optional-package-proof",
-                    "jobId": "sum",
+                    "jobId": "integer",
                     "graph": graph_to_wire(graph),
-                    "targets": ["sum"],
+                    "targets": ["integer"],
                 },
             ) as response:
                 assert response.status == 202, await response.text()
             async with asyncio.timeout(30):
                 while True:
                     async with session.get(
-                        base + "/api/jobs/optional-package-proof/sum"
+                        base + "/api/jobs/optional-package-proof/integer"
                     ) as response:
                         job = await response.json()
                     if job["state"] in {"completed", "failed", "cancelled"}:
