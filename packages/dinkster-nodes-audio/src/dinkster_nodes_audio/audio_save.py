@@ -78,6 +78,18 @@ def _save_audio(
     value = materialize_audio(audio)
     waveform: Any = value["waveform"]
     sample_rate = cast("int", value["sample_rate"])
+    if waveform.ndim != 3:
+        raise ValueError("audio waveform must have [B, C, T] layout")
+    if waveform.shape[0] == 0:
+        raise ValueError("audio waveform must contain a batch element")
+    if waveform.shape[1] not in (1, 2):
+        raise ValueError("audio encoding requires one or two channels")
+    if waveform.shape[2] == 0:
+        raise ValueError("audio waveform must contain samples")
+    if type(sample_rate) is not int or sample_rate <= 0:
+        raise ValueError("audio sample_rate must be a positive integer")
+    if not bool(waveform.isfinite().all()):
+        raise ValueError("audio waveform contains non-finite samples")
     if format == "opus":
         encoded_rate = _opus_rate(sample_rate)
         if encoded_rate != sample_rate:

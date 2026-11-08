@@ -1,6 +1,8 @@
 ## Media I/O
 
 - Save Audio (Opus) uses its declared 128k quality when callers omit quality.
+- Audio saves reject malformed, empty or non-finite waveforms and invalid sample
+  rates before encoding. Encoded output supports mono and stereo channels.
 - First-party utility lists transport whole IMAGE values between isolated
   workers without decoding their pixels in the utilities worker.
 - Get Video Components preserves silent video frames and reports an absent

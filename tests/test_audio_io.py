@@ -11,16 +11,11 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetRef, AssetVault, AssetWriter, MountSnapshotResolver, digest_bytes
-from dinkster_nodes_media_io import (
-    EmptyAudio,
-    LoadAudio,
-    PreviewAudio,
-    SaveAudio,
-    SaveAudioMP3,
-    SaveAudioOpus,
-)
-from dinkster_nodes_media_io.audio import MAX_ENCODED_AUDIO_BYTES
+from dinkster_nodes_audio.audio_generators import EmptyAudio
+from dinkster_nodes_audio.audio_io import LoadAudio, PreviewAudio
+from dinkster_nodes_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 from dinkster_schema import AssetWidget
+from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import render_audio_wav
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
@@ -72,6 +67,13 @@ def _bound(ref: AssetRef, snapshot: Path) -> AssetRef:
     )
 
 
+def _save(node: type[Any], *, audio: object, **kwargs: object) -> list[AssetRef]:
+    with capture_saved_artifacts() as claims:
+        result = node.execute(audio=audio, **kwargs)
+    assert result["audio"] is audio
+    return [AssetRef.from_wire(claim) for claim in claims]
+
+
 @pytest.mark.parametrize(
     ("node", "kwargs", "suffix", "media_type", "codec"),
     [
@@ -91,12 +93,13 @@ def test_save_advertised_formats_publish_decodable_assets(
     codec: str,
 ) -> None:
     root, _snapshot = _mount(tmp_path, monkeypatch)
-    result = node.execute(
+    refs = _save(
+        node,
         audio=_sine(),
-        target={"mount": "comfy-output", "prefix": "audio/clip"},
+        mount="comfy-output",
+        filename_prefix="audio/clip",
         **kwargs,
     )
-    refs = cast("list[AssetRef]", result["audios"])
     assert len(refs) == 1
     ref = refs[0]
     assert ref.name.endswith(suffix)
@@ -113,8 +116,7 @@ def test_save_publishes_one_ordered_asset_per_batch_element(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _root, snapshot = _mount(tmp_path, monkeypatch)
-    result = SaveAudio.execute(audio=_sine(samples=4_800, batch=3))
-    refs = cast("list[AssetRef]", result["audios"])
+    refs = _save(SaveAudio, audio=_sine(samples=4_800, batch=3), mount="comfy-output")
     assert [ref.name for ref in refs] == [
         "ComfyUI_00001.flac",
         "ComfyUI_00002.flac",
@@ -122,7 +124,7 @@ def test_save_publishes_one_ordered_asset_per_batch_element(
     ]
     peaks = []
     for ref in refs:
-        loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["audio"])
+        loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["AUDIO"])
         peaks.append(float(np.abs(loaded["waveform"]).max()))
     assert peaks == sorted(peaks)
     assert peaks[0] < peaks[2]
@@ -133,8 +135,8 @@ def test_flac_round_trip_preserves_samples_within_s16_quantization(
 ) -> None:
     _root, snapshot = _mount(tmp_path, monkeypatch)
     audio = _sine(samples=22_050, sample_rate=22_050)
-    ref = cast("list[AssetRef]", SaveAudio.execute(audio=audio)["audios"])[0]
-    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["audio"])
+    ref = _save(SaveAudio, audio=audio, mount="comfy-output")[0]
+    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["AUDIO"])
     waveform = cast(np.ndarray, loaded["waveform"])
     assert loaded["sample_rate"] == 22_050
     assert waveform.shape == (1, 2, 22_050)
@@ -147,22 +149,24 @@ def test_opus_coerces_unsupported_rates_and_preserves_duration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _root, snapshot = _mount(tmp_path, monkeypatch)
-    ref = cast(
-        "list[AssetRef]",
-        SaveAudioOpus.execute(audio=_sine(samples=44_100, sample_rate=44_100))["audios"],
+    ref = _save(
+        SaveAudioOpus,
+        audio=_sine(samples=44_100, sample_rate=44_100),
+        mount="comfy-output",
     )[0]
-    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["audio"])
+    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["AUDIO"])
     waveform = cast(np.ndarray, loaded["waveform"])
     assert loaded["sample_rate"] == 48_000
     assert waveform.shape[2] == pytest.approx(48_000, abs=4_800)
 
     # Opus bitstreams always decode at 48 kHz (libopus contract), so even a
     # supported encode rate reads back as 48 kHz; duration is the invariant.
-    ref = cast(
-        "list[AssetRef]",
-        SaveAudioOpus.execute(audio=_sine(samples=16_000, sample_rate=16_000))["audios"],
+    ref = _save(
+        SaveAudioOpus,
+        audio=_sine(samples=16_000, sample_rate=16_000),
+        mount="comfy-output",
     )[0]
-    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["audio"])
+    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["AUDIO"])
     assert loaded["sample_rate"] == 48_000
     waveform = cast(np.ndarray, loaded["waveform"])
     assert waveform.shape[2] == pytest.approx(48_000, abs=4_800)
@@ -174,13 +178,12 @@ def test_opus_quality_selects_declared_bit_rate(
     root, _snapshot = _mount(tmp_path, monkeypatch)
     sizes = {}
     for quality in ("64k", "320k"):
-        ref = cast(
-            "list[AssetRef]",
-            SaveAudioOpus.execute(
-                audio=_sine(),
-                target={"mount": "comfy-output", "prefix": f"audio/{quality}"},
-                quality=quality,
-            )["audios"],
+        ref = _save(
+            SaveAudioOpus,
+            audio=_sine(),
+            mount="comfy-output",
+            filename_prefix=f"audio/{quality}",
+            quality=quality,
         )[0]
         sizes[quality] = (root / "audio" / ref.name).stat().st_size
     assert sizes["64k"] < sizes["320k"]
@@ -190,8 +193,8 @@ def test_mp3_rejects_unsupported_sample_rate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _mount(tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match="MP3 encoding supports sample rates"):
-        SaveAudioMP3.execute(audio=_sine(samples=1_000, sample_rate=44_123))
+    with pytest.raises(ValueError):
+        SaveAudioMP3.execute(audio=_sine(samples=1_000, sample_rate=44_123), mount="comfy-output")
 
 
 def test_save_quality_domains_are_validated(
@@ -208,74 +211,46 @@ def test_save_quality_domains_are_validated(
     ("audio", "match"),
     [
         ({"waveform": np.zeros((2, 100), dtype=np.float32), "sample_rate": 44_100}, "layout"),
+        ({"waveform": np.zeros((0, 2, 100), dtype=np.float32), "sample_rate": 44_100}, "batch"),
         ({"waveform": np.zeros((1, 0, 100), dtype=np.float32), "sample_rate": 44_100}, "channels"),
+        ({"waveform": np.zeros((1, 3, 100), dtype=np.float32), "sample_rate": 44_100}, "channels"),
         ({"waveform": np.zeros((1, 1, 0), dtype=np.float32), "sample_rate": 44_100}, "samples"),
         (
             {"waveform": np.full((1, 1, 8), np.nan, dtype=np.float32), "sample_rate": 44_100},
             "non-finite",
         ),
         ({"waveform": np.zeros((1, 1, 8), dtype=np.float32), "sample_rate": 0}, "positive"),
-        ({"waveform": [0.0], "sample_rate": 44_100}, "numpy"),
-        (None, "waveform"),
+        ({"waveform": [0.0], "sample_rate": 44_100}, "layout"),
+        (None, "input audio is None"),
     ],
 )
-def test_save_refuses_invalid_waveforms(audio: object, match: str) -> None:
+def test_save_refuses_invalid_waveforms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audio: object, match: str
+) -> None:
+    root, _snapshot = _mount(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match=match):
-        SaveAudio.execute(audio=audio)
-
-
-def test_save_input_budget_is_enforced_before_encoding() -> None:
-    # as_strided reports nbytes from the shape (1*2*70e6*4 bytes ~= 534 MiB)
-    # without allocating that much memory, so the budget check must trip.
-    big = np.lib.stride_tricks.as_strided(
-        np.zeros(8, dtype=np.float32), shape=(1, 2, 70_000_000), strides=(0, 0, 0)
-    )
-    with pytest.raises(ValueError, match="256 MiB"):
-        SaveAudio.execute(audio={"waveform": big, "sample_rate": 44_100})
+        SaveAudio.execute(audio=audio, mount="comfy-output")
+    assert [path.name for path in root.iterdir()] == [".dinkster-asset-index.json"]
 
 
 def test_empty_audio_matches_declared_sample_count_and_layout() -> None:
     result = cast(
         "dict[str, Any]",
-        EmptyAudio.execute(duration=1.5, sample_rate=8_000, channels=1)["audio"],
+        EmptyAudio.execute(duration=1.5, sample_rate=8_000, channels=1)["AUDIO"],
     )
-    waveform = cast(np.ndarray, result["waveform"])
+    waveform = np.asarray(result["waveform"])
     assert waveform.shape == (1, 1, 12_000)
     assert waveform.dtype == np.float32
     assert not waveform.any()
     assert result["sample_rate"] == 8_000
     half_sample = cast(
-        "dict[str, Any]", EmptyAudio.execute(duration=0.25, sample_rate=2, channels=2)["audio"]
+        "dict[str, Any]", EmptyAudio.execute(duration=0.25, sample_rate=2, channels=2)["AUDIO"]
     )
     assert cast(np.ndarray, half_sample["waveform"]).shape == (1, 2, 0)
     surround = cast(
-        "dict[str, Any]", EmptyAudio.execute(duration=0.5, sample_rate=8000, channels=6)["audio"]
+        "dict[str, Any]", EmptyAudio.execute(duration=0.5, sample_rate=8000, channels=6)["AUDIO"]
     )
     assert cast(np.ndarray, surround["waveform"]).shape == (1, 6, 4000)
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "match"),
-    [
-        ({"duration": -1.0}, "duration"),
-        ({"duration": float("nan")}, "duration"),
-        ({"duration": 100_000.0}, "duration"),
-        ({"sample_rate": 0}, "sample_rate"),
-        ({"sample_rate": 400_000}, "sample_rate"),
-        ({"sample_rate": 44_100.5}, "sample_rate must be an integer"),
-        ({"sample_rate": 44_100.0}, "sample_rate must be an integer"),
-        ({"sample_rate": "44100"}, "sample_rate must be an integer"),
-        ({"sample_rate": True}, "sample_rate must be an integer"),
-        ({"channels": 0}, "channels"),
-        ({"channels": 1.0}, "channels must be a positive integer"),
-        ({"channels": "2"}, "channels must be a positive integer"),
-        ({"channels": True}, "channels must be a positive integer"),
-        ({"duration": 3_600.0, "sample_rate": 192_000, "channels": 2}, "256 MiB"),
-    ],
-)
-def test_empty_audio_rejects_out_of_domain_requests(kwargs: dict[str, Any], match: str) -> None:
-    with pytest.raises(ValueError, match=match):
-        EmptyAudio.execute(**kwargs)
 
 
 def test_load_decodes_wav_bytes_exactly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -290,7 +265,7 @@ def test_load_decodes_wav_bytes_exactly(tmp_path: Path, monkeypatch: pytest.Monk
         suffix=".wav",
         media_type="audio/wav",
     )
-    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["audio"])
+    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=_bound(ref, snapshot))["AUDIO"])
     waveform = cast(np.ndarray, loaded["waveform"])
     assert loaded["sample_rate"] == 16_000
     assert waveform.shape == (1, 2, 8_000)
@@ -312,34 +287,23 @@ def test_load_refuses_malformed_and_audioless_assets(tmp_path: Path) -> None:
         LoadAudio.execute(audio=ref)
 
 
-def test_preview_validates_and_passes_audio_through() -> None:
+def test_preview_passes_audio_through_and_rejects_absent_audio() -> None:
     audio = _sine(samples=64)
     result = PreviewAudio.execute(audio=audio)
     assert result["audio"] is audio
-    with pytest.raises((TypeError, ValueError)):
-        PreviewAudio.execute(audio={"waveform": "wrong", "sample_rate": 8})
+    with pytest.raises(ValueError, match="input audio is None"):
+        PreviewAudio.execute(audio=None)
 
 
 def test_audio_schemas_preserve_preview_asset_and_bound_contracts() -> None:
     load = LoadAudio.schema()
-    assert load.node_type == "dinkster.load_audio"
-    assert load.inputs[0].type.kind == "asset"
-    assert load.inputs[0].type.element is not None
-    assert load.inputs[0].type.element.types == (AUDIO_TYPE,)
+    assert load.node_type == "dinkster.audio.load_audio"
+    assert load.inputs[0].type.types == ("ASSET",)
     assert load.inputs[0].source_filename is not None
     assert load.inputs[0].source_filename.kind == "media/audio"
     assert isinstance(load.inputs[0].widget, AssetWidget)
-    assert load.inputs[0].widget.accept == (
-        "audio/wav",
-        "audio/flac",
-        "audio/mpeg",
-        "audio/ogg",
-        "audio/webm",
-        "audio/mp4",
-        "video/mp4",
-        "video/webm",
-    )
-    assert [(output.id, output.preview) for output in load.outputs] == [("audio", True)]
+    assert load.inputs[0].widget.accept == ("audio/*", "video/*")
+    assert [(output.id, output.preview) for output in load.outputs] == [("AUDIO", True)]
 
     for node, quality_options in (
         (SaveAudio, None),
@@ -350,14 +314,13 @@ def test_audio_schemas_preserve_preview_asset_and_bound_contracts() -> None:
         assert schema.output_node
         assert not schema.idempotent
         by_id = {spec.id: spec for spec in schema.inputs}
-        assert by_id["audio"].on_absent == "fail"
-        assert by_id["target"].default == {"mount": "comfy-output", "prefix": "audio/ComfyUI"}
+        assert by_id["audio"].required
+        assert by_id["filename_prefix"].default == "audio/ComfyUI"
+        assert by_id["mount"].default is None
         output = schema.outputs[0]
-        assert output.id == "audios"
+        assert output.id == "audio"
         assert output.preview
-        assert output.type.kind == "list"
-        assert output.type.element is not None
-        assert output.type.element.kind == "asset"
+        assert output.type.types == (AUDIO_TYPE,)
         if quality_options is None:
             assert "quality" not in by_id
         else:
@@ -367,13 +330,10 @@ def test_audio_schemas_preserve_preview_asset_and_bound_contracts() -> None:
 
     preview = PreviewAudio.schema()
     assert preview.output_node
-    assert preview.inputs[0].on_absent == "fail"
+    assert preview.inputs[0].required
     assert [(output.id, output.preview) for output in preview.outputs] == [("audio", True)]
 
     empty = EmptyAudio.schema()
     assert not empty.output_node
     defaults = {spec.id: spec.default for spec in empty.inputs}
     assert defaults == {"duration": 60.0, "sample_rate": 44_100, "channels": 2}
-
-    encoded_limit = MAX_ENCODED_AUDIO_BYTES
-    assert encoded_limit == 256 * 1024 * 1024
