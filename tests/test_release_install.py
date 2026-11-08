@@ -698,6 +698,14 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     supervisor = tmp_path / "packages/supervisor/pyproject.toml"
     supervisor.parent.mkdir()
     supervisor.write_text('[project]\nname = "dinkster-supervisor"\nversion = "7.8.9"\n')
+    for name, manifest in (
+        ("dinkster-nodes-remote", "dinkster-pack.toml"),
+        ("dinkster-nodes-vision", "hed_pack/dinkster-pack.toml"),
+    ):
+        pack = tmp_path / "packages" / name
+        (pack / manifest).parent.mkdir(parents=True)
+        (pack / manifest).write_text('[pack]\nversion = "4.5.6"\n')
+        (pack / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "4.5.6"\n')
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "root"\nversion = "1.2.3"\n', encoding="utf-8"
     )
@@ -819,6 +827,13 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
+        for member in ("remote", "image", "dev"):
+            relative = f"packages/dinkster-nodes-{member}/pyproject.toml"
+            committed = tomllib.loads(
+                subprocess.check_output(["git", "show", f"HEAD:{relative}"], cwd=ROOT, text=True)
+            )["project"]["version"]
+            actual = tomllib.loads((staged / relative).read_text())["project"]["version"]
+            assert actual == (committed if member in {"remote", "image"} else version)
         for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -2538,7 +2553,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     output = tmp_path / "outputs"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setenv("PACKS", '["dinkster-nodes-foundation"]')
+    monkeypatch.setenv("PACKS", '["dinkster-image"]')
     try:
         if problem not in {None, "candidate"}:
             with pytest.raises((ValueError, environment_downloads.DownloadError)):
@@ -2546,7 +2561,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                     tmp_path,
                     tmp_path / ".official-publication",
                     "c" * 40,
-                    ["dinkster-nodes-foundation"],
+                    ["dinkster-image"],
                 )
             assert not output.exists()
         else:
@@ -2554,7 +2569,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 tmp_path,
                 tmp_path / ".official-publication",
                 "c" * 40,
-                ["dinkster-nodes-foundation"],
+                ["dinkster-image"],
                 candidate=problem == "candidate",
             ) == [
                 {"variant": "linux-cpu", "runner": "ubuntu-latest"},
@@ -2571,7 +2586,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-nodes-foundation", "0.0.2")
+                ("dinkster-image", "0.0.1")
             ]
     finally:
         server.shutdown()

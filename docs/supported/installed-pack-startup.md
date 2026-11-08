@@ -3,6 +3,9 @@
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
+- Official packs retain independent versions when the engine is released;
+  changed remote pack dependencies use a new version rather than replacing
+  an immutable published artifact.
 - Published software history can rebuild a pruned generation without restoring
   workflows, models or outputs. Missing engine inputs expose read-only alternatives
   and all substitutions before a proposal-specific approval; `--yes` alone cannot

@@ -1565,7 +1565,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-nodes-remote"
-version = "0.0.2"
+version = "0.0.3"
 source = { editable = "packages/dinkster-nodes-remote" }
 dependencies = [
     { name = "dinkster-api" },
