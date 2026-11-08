@@ -15,6 +15,7 @@ from dinkster_supervisor.environment_downloads import fetch_artifact, read_metad
 from dinkster_supervisor.environment_state import digest
 from dinkster_workers import load_manifest
 from dinkster_workers.boundary import PROTOCOL_VERSION
+from dinkster_workers.pack_wheel import pack_manifest_path
 
 from scripts.acquire_engine_bases import acquire
 from scripts.build_official_packs import build
@@ -55,11 +56,12 @@ def prepare_inputs(
     catalog = Lockfile.from_record_json((sources / "official-packs.lock").read_text())
     for pack in catalog.packs:
         tree = unpack_artifact(
-            sources / f"{pack.pack}-{pack.version}.zip",
+            sources
+            / f"{pack.pack.replace('-', '_').replace('.', '_')}-{pack.version}-py3-none-any.whl",
             work / "admission" / pack.pack,
             pack.artifact_digest,
         )
-        manifest = load_manifest(tree / "dinkster-pack.toml")
+        manifest = load_manifest(pack_manifest_path(tree))
         if manifest.compatibility is None:
             raise ValueError(f"pack {pack.pack} lacks engine compatibility")
         manifest.compatibility.require_engine(pack.pack, engine["version"])

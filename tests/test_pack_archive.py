@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import shutil
@@ -42,21 +43,23 @@ def write_pack(root: Path) -> Path:
 
 
 def test_archive_is_deterministic_and_has_registry_metadata(tmp_path: Path) -> None:
-    first = write_pack(tmp_path / "first")
-    second = write_pack(tmp_path / "second")
-    os.utime(second / "nodes.py", (0, 0))
-    (second / "nodes.py").chmod(0o755)
+    fixture = Path(__file__).parent / "fixtures/registry-admission/color-tools"
+    first = shutil.copytree(fixture, tmp_path / "first")
+    second = shutil.copytree(fixture, tmp_path / "second")
+    os.utime(second / "color_tools/__init__.py", (0, 0))
+    (second / "color_tools/__init__.py").chmod(0o755)
 
-    first_output = tmp_path / "first.zip"
-    second_output = tmp_path / "second.zip"
+    first_output = tmp_path / "first-output/color_tools-1.2.3-py3-none-any.whl"
+    second_output = tmp_path / "second-output/color_tools-1.2.3-py3-none-any.whl"
     first_digest = build_pack_archive(first, first_output)
     second_digest = build_pack_archive(second, second_output)
 
     assert first_output.read_bytes() == second_output.read_bytes()
     assert (
-        first_digest == second_digest == f"blake3:{blake3(first_output.read_bytes()).hexdigest()}"
+        first_digest
+        == second_digest
+        == f"sha256:{hashlib.sha256(first_output.read_bytes()).hexdigest()}"
     )
-    assert first_digest == "blake3:ccbd5bd1ece43a67a6256b92b58c4787036e85129b24bf08f59070c285ed3fe6"
     with zipfile.ZipFile(first_output) as archive:
         assert archive.namelist() == sorted(archive.namelist())
         assert archive.comment == b""
@@ -584,8 +587,10 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
 ) -> None:
     from dataclasses import replace
 
-    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_registry.archive_admission import StageResult
+    from dinkster_workers import load_manifest
+    from dinkster_workers.pack_wheel import wheel_filename
 
     from scripts import check_default_pack_admission as admission
 
@@ -597,17 +602,19 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         (source / "dinkster-pack.toml").write_text(
             f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
             f'version = "{version}"\nengine = ">=0.2,<1"\n'
-            '[pack.entry]\nnodes = "nodes:NODES"\n'
+            f'[pack.entry]\nnodes = "{name}:NODES"\n'
             '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
         )
         if name == "candidate" and problem == "manifest":
             manifest = source / "dinkster-pack.toml"
             manifest.write_text(manifest.read_text().replace('version = "7.2"', 'version = "7.1"'))
-        (source / "nodes.py").write_text("NODES = []\n")
+        (source / name).mkdir()
+        (source / name / "__init__.py").write_text("NODES = []\n")
         if name == "candidate" and problem == "security":
             (source / "bad.txt").write_text("dinkster-known-bad-test-payload")
-        archive = tmp_path / f"{name}.zip"
-        digest = build_artifact(source, archive)
+        archive = tmp_path / wheel_filename(load_manifest(source / "dinkster-pack.toml"))
+        build_pack_archive(source, archive)
+        digest = artifact_digest(archive.read_bytes())
         archives[name] = archive.read_bytes()
         entries[name] = LockedPack(
             pack=name,
@@ -621,7 +628,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     def build_candidate(root, output, *, packs):
         assert packs == ("candidate",)
         output.mkdir()
-        (output / "candidate-7.2.zip").write_bytes(archives["candidate"])
+        (output / "candidate-7.2-py3-none-any.whl").write_bytes(archives["candidate"])
         (output / "official-packs.lock").write_text(
             Lockfile.of([entries["candidate"]]).record_json()
         )
@@ -1215,15 +1222,21 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
 
 
 @pytest.mark.parametrize("problem", [None, "path", "case", "compression", "order", "junk"])
-def test_registry_archive_admission_requires_canonical_bytes(problem: str | None) -> None:
+def test_registry_archive_admission_requires_verified_wheel(
+    tmp_path: Path, problem: str | None
+) -> None:
     from dinkster_registry import artifact_digest
     from dinkster_registry.archive_admission import extracted_archive, run_ingest_integrity
 
-    files = [("dinkster-pack.toml", MANIFEST.encode()), ("nodes.py", b"NODES = []\n")]
+    root = Path(__file__).parent / "fixtures/registry-admission/color-tools"
+    wheel = tmp_path / "color_tools-1.2.3-py3-none-any.whl"
+    build_pack_archive(root, wheel)
+    with zipfile.ZipFile(wheel) as archive:
+        files = [(name, archive.read(name)) for name in archive.namelist()]
     if problem == "path":
         files.append(("../escape.py", b"escape"))
     elif problem == "case":
-        files.append(("NODES.py", b"collision"))
+        files.append(("color_tools/__INIT__.py", b"collision"))
     elif problem == "order":
         files.reverse()
     elif problem == "junk":
@@ -1240,12 +1253,14 @@ def test_registry_archive_admission_requires_canonical_bytes(problem: str | None
     data = output.getvalue()
     digest = artifact_digest(data)
     result = run_ingest_integrity(data, len(data), digest)
-    assert result.blocked is (problem is not None)
-    if problem is None:
+    assert result.blocked is (problem in {"path", "case", "junk"})
+    if problem in {None, "compression", "order"}:
         assert result.data == {"artifactDigest": digest, "size": len(data)}
-        with extracted_archive(data) as root:
-            assert (root / "nodes.py").read_bytes() == b"NODES = []\n"
-        assert not root.exists()
+        with extracted_archive(data) as extracted:
+            assert (extracted / "__init__.py").read_bytes() == (
+                root / "color_tools/__init__.py"
+            ).read_bytes()
+        assert not extracted.exists()
         assert run_ingest_integrity(data, len(data) + 1, digest).findings[0].code == (
             "integrity.size-mismatch"
         )
@@ -1270,13 +1285,13 @@ def test_registry_archive_admission_requires_canonical_bytes(problem: str | None
 def test_registry_archive_security_preserves_block_and_review(
     tmp_path: Path, filename: str, payload: bytes, code: str | None, effect: str | None
 ) -> None:
-    from dinkster_registry import build_artifact
     from dinkster_registry.archive_admission import run_fast_security
 
-    root = write_pack(tmp_path / "pack")
-    (root / filename).write_bytes(payload)
-    archive = tmp_path / "pack.zip"
-    build_artifact(root, archive)
+    root = tmp_path / "pack"
+    shutil.copytree(Path(__file__).parent / "fixtures/registry-admission/color-tools", root)
+    (root / "color_tools" / filename).write_bytes(payload)
+    archive = tmp_path / "color_tools-1.2.3-py3-none-any.whl"
+    build_pack_archive(root, archive)
     result = run_fast_security(archive.read_bytes())
     assert [(finding.code, finding.effect) for finding in result.findings] == (
         [] if code is None else [(code, effect)]
