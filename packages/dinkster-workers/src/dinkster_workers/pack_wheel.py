@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import email.parser
 import hashlib
 import importlib.metadata
 import io
@@ -13,6 +14,7 @@ import unicodedata
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
+from typing import cast
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -63,6 +65,104 @@ def installed_pack_manifests(
         for file in distribution.files or ():
             if file.name == MANIFEST_FILENAME and len(file.parts) == 2:
                 yield distribution, Path(str(distribution.locate_file(file))).resolve()
+
+
+def pack_manifest_path(root: Path) -> Path:
+    """Locate a local source manifest or the manifest recorded by an installed wheel."""
+    local = root / MANIFEST_FILENAME
+    if local.is_file():
+        return local
+    manifests = [path for _, path in installed_pack_manifests(root)]
+    if not manifests:
+        return local
+    if len(manifests) > 1:
+        raise PackArchiveError(f"wheel.manifest: expected one pack manifest in {root}")
+    return manifests[0]
+
+
+def validate_pack_wheel(archive: zipfile.ZipFile) -> str:
+    """Validate wheel paths, RECORD hashes and manifest identity before extraction."""
+    infos = archive.infolist()
+    if not 1 <= len(infos) <= MAX_ENTRIES:
+        raise PackArchiveError("wheel.invalid: invalid entry count")
+    names: set[str] = set()
+    folded: set[str] = set()
+    expanded = 0
+    for info in infos:
+        name = info.filename
+        path = PurePosixPath(name)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "\\" in name
+            or ":" in name
+            or "\0" in name
+            or name != path.as_posix()
+            or name != unicodedata.normalize("NFC", name)
+            or name.casefold() in folded
+            or info.is_dir()
+            or info.flag_bits & 1
+            or (info.external_attr >> 16) & 0o170000 not in (0, 0o100000)
+        ):
+            raise PackArchiveError(f"wheel.invalid: unsafe or duplicate path {name!r}")
+        if path.suffix == ".pth" or path.name == "entry_points.txt":
+            raise PackArchiveError(f"wheel.entry-point-forbidden: {name}")
+        _enforce_limit(len(name.encode("utf-8")), MAX_PATH_BYTES, "wheel path")
+        _enforce_limit(info.file_size, MAX_FILE_BYTES, "wheel file")
+        expanded += info.file_size
+        names.add(name)
+        folded.add(name.casefold())
+    _enforce_limit(expanded, MAX_EXPANDED_BYTES, "expanded wheel")
+    manifests = [name for name in names if PurePosixPath(name).name == MANIFEST_FILENAME]
+    metadata_files = [name for name in names if name.endswith(".dist-info/METADATA")]
+    if len(manifests) != 1 or len(metadata_files) != 1:
+        raise PackArchiveError("wheel.manifest: expected one manifest and one distribution")
+    manifest_path = manifests[0]
+    manifest_bytes = archive.read(manifest_path)
+    _enforce_limit(len(manifest_bytes), MAX_MANIFEST_BYTES, "pack manifest")
+    pack = tomllib.loads(manifest_bytes.decode("utf-8")).get("pack")
+    if not isinstance(pack, dict):
+        raise PackArchiveError("wheel.manifest: missing pack table")
+    metadata = email.parser.BytesParser().parsebytes(archive.read(metadata_files[0]))
+    fields = cast("dict[str, object]", pack)
+    name, version = fields.get("name"), fields.get("version")
+    if not isinstance(name, str) or metadata["Name"] != name or metadata["Version"] != version:
+        raise PackArchiveError("wheel.distribution-name: metadata differs from pack manifest")
+    package = pack_import_name(name)
+    dist_info = metadata_files[0].partition("/")[0]
+    if (
+        not package.isidentifier()
+        or keyword.iskeyword(package)
+        or dist_info != f"{canonicalize_name(name).replace('-', '_')}-{version}.dist-info"
+        or f"{dist_info}/WHEEL" not in names
+    ):
+        raise PackArchiveError("wheel.distribution-name: invalid wheel metadata directory")
+    if (
+        manifest_path != f"{package}/{MANIFEST_FILENAME}"
+        or f"{package}/__init__.py" not in names
+        or any(PurePosixPath(path).parts[0] not in {package, dist_info} for path in names)
+    ):
+        raise PackArchiveError("wheel.import-name: wheel must contain exactly the pack package")
+    record_path = f"{dist_info}/RECORD"
+    if record_path not in names:
+        raise PackArchiveError("wheel.record: missing RECORD")
+    recorded: set[str] = set()
+    for row in csv.reader(io.StringIO(archive.read(record_path).decode("utf-8"))):
+        if len(row) != 3 or row[0] in recorded or row[0] not in names:
+            raise PackArchiveError("wheel.record: invalid or duplicate RECORD entry")
+        path, digest, size = row
+        recorded.add(path)
+        if path == record_path:
+            if digest or size:
+                raise PackArchiveError("wheel.record: RECORD must not hash itself")
+            continue
+        data = archive.read(path)
+        actual = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+        if digest != "sha256=" + actual or size != str(len(data)):
+            raise PackArchiveError(f"wheel.hash-mismatch: RECORD differs for {path}")
+    if recorded != names:
+        raise PackArchiveError("wheel.record: RECORD does not cover every wheel file")
+    return manifest_path
 
 
 def _enforce_limit(actual: int, maximum: int, subject: str) -> None:

@@ -338,7 +338,7 @@ def _check_requirement_strings(
 
 
 def _known_pack_names(manifest: PackManifest, published_packs: Collection[str]) -> set[str]:
-    pack_names = {canonicalize_name(name) for name in published_packs}
+    pack_names: set[str] = {canonicalize_name(name) for name in published_packs}
     pack_names.add(canonicalize_name(manifest.name))
     pack_names.update(
         canonicalize_name(distribution.metadata["Name"])

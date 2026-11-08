@@ -31,12 +31,14 @@ import hashlib
 import importlib
 import importlib.metadata
 import importlib.util
+import json
 import math
 import os
 import shutil
 import sys
 import tempfile
-import tomllib
+import urllib.parse
+import urllib.request
 import uuid
 import weakref
 from collections.abc import (
@@ -144,7 +146,6 @@ from dinkster_protocol import (
 from dinkster_protocol.frontend_modules import FrontendModule
 from dinkster_protocol.pack_surfaces import PACK_EVENTS_SURFACE, PACK_ROUTES_SURFACE, PackRoute
 from dinkster_registry import (
-    ArtifactError,
     ComposedPack,
     CompositionGeneration,
     CompositionRecordError,
@@ -153,7 +154,7 @@ from dinkster_registry import (
     Lockfile,
     RequirementKind,
     ResolvedRequirement,
-    build_artifact,
+    artifact_digest,
 )
 from dinkster_registry import (
     CompositionMode as PackCompositionMode,
@@ -1189,58 +1190,12 @@ def default_pack_ids() -> tuple[str, ...]:
 
 def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
     """Digest source and wheel installations as the same pack artifact."""
+    from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
+
     with tempfile.TemporaryDirectory(prefix="dinkster-default-pack-") as directory:
-        temporary = Path(directory)
-        root = manifest.parent
-        if module_root is not None:
-            root = temporary / "artifact"
-            root.mkdir()
-            shutil.copy2(manifest, root / "dinkster-pack.toml")
-            if module_root.parent.name == "dinkster_nodes_vision":
-                namespace = root / module_root.parent.name
-                namespace.mkdir()
-                bundled_namespace = manifest.parent / module_root.parent.name
-                shutil.copy2(bundled_namespace / "__init__.py", namespace / "__init__.py")
-                shutil.copytree(module_root, namespace / module_root.name)
-                for sidecar in manifest.parent.iterdir():
-                    if sidecar.is_file() and sidecar != manifest:
-                        target = root / sidecar.name
-                        shutil.copy2(sidecar, target)
-                        if sidecar.name.endswith("_LICENSE"):
-                            target.write_bytes(target.read_bytes().replace(b"\r\n", b"\n"))
-            else:
-                shutil.copytree(module_root, root / module_root.name)
-            for filename in _PACK_ARTIFACT_SIDECARS:
-                sidecar = manifest.parent / filename
-                if sidecar.is_file():
-                    shutil.copy2(sidecar, root / filename)
-            pack = tomllib.loads(manifest.read_text(encoding="utf-8")).get("pack", {})
-            docs = pack.get("docs", {}) if isinstance(pack, dict) else {}
-            docs_dir = docs.get("dir") if isinstance(docs, dict) else None
-            if isinstance(docs_dir, str):
-                relative_docs = Path(docs_dir)
-                source_docs = manifest.parent / relative_docs
-                if (
-                    not relative_docs.is_absolute()
-                    and ".." not in relative_docs.parts
-                    and source_docs.is_symlink()
-                ):
-                    raise ArtifactError(f"artifact contains symlink: {relative_docs}")
-                if (
-                    not relative_docs.is_absolute()
-                    and ".." not in relative_docs.parts
-                    and source_docs.is_dir()
-                    and source_docs.resolve().is_relative_to(manifest.parent.resolve())
-                ):
-                    target_docs = root / relative_docs
-                    target_docs.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(source_docs, target_docs, symlinks=True)
-            source_locales = manifest.parent / "locales"
-            if source_locales.is_symlink():
-                raise ArtifactError("artifact contains symlink: locales")
-            if source_locales.is_dir():
-                shutil.copytree(source_locales, root / "locales", symlinks=True)
-        return build_artifact(root, temporary / "pack.zip")
+        output = Path(directory) / wheel_filename(load_manifest(manifest))
+        build_pack_archive(manifest.parent, output)
+        return artifact_digest(output.read_bytes())
 
 
 def _installed_pack_spec(
@@ -1254,54 +1209,45 @@ def _installed_pack_spec(
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
     distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
-    sidecar = pack_id.replace("-", "_")
-    module = importlib.util.find_spec(module_name)
-    if module is None or module.origin is None:
-        raise CompositionError(f"installed {pack_id} package is not discoverable")
-    source_manifest = next(
+    try:
+        distribution = importlib.metadata.distribution(distribution_id)
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise CompositionError(
+            f"installed pack distribution {distribution_id!r} is unavailable"
+        ) from exc
+    package = pack_id.replace("-", "_").replace(".", "_")
+    version = distribution.version
+    source = f"python:{distribution_id}=={version}"
+    manifest = next(
         (
-            parent / "dinkster-pack.toml"
-            for parent in Path(module.origin).resolve().parents
-            if (parent / "dinkster-pack.toml").is_file()
+            Path(str(distribution.locate_file(file)))
+            for file in distribution.files or ()
+            if str(file) == f"{package}/dinkster-pack.toml"
         ),
         None,
     )
-    if source_manifest is None:
-        source_manifest = next(
+    module_root = None
+    direct_url = json.loads(distribution.read_text("direct_url.json") or "{}")
+    if direct_url.get("dir_info", {}).get("editable") is True:
+        url = urllib.parse.urlsplit(direct_url["url"])
+        if url.scheme != "file":
+            raise CompositionError(f"editable pack {pack_id} has a non-file source")
+        root = Path(urllib.request.url2pathname(url.path))
+        manifest = next(
             (
-                parent / f"{sidecar}_pack" / "dinkster-pack.toml"
-                for parent in Path(module.origin).resolve().parents
-                if Path(module.origin).resolve().is_relative_to(parent / "src")
-                and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
+                candidate
+                for candidate in (
+                    root / "dinkster-pack.toml",
+                    root / f"{package}_pack/dinkster-pack.toml",
+                )
+                if candidate.is_file()
             ),
             None,
         )
-    declaration = load_manifest(source_manifest) if source_manifest is not None else None
-    if declaration is not None and declaration.compatibility is not None:
-        version = declaration.compatibility.version
-        bundled = None
-    else:
-        try:
-            distribution = importlib.metadata.distribution(distribution_id)
-        except importlib.metadata.PackageNotFoundError as exc:
-            raise CompositionError(
-                f"installed pack distribution {distribution_id!r} is unavailable"
-            ) from exc
-        version = distribution.version
-        bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
-    if source_manifest is not None:
-        manifest = source_manifest
-        source = f"local:{manifest.parent.resolve()}"
-        source_install = True
-    elif bundled is not None and bundled.is_file():
-        manifest = bundled
-        source = f"python:{distribution_id}=={version}"
-        source_install = False
-    else:
-        raise CompositionError(f"installed {pack_id} has no bundled artifact or source manifest")
-    module_root = (
-        Path(module.origin).resolve().parent if source_install and locked is not None else None
-    )
+        source = f"local:{root.resolve()}"
+        module_root = root / "src" / module_name.replace(".", "/")
+    if manifest is None or not manifest.is_file():
+        raise CompositionError(f"installed {pack_id} has no metadata-recorded pack manifest")
     digest = _installed_pack_digest(manifest, module_root)
     manifest_record = load_manifest(manifest)
     if canonical_name(manifest_record.name) != canonical_name(pack_id):

@@ -16,8 +16,10 @@ from pathlib import Path
 
 import pytest
 from dinkster_registry import InstallError, Lockfile, artifact_digest
+from dinkster_registry.archive_admission import extracted_archive, run_ingest_integrity
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import diagnose_static
+from dinkster_workers.manifest import add_pack_root_to_import_path
 from dinkster_workers.pack_environment import provision_pack
 from dinkster_workers.pack_lock import GenerationPackages, PackLock, plan_pack
 from dinkster_workers.pack_wheel import (
@@ -134,6 +136,41 @@ def test_manifest_drives_installable_wheel_and_record(tmp_path: Path) -> None:
         importlib.metadata.Distribution.at(site_packages / "demo_nodes-1.2.3.dist-info").version
         == "1.2.3"
     )
+    assert not run_ingest_integrity(contents, len(contents), artifact_digest(contents)).blocked
+    with extracted_archive(contents) as extracted:
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        import_path: list[str] = []
+        add_pack_root_to_import_path(manifest, import_path)
+        assert import_path == [str(extracted.parent)]
+        assert (extracted / "locales/en.json").read_bytes() == b'{"hello":"world"}\n'
+
+
+@pytest.mark.parametrize("change", ["tampered-file", "extra-package", "legacy-zip", "traversal"])
+def test_wheel_admission_refuses_bad_records_and_layouts(tmp_path: Path, change: str) -> None:
+    root = wheel_pack(tmp_path / "source")
+    output = tmp_path / "dist/demo_nodes-1.2.3-py3-none-any.whl"
+    build_pack_archive(root, output)
+    with zipfile.ZipFile(output) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    if change == "tampered-file":
+        files["demo_nodes/__init__.py"] = b"NODES = ['changed']\n"
+    elif change == "extra-package":
+        files["other/__init__.py"] = b""
+    elif change == "traversal":
+        files["../outside"] = b"outside"
+    else:
+        files = {"dinkster-pack.toml": (root / "dinkster-pack.toml").read_bytes()}
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    data = buffer.getvalue()
+    verdict = run_ingest_integrity(data, len(data), artifact_digest(data))
+    assert verdict.blocked
+    assert verdict.findings[0].code == "integrity.invalid-archive"
+    with pytest.raises(PackArchiveError):
+        with extracted_archive(data):
+            pytest.fail("invalid wheel was extracted")
 
 
 @pytest.mark.parametrize(

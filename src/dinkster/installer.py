@@ -67,6 +67,7 @@ from dinkster_workers import (
     load_manifest,
 )
 from dinkster_workers.doctor import render_text
+from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import (
     ProvisionError,
     bare_pin,
@@ -810,7 +811,7 @@ class Installer:
         for entry in target.packs:
             if entry.pack in grouped or entry.pack in in_process:
                 continue
-            manifest_path = self._store_dir(entry) / MANIFEST_FILENAME
+            manifest_path = pack_manifest_path(self._store_dir(entry))
             if not manifest_path.is_file():
                 return False
             manifest = load_manifest(manifest_path)
@@ -840,7 +841,7 @@ class Installer:
         """Whether the exact bytes this entry pins are present (unpacked
         store or archived artifact) - what apply-from-plan checks up front
         so a stale-gc'd plan refuses loudly instead of failing mid-stage."""
-        if (self._store_dir(entry) / MANIFEST_FILENAME).is_file():
+        if pack_manifest_path(self._store_dir(entry)).is_file():
             return True
         return pack_archive_path(self.artifacts_dir, entry.artifact_digest).is_file()
 
@@ -948,7 +949,7 @@ class Installer:
         accelerator-conditional requirements) before anything mutates.
         ``artifact`` supplies an explicit archive instead of the cached path.
         None when neither is present (a gc'd plan; apply refuses that separately)."""
-        store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
+        store_manifest = pack_manifest_path(self._store_dir(entry))
         if store_manifest.is_file():
             return load_manifest(store_manifest)
         archive = artifact or pack_archive_path(self.artifacts_dir, entry.artifact_digest)
@@ -956,7 +957,7 @@ class Installer:
             return None
         with tempfile.TemporaryDirectory(prefix="dinkster-manifest-") as scratch:
             unpack_artifact(archive, Path(scratch), entry.artifact_digest)
-            return load_manifest(Path(scratch) / MANIFEST_FILENAME)
+            return load_manifest(pack_manifest_path(Path(scratch)))
 
     def check_engine_compatibility(
         self, target: Lockfile, artifacts: Mapping[str, Path] | None = None
@@ -989,7 +990,7 @@ class Installer:
         lockfile: Lockfile,
         groups: Sequence[tuple[str, tuple[str, ...]]],
     ) -> Path | None:
-        store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
+        store_manifest = pack_manifest_path(self._store_dir(entry))
         if not store_manifest.is_file():
             return None
         manifest = load_manifest(store_manifest)
@@ -1117,7 +1118,7 @@ class Installer:
             return
         for entry in target.packs:
             store = self._store_dir(entry, allocate=True)
-            if not (store / MANIFEST_FILENAME).is_file():
+            if not pack_manifest_path(store).is_file():
                 archive = artifacts.get(entry.artifact_digest)
                 if archive is None:
                     candidate = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
@@ -1128,7 +1129,7 @@ class Installer:
                         )
                     archive = candidate
                 unpack_artifact(archive, store, entry.artifact_digest)
-            manifest = load_manifest(store / MANIFEST_FILENAME)
+            manifest = load_manifest(pack_manifest_path(store))
             interpreter: Path | str = (
                 self._serving_interpreter if entry.pack in in_process else sys.executable
             )
@@ -1164,7 +1165,7 @@ class Installer:
         entries = {entry.pack: entry for entry in target.packs}
         for entry in target.packs:
             store = self._store_dir(entry, allocate=True)
-            if not (store / MANIFEST_FILENAME).is_file():
+            if not pack_manifest_path(store).is_file():
                 archive = artifacts.get(entry.artifact_digest)
                 if archive is None:
                     candidate = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
@@ -1175,7 +1176,7 @@ class Installer:
                         )
                     archive = candidate
                 unpack_artifact(archive, store, entry.artifact_digest)
-            manifests[entry.pack] = load_manifest(store / MANIFEST_FILENAME)
+            manifests[entry.pack] = load_manifest(pack_manifest_path(store))
 
         member_to_group = {
             member: (name, members) for name, members in groups for member in members
@@ -1536,7 +1537,7 @@ class Installer:
         specs: list[PackSpec] = []
         for entry in lockfile.packs:
             store = self._store_dir(entry)
-            manifest_path = store / MANIFEST_FILENAME
+            manifest_path = pack_manifest_path(store)
             if not manifest_path.is_file():
                 raise InstallError(
                     f"generation content for pack {entry.pack!r} is missing from "
@@ -1577,7 +1578,7 @@ class Installer:
                     worker_group=group[0] if group is not None else None,
                     group_manifests=(
                         tuple(
-                            self._store_dir(entries[member]) / MANIFEST_FILENAME
+                            pack_manifest_path(self._store_dir(entries[member]))
                             for member in group[1]
                         )
                         if group is not None

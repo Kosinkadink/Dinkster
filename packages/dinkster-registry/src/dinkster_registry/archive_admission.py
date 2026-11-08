@@ -14,14 +14,13 @@ import tempfile
 import threading
 import time
 import tomllib
-import unicodedata
 import zipfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.metadata import version as distribution_version
 from io import BufferedReader
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from blake3 import blake3
@@ -42,13 +41,14 @@ from dinkster_workers.doctor import (
     diagnose_static,
 )
 from dinkster_workers.manifest import ManifestError, PackManifest, load_manifest
+from dinkster_workers.pack_wheel import pack_manifest_path, validate_pack_wheel
 from dinkster_workers.sandbox import SandboxError, detect_probe_jail
 from packaging.licenses import InvalidLicenseExpression, canonicalize_license_expression
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import Version
 
-from .artifact import MANIFEST_FILENAME, build_artifact
+from .artifact import MANIFEST_FILENAME
 from .model import artifact_digest
 
 SCAN_POLICY_VERSION = "registry-scan/1"
@@ -102,55 +102,8 @@ def _signal(code: str, message: str, *, severity: FindingSeverity = "warning") -
 
 
 def _safe_archive_infos(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
-    infos = archive.infolist()
-    if not infos or len(infos) > ENTRY_LIMIT:
-        raise ValueError(f"archive must contain between 1 and {ENTRY_LIMIT} entries")
-    names: set[str] = set()
-    folded: set[str] = set()
-    expanded = 0
-    for info in infos:
-        name = info.filename
-        path = PurePosixPath(name)
-        mode = info.external_attr >> 16
-        if (
-            not name
-            or "\\" in name
-            or "\x00" in name
-            or path.is_absolute()
-            or PureWindowsPath(name).is_absolute()
-            or ".." in path.parts
-            or name != unicodedata.normalize("NFC", name)
-        ):
-            raise ValueError(f"archive path is unsafe: {name!r}")
-        if name.endswith("/") or info.is_dir():
-            raise ValueError(f"archive directories must be implicit: {name!r}")
-        if len(name.encode("utf-8")) > PATH_BYTE_LIMIT:
-            raise ValueError(f"archive path exceeds {PATH_BYTE_LIMIT} UTF-8 bytes: {name!r}")
-        if name in names:
-            raise ValueError(f"archive path is duplicated: {name!r}")
-        names.add(name)
-        folded_name = name.casefold()
-        if folded_name in folded:
-            raise ValueError(f"archive paths collide case-insensitively: {name!r}")
-        folded.add(folded_name)
-        if info.create_system != 3 or mode != 0o644:
-            raise ValueError(f"archive entry is not a regular 0644 file: {name!r}")
-        if info.compress_type != zipfile.ZIP_STORED:
-            raise ValueError(f"archive entry uses unsupported compression: {name!r}")
-        if info.flag_bits & 0x1:
-            raise ValueError(f"archive entry is encrypted: {name!r}")
-        if info.date_time != (1980, 1, 1, 0, 0, 0) or info.extra or info.comment:
-            raise ValueError(f"archive entry metadata is not deterministic: {name!r}")
-        if info.file_size > FILE_LIMIT:
-            raise ValueError(f"archive file exceeds {FILE_LIMIT} bytes: {name!r}")
-        if name == MANIFEST_FILENAME and info.file_size > MANIFEST_LIMIT:
-            raise ValueError(f"archive manifest exceeds {MANIFEST_LIMIT} bytes")
-        expanded += info.file_size
-        if expanded > EXPANDED_LIMIT:
-            raise ValueError(f"archive expands beyond {EXPANDED_LIMIT} bytes")
-    if MANIFEST_FILENAME not in names:
-        raise ValueError(f"archive has no root {MANIFEST_FILENAME}")
-    return infos
+    validate_pack_wheel(archive)
+    return archive.infolist()
 
 
 def run_ingest_integrity(data: bytes, declared_size: int, declared_digest: str) -> StageResult:
@@ -169,29 +122,9 @@ def run_ingest_integrity(data: bytes, declared_size: int, declared_digest: str) 
         )
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            if archive.comment:
-                raise ValueError("archive comment must be empty")
-            infos = _safe_archive_infos(archive)
+            _safe_archive_infos(archive)
             if archive.testzip() is not None:
                 raise ValueError("archive member failed its CRC check")
-            if any(
-                part in _SKIP_DIRECTORIES
-                for info in infos
-                for part in PurePosixPath(info.filename).parts
-            ):
-                raise ValueError("archive bytes are not the deterministic serialization")
-            with tempfile.TemporaryDirectory(prefix="dinkster-registry-integrity-") as temporary:
-                root = Path(temporary) / "sources"
-                root.mkdir()
-                for info in infos:
-                    destination = root / info.filename
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    destination.write_bytes(archive.read(info))
-                rebuilt = Path(temporary) / "rebuilt.zip"
-                build_artifact(root, rebuilt)
-                rebuilt_digest = artifact_digest(rebuilt.read_bytes())
-        if rebuilt_digest != actual_digest:
-            raise ValueError("archive bytes are not the deterministic serialization")
     except (OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
         return StageResult((_block("integrity.invalid-archive", str(exc)),))
     return StageResult(data={"artifactDigest": actual_digest, "size": len(data)})
@@ -206,7 +139,7 @@ def extracted_archive(data: bytes) -> Generator[Path]:
                 destination = root / info.filename
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(archive.read(info))
-        yield root
+        yield pack_manifest_path(root).parent
 
 
 def _pack_metadata(manifest_path: Path) -> dict[str, object]:

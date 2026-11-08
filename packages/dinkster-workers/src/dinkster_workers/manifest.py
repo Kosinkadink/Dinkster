@@ -3333,11 +3333,15 @@ def _parse_presentation(
 
 def add_pack_root_to_import_path(manifest: PackManifest, import_path: list[str]) -> None:
     """Expose local entries without shadowing entries installed in the pack interpreter."""
-    root = str(manifest.root.resolve())
+    directory = manifest.root.resolve()
+    package = manifest.name.replace("-", "_").replace(".", "_")
+    if directory.name == package and (directory / "__init__.py").is_file():
+        directory = directory.parent
+    root = str(directory)
     if root in import_path:
         return
     module = manifest.nodes_entry.partition(":")[0]
-    source = manifest.root.joinpath(*module.split("."))
+    source = directory.joinpath(*module.split("."))
     if source.with_suffix(".py").is_file() or source.is_dir():
         import_path.insert(0, root)
     else:
