@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent
-from dinkster_nodes_comfy import custom_sampling
-from dinkster_nodes_comfy.noise import DisableNoise, RandomNoise
+from dinkster_nodes_sampling import custom_sampling
+from dinkster_nodes_sampling.noise import DisableNoise, RandomNoise
 
 # Expected values are hand-derived from the explicit fixture tensors, masks,
 # and linear model/noise transforms below, not recorded ComfyUI outputs.
@@ -292,31 +292,41 @@ def test_advanced_sampler_restores_asymmetric_av_streams_with_stub_guider(
 def test_custom_sampling_on_ordinary_hosts(mode: str, in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
 
-    from dinkster.compose import PackSpec, ServingComposer
+    from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        manifests = (
-            root / "dinkster-pack.toml",
-            root / "tests/fixtures/custom_sampling/dinkster-pack.toml",
+        root = Path(__file__).resolve().parent
+        specs = (
+            *(
+                _installed_pack_spec(identity, module, in_process=in_process)
+                for identity, module in (
+                    ("dinkster-latent", "dinkster_nodes_latent"),
+                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                    ("dinkster-sampling", "dinkster_nodes_sampling"),
+                )
+            ),
+            PackSpec(root / "fixtures/custom_sampling/dinkster-pack.toml"),
         )
+        manifests = tuple(Path(spec.manifest) for spec in specs)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+                "PYTHONPATH": os.pathsep.join((str(root), str(root / "fixtures/custom_sampling"))),
             }
         )
         try:
-            for manifest in manifests:
-                pack = PackSpec(manifest=manifest, in_process=True)
-                if not in_process:
-                    pack = PackSpec(
-                        manifest=manifest,
-                        worker_group="custom-sampling-fixture",
-                        group_manifests=manifests,
+            for spec in specs:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
+                        in_process=in_process,
+                        worker_group=None if in_process else "custom-sampling-fixture",
+                        group_manifests=() if in_process else manifests,
                     )
-                await composer.add_pack(pack)
+                )
             inputs: dict[str, Any] = {
                 "sampler": Link("source", "sampler"),
                 "sigmas": Link("source", "sigmas"),
@@ -337,7 +347,9 @@ def test_custom_sampling_on_ordinary_hosts(mode: str, in_process: bool) -> None:
                 nodes={
                     "source": GraphNode("custom-sampling-fixture.source", {}),
                     "sample": GraphNode(
-                        "SamplerCustomAdvanced" if mode == "advanced" else "SamplerCustom",
+                        "dinkster.sampling.sampler_custom_advanced"
+                        if mode == "advanced"
+                        else "dinkster.sampling.sampler_custom",
                         inputs,
                     ),
                     "inspect": GraphNode(

@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent, initialize_inference_process
-from dinkster_nodes_comfy import custom_sampling, standard_sampling
-from dinkster_nodes_comfy.noise import DisableNoise
-from dinkster_nodes_comfy.standard_sampling import KSampler, KSamplerAdvanced
+from dinkster_nodes_sampling import custom_sampling, standard_sampling
+from dinkster_nodes_sampling.noise import DisableNoise
+from dinkster_nodes_sampling.standard_sampling import KSampler, KSamplerAdvanced
 
 # Expected values below are hand-derived from the fixture model x -> x / 4,
 # Euler's one-step update, and the explicitly supplied noise and masks.
@@ -396,31 +396,43 @@ def test_standard_sampler_restores_asymmetric_av_streams_with_stub_runtime(
 def test_standard_samplers_execute_on_both_ordinary_hosts(in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
 
-    from dinkster.compose import PackSpec, ServingComposer
+    from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        manifests = (
-            root / "dinkster-pack.toml",
-            root / "tests/fixtures/standard_sampling/dinkster-pack.toml",
+        root = Path(__file__).resolve().parent
+        specs = (
+            *(
+                _installed_pack_spec(identity, module, in_process=in_process)
+                for identity, module in (
+                    ("dinkster-latent", "dinkster_nodes_latent"),
+                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                    ("dinkster-sampling", "dinkster_nodes_sampling"),
+                )
+            ),
+            PackSpec(root / "fixtures/standard_sampling/dinkster-pack.toml"),
         )
+        manifests = tuple(Path(spec.manifest) for spec in specs)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+                "PYTHONPATH": os.pathsep.join(
+                    (str(root), str(root / "fixtures/standard_sampling"))
+                ),
             }
         )
         try:
-            for manifest in manifests:
-                pack = PackSpec(manifest=manifest, in_process=True)
-                if not in_process:
-                    pack = PackSpec(
-                        manifest=manifest,
-                        worker_group="standard-sampling-fixture",
-                        group_manifests=manifests,
+            for spec in specs:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
+                        in_process=in_process,
+                        worker_group=None if in_process else "standard-sampling-fixture",
+                        group_manifests=() if in_process else manifests,
                     )
-                await composer.add_pack(pack)
+                )
             inputs = {
                 "model": Link("source", "model"),
                 "steps": 1,
@@ -434,9 +446,11 @@ def test_standard_samplers_execute_on_both_ordinary_hosts(in_process: bool) -> N
             graph = Graph(
                 nodes={
                     "source": GraphNode("standard-sampling-fixture.source", {}),
-                    "standard": GraphNode("KSampler", {**inputs, "seed": 739, "denoise": 0.5}),
+                    "standard": GraphNode(
+                        "dinkster.sampling.k_sampler", {**inputs, "seed": 739, "denoise": 0.5}
+                    ),
                     "advanced": GraphNode(
-                        "KSamplerAdvanced",
+                        "dinkster.sampling.k_sampler_advanced",
                         {
                             **inputs,
                             "steps": 2,
