@@ -2321,7 +2321,6 @@ def test_unprepared_library_catalog_fails_before_api_binding(
             run_scenario(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve, "_resolve_pack_argument", lambda _path: pack)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
@@ -3709,7 +3708,7 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
 def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None:
     """A pack that cannot compose (reserved name) does NOT take the process
     down by default: the failure is cached on /api/composition with its
-    error, the foundation pack keeps serving, and composition still completes -
+    error, the utilities pack keeps serving, and composition still completes -
     positively, with the failure on the record instead of a dead server
     (the anti-ComfyUI: broken extensions were just silently absent)."""
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
@@ -3717,9 +3716,7 @@ def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None
     bootstrap = """
 from dinkster import serve
 
-serve.default_pack_ids = lambda: ("dinkster-nodes-foundation",)
-serve.model_pack_specs = lambda: ()
-serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.default_pack_ids = lambda: ("dinkster-utilities",)
 serve.main()
 """
     process = subprocess.Popen(
@@ -3752,7 +3749,8 @@ serve.main()
             # complete - the failure is on the record, not on the surface.
             async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
-            assert any(t.startswith("std.") for t in data["nodes"])
+            assert data["nodes"]["dinkster.utilities.make_list"]["pack"] == "dinkster-utilities"
+            assert report["packs"]["dinkster-utilities"]["state"] == "announced"
             assert "composing" not in data
             assert process.poll() is None, "pack failure must not kill serve"
 
