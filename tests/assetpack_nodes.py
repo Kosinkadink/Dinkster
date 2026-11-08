@@ -30,7 +30,8 @@ ASSET = TypeExpr.concrete(ASSET_TYPE)
 
 
 def register_types(registry: TypeRegistry) -> None:
-    register_asset_type(registry, resolver_from_env())
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
 
 
 class ReadAssetInput(Node):

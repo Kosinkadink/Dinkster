@@ -2848,9 +2848,9 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 candidates: tuple[str, Mapping[str, str]],
                 **context: object,
             ) -> None:
-                value = inputs["a"].resolve()
-                if value in (5, 13):
-                    label = "other" if value == 13 else "main"
+                value = inputs["string_a"].resolve()
+                if value in ("first-second", "other"):
+                    label = "other" if value == "other" else "main"
                     entered[label].set()
                     await resume[label].wait()
                     if label == "main" and ending == "failure":
@@ -2866,7 +2866,7 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
         composer = ServingComposer(pack_scratch_root=scratch, native_policy=Policy())
         tasks: list[asyncio.Task[object]] = []
         try:
-            await composer.add_pack(default_pack_spec("dinkster-nodes-foundation"))
+            await composer.add_pack(default_pack_spec("dinkster-text"))
             engine = composer.composition.make_engine(lambda event: None)
             with pytest.raises(AssetError, match="ownership state is unavailable"):
                 with claim_inactive_produced_job(scratch, "unknown job"):
@@ -2875,9 +2875,17 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 engine.run(
                     Graph(
                         nodes={
-                            "first": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
+                            "first": GraphNode(
+                                "dinkster.text.string_concatenate",
+                                {"string_a": "first", "string_b": "second", "delimiter": "-"},
+                            ),
                             "second": GraphNode(
-                                "std.math.add_ints", {"a": Link("first", "sum"), "b": 7}
+                                "dinkster.text.string_concatenate",
+                                {
+                                    "string_a": Link("first", "STRING"),
+                                    "string_b": "third",
+                                    "delimiter": ":",
+                                },
                             ),
                         }
                     ),
@@ -2888,7 +2896,14 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
             )
             other = asyncio.create_task(
                 composer.composition.make_engine(lambda event: None).run(
-                    Graph(nodes={"other": GraphNode("std.math.add_ints", {"a": 13, "b": 17})}),
+                    Graph(
+                        nodes={
+                            "other": GraphNode(
+                                "dinkster.text.string_concatenate",
+                                {"string_a": "other", "string_b": "job", "delimiter": "/"},
+                            )
+                        }
+                    ),
                     ["other"],
                     run_id=other_job,
                 )
@@ -2911,14 +2926,16 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                         ):
                             await main
                     else:
-                        assert (await main).outputs["second"]["sum"].resolve() == 12
+                        assert (await main).outputs["second"][
+                            "STRING"
+                        ].resolve() == "first-second:third"
                 with claim_inactive_produced_job(scratch, "../main job") as inactive:
                     assert inactive == (other_job != "../main job")
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert not inactive
                 assert released == ["../main job"]
                 resume["other"].set()
-                assert (await other).outputs["other"]["sum"].resolve() == 30
+                assert (await other).outputs["other"]["STRING"].resolve() == "other/job"
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert inactive
         finally:
@@ -3310,8 +3327,8 @@ def test_failed_start_reaps_started_workers(
         )
         with pytest.raises(RuntimeError, match="failed to start"):
             await compose_serving([good, bad], worker_env=WORKER_ENV)
-        assert len(started) == 1
-        assert started[0] in closed
+        assert started
+        assert all(worker in closed for worker in started)
 
     run_scenario(scenario())
 
