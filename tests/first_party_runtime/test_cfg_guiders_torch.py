@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.cfg_guiders import (
-    CFG_GUIDER_NODES,
+from dinkster_nodes_sampling import NODES
+from dinkster_nodes_sampling.cfg_guiders import (
     BasicGuider,
     CFGGuider,
     CFGOverride,
@@ -32,7 +32,7 @@ from dinkster_nodes_comfy.cfg_guiders import (
     DualModelGuider,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 _CONDITIONING_TYPE = TypeExpr.concrete(CONDITIONING_TYPE)
 _FLOAT_TYPE = TypeExpr.concrete(CORE_FLOAT)
@@ -251,7 +251,17 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
             f'types = "{module}:register_inference_types"\n',
             encoding="ascii",
         )
-        native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        specs = (
+            *(
+                _installed_pack_spec(identity, module, in_process=in_process)
+                for identity, module in (
+                    ("dinkster-latent", "dinkster_nodes_latent"),
+                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                    ("dinkster-sampling", "dinkster_nodes_sampling"),
+                )
+            ),
+            PackSpec(fixture_manifest),
+        )
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -260,31 +270,24 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
             }
         )
         try:
-            group_options: dict[str, object] = {}
-            if not in_process:
-                group_options = {
-                    "worker_group": "cfg-guiders-test",
-                    "group_manifests": (native_manifest, fixture_manifest),
-                }
-            await composer.add_pack(
-                PackSpec(
-                    manifest=native_manifest,
-                    in_process=in_process,
-                    **group_options,
+            for spec in specs:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
+                        in_process=in_process,
+                        worker_group=None if in_process else "cfg-guiders-test",
+                        group_manifests=()
+                        if in_process
+                        else tuple(Path(item.manifest) for item in specs),
+                    )
                 )
-            )
-            await composer.add_pack(
-                PackSpec(
-                    manifest=fixture_manifest,
-                    in_process=in_process,
-                    **group_options,
-                )
-            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("cfg-guiders-fixture.source"),
                     "override": GraphNode(
-                        "CFGOverride",
+                        "dinkster.sampling.cfg_override",
                         {
                             "model": Link("source", "model"),
                             "cfg": 7.0,
@@ -293,14 +296,14 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
                         },
                     ),
                     "basic": GraphNode(
-                        "BasicGuider",
+                        "dinkster.sampling.basic_guider",
                         {
                             "model": Link("override", "MODEL"),
                             "conditioning": Link("source", "positive"),
                         },
                     ),
                     "cfg": GraphNode(
-                        "CFGGuider",
+                        "dinkster.sampling.cfg_guider",
                         {
                             "model": Link("override", "MODEL"),
                             "positive": Link("source", "positive"),
@@ -309,7 +312,7 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
                         },
                     ),
                     "dual_regular": GraphNode(
-                        "DualCFGGuider",
+                        "dinkster.sampling.dual_cfg_guider",
                         {
                             "model": Link("override", "MODEL"),
                             "cond1": Link("source", "positive"),
@@ -321,7 +324,7 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
                         },
                     ),
                     "dual_nested": GraphNode(
-                        "DualCFGGuider",
+                        "dinkster.sampling.dual_cfg_guider",
                         {
                             "model": Link("override", "MODEL"),
                             "cond1": Link("source", "positive"),
@@ -333,7 +336,7 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
                         },
                     ),
                     "dual_model": GraphNode(
-                        "DualModelGuider",
+                        "dinkster.sampling.dual_model_guider",
                         {
                             "model": Link("override", "MODEL"),
                             "model_negative": Link("source", "negative_model"),
@@ -343,7 +346,7 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
                         },
                     ),
                     "dual_fallback": GraphNode(
-                        "DualModelGuider",
+                        "dinkster.sampling.dual_model_guider",
                         {
                             "model": Link("override", "MODEL"),
                             "positive": Link("source", "positive"),
@@ -375,20 +378,15 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
     asyncio.run(scenario())
 
 
-def test_cold_schemas_and_registry_export_exact_five_nodes_without_torch_import() -> None:
-    assert tuple(node.__name__ for node in CFG_GUIDER_NODES) == (
-        "CFGGuider",
-        "BasicGuider",
-        "DualCFGGuider",
-        "DualModelGuider",
-        "CFGOverride",
-    )
-    assert [node.schema().node_type for node in CFG_GUIDER_NODES] == [
-        "CFGGuider",
-        "BasicGuider",
-        "DualCFGGuider",
-        "DualModelGuider",
-        "CFGOverride",
+def test_sampling_pack_exports_all_five_guider_schemas() -> None:
+    guiders = (CFGGuider, BasicGuider, DualCFGGuider, DualModelGuider, CFGOverride)
+    assert set(guiders) <= set(NODES)
+    assert [node.schema().node_type for node in guiders] == [
+        "dinkster.sampling.cfg_guider",
+        "dinkster.sampling.basic_guider",
+        "dinkster.sampling.dual_cfg_guider",
+        "dinkster.sampling.dual_model_guider",
+        "dinkster.sampling.cfg_override",
     ]
     assert tuple(port.id for port in DualModelGuider.schema().inputs) == (
         "model",
