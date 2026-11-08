@@ -25,9 +25,9 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_latent,
 )
-from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_void import NODES as COMFY_NODES
+from dinkster_nodes_void import register_types as register_types
 from dinkster_nodes_void.void_warped_noise import VOIDWarpedNoise
 from void_pack_fixtures import void_providers
 
@@ -66,7 +66,7 @@ def test_schema_is_canonical_and_cold_import_avoids_tensor_runtime(tmp_path: Pat
     assert VOIDWarpedNoise in COMFY_NODES
     schema = VOIDWarpedNoise.schema()
     assert schema.node_type == "dinkster.void.void_warped_noise"
-    assert schema.display_name == ""
+    assert schema.display_name == "VOIDWarpedNoise"
     assert schema.category == "model/latent/void"
     assert [input.id for input in schema.inputs] == [
         "optical_flow",
@@ -240,15 +240,16 @@ def test_node_crosses_ordinary_hosts_twice_with_native_manifest(
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]
         (tmp_path / "void_warped_noise_fixture.py").write_text(
-            "from test_void_warped_noise_torch import FIXTURE_NODES, register_inference_types\n",
+            "from test_void_warped_noise_torch import FIXTURE_NODES, register_types\n",
             encoding="ascii",
         )
         fixture = tmp_path / "fixture.toml"
         fixture.write_text(
             '[pack]\nname = "void-warped-noise-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["void-warped-noise-fixture"]\n[pack.entry]\n'
+            'namespaces = ["void-warped-noise-fixture"]\n'
+            '[pack.dependencies]\ndinkster-video = ">=0.0.1"\n[pack.entry]\n'
             'nodes = "void_warped_noise_fixture:FIXTURE_NODES"\n'
-            'types = "void_warped_noise_fixture:register_inference_types"\n',
+            'types = "void_warped_noise_fixture:register_types"\n',
             encoding="ascii",
         )
         native = package / "dinkster-pack.toml"

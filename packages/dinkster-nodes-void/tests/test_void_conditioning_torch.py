@@ -65,7 +65,11 @@ def test_isolated_void_manifest_installs_only_consumed_codecs() -> None:
     }
     for type_id in required:
         assert registry.spec(type_id).declared_codec, type_id
-        assert type_id in worker.registered_types
+        if type_id == "OPTICAL_FLOW":
+            assert type_id not in worker.registered_types
+            assert registry.owner_of(type_id) == "dinkster-video"
+        else:
+            assert type_id in worker.registered_types
         assert registry.owner_of(type_id) != manifest.name
     for type_id in ("IC_LORA_PARAMETERS", "WAN_CAMERA_EMBEDDING", "TRACKS", "INTERP_MODEL", "CLIP"):
         assert type_id not in registry, type_id
