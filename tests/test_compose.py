@@ -331,34 +331,36 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
         compose._default_pack_lock.cache_clear()
 
 
-def test_engine_carried_pack_uses_engine_distribution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
     import dinkster.compose as compose
 
     distribution = SimpleNamespace(version="1.2.3", locate_file=lambda path: path)
     requested: list[str] = []
-    monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
+    locked = compose._default_pack_lock().get("dinkster-text")
+    assert locked is not None
+    lock = Lockfile.of([replace(locked, source="python:dinkster-nodes-text==1.2.3")])
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: lock)
 
     def find_distribution(name: str) -> SimpleNamespace:
         requested.append(name)
         return distribution
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", find_distribution)
-    spec = compose.default_pack_spec("dinkster-nodes-generation")
-    assert requested == ["dinkster"]
+    spec = compose.default_pack_spec("dinkster-text")
+    assert requested == ["dinkster-nodes-text"]
     assert spec.packs is not None
-    assert spec.packs["dinkster-nodes-generation"].version == "0.0.2"
+    assert spec.packs["dinkster-text"].version == "0.0.1"
+    assert spec.packs["dinkster-text"].source == "python:dinkster-nodes-text==1.2.3"
 
 
 def test_image_pack_starts_with_canonical_inference_types() -> None:
     async def scenario() -> None:
-        image = replace(default_pack_spec("dinkster-nodes-image"), require_catalog=True)
+        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
         assert prepare_catalog(image.manifest, environment=os.environ).ok
         composer = ServingComposer()
         try:
             specs = tuple(
-                image if load_manifest(spec.manifest).name == "dinkster-nodes-image" else spec
+                image if load_manifest(spec.manifest).name == "dinkster-image" else spec
                 for spec in default_pack_specs()
             )
             for spec in composer.order_pack_entries(specs):
@@ -366,20 +368,22 @@ def test_image_pack_starts_with_canonical_inference_types() -> None:
             result = await composer.composition.make_engine(lambda event: None).run(
                 Graph(
                     nodes={
-                        "region": GraphNode(
-                            "dinkster.region.make",
-                            {"x": 2.0, "y": 3.0, "width": 4.0, "height": 5.0},
-                        )
+                        "image": GraphNode(
+                            "dinkster.image.empty_image",
+                            {"width": 7, "height": 3, "batch_size": 2, "color": 0x123456},
+                        ),
+                        "size": GraphNode(
+                            "dinkster.image.get_image_size", {"image": Link("image", "IMAGE")}
+                        ),
                     }
                 ),
-                ["region"],
+                ["size"],
             )
-            assert result.executed == ("region",)
-            assert result.outputs["region"]["region"].meta.entries == {
-                "x": 2.0,
-                "y": 3.0,
-                "width": 4.0,
-                "height": 5.0,
+            assert result.executed == ("image", "size")
+            assert {name: value.resolve() for name, value in result.outputs["size"].items()} == {
+                "width": 7,
+                "height": 3,
+                "batch_size": 2,
             }
             assert result.diagnostics == ()
         finally:
