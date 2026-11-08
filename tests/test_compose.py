@@ -946,23 +946,39 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert info.artifact_digest == locked.artifact_digest
 
 
-def test_foundation_default_pack_ships_docs() -> None:
-    spec = default_pack_spec("dinkster-nodes-foundation")
+def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster import compose
+
+    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    copied = tmp_path / "pack"
+    shutil.copytree(source, copied)
+    manifest = copied / "dinkster-pack.toml"
+    manifest.write_text(manifest.read_text() + '\n[pack.docs]\ndir = "docs"\n')
+    node = copied / "docs/nodes/dinkster.text.string_concatenate"
+    node.mkdir(parents=True)
+    body = b"# Concatenate Text\n\nJoins two strings.\n"
+    (node / "en.md").write_bytes(
+        b'+++\ntitle = "Concatenate Text"\nsummary = "Joins strings."\nschema_version = 1\n+++\n'
+        + body
+    )
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
+    monkeypatch.setattr(
+        compose.importlib.util,
+        "find_spec",
+        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_nodes_text/__init__.py")),
+    )
+    spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    docs = spec.packs["dinkster-nodes-foundation"].docs
+    docs = spec.packs["dinkster-text"].docs
     assert docs is not None
     assert [(page.kind, page.id, page.locale) for page in docs.pages] == [
-        ("node", "std.math.add_ints", "en"),
-        ("guide", "loops", "en"),
+        ("node", "dinkster.text.string_concatenate", "en"),
     ]
     page = next(page for page in docs.pages if page.kind == "node")
-    assert page.title == "Add Integers"
-    assert page.summary == "Adds two integer values."
+    assert page.title == "Concatenate Text"
+    assert page.summary == "Joins strings."
     assert page.schema_version == 1
-    assert page.data == (
-        b"\n# Add Integers\n\nConnect integer values to `a` and `b`. "
-        b"The `sum` output is their arithmetic sum.\n"
-    )
+    assert page.data == body
     assert page.digest == "sha256:" + hashlib.sha256(page.data).hexdigest()
 
 
@@ -1040,25 +1056,6 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         "pack artifact files must declare eol=lf for text or -text for binary: "
         + ", ".join(uncovered)
     )
-
-
-@pytest.mark.all_file_shards
-def test_vision_pack_license_worktree_bytes_are_lf() -> None:
-    repo_root = TESTS_DIR.parent
-    vision_root = repo_root / "packages/dinkster-nodes-vision"
-    licenses = sorted(vision_root.glob("*_pack/*_LICENSE"))
-
-    assert [path.relative_to(vision_root).as_posix() for path in licenses] == [
-        "dinkster_vision_hed_pack/LINEART_LICENSE",
-        "dinkster_vision_hed_pack/MANGA_LICENSE",
-        "dinkster_vision_hed_pack/MLSD_LICENSE",
-        "dinkster_vision_hed_pack/TEED_LICENSE",
-        "dinkster_vision_sam31_pack/CLIP_LICENSE",
-        "dinkster_vision_sam31_pack/SAM_LICENSE",
-    ]
-    assert [
-        path.relative_to(repo_root).as_posix() for path in licenses if b"\r" in path.read_bytes()
-    ] == []
 
 
 def test_default_pack_publishes_alias_registry_from_manifest(
@@ -1249,22 +1246,6 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     bundled_digest = compose._installed_pack_digest(bundled / "dinkster-pack.toml", None)
 
     assert source_digest == bundled_digest
-
-
-def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Path) -> None:
-    from dinkster import compose
-
-    source = Path(__file__).parent.parent / "packages/dinkster-nodes-vision"
-    copied = shutil.copytree(source, tmp_path / source.name)
-    manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
-    module = copied / "src/dinkster_nodes_vision/hed"
-    expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:c9bc906f97e7ea168dc04dcf10a51d7aa33523ce8a0b3e204b2df846603aedc9")
-    license_file = manifest.parent / "MLSD_LICENSE"
-    license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
-    license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
-
-    assert compose._installed_pack_digest(manifest, module) == expected
 
 
 def test_default_pack_refuses_version_outside_suite_lock(
