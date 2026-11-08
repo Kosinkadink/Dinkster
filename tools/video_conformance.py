@@ -66,9 +66,10 @@ def _source(path: Path) -> None:
 def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]:
     import av
     from dinkster_assets import AssetRef, MountSnapshotResolver, digest_file
-    from dinkster_nodes_media_io import LoadVideoValue, SaveVideoValue, TrimVideo
+    from dinkster_nodes_video.video_load import LoadVideo
+    from dinkster_nodes_video.video_save import SaveVideo
     from dinkster_schema.reporting import capture_saved_artifacts
-    from dinkster_values import video_meta
+    from dinkster_values import edit_video, video_meta
 
     class Resolver:
         def resolve(self, digest: str) -> Path:
@@ -80,8 +81,8 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
         allocation[::4096] = b"x" * len(allocation[::4096])
         return dict(_rss_usage(baseline))
     ref = AssetRef(digest_file(path), path.name, path.stat().st_size, resolver=Resolver())
-    value = LoadVideoValue.execute(video=ref)["video"]
-    value = TrimVideo.execute(video=value, start_time=1.01, duration=7.5)["video"]
+    value = LoadVideo.execute(file=ref)["VIDEO"]
+    value = edit_video(value, {"trim": {"start_time": 1.01, "duration": 7.5}})
     with tempfile.TemporaryDirectory(prefix="dinkster-video-output-") as directory:
         root = Path(directory)
         index, snapshot = root / "index.json", root / "mounts.json"
@@ -105,11 +106,11 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
         os.environ["DINKSTER_MOUNTS_SNAPSHOT"] = str(snapshot)
         try:
             with capture_saved_artifacts() as claims:
-                saved = cast(AssetRef, SaveVideoValue.execute(video=value)["video"])
-            if claims != [saved.to_wire()]:
-                raise RuntimeError("video save did not attach its published asset")
-            resolved = AssetRef.from_wire(saved.to_wire(), MountSnapshotResolver(snapshot))
-            with resolved.open() as output, av.open(output, mode="r") as opened:
+                outputs = SaveVideo.execute(video=value, mount="comfy-output")
+            if outputs["video"] is not value or len(claims) != 1:
+                raise RuntimeError("video save did not preserve its input and attach one asset")
+            saved = AssetRef.from_wire(claims[0], MountSnapshotResolver(snapshot))
+            with saved.open() as output, av.open(output, mode="r") as opened:
                 stream = cast(Any, opened).streams.video[0]
                 frames = stream.frames
             size, suffix, mime = saved.size, Path(saved.name).suffix, saved.media_type

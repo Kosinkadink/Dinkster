@@ -274,12 +274,12 @@ def test_loader_crosses_ordinary_hosts_twice_with_resident_optical_flow(
         root = Path(__file__).resolve().parents[1]
         native = root / "dinkster-pack.toml"
         module = "optical_flow_fixture"
+        fixture_module = __name__ if in_process else "test_optical_flow_torch"
         (tmp_path / f"{module}.py").write_text(
-            "from test_optical_flow_torch import (\n"
-            "    OpticalFlowFixtureConsumer, OpticalFlowFixtureSource,\n"
-            ")\n"
+            "from importlib import import_module\n"
+            f"fixture = import_module({fixture_module!r})\n"
             "from video_pack_fixtures import register_video_types\n"
-            "NODES = (OpticalFlowFixtureSource, OpticalFlowFixtureConsumer)\n",
+            "NODES = (fixture.OpticalFlowFixtureSource, fixture.OpticalFlowFixtureConsumer)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "fixture.toml"
