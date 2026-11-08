@@ -32057,6 +32057,7 @@
           },
           {
             "id": "audio",
+            "optional": true,
             "role": "output",
             "type": {
               "kind": "concrete",
