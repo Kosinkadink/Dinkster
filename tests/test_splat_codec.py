@@ -10,12 +10,12 @@ from typing import Any, cast
 import numpy
 import pytest
 from dinkster_inference_wire import register_inference_types
-from dinkster_nodes_media_io import SPLAT_TYPE, register_media_types
 from dinkster_values import (
     SPLAT_CODEC_MAGIC,
     SPLAT_CODEC_VERSION,
     SPLAT_FILE_DECODER_ID,
     SPLAT_PLY_MIME,
+    SPLAT_TYPE,
     EncodedLatentTensor,
     TypeRegistry,
     decode_splat,
@@ -298,7 +298,7 @@ def test_splat_file_decoder_reads_assets_and_names_failures() -> None:
 
 def test_splat_registration_wires_codec_rendition_and_asset_decoder() -> None:
     registry = TypeRegistry()
-    register_media_types(registry)
+    register_splat_type(registry)
     spec = registry.spec(SPLAT_TYPE)
     assert spec.declared_codec
     assert spec.validate_encoded_buffer is validate_splat_encoded
@@ -316,9 +316,9 @@ def test_splat_registration_wires_codec_rendition_and_asset_decoder() -> None:
 def test_splat_registration_preserves_codec_and_ply_in_both_orders(inference_first: bool) -> None:
     registry = TypeRegistry()
     first, second = (
-        (register_inference_types, register_media_types)
+        (register_inference_types, register_splat_type)
         if inference_first
-        else (register_media_types, register_inference_types)
+        else (register_splat_type, register_inference_types)
     )
     first(registry)
     spec = registry.spec(SPLAT_TYPE)
