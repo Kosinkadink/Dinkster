@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from blake3 import blake3
 from dinkster_workers import ManifestError
+from dinkster_workers.pack_wheel import _enforce_limit
 
 from dinkster import manager
 from dinkster.pack_archive import (
@@ -24,7 +25,6 @@ from dinkster.pack_archive import (
     MAX_MANIFEST_BYTES,
     MAX_PATH_BYTES,
     PackArchiveError,
-    _enforce_limit,
     build_pack_archive,
 )
 from scripts.build_official_packs import build as build_official_packs

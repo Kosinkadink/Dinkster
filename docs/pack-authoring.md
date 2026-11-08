@@ -67,9 +67,9 @@ Per-pack virtual environments remain isolated.
 Shared implementation belongs in a library wheel without a pack manifest or
 node/type claims, such as `my-core`, listed in the pack's `requires`.
 `requires` must never name a published pack (`wheel.requires-pack`).
-`[pack.dependencies]` expresses pack composition requirements, not permission
-to import another pack's implementation. No first-party library is required
-to publish a pack.
+`[pack.dependencies]` expresses pack composition requirements and permits
+imports of that pack's public helpers. Private modules and names remain
+forbidden. No first-party library is required to publish a pack.
 
 Store pack resources in a form the admission scanner can read; compressed
 resource files (gzip, ZIP, zstd, xz, tar) are held for review.

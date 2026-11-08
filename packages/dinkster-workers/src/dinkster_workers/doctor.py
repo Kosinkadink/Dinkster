@@ -357,7 +357,10 @@ def _check_requires(manifest: PackManifest, pack_names: Collection[str]) -> list
         findings.extend(
             _check_requirement_strings(manifest, extras, f"[pack.extra-requires] {accelerator}")
         )
-    requirements = (*manifest.requires, *(raw for _, extras in manifest.extra_requires for raw in extras))
+    requirements = (
+        *manifest.requires,
+        *(raw for _, extras in manifest.extra_requires for raw in extras),
+    )
     for raw in requirements:
         try:
             requirement = Requirement(raw)
@@ -385,8 +388,11 @@ def _check_pack_identity(manifest: PackManifest) -> list[Finding]:
             code, _, message = str(exc).partition(": ")
             findings.append(
                 Finding(
-                    "error", code, message,
-                    "use the pack name for the distribution and its underscore spelling for the package",
+                    "error",
+                    code,
+                    message,
+                    "use the pack name for the distribution and its underscore spelling "
+                    "for the package",
                     str(manifest.path),
                 )
             )
@@ -449,19 +455,12 @@ def _classify_import(
     names: str | None,
     own_modules: frozenset[str] = frozenset(),
     pack_modules: frozenset[str] = frozenset(),
+    dependency_modules: frozenset[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """Return (code, fix) for a problematic dinkster import, else None."""
     parts = module.split(".")
     root = parts[0]
-    if root not in own_modules and (
-        root in pack_modules or root.startswith(_PACK_IMPLEMENTATION_PREFIXES)
-    ):
-        return (
-            "imports.pack-implementation",
-            f"use registered ids or move shared code ({root}) into a versioned library; "
-            "pack dependencies do not grant implementation imports",
-        )
-    if not root.startswith("dinkster"):
+    if not root.startswith("dinkster") and root not in pack_modules:
         return None
     if any(part.startswith("_") for part in parts[1:]):
         return (
@@ -480,6 +479,16 @@ def _classify_import(
             "imports.host-machinery",
             f"packs must not import host machinery ({root}); everything a "
             f"pack needs is in dinkster_api.v1",
+        )
+    if (
+        root not in own_modules
+        and root not in dependency_modules
+        and (root in pack_modules or root.startswith(_PACK_IMPLEMENTATION_PREFIXES))
+    ):
+        return (
+            "imports.pack-implementation",
+            f"declare the provider pack dependency before importing public helpers ({root}); "
+            "otherwise depend on registered ids or a versioned library",
         )
     if root in _INTERNAL_SURFACE:
         return (
@@ -848,6 +857,9 @@ def _scan_sources(manifest: PackManifest, pack_names: Collection[str]) -> list[F
         pack_import_name(name)
         for name in (*pack_names, *(dependency.pack for dependency in manifest.dependencies))
     )
+    dependency_modules = frozenset(
+        pack_import_name(dependency.pack) for dependency in manifest.dependencies
+    )
     for path in paths:
         try:
             source = path.read_text(encoding="utf-8", errors="replace")
@@ -872,7 +884,7 @@ def _scan_sources(manifest: PackManifest, pack_names: Collection[str]) -> list[F
                         (node.module, ",".join(alias.name for alias in node.names), node.lineno)
                     )
         for module, names, lineno in sorted(imports, key=lambda item: (item[2], item[0])):
-            problem = _classify_import(module, names, own_modules, pack_modules)
+            problem = _classify_import(module, names, own_modules, pack_modules, dependency_modules)
             if problem is None:
                 continue
             code, fix = problem
@@ -1247,6 +1259,7 @@ def diagnose(
     probe_jail: ProbeJail | None = None,
     interpreter: Path | str | None = None,
     environment: Mapping[str, str] | None = None,
+    published_packs: Collection[str] = (),
 ) -> DoctorReport:
     """Run every check against one pack and return the structured report.
 
@@ -1258,6 +1271,7 @@ def diagnose(
     return _check_pack(
         manifest_path,
         authoring_checks=True,
+        published_packs=published_packs,
         probe_jail=probe_jail,
         interpreter=interpreter,
         environment=environment,
@@ -1292,6 +1306,7 @@ def _check_pack(
     probe_jail: ProbeJail | None,
     interpreter: Path | str | None,
     environment: Mapping[str, str] | None,
+    published_packs: Collection[str] = (),
 ) -> DoctorReport:
     from .catalog import catalog_path, source_digest, write_catalog
 
@@ -1314,7 +1329,11 @@ def _check_pack(
         )
 
     source = source_digest(manifest)
-    findings = list(diagnose_static(manifest.root, manifest).findings) if authoring_checks else []
+    findings = (
+        list(diagnose_static(manifest.root, manifest, published_packs=published_packs).findings)
+        if authoring_checks
+        else []
+    )
     # Timestamp-valid bytecode can describe old schemas after a same-size edit.
     for source_file in manifest.root.rglob("*.py"):
         if any(part in _SKIP_DIRS for part in source_file.relative_to(manifest.root).parts):

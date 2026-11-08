@@ -27,7 +27,18 @@ MAX_ENTRIES = 10_000
 MAX_PATH_BYTES = 512
 MAX_MANIFEST_BYTES = 1024 * 1024
 _SKIP_DIRS = frozenset(
-    {".git", ".hg", ".svn", ".tox", ".venv", "__pycache__", "build", "dist", "node_modules", "tests"}
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "tests",
+    }
 )
 
 
@@ -182,7 +193,10 @@ def build_pack_archive(pack_root: Path | str, output: Path | str) -> str:
     entries.extend(
         [
             (f"{dist_info}/METADATA", ("\n".join(metadata) + "\n\n").encode("utf-8")),
-            (f"{dist_info}/WHEEL", b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"),
+            (
+                f"{dist_info}/WHEEL",
+                b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            ),
         ]
     )
     record = io.StringIO(newline="")

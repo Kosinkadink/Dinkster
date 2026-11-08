@@ -80,6 +80,7 @@ from dinkster_workers import (
     resolve_accelerator,
 )
 from dinkster_workers.doctor import diagnose, prepare_catalog, render_text
+from dinkster_workers.pack_wheel import wheel_filename
 
 from . import __version__ as dinkster_version
 from .compose import CompositionError, PackSpec, resolve_manifest_path
@@ -108,6 +109,7 @@ from .registries import (
     resolve_release,
     routing_registry_fetcher,
     select_registry,
+    static_pack_releases,
 )
 
 GIT_PREFIX = "git+"
@@ -431,17 +433,22 @@ def _cmd_publish(args: argparse.Namespace) -> None:
         raise RegistryPublishError(f"version {args.version!r} {problem}")
     manifest_path = resolve_manifest_path(args.pack)
     manifest = load_manifest(manifest_path)
+    registry = select_registry(_registry_config(args), args.registry)
+    if manifest.compatibility is None or args.version != manifest.compatibility.version:
+        raise RegistryPublishError("publication version must equal the pack manifest version")
     if not args.no_preflight:
-        report = diagnose(manifest_path)
+        report = diagnose(
+            manifest_path,
+            published_packs=[cast("str", row["name"]) for row in static_pack_releases(registry)],
+        )
         if not report.ok:
             print(render_text(report))
             raise SystemExit(1)
-    registry = select_registry(_registry_config(args), args.registry)
     with tempfile.TemporaryDirectory(prefix="dinkster-publish-") as scratch:
-        archive = Path(scratch) / "artifact.zip"
+        archive = Path(scratch) / wheel_filename(manifest)
         try:
-            digest = build_artifact(manifest_path.parent, archive)
-        except ArtifactError as exc:
+            digest = build_pack_archive(manifest_path.parent, archive)
+        except PackArchiveError as exc:
             raise RegistryPublishError(str(exc)) from exc
         verdict = publish_release(registry, archive, manifest.name, args.version, locks=args.locks)
     for finding in verdict.findings:

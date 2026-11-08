@@ -410,10 +410,12 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
             HEALTHY_MANIFEST.replace("healthy", name)
+            .replace(f"{name}_nodes:", f"{name}:")
             .replace("numpy>=1.26", "fixture-adopt==1.0")
             .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n')
         )
-        (pack / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
+        (pack / name).mkdir()
+        (pack / name / "__init__.py").write_text(HEALTHY_NODES.replace("healthy", name))
         staging = updated_artifacts / "staging.zip"
         identity = build_artifact(pack, staging)
         retained = updated_artifacts / f"{identity[7:]}.zip"
@@ -487,7 +489,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
             "pack-sources/healthy/dinkster-pack.toml" in cast("dict", first["snapshot"])["metadata"]
         )
         assert (
-            "pack-sources/healthy/healthy_nodes.py"
+            "pack-sources/healthy/healthy/__init__.py"
             not in cast("dict", first["snapshot"])["metadata"]
         )
         for number in (1, 3):
@@ -565,7 +567,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     }
                     code, available = _run(root, "restore", "1", "--plan")
                     assert code == 0 and available["restorePlan"]["exact"], available
-                    changed = tmp_path / "healthy/healthy_nodes.py"
+                    changed = tmp_path / "healthy/healthy/__init__.py"
                     original_nodes = changed.read_bytes()
                     for content in (original_nodes + b"\n# changed source bytes\n", None):
                         if content is None:

@@ -160,50 +160,32 @@ def _is_registry_source(source: str) -> bool:
 def http_registry_fetcher(
     endpoint: str, *, token: str = "", timeout: float = DEFAULT_REGISTRY_TIMEOUT
 ) -> RegistryFetcher:
-    """Acquire exact bytes through the registry's download-ticket contract."""
+    """Acquire a hash-pinned wheel using only the registry's static prefix."""
     base = endpoint.rstrip("/")
     if not base.startswith(("http://", "https://")):
         raise InstallError(f"registry endpoint {endpoint!r} must be an http(s) URL")
 
     def fetch(entry: LockedPack) -> bytes:
+        from .registries import NamedRegistry, static_pack_release, static_release_wheel
+
         headers = {"User-Agent": "dinkster-pack"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        ticket_url = f"{base}/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"
-        ticket_request = urllib.request.Request(ticket_url, headers=headers, method="POST")  # noqa: S310 - scheme checked above
         try:
-            with urllib.request.urlopen(ticket_request, timeout=timeout) as response:  # noqa: S310
-                ticket_raw: object = json.load(response)
-            if not isinstance(ticket_raw, dict):
-                raise ValueError("ticket is not an object")
-            ticket = cast("dict[str, object]", ticket_raw)
-            url = ticket.get("url")
-            digest = ticket.get("artifactDigest")
-            size = ticket.get("artifactSize")
-            required_headers = ticket.get("requiredHeaders", {})
-            if (
-                not isinstance(url, str)
-                or digest != entry.artifact_digest
-                or not isinstance(required_headers, dict)
-                or not all(
-                    isinstance(name, str) and isinstance(value, str)
-                    for name, value in required_headers.items()
-                )
-            ):
-                raise ValueError("ticket fields do not match the locked release")
-            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-                raise ValueError("ticket artifactSize must be a nonnegative integer")
-            url = urllib.parse.urljoin(base + "/", url)
-            if not url.startswith(("http://", "https://")):
-                raise ValueError("ticket URL is not HTTP(S)")
-            request = urllib.request.Request(url, headers=cast("dict[str, str]", required_headers))  # noqa: S310 - service-issued ticket URL
+            registry = NamedRegistry("", base)
+            fields = static_pack_release(
+                registry, entry.pack, entry.version, timeout=timeout, token=token
+            )
+            if fields.get("digest") != entry.artifact_digest:
+                raise ValueError("wheel.digest-mismatch: index differs from locked release")
+            wheel = static_release_wheel(registry, fields)
+            request = urllib.request.Request(wheel.url, headers=headers)
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                data = response.read(size + 1)
-            if len(data) != size:
-                raise ValueError(
-                    f"archive size differs from ticket: expected {size}, got {len(data)}; "
-                    "refusing to return unverified bytes"
-                )
+                data = response.read(wheel.size + 1)
+            if len(data) != wheel.size or hashlib.sha256(data).hexdigest() != wheel.sha256:
+                raise ValueError("wheel.hash-mismatch: bytes differ from published size or sha256")
+            if artifact_digest(data) != entry.artifact_digest:
+                raise ValueError("wheel.digest-mismatch: bytes differ from locked release")
             return data
         except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise InstallError(

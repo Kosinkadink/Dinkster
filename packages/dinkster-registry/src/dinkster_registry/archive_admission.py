@@ -37,17 +37,9 @@ from dinkster_schema import (
 from dinkster_schema.units import MEBIBYTE
 from dinkster_workers import doctor as dinkster_doctor
 from dinkster_workers.doctor import (
-    _check_assets,  # pyright: ignore[reportPrivateUsage]
-    _check_blueprints,  # pyright: ignore[reportPrivateUsage]
-    _check_environment,  # pyright: ignore[reportPrivateUsage]
-    _check_icon,  # pyright: ignore[reportPrivateUsage]
     _check_namespace_coverage,  # pyright: ignore[reportPrivateUsage]
-    _check_requires,  # pyright: ignore[reportPrivateUsage]
-    _check_reserved_namespaces,  # pyright: ignore[reportPrivateUsage]
-    _check_sandbox_needs,  # pyright: ignore[reportPrivateUsage]
-    _check_templates,  # pyright: ignore[reportPrivateUsage]
     _probe_findings,  # pyright: ignore[reportPrivateUsage]
-    _scan_sources,  # pyright: ignore[reportPrivateUsage]
+    diagnose_static,
 )
 from dinkster_workers.manifest import ManifestError, PackManifest, load_manifest
 from dinkster_workers.sandbox import SandboxError, detect_probe_jail
@@ -364,17 +356,7 @@ def run_doctor_static(root: Path) -> StageResult:
         manifest = load_manifest(manifest_path)
     except ManifestError as exc:
         return StageResult((_block("doctor.manifest-invalid", str(exc)),))
-    findings = [
-        *_check_requires(manifest),
-        *_check_environment(manifest),
-        *_check_sandbox_needs(manifest),
-        *_check_reserved_namespaces(manifest),
-        *_check_icon(manifest),
-        *_check_blueprints(manifest),
-        *_check_assets(manifest),
-        *_check_templates(manifest),
-        *_scan_sources(manifest),
-    ]
+    findings = diagnose_static(manifest.root, manifest).findings
     mapped = tuple(
         AdmissionFinding(
             finding.code,
