@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
 import tomllib
 from collections import defaultdict
 from dataclasses import replace
@@ -16,6 +17,7 @@ from dinkster_schema.replace import rule_from_wire, rule_to_wire
 ROOT = Path(__file__).parent.parent
 ALIAS_PATH = ROOT / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
 MODEL_TEST_REFERENCE_COMMIT = "e1c0e72eab86e9fd7ee794f623ebf0b8984ab7b6"
+DRAFT_TEST_REFERENCE_COMMIT = "728f58b22ccf6bb64c7e2b8ee38f35c69fbf4a75"
 DYNAMIC_ALIAS_IDS = frozenset(
     {
         "comfy_alias:comfy-core/AdjustBrightness",
@@ -764,15 +766,29 @@ def test_image_comfy_alias_confidence_has_pinned_evidence() -> None:
         assert confidence["evidence"]
         for selector in confidence["evidence"]:
             historical = selector.startswith("git:")
+            revision = ""
             if historical:
                 revision, separator, selector = selector.removeprefix("git:").partition(":")
-                assert separator and revision == MODEL_TEST_REFERENCE_COMMIT
+                assert separator and revision in {
+                    MODEL_TEST_REFERENCE_COMMIT,
+                    DRAFT_TEST_REFERENCE_COMMIT,
+                }
             path_text, _, test_name = selector.partition("::")
             assert path_text and test_name
             path = ROOT / path_text
-            assert path.is_file()
-            present = f"def {test_name}(" in path.read_text(encoding="utf-8")
-            assert present is not historical
+            if historical:
+                evidence = subprocess.check_output(
+                    ["git", "show", f"{revision}:{path_text}"],
+                    cwd=ROOT,
+                    text=True,
+                    encoding="utf-8",
+                )
+                assert not path.is_file() or f"def {test_name}(" not in path.read_text(
+                    encoding="utf-8"
+                )
+            else:
+                evidence = path.read_text(encoding="utf-8")
+            assert f"def {test_name}(" in evidence
         tolerances = confidence.get("tolerances")
         if confidence["tier"] == "equivalent":
             assert tolerances
