@@ -269,10 +269,10 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-minimax",
         "dinkster-misc-models",
         "dinkster-models",
-        "dinkster-nodes-comfy",
-        "dinkster-nodes-foundation",
-        "dinkster-nodes-image",
-        "dinkster-nodes-media-io",
+        "dinkster-3d",
+        "dinkster-3d-models",
+        "dinkster-image",
+        "dinkster-utilities",
         "dinkster-nodes-remote",
         "dinkster-qwen",
         "dinkster-sampling",
@@ -281,49 +281,32 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-text",
         "dinkster-upscale",
         "dinkster-video",
-        "dinkster-vision-birefnet",
-        "dinkster-vision-depth-anything-v2",
-        "dinkster-vision-depth-anything-v3",
-        "dinkster-vision-detr",
-        "dinkster-vision-efficient-sam",
-        "dinkster-vision-hed",
+        "dinkster-vision-background-removal",
+        "dinkster-vision-depth-anything-3",
+        "dinkster-vision-marigold",
+        "dinkster-vision-mediapipe",
+        "dinkster-vision-moge",
         "dinkster-vision-rtdetr",
-        "dinkster-vision-sam31",
-        "dinkster-vision-upscale",
+        "dinkster-vision-sam3",
+        "dinkster-vision-sam3d-body",
+        "dinkster-vision-sdpose",
         "dinkster-void",
         "dinkster-wan",
     }
     assert {pack.pack for pack in lock.packs} == expected
     core_requirements = {
-        "dinkster-nodes-comfy": (
-            "simpleeval==1.0.8",
-            "numpy",
-            "pillow",
-            "torch",
-            "torchvision",
-            "dinkster-inference==0.1.1",
-            "av",
-            "scipy",
-            "einops",
-            "kornia",
-            "safetensors",
-            "tqdm",
-            "spandrel",
-            "comfy-kitchen",
-        ),
-        "dinkster-nodes-foundation": (),
-        "dinkster-nodes-image": (
+        "dinkster-image": (
             "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
             "numpy>=1.26",
             "opencv-contrib-python-headless>=5.0,<5.1",
             "pillow>=10",
             "PyOpenGL>=3.1.8,<4",
-        ),
-        "dinkster-nodes-media-io": (
             "av==18.1.0",
-            "numpy>=1.26",
-            "pillow>=10",
-            "scipy>=1.11",
+            "torch",
+            "torchvision",
+            "scipy",
+            "kornia",
+            "dinkster-inference==0.1.1",
         ),
         "dinkster-nodes-remote": ("httpx>=0.28,<1",),
     }
@@ -345,9 +328,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
             assert manifest.requires == core_requirements[pack.pack]
         module = manifest.nodes_entry.partition(":")[0]
         relative = Path(*module.split(".")) / "__init__.py"
-        if pack.pack.startswith("dinkster-vision-"):
-            original = Path("packages/dinkster-nodes-vision/src") / relative
-        elif not pack.pack.startswith("dinkster-nodes-"):
+        if not pack.pack.startswith("dinkster-nodes-"):
             original = (
                 Path("packages")
                 / pack.pack.replace("dinkster-", "dinkster-nodes-", 1)
@@ -369,7 +350,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
 
 
 @pytest.mark.parametrize(
-    "pack", ["dinkster-nodes-comfy", "dinkster-nodes-remote", "dinkster-vision-upscale"]
+    "pack", ["dinkster-image", "dinkster-nodes-remote", "dinkster-vision-sam3"]
 )
 def test_official_artifacts_reject_static_errors_in_built_zip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pack: str
