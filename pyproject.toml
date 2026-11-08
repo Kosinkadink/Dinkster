@@ -135,7 +135,9 @@ testpaths = [
 # Tests import helpers as `tests.*` / `tools.*`, which requires the repo
 # root on sys.path. `python -m pytest` adds it implicitly; the `pytest`
 # entrypoint (what CI's `uv run pytest` invokes) does not.
-pythonpath = ["."]
+# Manifest fixtures import runtime test modules by name in both host modes,
+# including when pytest collects those modules with importlib mode.
+pythonpath = [".", "tests/first_party_runtime"]
 timeout = 300
 timeout_method = "thread"
 # Self-identifying hangs: once any test runs this long, pytest's bundled
