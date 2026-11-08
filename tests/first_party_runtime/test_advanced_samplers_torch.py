@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.advanced_samplers import (
-    ADVANCED_SAMPLER_NODES,
+from dinkster_nodes_sampling import NODES
+from dinkster_nodes_sampling.advanced_samplers import (
     SamplerEulerCFGpp,
     SamplerLCM,
     SamplerLCMUpscale,
@@ -29,18 +29,20 @@ from dinkster_nodes_comfy.advanced_samplers import (
     sample_lcm_upscale,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def _sampler(node: type[Any], **inputs: Any) -> Any:
     return node.execute(**inputs)["SAMPLER"]
 
 
-def test_advanced_sampler_schemas_remain_torch_free_until_execution() -> None:
-    assert tuple(node.define_schema().node_type for node in ADVANCED_SAMPLER_NODES) == (
-        "SamplerLCMUpscale",
-        "SamplerLCM",
-        "SamplerEulerCFGpp",
+def test_sampling_pack_exports_advanced_sampler_schemas() -> None:
+    samplers = (SamplerLCMUpscale, SamplerLCM, SamplerEulerCFGpp)
+    assert set(samplers) <= set(NODES)
+    assert tuple(node.define_schema().node_type for node in samplers) == (
+        "dinkster.sampling.sampler_lcm_upscale",
+        "dinkster.sampling.sampler_lcm",
+        "dinkster.sampling.sampler_euler_cf_gpp",
     )
     upscale = SamplerLCMUpscale.define_schema()
     assert upscale.category == "model/sampling/samplers"
@@ -466,7 +468,7 @@ def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
             module = f"advanced_samplers_fixture_{int(in_process)}"
             (tmp_path / f"{module}.py").write_text(
                 "from test_advanced_samplers_torch import AdvancedSamplerConsumer\n"
-                "from dinkster_nodes_comfy import register_inference_types\n"
+                "from dinkster_api.v1 import register_inference_types\n"
                 "NODES = (AdvancedSamplerConsumer,)\n",
                 encoding="ascii",
             )
@@ -478,32 +480,34 @@ def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
                 f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             specs = (
-                (
-                    PackSpec(manifest=native_manifest, in_process=True),
-                    PackSpec(manifest=fixture_manifest, in_process=True),
-                )
-                if in_process
-                else (
-                    PackSpec(
-                        manifest=native_manifest,
-                        worker_group="advanced-sampler-fixture",
-                        group_manifests=(native_manifest, fixture_manifest),
-                    ),
-                    PackSpec(
-                        manifest=fixture_manifest,
-                        worker_group="advanced-sampler-fixture",
-                        group_manifests=(native_manifest, fixture_manifest),
-                    ),
-                )
+                *(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                    for identity, module in (
+                        ("dinkster-latent", "dinkster_nodes_latent"),
+                        ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                        ("dinkster-sampling", "dinkster_nodes_sampling"),
+                    )
+                ),
+                PackSpec(fixture_manifest),
             )
             for spec in specs:
-                await composer.add_pack(spec)
+                await composer.add_pack(
+                    PackSpec(
+                        spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
+                        in_process=in_process,
+                        worker_group=None if in_process else "advanced-sampler-fixture",
+                        group_manifests=()
+                        if in_process
+                        else tuple(Path(item.manifest) for item in specs),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "upscale": GraphNode(
-                        "SamplerLCMUpscale",
+                        "dinkster.sampling.sampler_lcm_upscale",
                         {
                             "scale_ratio": 1.5,
                             "scale_steps": -1,
@@ -511,11 +515,15 @@ def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
                         },
                     ),
                     "lcm": GraphNode(
-                        "SamplerLCM",
+                        "dinkster.sampling.sampler_lcm",
                         {"s_noise": 0.375, "s_noise_end": 1.75, "noise_clip_std": 0.25},
                     ),
-                    "regular": GraphNode("SamplerEulerCFGpp", {"version": "regular"}),
-                    "alternative": GraphNode("SamplerEulerCFGpp", {"version": "alternative"}),
+                    "regular": GraphNode(
+                        "dinkster.sampling.sampler_euler_cf_gpp", {"version": "regular"}
+                    ),
+                    "alternative": GraphNode(
+                        "dinkster.sampling.sampler_euler_cf_gpp", {"version": "alternative"}
+                    ),
                     "consumer": GraphNode(
                         "advanced-sampler.consumer",
                         {

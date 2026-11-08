@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,8 +21,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.sampler_factories import (
-    SAMPLER_FACTORY_NODES,
+from dinkster_nodes_sampling import NODES
+from dinkster_nodes_sampling.sampler_factories import (
     SAMPLER_NAMES,
     KSamplerSelect,
     SamplerDPMAdaptative,
@@ -39,7 +38,7 @@ from dinkster_nodes_comfy.sampler_factories import (
     SamplerSEEDS2,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 class ModelSampling:
@@ -57,22 +56,35 @@ def _sampler(node: type[Any], **inputs: Any) -> Any:
     return node.execute(**inputs)["SAMPLER"]
 
 
-def test_root_sampler_factory_schemas_do_not_import_torch_or_inference() -> None:
-    assert "torch" in sys.modules
-    assert len(SAMPLER_FACTORY_NODES) == 12
-    assert tuple(node.define_schema().node_type for node in SAMPLER_FACTORY_NODES) == (
-        "KSamplerSelect",
-        "SamplerEulerAncestral",
-        "SamplerEulerAncestralCFGPP",
-        "SamplerLMS",
-        "SamplerDPMPP_3M_SDE",
-        "SamplerDPMPP_2M_SDE",
-        "SamplerDPMPP_SDE",
-        "SamplerDPMPP_2S_Ancestral",
-        "SamplerDPMAdaptative",
-        "SamplerER_SDE",
-        "SamplerSASolver",
-        "SamplerSEEDS2",
+def test_sampling_pack_exports_all_twelve_sampler_factories() -> None:
+    factories = (
+        KSamplerSelect,
+        SamplerEulerAncestral,
+        SamplerEulerAncestralCFGPP,
+        SamplerLMS,
+        SamplerDPMPP_3M_SDE,
+        SamplerDPMPP_2M_SDE,
+        SamplerDPMPP_SDE,
+        SamplerDPMPP_2S_Ancestral,
+        SamplerDPMAdaptative,
+        SamplerER_SDE,
+        SamplerSASolver,
+        SamplerSEEDS2,
+    )
+    assert set(factories) <= set(NODES)
+    assert tuple(node.define_schema().node_type for node in factories) == (
+        "dinkster.sampling.k_sampler_select",
+        "dinkster.sampling.sampler_euler_ancestral",
+        "dinkster.sampling.sampler_euler_ancestral_cfgpp",
+        "dinkster.sampling.sampler_lms",
+        "dinkster.sampling.sampler_dpmpp_3_m_sde",
+        "dinkster.sampling.sampler_dpmpp_2_m_sde",
+        "dinkster.sampling.sampler_dpmpp_sde",
+        "dinkster.sampling.sampler_dpmpp_2_s_ancestral",
+        "dinkster.sampling.sampler_dpm_adaptative",
+        "dinkster.sampling.sampler_er_sde",
+        "dinkster.sampling.sampler_sa_solver",
+        "dinkster.sampling.sampler_seeds2",
     )
 
 
@@ -447,54 +459,71 @@ def test_all_sampler_factories_cross_ordinary_manifest_hosts_twice(
             module = f"sampler_factories_fixture_{int(in_process)}"
             (tmp_path / f"{module}.py").write_text(
                 "from test_sampler_factories_torch import ModelSource, SamplerConsumer\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, ModelSource, SamplerConsumer)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (ModelSource, SamplerConsumer)\n",
                 encoding="ascii",
             )
             manifest = tmp_path / "dinkster-pack.toml"
-            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             manifest.write_text(
-                native_manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["sampler-factory",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    f"{module}:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+                '[pack]\nname = "sampler-factory-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["sampler-factory"]\n[pack.entry]\n'
+                f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            specs = (
+                *(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                    for identity, module in (
+                        ("dinkster-latent", "dinkster_nodes_latent"),
+                        ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                        ("dinkster-sampling", "dinkster_nodes_sampling"),
+                    )
+                ),
+                PackSpec(manifest),
+            )
+            for spec in specs:
+                await composer.add_pack(
+                    PackSpec(
+                        spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
+                        in_process=in_process,
+                        worker_group=None if in_process else "sampler-factory-fixture",
+                        group_manifests=()
+                        if in_process
+                        else tuple(Path(item.manifest) for item in specs),
+                    )
+                )
             nodes = {
                 "model": GraphNode("sampler-factory.model"),
-                "select": GraphNode("KSamplerSelect", {"sampler_name": "euler"}),
+                "select": GraphNode(
+                    "dinkster.sampling.k_sampler_select", {"sampler_name": "euler"}
+                ),
                 "euler_ancestral": GraphNode(
-                    "SamplerEulerAncestral", {"eta": 0.375, "s_noise": 1.25}
+                    "dinkster.sampling.sampler_euler_ancestral", {"eta": 0.375, "s_noise": 1.25}
                 ),
                 "euler_ancestral_cfgpp": GraphNode(
-                    "SamplerEulerAncestralCFGPP", {"eta": 0.625, "s_noise": 2.5}
+                    "dinkster.sampling.sampler_euler_ancestral_cfgpp",
+                    {"eta": 0.625, "s_noise": 2.5},
                 ),
-                "lms": GraphNode("SamplerLMS", {"order": 7}),
+                "lms": GraphNode("dinkster.sampling.sampler_lms", {"order": 7}),
                 "dpmpp_3m_sde": GraphNode(
-                    "SamplerDPMPP_3M_SDE", {"eta": 0.4, "s_noise": 1.3, "noise_device": "cpu"}
+                    "dinkster.sampling.sampler_dpmpp_3_m_sde",
+                    {"eta": 0.4, "s_noise": 1.3, "noise_device": "cpu"},
                 ),
                 "dpmpp_2m_sde": GraphNode(
-                    "SamplerDPMPP_2M_SDE",
+                    "dinkster.sampling.sampler_dpmpp_2_m_sde",
                     {"solver_type": "heun", "eta": 0.4, "s_noise": 1.3, "noise_device": "cpu"},
                 ),
                 "dpmpp_sde": GraphNode(
-                    "SamplerDPMPP_SDE",
+                    "dinkster.sampling.sampler_dpmpp_sde",
                     {"eta": 0.4, "s_noise": 1.3, "r": 0.27, "noise_device": "cpu"},
                 ),
                 "dpmpp_2s_ancestral": GraphNode(
-                    "SamplerDPMPP_2S_Ancestral", {"eta": 0.4, "s_noise": 1.3}
+                    "dinkster.sampling.sampler_dpmpp_2_s_ancestral", {"eta": 0.4, "s_noise": 1.3}
                 ),
                 "dpm_adaptative": GraphNode(
-                    "SamplerDPMAdaptative",
+                    "dinkster.sampling.sampler_dpm_adaptative",
                     {
                         "order": 2,
                         "rtol": 0.04,
@@ -509,11 +538,11 @@ def test_all_sampler_factories_cross_ordinary_manifest_hosts_twice(
                     },
                 ),
                 "er_sde": GraphNode(
-                    "SamplerER_SDE",
+                    "dinkster.sampling.sampler_er_sde",
                     {"solver_type": "ER-SDE", "max_stage": 2, "eta": 0.5, "s_noise": 1.3},
                 ),
                 "sa_solver": GraphNode(
-                    "SamplerSASolver",
+                    "dinkster.sampling.sampler_sa_solver",
                     {
                         "model": Link("model", "MODEL"),
                         "eta": 0.75,
@@ -527,7 +556,8 @@ def test_all_sampler_factories_cross_ordinary_manifest_hosts_twice(
                     },
                 ),
                 "seeds2": GraphNode(
-                    "SamplerSEEDS2", {"solver_type": "phi_2", "eta": 0.4, "s_noise": 1.3, "r": 0.27}
+                    "dinkster.sampling.sampler_seeds2",
+                    {"solver_type": "phi_2", "eta": 0.4, "s_noise": 1.3, "r": 0.27},
                 ),
             }
             nodes["consumer"] = GraphNode(
