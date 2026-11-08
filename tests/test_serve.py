@@ -282,7 +282,9 @@ def test_native_runtime_versions_are_read_from_worker_interpreter(
     assert len(calls[0]) == 4
 
 
-@pytest.mark.parametrize("pack_name", ["dinkster-vision-hed", "dinkster-vision-birefnet"])
+@pytest.mark.parametrize(
+    "pack_name", ["dinkster-vision-depth-anything-3", "dinkster-vision-background-removal"]
+)
 def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pack_name: str
 ) -> None:
@@ -320,7 +322,16 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
     workspace_names = {path.name for path in workspace}
-    assert workspace_names == {"dinkster-api"}
+    expected_workspace = {"dinkster-api"}
+    if pack_name == "dinkster-vision-depth-anything-3":
+        expected_workspace |= {
+            "dinkster-inference-wire",
+            "dinkster-assets",
+            "dinkster-memory",
+            "dinkster-schema",
+            "dinkster-values",
+        }
+    assert workspace_names == expected_workspace
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")
@@ -329,9 +340,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         project = tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
-    if pack_name == "dinkster-vision-birefnet":
-        assert "dinkster-inference==0.1.1" in manifest.requires
-    assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
+    assert "dinkster-inference==0.1.1" in manifest.requires
+    assert str(manifest.root / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
 def test_configured_serving_python_skips_standard_pack_provisioning(
@@ -346,7 +356,7 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
     monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
     prepared = serve._prepare_default_pack(
-        default_pack_spec("dinkster-vision-hed"),
+        default_pack_spec("dinkster-vision-depth-anything-3"),
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cpu",
     )
@@ -358,7 +368,7 @@ def test_only_standard_vision_defaults_are_selected_for_runtime_provisioning() -
     from dinkster import serve
     from dinkster.compose import default_pack_spec
 
-    assert serve._is_standard_vision_pack(default_pack_spec("dinkster-vision-hed"))
+    assert serve._is_standard_vision_pack(default_pack_spec("dinkster-vision-depth-anything-3"))
     assert not serve._is_standard_vision_pack(default_pack_spec("dinkster-nodes-remote"))
 
 
