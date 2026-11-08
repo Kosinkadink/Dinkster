@@ -1678,22 +1678,21 @@ def test_ordinary_serve_passes_no_federated_routes(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.parametrize("devices", (None, "0,1"))
-def test_serve_without_comfy_mounts_native_provider(
+def test_serve_without_comfy_configures_first_party_workers(
     monkeypatch: pytest.MonkeyPatch,
     devices: str | None,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    calls: list[tuple[object, dict[str, object]]] = []
-
-    def native_specs(root: object, **kwargs: object) -> list[object]:
-        calls.append((root, kwargs))
-        return []
+    captured: list[PackSpec] = []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", native_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     argv = ["dinkster-serve", "--library-root", ""]
     if devices:
@@ -1702,15 +1701,15 @@ def test_serve_without_comfy_mounts_native_provider(
     monkeypatch.delenv("DINKSTER_COMFYUI_ROOT", raising=False)
 
     serve.main()
-    assert len(calls) == 1
-    root, options = calls[0]
-    assert root is None
-    if devices:
-        config = options["single_job_multi_gpu"]
-        assert isinstance(config, serve.SingleJobMultiGpuConfig)
-        assert config.cuda_indices == (0, 1)
-    else:
-        assert options["single_job_multi_gpu"] is None
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" in spec.packs:
+            assert not spec.single_job_cuda_indices
+        else:
+            assert spec.runtime_settings
+            assert spec.python == sys.executable
+            assert spec.single_job_cuda_indices == ((0, 1) if devices else ())
 
 
 def test_serve_resolves_legacy_pack_from_launch_directory(
@@ -1806,75 +1805,64 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
-def test_serve_aimdo_cli_defaults_and_reaches_compat_specs(
+def test_serve_aimdo_cli_defaults_and_reaches_first_party_workers(
     mode: str | None,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    captured: list[dict[str, object]] = []
-
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.append(dict(kwargs))
-        return []
+    captured: list[PackSpec] = []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
     argv = [
         "dinkster-serve",
-        "--comfy-root",
-        str(comfy_root),
         "--library-root",
         "",
     ]
     if mode is not None:
         argv.extend(("--aimdo", mode))
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(sys, "argv", argv)
 
     serve.main()
 
-    assert len(captured) == 1
-    assert captured[0]["aimdo"] == ("auto" if mode is None else mode)
-    assert captured[0]["reserve_vram"] == 256 * 1024**2
-    assert captured[0]["memory_budgets"] == {}
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.aimdo == ("auto" if mode is None else mode)
+            assert spec.reserve_vram == 256 * 1024**2
+            assert spec.vram_budgets == {}
 
 
-def test_serve_multi_gpu_cli_reaches_compat_worker(
-    tmp_path: Path,
+def test_serve_multi_gpu_cli_reaches_first_party_workers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    captured: list[dict[str, object]] = []
+    captured: list[PackSpec] = []
     captured_running: list[int] = []
-
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.append(dict(kwargs))
-        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         frame = awaitable.cr_frame  # type: ignore[attr-defined]
         assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         captured_running.append(frame.f_locals["max_running_jobs"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             "",
             "--multi-gpu-devices",
@@ -1884,7 +1872,11 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
 
     serve.main()
 
-    assert captured[0]["multi_device_cuda_indices"] == (1, 0)
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.replica_cuda_indices == (1, 0)
     assert captured_running == [2]
 
 
@@ -1898,21 +1890,22 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
     ),
 )
 def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     devices: str,
     mode: str,
 ) -> None:
     from dinkster import serve
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[object] = []
+    captured: list[PackSpec] = []
 
-    def compat_specs(*args: object, **kwargs: object) -> list[object]:
-        del args
-        captured.append(kwargs["single_job_multi_gpu"])
-        raise RuntimeError("captured")
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
+        awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", compat_specs)
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -1920,20 +1913,20 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
             "dinkster-serve",
             "--library-root",
             "",
-            "--comfy-root",
-            str(tmp_path),
             "--single-job-multi-gpu-devices",
             devices,
             "--single-job-multi-gpu-mode",
             mode,
         ],
     )
-    with pytest.raises(RuntimeError, match="captured"):
-        serve.main()
+    serve.main()
 
-    config = captured[0]
-    assert config.cuda_indices == tuple(int(value) for value in devices.split(","))  # type: ignore[attr-defined]
-    assert config.mode == mode  # type: ignore[attr-defined]
+    assert len(captured) == len(default_pack_ids())
+    for spec in captured:
+        assert spec.packs is not None
+        if "dinkster-nodes-remote" not in spec.packs:
+            assert spec.single_job_cuda_indices == tuple(int(value) for value in devices.split(","))
+            assert spec.single_job_mode == mode
 
 
 @pytest.mark.parametrize("mode", ("model", "window"))
