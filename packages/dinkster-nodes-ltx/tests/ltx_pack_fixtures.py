@@ -1,11 +1,12 @@
 """Compose LTX fixtures with their installed, versioned helper providers."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from dinkster.compose import (
     PackSpec,
     ServingComposer,
-    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+    default_pack_spec,
 )
 
 
@@ -16,13 +17,13 @@ async def compose_ltx_packs(
     worker_group: str | None = None,
 ) -> None:
     providers = tuple(
-        _installed_pack_spec(identity, module, in_process=in_process)
-        for identity, module in (
-            ("dinkster-latent", "dinkster_nodes_latent"),
-            ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-            ("dinkster-models", "dinkster_nodes_models"),
-            ("dinkster-llm", "dinkster_nodes_llm"),
-            ("dinkster-video", "dinkster_nodes_video"),
+        replace(default_pack_spec(identity), in_process=in_process)
+        for identity in (
+            "dinkster-latent",
+            "dinkster-conditioning",
+            "dinkster-models",
+            "dinkster-llm",
+            "dinkster-video",
         )
     )
     specs = (*providers, *(PackSpec(manifest, trust_reserved=True) for manifest in manifests))

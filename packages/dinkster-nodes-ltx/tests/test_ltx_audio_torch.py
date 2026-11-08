@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import (
     ServingComposer,
-    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+    default_pack_spec,
 )
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -185,9 +186,7 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
                 encoding="ascii",
             )
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-audio", "dinkster_nodes_audio", in_process=in_process
-                )
+                replace(default_pack_spec("dinkster-audio"), in_process=in_process)
             )
             await compose_ltx_packs(composer, fixture, in_process=in_process)
             graph = Graph(

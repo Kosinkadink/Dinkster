@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ from dinkster_nodes_cosmos.cosmos_conditioning import (
 from dinkster.compose import (
     PackSpec,
     ServingComposer,
-    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+    default_pack_spec,
 )
 
 
@@ -280,9 +281,7 @@ def test_ordinary_manifest_executes_both_cosmos_nodes_twice(
                 encoding="ascii",
             )
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-video", "dinkster_nodes_video", in_process=in_process
-                )
+                replace(default_pack_spec("dinkster-video"), in_process=in_process)
             )
             await composer.add_pack(
                 PackSpec(trust_reserved=True, manifest=fixture, in_process=in_process)

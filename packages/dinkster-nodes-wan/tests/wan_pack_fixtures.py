@@ -1,5 +1,6 @@
 """Compose Wan fixtures with their installed, versioned helper providers."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from dinkster_api.v1 import TypeRegistry
@@ -9,7 +10,7 @@ from dinkster.compose import (
     PackInfo,
     PackSpec,
     ServingComposer,
-    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
+    default_pack_spec,
 )
 
 
@@ -28,12 +29,12 @@ async def compose_wan_packs(
     worker_group: str,
 ) -> None:
     providers = tuple(
-        _installed_pack_spec(identity, module, in_process=in_process)
-        for identity, module in (
-            ("dinkster-latent", "dinkster_nodes_latent"),
-            ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-            ("dinkster-models", "dinkster_nodes_models"),
-            ("dinkster-vision-sam3", "dinkster_nodes_vision_sam3"),
+        replace(default_pack_spec(identity), in_process=in_process)
+        for identity in (
+            "dinkster-latent",
+            "dinkster-conditioning",
+            "dinkster-models",
+            "dinkster-vision-sam3",
         )
     )
     specs = (

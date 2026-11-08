@@ -1,23 +1,18 @@
 """Installed provider identities for ordinary VOID composition tests."""
 
+from dataclasses import replace
 from pathlib import Path
 
-from dinkster.compose import (
-    PackSpec,
-    _installed_pack_spec,  # pyright: ignore[reportPrivateUsage]
-)
+from dinkster.compose import PackSpec, default_pack_spec
 
 
 def void_providers(in_process: bool, *, sampling: bool = False) -> dict[Path, PackSpec]:
     packages = [
-        ("dinkster-latent", "dinkster_nodes_latent"),
-        ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-        ("dinkster-video", "dinkster_nodes_video"),
+        "dinkster-latent",
+        "dinkster-conditioning",
+        "dinkster-video",
     ]
     if sampling:
-        packages.append(("dinkster-sampling", "dinkster_nodes_sampling"))
-    specs = (
-        _installed_pack_spec(identity, module, in_process=in_process)
-        for identity, module in packages
-    )
+        packages.append("dinkster-sampling")
+    specs = (replace(default_pack_spec(identity), in_process=in_process) for identity in packages)
     return {Path(spec.manifest): spec for spec in specs}
