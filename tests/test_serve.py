@@ -720,42 +720,21 @@ def test_serve_official_bootstrap_requires_persistent_library(
     assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
 
 
-def test_comfy_compat_composition_failure_exits_with_one_message(
-    tmp_path: Path,
+@pytest.mark.parametrize("flag", ("--comfy-root", "--legacy-pack"))
+def test_serve_rejects_removed_compatibility_arguments(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flag: str,
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    message = (
-        "ComfyUI requirement module 'einops' is unavailable in interpreter "
-        "'/selected/python' selected by --execution-python"
-    )
-
-    def fail_specs(*_args: object, **_kwargs: object) -> None:
-        raise serve.CompositionError(message)
-
-    monkeypatch.setattr(serve, "comfy_compat_specs", fail_specs)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-serve",
-            "--library-root",
-            "",
-            "--no-default-packs",
-            "--comfy-root",
-            str(comfy_root),
-            "--execution-python",
-            "/selected/python",
-        ],
-    )
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", flag, "/unused"])
 
     with pytest.raises(SystemExit) as caught:
         serve.main()
 
-    assert str(caught.value) == message
+    assert caught.value.code == 2
+    assert f"unrecognized arguments: {flag}" in capsys.readouterr().err
 
 
 def test_retired_comfy_python_flag_exits_naming_the_replacement(
@@ -1712,28 +1691,23 @@ def test_serve_without_comfy_configures_first_party_workers(
             assert spec.single_job_cuda_indices == ((0, 1) if devices else ())
 
 
-def test_serve_resolves_legacy_pack_from_launch_directory(
+def test_serve_resolves_explicit_pack_from_launch_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
 
     launch_directory = tmp_path / "launch"
-    legacy_pack = launch_directory / "packs" / "legacy"
-    legacy_pack.mkdir(parents=True)
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
+    manifest = write_iso_manifest(launch_directory / "packs" / "explicit")
     captured: list[Path] = []
 
-    def capture_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.extend(kwargs["legacy_packs"])  # type: ignore[arg-type]
-        return []
-
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        frame = awaitable.cr_frame  # type: ignore[attr-defined]
+        assert frame is not None
+        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
     monkeypatch.chdir(launch_directory)
-    monkeypatch.setattr(serve, "comfy_compat_specs", capture_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
@@ -1742,31 +1716,25 @@ def test_serve_resolves_legacy_pack_from_launch_directory(
             "dinkster-serve",
             "--library-root",
             "",
-            "--comfy-root",
-            str(comfy_root),
-            "--legacy-pack",
-            str(legacy_pack.relative_to(launch_directory)),
+            "--no-default-packs",
+            "--pack",
+            str(manifest.relative_to(launch_directory)),
         ],
     )
 
     serve.main()
 
-    assert captured == [legacy_pack.resolve()]
+    assert captured == [manifest.resolve()]
 
 
-def test_comfy_root_defaults_include_compat_specs_in_ordering(
+def test_first_party_defaults_exclude_explicit_packs_from_default_ordering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec
+    from dinkster.compose import PackSpec, default_pack_ids
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    compat = (
-        PackSpec(manifest=tmp_path / "generation"),
-        PackSpec(manifest=tmp_path / "compat"),
-    )
+    manifest = write_iso_manifest(tmp_path / "explicit")
     captured: list[tuple[int, int]] = []
 
     def capture_ordering(
@@ -1782,9 +1750,6 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
         with pytest.raises(RuntimeError, match="captured ordering"):
             run_scenario(awaitable)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "model_pack_specs", lambda: ())
-    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: compat)
     monkeypatch.setattr(serve, "_order_default_pack_specs", capture_ordering)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
@@ -1794,14 +1759,15 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
             "dinkster-serve",
             "--library-root",
             "",
-            "--comfy-root",
-            str(comfy_root),
+            "--pack",
+            str(manifest),
         ],
     )
 
     serve.main()
 
-    assert captured == [(2, 2)]
+    count = len(default_pack_ids())
+    assert captured == [(count + 1, count)]
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
