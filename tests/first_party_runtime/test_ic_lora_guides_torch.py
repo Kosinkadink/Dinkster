@@ -39,9 +39,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.ltx_guides import GetICLoRAParameters, LTXVAddGuide
+from dinkster_nodes_ltx.ltx_guides import GetICLoRAParameters, LTXVAddGuide
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def model_with_metadata(metadata: Any) -> Any:
@@ -187,7 +187,6 @@ HOST_NODES = (Source, Consumer)
 @pytest.mark.parametrize("in_process", [True, False])
 def test_canonical_metadata_guide_graph_and_cache(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
         (tmp_path / "ic_guide_entry.py").write_text(
             "from test_ic_lora_guides_torch import HOST_NODES, register_inference_types\n",
             encoding="ascii",
@@ -200,37 +199,51 @@ def test_canonical_metadata_guide_graph_and_cache(tmp_path: Path, in_process: bo
             'types="ic_guide_entry:register_inference_types"\n',
             encoding="ascii",
         )
-        native = package / "dinkster-pack.toml"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
             }
         )
+        specs = (
+            *(
+                _installed_pack_spec(identity, module, in_process=in_process)
+                for identity, module in (
+                    ("dinkster-latent", "dinkster_nodes_latent"),
+                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                    ("dinkster-video", "dinkster_nodes_video"),
+                    ("dinkster-models", "dinkster_nodes_models"),
+                    ("dinkster-llm", "dinkster_nodes_llm"),
+                    ("dinkster-ltx", "dinkster_nodes_ltx"),
+                )
+            ),
+            PackSpec(fixture),
+        )
+        manifests = tuple(Path(spec.manifest) for spec in specs)
         try:
-            for manifest in (native, fixture):
+            for spec in specs:
                 await composer.add_pack(
                     PackSpec(
-                        manifest=manifest,
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
                         in_process=in_process,
                         worker_group=None if in_process else "ic-guide-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             graph = Graph(
                 nodes={
                     "source": GraphNode("ic-guide-fixture.source"),
                     "parameters": GraphNode(
-                        "GetICLoRAParameters",
+                        "dinkster.ltx.get_ic_lo_ra_parameters",
                         {
                             "iclora_model": Link("source", "model"),
                         },
                     ),
                     "guide": GraphNode(
-                        "LTXVAddGuide",
+                        "dinkster.ltx.ltxv_add_guide",
                         {
                             **{
                                 name: Link("source", name)
