@@ -16,6 +16,7 @@ import av
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
+    ABSENT,
     AUDIO_TYPE,
     CORE_COMBO,
     CORE_FLOAT,
@@ -287,7 +288,7 @@ def test_create_and_get_components_allow_no_audio_without_mutating_images() -> N
     video = CreateVideo.execute(images=images, fps=24.0)["video"]
     result = GetVideoComponents.execute(video=video)
     np.testing.assert_array_equal(result["images"], images)
-    assert result["audio"] is None
+    assert result["audio"] is ABSENT
     assert result["fps"] == 24.0
     assert result["bit_depth"] == 8
     assert result["color_space"] == "sRGB"
@@ -333,7 +334,7 @@ def test_h264_create_encodes_then_extracts_real_components() -> None:
     decoded = result["images"]
     assert isinstance(decoded, np.ndarray)
     assert decoded.shape == (3, 16, 16, 3)
-    assert result["audio"] is None
+    assert result["audio"] is ABSENT
     assert result["fps"] == float(Fraction(2997, 100))
     assert result["bit_depth"] == 8
     assert result["color_space"] == "sRGB"

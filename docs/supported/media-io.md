@@ -1,5 +1,9 @@
 ## Media I/O
 
+- First-party utility lists transport whole IMAGE values between isolated
+  workers without decoding their pixels in the utilities worker.
+- Get Video Components preserves silent video frames and reports an absent
+  optional audio output when the source has no audio stream.
 - Node packs can publish produced bytes through the public
   `dinkster_api.v1.produced_output_scratch` writer selector. It uses the existing
   worker scratch and active job authority without granting mounted-file access.

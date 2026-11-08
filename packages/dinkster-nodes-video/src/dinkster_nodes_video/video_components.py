@@ -9,6 +9,7 @@ from fractions import Fraction
 from typing import Any, cast
 
 from dinkster_api.v1 import (
+    ABSENT,
     AUDIO_TYPE,
     CORE_COMBO,
     CORE_FLOAT,
@@ -146,7 +147,7 @@ class GetVideoComponents(Node):
             inputs=(InputSpec("video", _VIDEO, doc="The video to extract components from."),),
             outputs=(
                 OutputSpec("images", _IMAGE),
-                OutputSpec("audio", _AUDIO),
+                OutputSpec("audio", _AUDIO, optional=True),
                 OutputSpec("fps", _FLOAT),
                 OutputSpec("bit_depth", _COMBO),
                 OutputSpec("color_space", _COMBO),
@@ -165,7 +166,7 @@ class GetVideoComponents(Node):
         )
         return cls.outputs(
             images=components["images"],
-            audio=components["audio"],
+            audio=ABSENT if components["audio"] is None else components["audio"],
             fps=float(components["fps"]),
             bit_depth=components["bit_depth"],
             color_space=components["color_space"],

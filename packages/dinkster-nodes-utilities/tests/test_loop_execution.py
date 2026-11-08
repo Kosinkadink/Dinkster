@@ -69,7 +69,7 @@ def test_list_support_keeps_whole_typed_elements_and_unbounded_inputs() -> None:
     first = replace(registry.wrap("INT", 17), meta=ValueMeta({"provenance": "first"}))
     second = registry.wrap("INT", -4)
     nested = make_list_value("INT", [first, second])
-    result = MakeList.execute(items={"a": [17, -4]}, input_values={"items.a": nested})
+    result = MakeList.execute(input_values={"items.a": nested})
     assert result["list"] == [nested]
     for index, expected in ((0, first), (-1, second)):
         assert ListElement.execute(index=index, input_values={"list": nested})["item"] is expected

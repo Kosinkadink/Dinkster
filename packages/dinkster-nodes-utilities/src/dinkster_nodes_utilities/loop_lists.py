@@ -34,10 +34,8 @@ class MakeList(Node):
         )
 
     @classmethod
-    def execute(
-        cls, *, items: Mapping[str, object], input_values: Mapping[str, Value]
-    ) -> Mapping[str, object]:
-        return cls.outputs(list=[input_values[f"items.{name}"] for name in items])
+    def execute(cls, *, input_values: Mapping[str, Value]) -> Mapping[str, object]:
+        return cls.outputs(list=list(input_values.values()))
 
 
 class ListElement(Node):
