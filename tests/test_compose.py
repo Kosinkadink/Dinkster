@@ -395,13 +395,12 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     return pool
 
 
-def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
+def test_lazy_image_pack_resolves_assets_after_host_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import io
 
     import numpy as np
-    from dinkster.comfy_compose import register_comfy_host_types
     from PIL import Image
 
     pixels = np.zeros((3, 5, 3), dtype=np.uint8)
@@ -422,17 +421,18 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            media = replace(default_pack_spec("dinkster-nodes-media-io"), require_catalog=True)
-            assert prepare_catalog(media.manifest, environment=os.environ).ok
-            await composer.add_pack(media)
-            register_comfy_host_types(composer.composition._registry)
+            image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
+            assert prepare_catalog(image.manifest, environment=os.environ).ok
+            await composer.add_pack(image)
 
             engine = composer.composition.make_engine(lambda _event: None)
             result = await engine.run(
-                Graph(nodes={"load": GraphNode("dinkster.load_image", {"image": ref.to_wire()})}),
+                Graph(
+                    nodes={"load": GraphNode("dinkster.image.load_image", {"image": ref.to_wire()})}
+                ),
                 ["load"],
             )
-            loaded = cast("np.ndarray", result.outputs["load"]["image"].resolve())
+            loaded = cast("np.ndarray", result.outputs["load"]["IMAGE"].resolve())
             np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
         finally:
             await composer.close()
@@ -1791,67 +1791,6 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             await compose_serving([first, second], worker_env=WORKER_ENV)
 
     run_scenario(scenario())
-
-
-def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster_nodes_comfy import COMFY_NODES
-
-    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            for spec in comfy_compat_specs():
-                await composer.add_pack(spec)
-            assert set(composer.composition.schemas) == {
-                node.schema().node_type for node in COMFY_NODES
-            }
-            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(nodes={"text": GraphNode("PrimitiveString", {"value": "native core"})}),
-                ["text"],
-            )
-            assert result.outputs["text"]["STRING"].resolve() == "native core"
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("explicit", (False, True))
-def test_rootless_native_runtime_configuration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
-) -> None:
-    from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster_workers import SingleJobMultiGpuConfig
-
-    monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/environment/python")
-    specs = comfy_compat_specs(
-        python="/explicit/python" if explicit else None,
-        asset_vault=tmp_path / "vault",
-        mounts_snapshot=tmp_path / "mounts.json",
-        aimdo="off",
-        memory_budgets={"vram:cuda:0": 123456, "ram": 654321},
-        reserve_vram=789,
-        single_job_multi_gpu=SingleJobMultiGpuConfig(cuda_indices=(0, 1), mode="guidance"),
-    )
-    assert len(specs) == 1
-    spec = specs[0]
-    assert load_manifest(spec.manifest).name == "dinkster-nodes-comfy"
-    assert spec.python == ("/explicit/python" if explicit else "/environment/python")
-    assert spec.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "vault")
-    assert spec.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "mounts.json")
-    assert str(TESTS_DIR.parent / "packages/dinkster-nodes-comfy/src") in spec.env[
-        "PYTHONPATH"
-    ].split(os.pathsep)
-    assert spec.vram_budgets == {"vram:cuda:0": 123456}
-    assert spec.reserve_vram == 789
-    assert spec.single_job_cuda_indices == (0, 1)
-    assert spec.single_job_mode == "guidance"
-    assert spec.runtime_settings
-    assert not spec.in_process
-    assert not spec.trust_reserved
 
 
 @pytest.mark.parametrize("in_process", (False, True))
@@ -3531,187 +3470,6 @@ def test_pack_table_rejects_comfy_group_collisions_without_mutating() -> None:
             "test",
         )
     assert set(packs) == {"native-a"}
-
-
-def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pure spec construction: no ComfyUI needed. The core worker
-    attributes everything to 'comfy'; legacy nodes attribute per pack by
-    the same namespace rule legacy.py applies, longest prefix first."""
-    from dinkster.comfy_compose import comfy_compat_specs
-
-    from dinkster import comfy_compose
-
-    root = tmp_path / "ComfyUI"
-    root.mkdir()
-    (tmp_path / "packs" / "rgthree").mkdir(parents=True)
-    single = tmp_path / "packs" / "solo.py"
-    single.write_text("")
-    # A pack that declares its own badge via a presentation-only manifest
-    # (no [pack.entry] - not a loadable Dinkster pack, just a badge).
-    themed = tmp_path / "packs" / "themed"
-    themed.mkdir()
-    from dinkster_assets import PackagedSource, digest_bytes
-    from icon_bytes import png_bytes
-
-    (themed / "badge.png").write_bytes(png_bytes())
-    (themed / "starter.json").write_text('{"graphs": {}}')
-    aux_bytes = b"legacy aux model" * 8
-    aux_digest = digest_bytes(aux_bytes)
-    (themed / "models").mkdir()
-    (themed / "models" / "aux.bin").write_bytes(aux_bytes)
-    (themed / "dinkster-pack.toml").write_text(
-        "[pack]\n[pack.presentation]\n"
-        'display_name = "Themed Pack"\nabbr = "TH"\ncolor = "#aa3355"\n'
-        'icon = "badge.png"\n'
-        "[[pack.blueprints]]\n"
-        'id = "starter"\nname = "Starter"\nfile = "starter.json"\n'
-        "[[pack.assets]]\n"
-        f'id = "aux"\nname = "Aux Model"\ndigest = "{aux_digest}"\n'
-        'file = "models/aux.bin"\nnodes = ["comfy.themed.AuxNode"]\n'
-        "[[pack.templates]]\n"
-        'id = "quickstart"\nname = "Quickstart"\nfile = "starter.json"\n'
-        'assets = ["aux"]\n'
-    )
-    # A pack whose manifest is broken TOML: advisory means it composes
-    # anyway, with the shared legacy default.
-    broken = tmp_path / "packs" / "broken"
-    broken.mkdir()
-    (broken / "dinkster-pack.toml").write_text("[pack\n")
-    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", lambda _interpreter: None)
-
-    specs = comfy_compat_specs(
-        root,
-        python=sys.executable,
-        legacy_packs=[tmp_path / "packs" / "rgthree", single, themed, broken],
-        comfy_nodes=["EmptyLatentImage"],
-        asset_vault=tmp_path / "library" / "vault",
-        mounts_snapshot=tmp_path / "library" / "mounts.json",
-    )
-    assert len(specs) == 2
-    generation, legacy = specs
-    assert generation.in_process is True
-    assert generation.packs is not None and set(generation.packs) == {"dinkster-nodes-generation"}
-    assert legacy.env["DINKSTER_COMFYUI_ROOT"] == str(root)
-    assert legacy.env["DINKSTER_COMFY_NODES"] == "EmptyLatentImage"
-    assert legacy.python == sys.executable
-    # The compat layer's own declared chip: distinguishable from legacy
-    # packs (shared color, no puzzle mark).
-    assert legacy.packs is not None
-    assert legacy.packs["comfy"].display_name == "ComfyUI Compat"
-    assert legacy.packs["comfy"].abbr == "C1"
-    assert legacy.packs["comfy"].color
-
-    multi_gpu = comfy_compat_specs(
-        root,
-        python=sys.executable,
-        multi_device_cuda_indices=(1, 0),
-    )[1]
-    assert multi_gpu.replica_cuda_indices == (1, 0)
-
-    assert set(legacy.packs) == {
-        "comfy",
-        "comfy.rgthree",
-        "comfy.solo",
-        "comfy.themed",
-        "comfy.broken",
-    }
-    assert "rgthree" in str(legacy.env["DINKSTER_LEGACY_PACKS"])
-    assert legacy.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "library" / "vault")
-    assert legacy.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "library" / "mounts.json")
-    assert legacy.attribute is not None
-    assert legacy.attribute("comfy.rgthree.FastMuter") == "comfy.rgthree"
-    assert legacy.attribute("comfy.solo.Thing") == "comfy.solo"
-    # No configured pack matches -> the truthful compat-layer chip.
-    assert legacy.attribute("comfy.mystery.Node") == "comfy"
-    # Default legacy badge: shared "unported legacy pack" mark + color,
-    # per-pack display name. Single-file packs get the same default.
-    rgthree = legacy.packs["comfy.rgthree"]
-    assert rgthree.display_name == "rgthree (ComfyUI)"
-    assert rgthree.mark == "\U0001f9e9"
-    assert rgthree.color
-    assert legacy.packs["comfy.solo"].mark == "\U0001f9e9"
-    # Declared [pack.presentation] overrides the default badge wholesale.
-    themed_info = legacy.packs["comfy.themed"]
-    assert themed_info.display_name == "Themed Pack"
-    assert themed_info.abbr == "TH"
-    assert themed_info.color == "#aa3355"
-    assert not themed_info.mark
-    # A declared icon rides along: legacy packs get raster badges through
-    # the same presentation-only manifest, no porting required.
-    assert themed_info.icon is not None
-    assert themed_info.icon.media_type == "image/png"
-    assert themed_info.icon.digest.startswith("sha256:")
-    assert themed_info.icon.data == png_bytes()
-    # Blueprints ride the same presentation-only on-ramp: a legacy pack
-    # ships starter workflows without being a loadable Dinkster pack.
-    assert [bp.id for bp in themed_info.blueprints] == ["starter"]
-    assert themed_info.blueprints[0].data == b'{"graphs": {}}'
-    # Templates too, with asset references validated against the same
-    # file's [[pack.assets]] declarations.
-    assert [tp.id for tp in themed_info.templates] == ["quickstart"]
-    assert themed_info.templates[0].assets == ("aux",)
-    assert themed_info.templates[0].data == b'{"graphs": {}}'
-    # [[pack.assets]] rides it too: the declaration resolves under the
-    # synthetic legacy pack id, whose artifact root the spec maps to the
-    # pack directory - so packaged acquisition works for unported packs.
-    assert [a.id for a in themed_info.assets] == ["aux"]
-    assert themed_info.assets[0].need.digest == aux_digest
-    assert themed_info.assets[0].nodes == ("comfy.themed.AuxNode",)
-    assert themed_info.assets[0].need.sources == (
-        PackagedSource(pack="comfy.themed", path="models/aux.bin"),
-    )
-    # Only directory packs get roots: single-file packs have no adjacent
-    # manifest to declare assets from.
-    assert dict(legacy.asset_roots) == {
-        "comfy.rgthree": tmp_path / "packs" / "rgthree",
-        "comfy.themed": themed,
-        "comfy.broken": broken,
-    }
-    # Packs without a manifest (or with a broken one) simply have none.
-    assert rgthree.blueprints == ()
-    assert rgthree.assets == () and legacy.packs["comfy.broken"].assets == ()
-    # Broken presentation file: advisory, so the pack still composes and
-    # wears the shared default.
-    assert legacy.packs["comfy.broken"].display_name == "broken (ComfyUI)"
-    assert legacy.packs["comfy.broken"].mark == "\U0001f9e9"
-
-    with pytest.raises(CompositionError, match="not found"):
-        comfy_compat_specs(tmp_path / "nowhere")
-    with pytest.raises(CompositionError, match="legacy pack not found"):
-        comfy_compat_specs(root, legacy_packs=[tmp_path / "missing"])
-
-
-def test_comfy_host_types_register_save_target_runtime_values() -> None:
-    from dinkster.comfy_compose import register_comfy_host_types
-    from dinkster_assets import SAVE_TARGET_TYPE, AssetError, SaveTarget
-    from dinkster_values import TypeRegistry
-
-    registry = TypeRegistry()
-    register_comfy_host_types(registry)
-    register_comfy_host_types(registry)  # both compat PackSpecs share the hook
-
-    explicit = {"mount": "comfy-output", "prefix": "renders/scene"}
-    wrapped = registry.wrap(SAVE_TARGET_TYPE, explicit)
-    assert wrapped.resolve() == SaveTarget(**explicit)
-    assert wrapped.fingerprint == "SAVE_TARGET:comfy-output/renders/scene"
-    encoded = registry.spec(SAVE_TARGET_TYPE).encode(explicit)
-    assert registry.spec(SAVE_TARGET_TYPE).decode(encoded) == SaveTarget(**explicit)
-
-    from dinkster_nodes_media_io import SaveImage
-
-    advertised_default = SaveImage.schema().inputs[1].default
-    assert advertised_default is None
-
-    with pytest.raises(AssetError, match="unknown keys"):
-        registry.wrap(
-            SAVE_TARGET_TYPE,
-            {"mount": "comfy-output", "prefix": "renders/scene", "path": "/tmp"},
-        )
-    with pytest.raises(AssetError, match="invalid save target prefix"):
-        registry.wrap(
-            SAVE_TARGET_TYPE,
-            {"mount": "comfy-output", "prefix": "../escape"},
-        )
 
 
 def test_composition_close_is_idempotent(tmp_path: Path) -> None:
