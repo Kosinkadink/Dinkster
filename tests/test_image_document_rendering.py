@@ -19,7 +19,8 @@ from dinkster_image_document import (
     parse_selector,
     render_document,
 )
-from dinkster_nodes_media_io.image_document import RenderImageDocument
+from dinkster_nodes_image.layer_document import FlattenLayers
+from dinkster_nodes_image.layer_io import LoadLayers
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
 from dinkster_server.library import ServerLibrary, add_library_routes
 from dinkster_server.preflight import asset_preflight
@@ -589,7 +590,8 @@ def test_native_node_resolves_document_children_with_the_bound_resolver(tmp_path
         media_type=MEDIA_TYPE,
         resolver=vault,
     )
-    output = RenderImageDocument.execute(document=reference)["image"]
+    layers = LoadLayers.execute(document=reference)["layers"]
+    output = FlattenLayers.execute(layers=layers)["image"]
     assert isinstance(output, np.ndarray)
     assert output.shape == (1, 1, 1, 3)
     assert np.allclose(output[0, 0, 0], [90 / 255, 80 / 255, 70 / 255])
@@ -661,8 +663,9 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
     from dinkster_caches import MemoryLRUCache
     from dinkster_engine import Engine, EventListener
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
-    from dinkster_nodes_image import AddLayer, FlattenLayers, register_image_types
-    from dinkster_nodes_media_io import LoadImage, register_media_types
+    from dinkster_nodes_image.compositor import AddLayer
+    from dinkster_nodes_image.ported.image_file_tools import LoadImage
+    from dinkster_nodes_image.types import register_image_types
     from dinkster_schema import build_node_types, build_schemas
     from dinkster_server import create_app
     from dinkster_values import TypeRegistry, register_core_types
@@ -679,7 +682,6 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
         register_image_types(registry)
         return Engine(
             schemas=schemas,
@@ -709,12 +711,12 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
             asset = (await uploaded.json())["asset"]
             graph = Graph(
                 nodes={
-                    "load": GraphNode("dinkster.load_image", {"image": asset}),
+                    "load": GraphNode("dinkster.image.load_image", {"image": asset}),
                     "layers": GraphNode(
                         "dinkster.layers.add",
                         {
-                            "image": Link("load", "image"),
-                            "mask": Link("load", "mask"),
+                            "image": Link("load", "IMAGE"),
+                            "mask": Link("load", "MASK"),
                         },
                     ),
                     "flatten": GraphNode(
