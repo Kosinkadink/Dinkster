@@ -515,11 +515,19 @@ def test_official_publication_selects_only_changed_committed_packs(
         if "rev-parse" in command:
             return "a" * 40 + "\n"
         if "ls-tree" in command:
+            manifests = [
+                path for path in committed if "b" * 40 not in command or path != paths["first"]
+            ]
             return "\0".join(
-                [*committed, "packages/dinkster-nodes-dev/dinkster-pack.toml", ""]
+                [*manifests, "packages/dinkster-nodes-dev/dinkster-pack.toml", ""]
             ).encode()
         if "show" in command:
-            return committed[command[-1].split(":", 1)[1]]
+            data = committed[command[-1].split(":", 1)[1]]
+            return (
+                data.replace(b'version = "1.0"', b'version = "0.9"')
+                if command[-1].startswith("b" * 40)
+                else data
+            )
         if "diff" in command:
             return ("\0".join(changed) + "\0").encode()
         raise AssertionError(command)
@@ -527,6 +535,9 @@ def test_official_publication_selects_only_changed_committed_packs(
     monkeypatch.setattr("scripts.select_official_packs.subprocess.check_output", git)
     (tmp_path / "dinkster-pack.toml").write_text("invalid uncommitted data")
     assert select_packs(tmp_path, before="b" * 40) == expected
+    assert select_packs(tmp_path, before="b" * 40, version_changes_only=True) == tuple(
+        pack for pack in expected if pack in {"foundation", "first"}
+    )
     assert select_packs(tmp_path, before="0" * 40) == (
         "first",
         "foundation",
@@ -553,6 +564,157 @@ def test_official_publication_selects_only_changed_committed_packs(
     committed[first] = committed[first].replace(b'engine = ">=0.2,<1"', b'engine = ""')
     with pytest.raises(ManifestError, match="engine"):
         select_packs(tmp_path, tag="pack/first/v2.0")
+
+
+@pytest.mark.parametrize(
+    ("mode", "problem"),
+    [
+        ("candidate", None),
+        ("candidate", "manifest"),
+        ("candidate", "security"),
+        ("published", None),
+        ("published", "promotion"),
+        ("published", "timeout"),
+        ("published", "digest"),
+        ("published", "head"),
+    ],
+)
+def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, problem: str | None
+) -> None:
+    from dataclasses import replace
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_registry.archive_admission import StageResult
+
+    from scripts import check_default_pack_admission as admission
+
+    archives = {}
+    entries = {}
+    for name, version in (("candidate", "7.2"), ("unchanged", "1.3")):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+            f'version = "{version}"\nengine = ">=0.2,<1"\n'
+            '[pack.entry]\nnodes = "nodes:NODES"\n'
+            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+        )
+        if name == "candidate" and problem == "manifest":
+            manifest = source / "dinkster-pack.toml"
+            manifest.write_text(manifest.read_text().replace('version = "7.2"', 'version = "7.1"'))
+        (source / "nodes.py").write_text("NODES = []\n")
+        if name == "candidate" and problem == "security":
+            (source / "bad.txt").write_text("dinkster-known-bad-test-payload")
+        archive = tmp_path / f"{name}.zip"
+        digest = build_artifact(source, archive)
+        archives[name] = archive.read_bytes()
+        entries[name] = LockedPack(
+            pack=name,
+            version=version,
+            artifact_digest=digest,
+            publisher="dinkster",
+            claims=(),
+            source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
+        )
+
+    def build_candidate(root, output, *, packs):
+        assert packs == ("candidate",)
+        output.mkdir()
+        (output / "candidate-7.2.zip").write_bytes(archives["candidate"])
+        (output / "official-packs.lock").write_text(
+            Lockfile.of([entries["candidate"]]).record_json()
+        )
+
+    def registry_defaults(registry, minimums, artifacts, *, engine_version):
+        # The candidate has no registry release: requesting it would fail here.
+        assert minimums == {"unchanged": "1.0"}
+        entry = entries["unchanged"]
+        (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
+            archives["unchanged"]
+        )
+        return Lockfile.of([entry]), {}
+
+    observed = []
+
+    def engine_tests(root, catalog, artifacts):
+        assert root == Path(admission.__file__).resolve().parents[1]
+        observed.extend((pack.pack, pack.version) for pack in catalog.packs)
+
+    monkeypatch.setattr(
+        admission, "default_pack_minimums", lambda: {"candidate": "1.0", "unchanged": "1.0"}
+    )
+    monkeypatch.setattr(admission, "select_packs", lambda *args, **kwargs: ("candidate",))
+    monkeypatch.setattr(admission, "build", build_candidate)
+    monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
+    monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
+    monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
+    publication = None
+    if mode == "published":
+        publication = tmp_path / "official-packs.lock"
+        publication.write_text(Lockfile.of([entries["candidate"]]).record_json())
+        monkeypatch.setattr(
+            admission.subprocess,
+            "check_output",
+            lambda *args, **kwargs: "c" * 40 if problem == "head" else "a" * 40,
+        )
+        attempts = []
+
+        def release(registry, pack, version, *, engine_version):
+            assert (pack, version, engine_version) == ("candidate", "7.2", "0.2")
+            attempts.append(pack)
+            if problem == "timeout" or problem == "promotion" and len(attempts) == 1:
+                raise admission.InstallError("not active yet")
+            return replace(
+                entries["candidate"],
+                source="registry",
+                artifact_digest=entries["unchanged"].artifact_digest
+                if problem == "digest"
+                else entries["candidate"].artifact_digest,
+            )
+
+        monkeypatch.setattr(admission, "resolve_release", release)
+        monkeypatch.setattr(
+            admission, "http_registry_fetcher", lambda endpoint: lambda entry: archives[entry.pack]
+        )
+        ticks = iter((0, 601)) if problem == "timeout" else iter(range(100))
+        monkeypatch.setattr(admission.time, "monotonic", lambda: next(ticks))
+        monkeypatch.setattr(admission.time, "sleep", lambda seconds: None)
+    expected_error = {
+        "manifest": "candidate@7.2 admission refused",
+        "security": "candidate@7.2 admission refused",
+        "digest": "digest mismatch",
+        "head": "do not match the engine checkout",
+        "timeout": "not active yet",
+    }.get(problem or "")
+    if expected_error:
+        with pytest.raises((ValueError, admission.InstallError), match=expected_error):
+            admission.check_defaults(
+                admission.NamedRegistry("", "https://registry.example"),
+                engine_version="0.2",
+                candidate_base="b" * 40 if mode == "candidate" else None,
+                published_sources=publication,
+            )
+        assert not observed
+    else:
+        result = admission.check_defaults(
+            admission.NamedRegistry("", "https://registry.example"),
+            engine_version="0.2",
+            candidate_base="b" * 40 if mode == "candidate" else None,
+            published_sources=publication,
+        )
+        assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
+        assert result == {
+            "engineVersion": "0.2",
+            "packs": [
+                {
+                    "pack": name,
+                    "version": entries[name].version,
+                    "artifactDigest": entries[name].artifact_digest,
+                }
+                for name in ("candidate", "unchanged")
+            ],
+        }
 
 
 @pytest.mark.parametrize(
