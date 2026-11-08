@@ -20,11 +20,16 @@ from dinkster_api.v1 import (
     TypeExpr,
     TypeRegistry,
     materialize_latent,
-    register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_vision_sam3 import register_types
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
+
+
+def register_sam3_types(registry: TypeRegistry) -> None:
+    with registry.registering_pack("dinkster-vision-sam3", ("SAM3_TRACK_DATA",), allow_bare=True):
+        register_types(registry)
 
 
 def _track(case: str) -> dict[str, object]:
@@ -153,7 +158,7 @@ def test_public_sam3_track_codec_materializes_torch_data_without_mutating_source
     packed = source["packed_masks"]
     before = packed.clone() if isinstance(packed, torch.Tensor) else None
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_sam3_types(registry)
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
 
     restored = materialize_latent(spec.decode(spec.encode(source)))
@@ -216,10 +221,9 @@ def test_public_sam3_track_producer_consumer_repeats_through_ordinary_hosts(
     tmp_path: Path, case: str, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
         module = "sam3_public_fixture_" + case.replace("-", "_") + str(in_process)
         (tmp_path / f"{module}.py").write_text(
-            "from dinkster_api.v1 import register_inference_types\n"
+            "from test_sam3_track_transport_torch import register_sam3_types\n"
             "from test_sam3_track_transport_torch import SAM3TrackConsumer, SAM3TrackSource\n"
             "SOURCE_NODES = (SAM3TrackSource,)\n"
             "CONSUMER_NODES = (SAM3TrackConsumer,)\n",
@@ -236,13 +240,16 @@ def test_public_sam3_track_producer_consumer_repeats_through_ordinary_hosts(
                 f'name = "{name}"\n'
                 'publisher = "dinkster"\n'
                 f'namespaces = ["{namespace}"]\n'
+                '[pack.dependencies]\ndinkster-vision-sam3 = ">=0.0.1,<1"\n'
                 "\n[pack.entry]\n"
                 f'nodes = "{module}:{nodes}"\n'
-                f'types = "{module}:register_inference_types"\n',
+                f'types = "{module}:register_sam3_types"\n',
                 encoding="ascii",
             )
-        native_manifest = root / "dinkster-pack.toml"
-        manifests = (native_manifest, source_manifest, consumer_manifest)
+        provider = _installed_pack_spec(
+            "dinkster-vision-sam3", "dinkster_nodes_vision_sam3", in_process=in_process
+        )
+        manifests = (Path(provider.manifest), source_manifest, consumer_manifest)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -251,20 +258,17 @@ def test_public_sam3_track_producer_consumer_repeats_through_ordinary_hosts(
             }
         )
         try:
-            specs = (
-                tuple(PackSpec(manifest=manifest, in_process=True) for manifest in manifests)
-                if in_process
-                else tuple(
+            for spec in (provider, PackSpec(source_manifest), PackSpec(consumer_manifest)):
+                await composer.add_pack(
                     PackSpec(
-                        manifest=manifest,
-                        worker_group="sam3-public-fixture",
-                        group_manifests=manifests,
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
+                        in_process=in_process,
+                        worker_group=None if in_process else "sam3-public-fixture",
+                        group_manifests=() if in_process else manifests,
                     )
-                    for manifest in manifests
                 )
-            )
-            for spec in specs:
-                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "source": GraphNode("sam3-public-source.source", {"case": case}),
