@@ -3316,17 +3316,11 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             async with session.get(base + "/api/composition") as resp:
                 composition = await resp.json()
             assert data["epoch"] == final_epoch, composition
-            assert any(t.startswith("std.") for t in data["nodes"])
-            assert data["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
-            assert data["nodes"]["dinkster.load_video"]["pack"] == "dinkster-nodes-media-io"
-            assert data["nodes"]["dinkster.image.resize"]["pack"] == "dinkster-nodes-image"
+            assert data["nodes"]["dinkster.utilities.primitive_int"]["pack"] == "dinkster-utilities"
+            assert data["nodes"]["dinkster.video.load_video"]["pack"] == "dinkster-video"
+            assert data["nodes"]["dinkster.image.image_scale"]["pack"] == "dinkster-image"
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
-            named_route = data["nodes"]["dinkster.route.switch_by_name"]
-            assert named_route["schemaVersion"] == 1
-            assert named_route["interface"][0]["widget"] == {
-                "type": "COMBO",
-                "optionSource": {"inputFamily": "values"},
-            }
+            assert "dinkster.route.switch_by_name" not in data["nodes"]
             # Fully composed, positively: the last announcement and the
             # narration clear land atomically on the event loop, so a
             # table containing the final pack never claims "composing".
@@ -3352,7 +3346,8 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
                 for index, name in enumerate(default_packs)
             }
             expected_packs["isopack"] = {"state": "announced", "epoch": final_epoch}
-            assert data["nodes"]["StringLength"]["pack"] == "dinkster-nodes-comfy"
+            assert data["nodes"]["dinkster.text.string_length"]["pack"] == "dinkster-text"
+            assert "StringLength" not in data["nodes"]
             assert "dinkster.ksampler" not in data["nodes"]
             assert report["packs"] == expected_packs
 
@@ -3412,22 +3407,22 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
     ("failed_pack", "surviving_pack", "present_node", "missing_node"),
     [
         (
-            "dinkster-nodes-foundation",
-            "dinkster-nodes-media-io",
-            "dinkster.load_video",
-            "std.math.add_ints",
+            "dinkster-utilities",
+            "dinkster-video",
+            "dinkster.video.load_video",
+            "dinkster.utilities.primitive_int",
         ),
         (
-            "dinkster-nodes-media-io",
-            "dinkster-nodes-foundation",
-            "std.math.add_ints",
-            "dinkster.load_video",
+            "dinkster-video",
+            "dinkster-utilities",
+            "dinkster.utilities.primitive_int",
+            "dinkster.video.load_video",
         ),
         (
-            "dinkster-nodes-image",
-            "dinkster-nodes-foundation",
-            "std.math.add_ints",
-            "dinkster.image.resize",
+            "dinkster-image",
+            "dinkster-utilities",
+            "dinkster.utilities.primitive_int",
+            "dinkster.image.image_scale",
         ),
     ],
 )
