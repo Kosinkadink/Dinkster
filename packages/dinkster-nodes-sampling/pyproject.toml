@@ -1,0 +1,25 @@
+[project]
+name = "dinkster-nodes-sampling"
+version = "0.0.2"
+description = "First-party Dinkster sampling nodes"
+requires-python = ">=3.12"
+dependencies = ["dinkster-api", "dinkster-inference-wire", "dinkster-values", "dinkster-nodes-latent", "dinkster-nodes-conditioning"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_nodes_sampling"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_sampling_pack/dinkster-pack.toml"
+"src/dinkster_nodes_sampling" = "dinkster_sampling_pack/dinkster_nodes_sampling"
+"locales" = "dinkster_sampling_pack/locales"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-inference-wire = { workspace = true }
+dinkster-values = { workspace = true }
+dinkster-nodes-latent = { workspace = true }
+dinkster-nodes-conditioning = { workspace = true }

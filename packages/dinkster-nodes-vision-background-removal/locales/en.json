@@ -1,0 +1,18 @@
+{
+  "nodes": {
+    "dinkster.vision.background.removal.load_background_removal_model": {
+      "displayName": "Load Background Removal Model"
+    },
+    "dinkster.vision.background.removal.remove_background": {
+      "displayName": "Remove Background"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.background.removal.load_background_removal_model": [
+      "LoadBackgroundRemovalModel"
+    ],
+    "dinkster.vision.background.removal.remove_background": [
+      "RemoveBackground"
+    ]
+  }
+}

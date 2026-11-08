@@ -1,323 +1,73 @@
-"""Dinkster's deterministic first-party image and mask operation nodes."""
+"""First-party image operations with portable media and layer values."""
 
-from .adjust import ADJUST_NODES, ImageAdjust
-from .batch import (
-    BATCH_NODES,
-    ImageBatchCombine,
-    ImageBatchEdit,
-    ImageBatchToList,
-    ImageListToBatch,
-    ImageRebatch,
-    MaskBatchCombine,
-    MaskBatchEdit,
-)
-from .channels import (
-    CHANNEL_NODES,
-    ImageAlphaJoin,
-    ImageAlphaPremultiply,
-    ImageAlphaUnpremultiply,
-    ImageChannelMerge,
-    ImageChannelSplit,
-)
-from .compare import ImageCompare, NativeImageCompare
-from .composition import (
-    COMPOSITION_NODES,
-    ImageComposite,
-    PorterDuffComposite,
-)
-from .compositor import (
-    COMPOSITOR_NODES,
-    AddLayer,
-    CreateLayeredImage,
-    LayersFromBoundingBoxes,
-)
-from .compositor_types import (
-    BLEND_MODES as COMPOSITOR_BLEND_MODES,
-)
-from .compositor_types import (
+from functools import partial
+
+from dinkster_api.v1 import (
+    ASSET_TYPE,
+    BOUNDING_BOXES_TYPE,
+    COLOR_TYPE,
     COMPOSITOR_TYPE,
+    IMAGECOMPARE_TYPE,
     LAYERS_TYPE,
-    CompositorLayer,
-    CompositorRecipe,
-    CompositorSourceLayer,
-    CompositorTransform,
-    LayerStack,
-)
-from .detection import (
-    DETECTION_NODES,
-    DetectionFilter,
-    DetectionInfo,
-    DetectionSort,
-    DetectionsToMasks,
-    MakeDetection,
-)
-from .drawing import DRAWING_NODES, DrawMask, DrawRegion, DrawText, MakeImage
-from .filters import FILTER_NODES, ImageFilter
-from .geometry import (
-    GEOMETRY_NODES,
-    ImageCrop,
-    ImageInfo,
-    ImageResize,
-    ImageTransform,
-    ImageUncrop,
-    MakeRegion,
-    RegionInfo,
-)
-from .glsl import DEFAULT_FRAGMENT_SHADER, GLSL_NODES, GlslShader
-from .layer_document import LAYER_DOCUMENT_NODES, EditLayers, FlattenLayers, SplitLayers
-from .layer_io import LoadLayers, SaveLayers
-from .layout import LAYOUT_NODES, ImageGridCompose, ImageGridDecompose, ImageStitch
-from .mask import (
-    MASK_NODES,
-    ImageToMask,
-    MakeMask,
-    MaskCombine,
-    MaskInfo,
-    MaskMorphology,
-    MaskPolarity,
-    MaskToImage,
-    TextMask,
-)
-from .pose import POSE_NODES, ExportPoseJson, ImportPoseJson, RenderPose
-from .preprocess import (
-    MODEL_DEPTH_PROVIDER_CHOICE,
-    MODEL_EDGE_PROVIDER_CHOICE,
-    MODEL_EDGE_PROVIDER_CHOICES,
-    PREPROCESSOR_NODES,
-    AnimeLineartPreprocessor,
-    AnyLinePreprocessor,
-    BinaryPreprocessor,
-    ColorHintPreprocessor,
-    ContentShufflePreprocessor,
-    EdgePreprocessor,
-    HintImageResize,
-    HintResolution,
-    InpaintHintPreprocessor,
-    LineartPreprocessor,
-    MangaLineartPreprocessor,
-    MLSDPreprocessor,
-    ModelDepthPreprocessor,
-    ModelEdgePreprocessor,
-    RealisticLineartPreprocessor,
-    ScribblePreprocessor,
-    TEEDPreprocessor,
-    TileHintPreprocessor,
-    preprocessor_choices,
-)
-from .refine import REFINE_NODES, TileBlendMask, TileRefinePlan
-from .tiles import TILE_NODES, ImageTileMerge, ImageTileSplit
-from .tracking import TRACKING_NODES, TrackedCrop, TrackedUncrop
-from .transition import TRANSITION_NODES, ImageTransition
-from .types import (
-    DETECTION_TYPE,
-    POSE_TYPE,
-    REGION_TYPE,
-    RESERVED_TYPE_IDS,
-    SEGMENTATION_TYPE,
-    VECTOR_TYPE,
-    Detection,
-    Pose,
-    PoseKeypoint,
-    PoseSkeleton,
-    Region,
-    register_image_types,
-)
-from .upscale import (
-    UPSCALE_MODEL_PROVIDER_CHOICE,
-    UPSCALE_NODES,
-    UpscaleWithModel,
-    upscale_choices,
-)
-from .vision import (
-    DETECT_PROVIDER_CHOICE,
-    MATTE_PROVIDER_CHOICE,
-    SEGMENT_PROVIDER_CHOICE,
-    TEXT_SEGMENT_PROVIDER_CHOICE,
-    TRACK_PROVIDER_CHOICE,
-    VISION_NODES,
-    DetectObjects,
-    ImageMatte,
-    SegmentByText,
-    SegmentDetections,
-    TrackObjects,
-    vision_choices,
+    WEBCAM_TYPE,
+    TypeRegistry,
+    decode_latent,
+    encode_latent,
+    inference_nodes,
+    latent_fingerprint,
+    register_asset_type,
+    register_box_types,
+    register_media_types,
+    resolver_from_env,
+    validate_latent_encoded,
 )
 
-IMAGE_NODES = [
-    ImageCompare,
-    NativeImageCompare,
-    *GEOMETRY_NODES,
-    *COMPOSITION_NODES,
-    *COMPOSITOR_NODES,
-    *LAYER_DOCUMENT_NODES,
-    LoadLayers,
-    SaveLayers,
-    *GLSL_NODES,
-    *ADJUST_NODES,
-    *FILTER_NODES,
-    *PREPROCESSOR_NODES,
-    *POSE_NODES,
-    *CHANNEL_NODES,
-    *MASK_NODES,
-    *DETECTION_NODES,
-    *DRAWING_NODES,
-    *BATCH_NODES,
-    *LAYOUT_NODES,
-    *TILE_NODES,
-    *TRACKING_NODES,
-    *REFINE_NODES,
-    *TRANSITION_NODES,
-    *UPSCALE_NODES,
-    *VISION_NODES,
-]
+from .bounding_boxes import CreateBoundingBoxes
+from .image_compositor import ImageCompositor
+from .layer_recipe import coerce_delta, decode_delta, encode_delta, validate_delta_encoded
+from .layers_from_bounding_boxes import LayersFromBoundingBoxes
+from .ported import NODES as PORTED_NODES
+from .webcam import WebcamCapture
+
+NODES = (
+    *PORTED_NODES,
+    CreateBoundingBoxes,
+    LayersFromBoundingBoxes,
+    ImageCompositor,
+    WebcamCapture,
+)
 
 
-def image_choices() -> dict[str, tuple[str, ...]]:
-    """Every static remote choice this pack owns."""
-    return {**preprocessor_choices(), **upscale_choices(), **vision_choices()}
+def register_types(registry: TypeRegistry) -> None:
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
+    if WEBCAM_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env(), type_id=WEBCAM_TYPE)
+    register_media_types(registry)
+    register_box_types(registry)
+    if COMPOSITOR_TYPE not in registry:
+        registry.register(
+            COMPOSITOR_TYPE,
+            encode=encode_delta,
+            decode=decode_delta,
+            coerce=coerce_delta,
+            meta=lambda obj: {"version": coerce_delta(obj)["version"]},
+            validate_encoded=validate_delta_encoded,
+            asset_references_complete=True,
+        )
+    for type_id in (BOUNDING_BOXES_TYPE, COLOR_TYPE, IMAGECOMPARE_TYPE):
+        if type_id not in registry:
+            registry.register(type_id)
+    if LAYERS_TYPE not in registry:
+        registry.register(
+            LAYERS_TYPE,
+            encode=encode_latent,
+            decode=partial(decode_latent, require_samples=False),
+            fingerprint=latent_fingerprint(LAYERS_TYPE),
+            validate_encoded=partial(validate_latent_encoded, require_samples=False),
+        )
 
 
-__all__ = [
-    "ADJUST_NODES",
-    "AnimeLineartPreprocessor",
-    "AnyLinePreprocessor",
-    "BATCH_NODES",
-    "CHANNEL_NODES",
-    "COMPOSITION_NODES",
-    "COMPOSITOR_BLEND_MODES",
-    "COMPOSITOR_NODES",
-    "COMPOSITOR_TYPE",
-    "DETECTION_NODES",
-    "DETECTION_TYPE",
-    "DETECT_PROVIDER_CHOICE",
-    "DRAWING_NODES",
-    "FILTER_NODES",
-    "GEOMETRY_NODES",
-    "GLSL_NODES",
-    "IMAGE_NODES",
-    "EditLayers",
-    "FlattenLayers",
-    "LoadLayers",
-    "SaveLayers",
-    "SplitLayers",
-    "LAYERS_TYPE",
-    "LAYOUT_NODES",
-    "MASK_NODES",
-    "MATTE_PROVIDER_CHOICE",
-    "MODEL_DEPTH_PROVIDER_CHOICE",
-    "MODEL_EDGE_PROVIDER_CHOICE",
-    "MODEL_EDGE_PROVIDER_CHOICES",
-    "POSE_NODES",
-    "POSE_TYPE",
-    "PREPROCESSOR_NODES",
-    "REFINE_NODES",
-    "REGION_TYPE",
-    "RESERVED_TYPE_IDS",
-    "SEGMENTATION_TYPE",
-    "SEGMENT_PROVIDER_CHOICE",
-    "TEXT_SEGMENT_PROVIDER_CHOICE",
-    "TILE_NODES",
-    "TRACKING_NODES",
-    "TRACK_PROVIDER_CHOICE",
-    "TRANSITION_NODES",
-    "UPSCALE_MODEL_PROVIDER_CHOICE",
-    "UPSCALE_NODES",
-    "VECTOR_TYPE",
-    "VISION_NODES",
-    "BinaryPreprocessor",
-    "ColorHintPreprocessor",
-    "ContentShufflePreprocessor",
-    "CompositorLayer",
-    "CompositorRecipe",
-    "CompositorSourceLayer",
-    "CompositorTransform",
-    "CreateLayeredImage",
-    "DEFAULT_FRAGMENT_SHADER",
-    "DetectObjects",
-    "Detection",
-    "DetectionFilter",
-    "DetectionInfo",
-    "DetectionSort",
-    "DetectionsToMasks",
-    "EdgePreprocessor",
-    "HintImageResize",
-    "HintResolution",
-    "ImageAdjust",
-    "ImageAlphaJoin",
-    "ImageAlphaPremultiply",
-    "ImageAlphaUnpremultiply",
-    "AddLayer",
-    "ImageChannelMerge",
-    "ImageChannelSplit",
-    "ImageCompare",
-    "ImageComposite",
-    "ImageCrop",
-    "ImageBatchCombine",
-    "ImageBatchEdit",
-    "ImageBatchToList",
-    "ImageGridCompose",
-    "ImageGridDecompose",
-    "GlslShader",
-    "ImageListToBatch",
-    "ImageMatte",
-    "ImageRebatch",
-    "ImageStitch",
-    "ImageTileMerge",
-    "ImageTileSplit",
-    "ImageToMask",
-    "ImageTransition",
-    "DrawMask",
-    "DrawRegion",
-    "DrawText",
-    "ImageFilter",
-    "ImageInfo",
-    "ImageResize",
-    "ImageTransform",
-    "ImageUncrop",
-    "InpaintHintPreprocessor",
-    "LineartPreprocessor",
-    "LayerStack",
-    "LayersFromBoundingBoxes",
-    "MLSDPreprocessor",
-    "MangaLineartPreprocessor",
-    "MakeDetection",
-    "MakeRegion",
-    "RegionInfo",
-    "MakeImage",
-    "MakeMask",
-    "MaskCombine",
-    "MaskBatchCombine",
-    "MaskBatchEdit",
-    "MaskInfo",
-    "MaskMorphology",
-    "MaskPolarity",
-    "MaskToImage",
-    "ModelDepthPreprocessor",
-    "ModelEdgePreprocessor",
-    "RealisticLineartPreprocessor",
-    "PorterDuffComposite",
-    "Pose",
-    "PoseKeypoint",
-    "PoseSkeleton",
-    "Region",
-    "RenderPose",
-    "ScribblePreprocessor",
-    "TEEDPreprocessor",
-    "SegmentByText",
-    "SegmentDetections",
-    "TextMask",
-    "TileBlendMask",
-    "TileHintPreprocessor",
-    "TileRefinePlan",
-    "TrackObjects",
-    "TrackedCrop",
-    "TrackedUncrop",
-    "ExportPoseJson",
-    "ImportPoseJson",
-    "UpscaleWithModel",
-    "image_choices",
-    "preprocessor_choices",
-    "register_image_types",
-    "upscale_choices",
-    "vision_choices",
-]
+__all__ = ["NODES", "register_types"]
+
+inference_nodes(NODES)

@@ -390,7 +390,10 @@ def _check_sandbox_needs(manifest: PackManifest) -> list[Finding]:
 
 
 def _classify_import(
-    module: str, names: str | None, own_modules: frozenset[str] = frozenset()
+    module: str,
+    names: str | None,
+    own_modules: frozenset[str] = frozenset(),
+    dependency_modules: frozenset[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """Return (code, fix) for a problematic dinkster import, else None."""
     parts = module.split(".")
@@ -415,11 +418,15 @@ def _classify_import(
             f"packs must not import host machinery ({root}); everything a "
             f"pack needs is in dinkster_api.v1",
         )
-    if root.startswith(_PACK_IMPLEMENTATION_PREFIXES) and root not in own_modules:
+    if (
+        root.startswith(_PACK_IMPLEMENTATION_PREFIXES)
+        and root not in own_modules
+        and root not in dependency_modules
+    ):
         return (
             "imports.pack-implementation",
-            f"packs must not import another pack implementation ({root}); depend on "
-            "registered ids or extract shared code into a versioned library",
+            f"declare the provider pack dependency before importing public helpers ({root}); "
+            "otherwise depend on registered ids or a versioned library",
         )
     if root in _INTERNAL_SURFACE:
         return (
@@ -784,6 +791,11 @@ def _scan_sources(manifest: PackManifest) -> list[Finding]:
     own_module_names.update(path.stem for path in paths)
     own_module_names.update(path.parent.name for path in paths if path.name == "__init__.py")
     own_modules = frozenset(own_module_names)
+    dependency_modules = frozenset(
+        "dinkster_nodes_" + dependency.pack.removeprefix("dinkster-").replace("-", "_")
+        for dependency in manifest.dependencies
+        if dependency.pack.startswith("dinkster-")
+    )
     for path in paths:
         try:
             source = path.read_text(encoding="utf-8", errors="replace")
@@ -808,7 +820,7 @@ def _scan_sources(manifest: PackManifest) -> list[Finding]:
                         (node.module, ",".join(alias.name for alias in node.names), node.lineno)
                     )
         for module, names, lineno in sorted(imports, key=lambda item: (item[2], item[0])):
-            problem = _classify_import(module, names, own_modules)
+            problem = _classify_import(module, names, own_modules, dependency_modules)
             if problem is None:
                 continue
             code, fix = problem

@@ -8,6 +8,7 @@ uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
 uv run --locked python scripts/check_builtin_type_spellings.py
+uv run --locked python scripts/check_pack_inference_imports.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright &
@@ -62,6 +63,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_generation_source_staging_cli \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
   tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
+  tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
@@ -74,11 +76,13 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_pack_archive.py::test_registry_executable_probe_bounds_and_sanitizes \
   tests/test_pack_archive.py::test_registry_probe_refuses_degraded_isolation \
   tests/test_pack_archive.py::test_selected_pack_tests_cannot_fall_back_to_checkout \
+  tests/test_pack_archive.py::test_selected_pack_runtime_id_uses_distribution_layout \
   tests/test_archive_admission.py \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
   tests/test_names.py \
+  tests/test_first_party_node_ids.py \
   tests/test_comfy_controlnet_nodes.py \
   tests/test_validation_inputs.py \
   tests/test_values.py \
@@ -86,8 +90,6 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_graph_wire.py \
   tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
   tests/test_vision_capability_schemas.py \
-  tests/test_vision_sam31_schema.py::test_sam31_wheel_contains_pack_runtime_manifest_and_license \
-  packages/dinkster-nodes-vision/tests/test_sam31.py::test_offline_tokenizer_matches_pinned_clip_tokens \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
   tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
@@ -97,17 +99,15 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_manifest.py::test_catalog_driven_node_source_rejects_unknown_kinds_and_types \
   tests/test_doctor.py::test_catalog_driven_node_source_is_reported_without_hiding_entry_errors \
   tests/test_doctor.py::test_empty_pack_warns \
-  tests/test_audio_lazy.py::test_native_comfy_audio_registration_preserves_first_authority \
-  tests/test_audio_lazy.py::test_native_comfy_audio_registration_is_torch_free \
+  tests/test_audio_lazy.py::test_audio_pack_registration_preserves_first_authority \
+  tests/test_audio_lazy.py::test_audio_pack_registration_is_torch_free \
   tests/test_compose.py::test_default_pack_prefers_loaded_source_tree_over_bundled_copy \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
-  tests/test_compose.py::test_exact_node_claims_compose_reload_execute_and_reject_second_owner \
+  tests/test_compose.py::test_pack_namespace_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
-  tests/test_compose.py::test_vision_pack_license_checkout_endings_do_not_change_digest \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
-  tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection \
-  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency &
+  tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection &
 unit_tests=$!
 check_status=0
 wait "$linux_types" || check_status=$?

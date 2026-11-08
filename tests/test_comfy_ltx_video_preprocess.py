@@ -1,13 +1,13 @@
 """Torch-free schemas for native LTXV preprocessing."""
 
 from dinkster_api.v1 import CORE_INT, IMAGE_TYPE, NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES, LTXVPreprocess
+from dinkster_nodes_ltx import NODES
+from dinkster_nodes_ltx.ltx_video_preprocess import LTXVPreprocess
 
 
 def test_ltx_video_preprocess_schema() -> None:
     schema = LTXVPreprocess.schema()
-    assert schema.node_type == "LTXVPreprocess"
+    assert schema.node_type == "dinkster.ltx.ltxv_preprocess"
     assert schema.display_name == "LTXV Preprocess"
     assert schema.category == "video/preprocessors"
     assert tuple((item.id, item.type.types[0]) for item in schema.inputs) == (
@@ -21,5 +21,4 @@ def test_ltx_video_preprocess_schema() -> None:
     assert schema.outputs[0].id == "IMAGE"
     assert schema.outputs[0].display_name == "output_image"
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    assert LTX_VIDEO_PREPROCESS_NODES == (LTXVPreprocess,)
-    assert LTXVPreprocess in COMFY_NODES
+    assert NODES.count(LTXVPreprocess) == 1

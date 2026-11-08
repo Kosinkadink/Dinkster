@@ -1,0 +1,498 @@
+{
+  "nodes": {
+    "dinkster.image.image_compare": {
+      "displayName": "Compare Images"
+    },
+    "dinkster.image.glsl_shader": {
+      "displayName": "GLSL Shader"
+    },
+    "dinkster.image.crop_by_b_boxes": {
+      "displayName": "Crop By Bounding Boxes"
+    },
+    "dinkster.image.porter_duff_image_composite": {
+      "displayName": "Porter-Duff Image Composite"
+    },
+    "dinkster.image.split_image_with_alpha": {
+      "displayName": "Split Image with Alpha"
+    },
+    "dinkster.image.join_image_with_alpha": {
+      "displayName": "Join Image with Alpha"
+    },
+    "dinkster.image.image_sdr_to_hdr": {
+      "displayName": "Convert SDR to HDR"
+    },
+    "dinkster.image.image_color_space": {
+      "displayName": "Convert Image Color Space"
+    },
+    "dinkster.image.image_scale": {
+      "displayName": "Upscale Image"
+    },
+    "dinkster.image.image_scale_by": {
+      "displayName": "Upscale Image By"
+    },
+    "dinkster.image.image_invert": {
+      "displayName": "Invert Image Colors"
+    },
+    "dinkster.image.image_batch": {
+      "displayName": "Batch Images (DEPRECATED)"
+    },
+    "dinkster.image.empty_image": {
+      "displayName": "Empty Image"
+    },
+    "dinkster.image.image_pad_for_outpaint": {
+      "displayName": "Pad Image for Outpainting"
+    },
+    "dinkster.image.image_crop_to_mask": {
+      "displayName": "Crop Image to Mask"
+    },
+    "dinkster.image.image_crop_v2": {
+      "displayName": "Crop Image"
+    },
+    "dinkster.image.get_image_size": {
+      "displayName": "Get Image Size"
+    },
+    "dinkster.image.save_image": {
+      "displayName": "Save Image"
+    },
+    "dinkster.image.preview_image": {
+      "displayName": "Preview Image"
+    },
+    "dinkster.image.save_animated_webp": {
+      "displayName": "Save Animated WEBP"
+    },
+    "dinkster.image.save_animated_png": {
+      "displayName": "Save Animated PNG"
+    },
+    "dinkster.image.painter": {
+      "displayName": "Painter"
+    },
+    "dinkster.image.load_image": {
+      "displayName": "Load Image"
+    },
+    "dinkster.image.load_image_mask": {
+      "displayName": "Load Image (as Mask)"
+    },
+    "dinkster.image.load_image_output": {
+      "displayName": "Load Image (from Outputs)"
+    },
+    "dinkster.image.image_blend": {
+      "displayName": "Blend Images"
+    },
+    "dinkster.image.image_blur": {
+      "displayName": "Blur Image"
+    },
+    "dinkster.image.image_quantize": {
+      "displayName": "Quantize Image"
+    },
+    "dinkster.image.image_sharpen": {
+      "displayName": "Sharpen Image"
+    },
+    "dinkster.image.image_scale_to_total_pixels": {
+      "displayName": "Scale Image to Total Pixels"
+    },
+    "dinkster.image.canny": {
+      "displayName": "Detect Edges (Canny)"
+    },
+    "dinkster.image.image_histogram": {
+      "displayName": "Image Histogram"
+    },
+    "dinkster.image.add_layer": {
+      "displayName": "Add Layer"
+    },
+    "dinkster.image.split_image_to_tile_list": {
+      "displayName": "Split Image into List of Tiles"
+    },
+    "dinkster.image.image_merge_tile_list": {
+      "displayName": "Merge List of Tiles to Image"
+    },
+    "dinkster.image.image_crop": {
+      "displayName": "Crop Image (DEPRECATED)"
+    },
+    "dinkster.image.repeat_image_batch": {
+      "displayName": "Repeat Image Batch"
+    },
+    "dinkster.image.image_from_batch": {
+      "displayName": "Get Image from Batch"
+    },
+    "dinkster.image.image_add_noise": {
+      "displayName": "Add Noise to Image"
+    },
+    "dinkster.image.image_stitch": {
+      "displayName": "Stitch Images"
+    },
+    "dinkster.image.resize_and_pad_image": {
+      "displayName": "Resize And Pad Image"
+    },
+    "dinkster.image.image_rotate": {
+      "displayName": "Rotate Image"
+    },
+    "dinkster.image.image_flip": {
+      "displayName": "Flip Image"
+    },
+    "dinkster.image.image_scale_to_max_dimension": {
+      "displayName": "Scale Image to Max Dimension"
+    },
+    "dinkster.image.pad_image_node": {
+      "displayName": "Pad Image"
+    },
+    "dinkster.image.image_composite_masked": {
+      "displayName": "Image Composite Masked"
+    },
+    "dinkster.image.mask_to_image": {
+      "displayName": "Convert Mask to Image"
+    },
+    "dinkster.image.image_to_mask": {
+      "displayName": "Convert Image to Mask"
+    },
+    "dinkster.image.image_color_to_mask": {
+      "displayName": "Convert Image Color to Mask"
+    },
+    "dinkster.image.solid_mask": {
+      "displayName": "Create Solid Mask"
+    },
+    "dinkster.image.invert_mask": {
+      "displayName": "Invert Mask"
+    },
+    "dinkster.image.crop_mask": {
+      "displayName": "Crop Mask"
+    },
+    "dinkster.image.mask_composite": {
+      "displayName": "Combine Masks"
+    },
+    "dinkster.image.feather_mask": {
+      "displayName": "Feather Mask"
+    },
+    "dinkster.image.grow_mask": {
+      "displayName": "Grow Mask"
+    },
+    "dinkster.image.threshold_mask": {
+      "displayName": "Threshold Mask"
+    },
+    "dinkster.image.mask_preview": {
+      "displayName": "Preview Mask"
+    },
+    "dinkster.image.morphology": {
+      "displayName": "Apply Morphology"
+    },
+    "dinkster.image.image_rgb_to_yuv": {
+      "displayName": "Image RGB to YUV"
+    },
+    "dinkster.image.image_yuv_to_rgb": {
+      "displayName": "Image YUV to RGB"
+    },
+    "dinkster.image.resize_image_mask_node": {
+      "displayName": "Resize Image/Mask"
+    },
+    "dinkster.image.batch_images_node": {
+      "displayName": "Batch Images"
+    },
+    "dinkster.image.batch_masks_node": {
+      "displayName": "Batch Masks"
+    },
+    "dinkster.image.color_transfer": {
+      "displayName": "Transfer Color"
+    },
+    "dinkster.image.save_image_advanced": {
+      "displayName": "Save Image (Advanced)"
+    },
+    "dinkster.image.save_svg_node": {
+      "displayName": "Save SVG"
+    },
+    "dinkster.image.text_overlay": {
+      "displayName": "Draw Text Overlay"
+    }
+  },
+  "searchTerms": {
+    "dinkster.image.crop_by_b_boxes": [
+      "crop",
+      "face crop",
+      "bbox crop",
+      "pose",
+      "bounding box",
+      "CropByBBoxes"
+    ],
+    "dinkster.image.porter_duff_image_composite": [
+      "alpha composite",
+      "blend modes",
+      "layer blend",
+      "transparency blend",
+      "PorterDuffImageComposite"
+    ],
+    "dinkster.image.split_image_with_alpha": [
+      "extract alpha",
+      "separate transparency",
+      "remove alpha",
+      "SplitImageWithAlpha"
+    ],
+    "dinkster.image.join_image_with_alpha": [
+      "add transparency",
+      "apply alpha",
+      "composite alpha",
+      "RGBA",
+      "JoinImageWithAlpha"
+    ],
+    "dinkster.image.image_sdr_to_hdr": [
+      "ImageSDRToHDR"
+    ],
+    "dinkster.image.image_color_space": [
+      "ImageColorSpace"
+    ],
+    "dinkster.image.image_scale": [
+      "ImageScale"
+    ],
+    "dinkster.image.image_scale_by": [
+      "ImageScaleBy"
+    ],
+    "dinkster.image.image_invert": [
+      "ImageInvert"
+    ],
+    "dinkster.image.image_batch": [
+      "ImageBatch"
+    ],
+    "dinkster.image.empty_image": [
+      "EmptyImage"
+    ],
+    "dinkster.image.image_pad_for_outpaint": [
+      "ImagePadForOutpaint"
+    ],
+    "dinkster.image.image_crop_to_mask": [
+      "crop to mask",
+      "mask crop",
+      "crop mask",
+      "mask crop resize",
+      "crop mask resize",
+      "trellis2",
+      "pixal3d",
+      "ImageCropToMask"
+    ],
+    "dinkster.image.image_crop_v2": [
+      "crop",
+      "cut",
+      "trim",
+      "ImageCropV2"
+    ],
+    "dinkster.image.get_image_size": [
+      "dimensions",
+      "resolution",
+      "image info",
+      "GetImageSize"
+    ],
+    "dinkster.image.save_image": [
+      "save",
+      "save image",
+      "export image",
+      "output image",
+      "write image",
+      "download",
+      "SaveImage"
+    ],
+    "dinkster.image.preview_image": [
+      "preview",
+      "preview image",
+      "show image",
+      "view image",
+      "display image",
+      "image viewer",
+      "PreviewImage"
+    ],
+    "dinkster.image.save_animated_webp": [
+      "SaveAnimatedWEBP"
+    ],
+    "dinkster.image.save_animated_png": [
+      "SaveAnimatedPNG"
+    ],
+    "dinkster.image.painter": [
+      "Painter"
+    ],
+    "dinkster.image.load_image": [
+      "load image",
+      "open image",
+      "import image",
+      "image input",
+      "upload image",
+      "read image",
+      "image loader",
+      "LoadImage"
+    ],
+    "dinkster.image.load_image_mask": [
+      "import mask",
+      "alpha mask",
+      "channel mask",
+      "LoadImageMask"
+    ],
+    "dinkster.image.load_image_output": [
+      "output image",
+      "previous generation",
+      "LoadImageOutput"
+    ],
+    "dinkster.image.image_blend": [
+      "ImageBlend"
+    ],
+    "dinkster.image.image_blur": [
+      "ImageBlur"
+    ],
+    "dinkster.image.image_quantize": [
+      "ImageQuantize"
+    ],
+    "dinkster.image.image_sharpen": [
+      "ImageSharpen"
+    ],
+    "dinkster.image.image_scale_to_total_pixels": [
+      "ImageScaleToTotalPixels"
+    ],
+    "dinkster.image.canny": [
+      "edge detection",
+      "outline",
+      "contour detection",
+      "line art",
+      "Canny"
+    ],
+    "dinkster.image.image_histogram": [
+      "ImageHistogram"
+    ],
+    "dinkster.image.add_layer": [
+      "AddLayer"
+    ],
+    "dinkster.image.split_image_to_tile_list": [
+      "split image",
+      "tile image",
+      "slice image",
+      "SplitImageToTileList"
+    ],
+    "dinkster.image.image_merge_tile_list": [
+      "split image",
+      "tile image",
+      "slice image",
+      "ImageMergeTileList"
+    ],
+    "dinkster.image.image_crop": [
+      "ImageCrop"
+    ],
+    "dinkster.image.repeat_image_batch": [
+      "RepeatImageBatch"
+    ],
+    "dinkster.image.image_from_batch": [
+      "ImageFromBatch"
+    ],
+    "dinkster.image.image_add_noise": [
+      "ImageAddNoise"
+    ],
+    "dinkster.image.image_stitch": [
+      "ImageStitch"
+    ],
+    "dinkster.image.resize_and_pad_image": [
+      "ResizeAndPadImage"
+    ],
+    "dinkster.image.image_rotate": [
+      "ImageRotate"
+    ],
+    "dinkster.image.image_flip": [
+      "ImageFlip"
+    ],
+    "dinkster.image.image_scale_to_max_dimension": [
+      "ImageScaleToMaxDimension"
+    ],
+    "dinkster.image.pad_image_node": [
+      "pad",
+      "pad image",
+      "padding",
+      "reflect",
+      "mirror",
+      "extend canvas",
+      "expand image",
+      "border",
+      "PadImageNode"
+    ],
+    "dinkster.image.image_composite_masked": [
+      "ImageCompositeMasked"
+    ],
+    "dinkster.image.mask_to_image": [
+      "MaskToImage"
+    ],
+    "dinkster.image.image_to_mask": [
+      "ImageToMask"
+    ],
+    "dinkster.image.image_color_to_mask": [
+      "ImageColorToMask"
+    ],
+    "dinkster.image.solid_mask": [
+      "SolidMask"
+    ],
+    "dinkster.image.invert_mask": [
+      "InvertMask"
+    ],
+    "dinkster.image.crop_mask": [
+      "CropMask"
+    ],
+    "dinkster.image.mask_composite": [
+      "MaskComposite"
+    ],
+    "dinkster.image.feather_mask": [
+      "FeatherMask"
+    ],
+    "dinkster.image.grow_mask": [
+      "GrowMask"
+    ],
+    "dinkster.image.threshold_mask": [
+      "ThresholdMask"
+    ],
+    "dinkster.image.mask_preview": [
+      "preview",
+      "preview mask",
+      "show mask",
+      "view mask",
+      "inspect mask",
+      "debug mask",
+      "MaskPreview"
+    ],
+    "dinkster.image.morphology": [
+      "erode",
+      "dilate",
+      "Morphology"
+    ],
+    "dinkster.image.image_rgb_to_yuv": [
+      "color space conversion",
+      "ImageRGBToYUV"
+    ],
+    "dinkster.image.image_yuv_to_rgb": [
+      "color space conversion",
+      "ImageYUVToRGB"
+    ],
+    "dinkster.image.resize_image_mask_node": [
+      "ResizeImageMaskNode"
+    ],
+    "dinkster.image.batch_images_node": [
+      "BatchImagesNode"
+    ],
+    "dinkster.image.batch_masks_node": [
+      "BatchMasksNode"
+    ],
+    "dinkster.image.color_transfer": [
+      "ColorTransfer"
+    ],
+    "dinkster.image.save_image_advanced": [
+      "save",
+      "save image",
+      "export image",
+      "output image",
+      "write image",
+      "SaveImageAdvanced"
+    ],
+    "dinkster.image.save_svg_node": [
+      "export vector",
+      "save vector graphics",
+      "SaveSVGNode"
+    ],
+    "dinkster.image.text_overlay": [
+      "text",
+      "label",
+      "caption",
+      "subtitle",
+      "watermark",
+      "title",
+      "addlabel",
+      "overlay",
+      "TextOverlay"
+    ]
+  }
+}

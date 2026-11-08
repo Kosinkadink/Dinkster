@@ -1,0 +1,68 @@
+{
+  "nodes": {
+    "dinkster.audio.models.conditioning_stable_audio": {
+      "displayName": "dinkster.audio.models.conditioning_stable_audio"
+    },
+    "dinkster.audio.models.empty_ace_step1_5_latent_audio": {
+      "displayName": "Empty Ace Step 1.5 Latent Audio"
+    },
+    "dinkster.audio.models.empty_ace_step_latent_audio": {
+      "displayName": "Empty Ace Step 1.0 Latent Audio"
+    },
+    "dinkster.audio.models.empty_yu_e2_latent_audio": {
+      "displayName": "Empty YuE2 Latent Audio"
+    },
+    "dinkster.audio.models.sheet_sage2_audio_to_abc": {
+      "displayName": "SheetSage2 Audio to ABC"
+    },
+    "dinkster.audio.models.text_encode_ace_step_audio": {
+      "displayName": "dinkster.audio.models.text_encode_ace_step_audio"
+    },
+    "dinkster.audio.models.text_encode_ace_step_audio1_5": {
+      "displayName": "dinkster.audio.models.text_encode_ace_step_audio1_5"
+    },
+    "dinkster.audio.models.yu_e2_generate_abc": {
+      "displayName": "YuE2 Generate ABC"
+    },
+    "dinkster.audio.models.yu_e2_generate_music": {
+      "displayName": "YuE2 Generate Music"
+    }
+  },
+  "searchTerms": {
+    "dinkster.audio.models.conditioning_stable_audio": [
+      "ConditioningStableAudio"
+    ],
+    "dinkster.audio.models.empty_ace_step1_5_latent_audio": [
+      "EmptyAceStep1.5LatentAudio"
+    ],
+    "dinkster.audio.models.empty_ace_step_latent_audio": [
+      "EmptyAceStepLatentAudio"
+    ],
+    "dinkster.audio.models.empty_yu_e2_latent_audio": [
+      "EmptyYuE2LatentAudio"
+    ],
+    "dinkster.audio.models.sheet_sage2_audio_to_abc": [
+      "SheetSage2AudioToABC"
+    ],
+    "dinkster.audio.models.text_encode_ace_step_audio": [
+      "TextEncodeAceStepAudio"
+    ],
+    "dinkster.audio.models.text_encode_ace_step_audio1_5": [
+      "TextEncodeAceStepAudio1.5"
+    ],
+    "dinkster.audio.models.yu_e2_generate_abc": [
+      "yue2",
+      "music",
+      "abc",
+      "notation",
+      "YuE2GenerateABC"
+    ],
+    "dinkster.audio.models.yu_e2_generate_music": [
+      "yue2",
+      "music",
+      "audio",
+      "abc",
+      "YuE2GenerateMusic"
+    ]
+  }
+}

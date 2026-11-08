@@ -1,0 +1,296 @@
+{
+  "nodes": {
+    "dinkster.latent.empty_latent_image": {
+      "displayName": "Empty Latent Image"
+    },
+    "dinkster.latent.latent_from_batch": {
+      "displayName": "Get Latent From Batch"
+    },
+    "dinkster.latent.repeat_latent_batch": {
+      "displayName": "Repeat Latent Batch"
+    },
+    "dinkster.latent.latent_upscale": {
+      "displayName": "Upscale Latent"
+    },
+    "dinkster.latent.latent_upscale_by": {
+      "displayName": "Upscale Latent By"
+    },
+    "dinkster.latent.latent_rotate": {
+      "displayName": "Rotate Latent"
+    },
+    "dinkster.latent.latent_flip": {
+      "displayName": "Flip Latent"
+    },
+    "dinkster.latent.set_latent_noise_mask": {
+      "displayName": "Set Latent Noise Mask"
+    },
+    "dinkster.latent.latent_composite": {
+      "displayName": "Latent Composite"
+    },
+    "dinkster.latent.latent_blend": {
+      "displayName": "Latent Blend"
+    },
+    "dinkster.latent.latent_crop": {
+      "displayName": "Crop Latent"
+    },
+    "dinkster.latent.latent_add": {
+      "displayName": "LatentAdd"
+    },
+    "dinkster.latent.latent_subtract": {
+      "displayName": "LatentSubtract"
+    },
+    "dinkster.latent.latent_multiply": {
+      "displayName": "LatentMultiply"
+    },
+    "dinkster.latent.latent_interpolate": {
+      "displayName": "LatentInterpolate"
+    },
+    "dinkster.latent.latent_concat": {
+      "displayName": "LatentConcat"
+    },
+    "dinkster.latent.latent_cut": {
+      "displayName": "LatentCut"
+    },
+    "dinkster.latent.latent_cut_to_batch": {
+      "displayName": "LatentCutToBatch"
+    },
+    "dinkster.latent.latent_batch": {
+      "displayName": "Batch Latents (DEPRECATED)"
+    },
+    "dinkster.latent.latent_batch_seed_behavior": {
+      "displayName": "LatentBatchSeedBehavior"
+    },
+    "dinkster.latent.latent_apply_operation": {
+      "displayName": "LatentApplyOperation"
+    },
+    "dinkster.latent.latent_apply_operation_cfg": {
+      "displayName": "LatentApplyOperationCFG"
+    },
+    "dinkster.latent.latent_operation_blend": {
+      "displayName": "Latent Operation Blend"
+    },
+    "dinkster.latent.latent_operation_tonemap_reinhard": {
+      "displayName": "LatentOperationTonemapReinhard"
+    },
+    "dinkster.latent.latent_operation_sharpen": {
+      "displayName": "LatentOperationSharpen"
+    },
+    "dinkster.latent.replace_video_latent_frames": {
+      "displayName": "Replace Video Latent Frames"
+    },
+    "dinkster.latent.vae_decode": {
+      "displayName": "VAE Decode"
+    },
+    "dinkster.latent.vae_encode": {
+      "displayName": "VAE Encode"
+    },
+    "dinkster.latent.vae_decode_tiled": {
+      "displayName": "VAE Decode (Tiled)"
+    },
+    "dinkster.latent.vae_encode_tiled": {
+      "displayName": "VAE Encode (Tiled)"
+    },
+    "dinkster.latent.vae_encode_for_inpaint": {
+      "displayName": "VAE Encode (for Inpainting)"
+    },
+    "dinkster.latent.latent_composite_masked": {
+      "displayName": "Latent Composite Masked"
+    },
+    "dinkster.latent.get_latent_size": {
+      "displayName": "Get Image/Video Latent Size"
+    },
+    "dinkster.latent.trim_video_latent": {
+      "displayName": "Trim Video Latent"
+    },
+    "dinkster.latent.normalize_video_latent_start": {
+      "displayName": "NormalizeVideoLatentStart"
+    },
+    "dinkster.latent.batch_latents_node": {
+      "displayName": "Batch Latents"
+    },
+    "dinkster.latent.rebatch_images": {
+      "displayName": "Rebatch Images"
+    },
+    "dinkster.latent.rebatch_latents": {
+      "displayName": "Rebatch Latents"
+    },
+    "dinkster.latent.empty_latent_audio": {
+      "displayName": "Empty Latent Audio"
+    },
+    "dinkster.latent.vae_encode_audio": {
+      "displayName": "VAE Encode Audio"
+    },
+    "dinkster.latent.vae_decode_audio": {
+      "displayName": "VAE Decode Audio"
+    },
+    "dinkster.latent.vae_decode_audio_tiled": {
+      "displayName": "VAE Decode Audio (Tiled)"
+    },
+    "dinkster.latent.get_audio_latent_size": {
+      "displayName": "Get Audio Latent Size"
+    },
+    "dinkster.latent.load_latent": {
+      "displayName": "Load Latent"
+    },
+    "dinkster.latent.save_latent": {
+      "displayName": "Save Latent"
+    }
+  },
+  "searchTerms": {
+    "dinkster.latent.empty_latent_image": [
+      "EmptyLatentImage"
+    ],
+    "dinkster.latent.latent_from_batch": [
+      "LatentFromBatch"
+    ],
+    "dinkster.latent.repeat_latent_batch": [
+      "RepeatLatentBatch"
+    ],
+    "dinkster.latent.latent_upscale": [
+      "LatentUpscale"
+    ],
+    "dinkster.latent.latent_upscale_by": [
+      "LatentUpscaleBy"
+    ],
+    "dinkster.latent.latent_rotate": [
+      "LatentRotate"
+    ],
+    "dinkster.latent.latent_flip": [
+      "LatentFlip"
+    ],
+    "dinkster.latent.set_latent_noise_mask": [
+      "SetLatentNoiseMask"
+    ],
+    "dinkster.latent.latent_composite": [
+      "LatentComposite"
+    ],
+    "dinkster.latent.latent_blend": [
+      "LatentBlend"
+    ],
+    "dinkster.latent.latent_crop": [
+      "LatentCrop"
+    ],
+    "dinkster.latent.latent_add": [
+      "LatentAdd"
+    ],
+    "dinkster.latent.latent_subtract": [
+      "LatentSubtract"
+    ],
+    "dinkster.latent.latent_multiply": [
+      "LatentMultiply"
+    ],
+    "dinkster.latent.latent_interpolate": [
+      "LatentInterpolate"
+    ],
+    "dinkster.latent.latent_concat": [
+      "LatentConcat"
+    ],
+    "dinkster.latent.latent_cut": [
+      "LatentCut"
+    ],
+    "dinkster.latent.latent_cut_to_batch": [
+      "LatentCutToBatch"
+    ],
+    "dinkster.latent.latent_batch": [
+      "LatentBatch"
+    ],
+    "dinkster.latent.latent_batch_seed_behavior": [
+      "LatentBatchSeedBehavior"
+    ],
+    "dinkster.latent.latent_apply_operation": [
+      "LatentApplyOperation"
+    ],
+    "dinkster.latent.latent_apply_operation_cfg": [
+      "LatentApplyOperationCFG"
+    ],
+    "dinkster.latent.latent_operation_blend": [
+      "LatentOperationBlend"
+    ],
+    "dinkster.latent.latent_operation_tonemap_reinhard": [
+      "LatentOperationTonemapReinhard"
+    ],
+    "dinkster.latent.latent_operation_sharpen": [
+      "LatentOperationSharpen"
+    ],
+    "dinkster.latent.replace_video_latent_frames": [
+      "ReplaceVideoLatentFrames"
+    ],
+    "dinkster.latent.vae_decode": [
+      "decode",
+      "decode latent",
+      "latent to image",
+      "render latent",
+      "VAEDecode"
+    ],
+    "dinkster.latent.vae_encode": [
+      "encode",
+      "encode image",
+      "image to latent",
+      "VAEEncode"
+    ],
+    "dinkster.latent.vae_decode_tiled": [
+      "VAEDecodeTiled"
+    ],
+    "dinkster.latent.vae_encode_tiled": [
+      "VAEEncodeTiled"
+    ],
+    "dinkster.latent.vae_encode_for_inpaint": [
+      "VAEEncodeForInpaint"
+    ],
+    "dinkster.latent.latent_composite_masked": [
+      "LatentCompositeMasked"
+    ],
+    "dinkster.latent.get_latent_size": [
+      "dimensions",
+      "resolution",
+      "latent info",
+      "video latent size",
+      "GetLatentSize"
+    ],
+    "dinkster.latent.trim_video_latent": [
+      "TrimVideoLatent"
+    ],
+    "dinkster.latent.normalize_video_latent_start": [
+      "NormalizeVideoLatentStart"
+    ],
+    "dinkster.latent.batch_latents_node": [
+      "BatchLatentsNode"
+    ],
+    "dinkster.latent.rebatch_images": [
+      "RebatchImages"
+    ],
+    "dinkster.latent.rebatch_latents": [
+      "RebatchLatents"
+    ],
+    "dinkster.latent.empty_latent_audio": [
+      "EmptyLatentAudio"
+    ],
+    "dinkster.latent.vae_encode_audio": [
+      "audio to latent",
+      "VAEEncodeAudio"
+    ],
+    "dinkster.latent.vae_decode_audio": [
+      "latent to audio",
+      "VAEDecodeAudio"
+    ],
+    "dinkster.latent.vae_decode_audio_tiled": [
+      "latent to audio",
+      "VAEDecodeAudioTiled"
+    ],
+    "dinkster.latent.get_audio_latent_size": [
+      "dimensions",
+      "audio latent info",
+      "audio latent length",
+      "GetAudioLatentSize"
+    ],
+    "dinkster.latent.load_latent": [
+      "import latent",
+      "open latent",
+      "LoadLatent"
+    ],
+    "dinkster.latent.save_latent": [
+      "export latent",
+      "SaveLatent"
+    ]
+  }
+}

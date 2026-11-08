@@ -99,7 +99,7 @@ from dinkster_memory import (
     ReservationRequest,
     Shedder,
 )
-from dinkster_memory.resident import obtain_resident
+from dinkster_memory.resident import default_pool, obtain_resident
 from dinkster_protocol import (
     EXTENSION_CAPABILITIES,
     EXTENSION_SCOPES,
@@ -215,6 +215,7 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
+from dinkster_schema.first_party import first_party_schema
 from dinkster_values import (
     ARRAY_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
@@ -334,6 +335,7 @@ from dinkster_values import (
     VIDEO_TYPE,
     VOXEL_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
+    WEBCAM_TYPE,
     BufferEncoding,
     Curve,
     CustomWidgetDescriptor,
@@ -365,6 +367,7 @@ from dinkster_values import (
     decode_detection,
     decode_image_array,
     decode_image_components,
+    decode_latent,
     decode_model3d,
     decode_model3d_file,
     decode_region,
@@ -377,6 +380,7 @@ from dinkster_values import (
     encode_audio,
     encode_detection,
     encode_image_array,
+    encode_latent,
     encode_model3d,
     encode_region,
     encode_splat,
@@ -384,6 +388,7 @@ from dinkster_values import (
     image_array_fingerprint,
     image_array_meta,
     image_input,
+    latent_fingerprint,
     list_children,
     mask_array_meta,
     materialize_svg,
@@ -399,6 +404,7 @@ from dinkster_values import (
     register_box_types,
     register_curve_type,
     register_model3d_type,
+    register_resident_type,
     register_resource_handle_type,
     register_splat_type,
     register_video_edit_type,
@@ -416,6 +422,7 @@ from dinkster_values import (
     validate_bounding_box_encoded,
     validate_detection_encoded,
     validate_image_encoded,
+    validate_latent_encoded,
     validate_model3d_encoded,
     validate_placement_array_encoded,
     validate_region_encoded,
@@ -435,6 +442,7 @@ from dinkster_values.audio_codec import (
     effective_audio_facts,
 )
 from dinkster_values.audio_lazy import channel_layout as audio_channel_layout
+from dinkster_values.resident import comfy_resident_meta
 from dinkster_video import (
     DITHERS,
     FRAME_FORMATS,
@@ -451,6 +459,13 @@ from dinkster_video import (
 _VIDEO_MODULE_EXPORTS = frozenset(
     {"image_math", "timeline_document", "timeline_render", "timeline_runtime"}
 )
+_PACK_CODEC_EXPORTS = {
+    "register_load3d_camera_type": "dinkster_inference_wire.camera_wire",
+    "register_load3d_model_info_type": "dinkster_inference_wire.camera_wire",
+    "register_mesh_type": "dinkster_inference_wire.geometry_wire",
+    "register_shape_subdivides_type": "dinkster_inference_wire.shape_subdivides_wire",
+    "register_voxel_type": "dinkster_inference_wire.voxel_wire",
+}
 _PACK_MEDIA_EXPORTS = {
     "IMAGE_DOCUMENT_MEDIA_TYPE": "dinkster_image_document.format",
     "BLEND_MODES": "dinkster_image_document.format",
@@ -479,7 +494,9 @@ _PACK_MEDIA_EXPORTS = {
 
 
 def __getattr__(name: str) -> object:
-    if name in _PACK_MEDIA_EXPORTS:
+    if name in _PACK_CODEC_EXPORTS:
+        value = getattr(import_module(_PACK_CODEC_EXPORTS[name]), name)
+    elif name in _PACK_MEDIA_EXPORTS:
         value = getattr(import_module(_PACK_MEDIA_EXPORTS[name]), name)
     elif name in _VIDEO_MODULE_EXPORTS:
         import dinkster_video
@@ -495,6 +512,8 @@ def __getattr__(name: str) -> object:
         value = TriangleMeshBatch
     elif name in {
         "register_inference_types",
+        "register_media_types",
+        "register_vision_packet_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
@@ -522,12 +541,15 @@ def __dir__() -> list[str]:
     return sorted(
         set(globals())
         | _VIDEO_MODULE_EXPORTS
+        | _PACK_CODEC_EXPORTS.keys()
         | _PACK_MEDIA_EXPORTS.keys()
         | {
             "LatentStream",
             "MultiStreamLatent",
             "TriangleMeshBatch",
             "register_inference_types",
+            "register_media_types",
+            "register_vision_packet_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
@@ -567,8 +589,14 @@ if TYPE_CHECKING:
         ordered_layer_ids,
     )
     from dinkster_image_document.interchange import export_ora, export_psd, load_document
+    from dinkster_inference_wire.camera_wire import (
+        register_load3d_camera_type,
+        register_load3d_model_info_type,
+    )
+    from dinkster_inference_wire.geometry_wire import register_mesh_type
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import inference_nodes, initialize_inference_process
+    from dinkster_inference_wire.shape_subdivides_wire import register_shape_subdivides_type
     from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
@@ -581,7 +609,10 @@ if TYPE_CHECKING:
         materialize_vision_packet,
         materialize_voxel,
         register_inference_types,
+        register_media_types,
+        register_vision_packet_types,
     )
+    from dinkster_inference_wire.voxel_wire import register_voxel_type
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
     from dinkster_video import timeline as timeline_render
@@ -590,6 +621,11 @@ if TYPE_CHECKING:
 __all__ = [
     "TriangleMeshBatch",
     "materialize_mesh",
+    "register_load3d_camera_type",
+    "register_load3d_model_info_type",
+    "register_mesh_type",
+    "register_shape_subdivides_type",
+    "register_voxel_type",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -615,6 +651,9 @@ __all__ = [
     "srgb_to_linear",
     "RunExecutionContext",
     "obtain_resident",
+    "default_pool",
+    "comfy_resident_meta",
+    "register_resident_type",
     "Expansion",
     "ExpansionBuilder",
     "ExpansionNode",
@@ -634,6 +673,8 @@ __all__ = [
     "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
+    "register_media_types",
+    "register_vision_packet_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -751,6 +792,7 @@ __all__ = [
     "schema_from_wire",
     "schema_signature",
     "schema_to_wire",
+    "first_party_schema",
     # -- reporting and logging (dinkster-schema)
     "LOG_EVENT",
     "PREVIEW_EVENT",
@@ -862,6 +904,7 @@ __all__ = [
     "BOUNDING_BOX_TYPE",
     "BOUNDING_BOXES_TYPE",
     "IMAGECOMPARE_TYPE",
+    "WEBCAM_TYPE",
     "COMFY_ARRAY_TYPE",
     "CONTEXT_WINDOWS_TYPE",
     "INPAINT_CONDITIONING_TYPE",
@@ -915,6 +958,7 @@ __all__ = [
     "decode_detection",
     "decode_image_array",
     "decode_image_components",
+    "decode_latent",
     "open_image_components",
     "decode_model3d",
     "decode_model3d_file",
@@ -930,6 +974,7 @@ __all__ = [
     "encode_audio",
     "encode_detection",
     "encode_image_array",
+    "encode_latent",
     "encode_model3d",
     "encode_region",
     "encode_splat",
@@ -937,6 +982,7 @@ __all__ = [
     "image_array_fingerprint",
     "image_array_meta",
     "image_input",
+    "latent_fingerprint",
     "list_children",
     "Value",
     "annotate_image",
@@ -965,6 +1011,7 @@ __all__ = [
     "splat_meta",
     "storage_dtype",
     "stable_hash",
+    "validate_latent_encoded",
     "validate_model3d_encoded",
     "validate_splat_encoded",
     "validate_video_encoded",

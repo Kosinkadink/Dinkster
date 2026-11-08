@@ -1,0 +1,199 @@
+{
+  "nodes": {
+    "dinkster.conditioning.audio_encoder_loader": {
+      "displayName": "Load Audio Encoder"
+    },
+    "dinkster.conditioning.audio_encoder_encode": {
+      "displayName": "AudioEncoderEncode"
+    },
+    "dinkster.conditioning.clip_text_encode": {
+      "displayName": "CLIP Text Encode (Prompt)"
+    },
+    "dinkster.conditioning.clip_set_last_layer": {
+      "displayName": "CLIP Set Last Layer"
+    },
+    "dinkster.conditioning.clip_vision_encode": {
+      "displayName": "CLIP Vision Encode"
+    },
+    "dinkster.conditioning.style_model_apply": {
+      "displayName": "Apply Style Model"
+    },
+    "dinkster.conditioning.clip_text_encode_controlnet": {
+      "displayName": "CLIP Text Encode (Controlnet)"
+    },
+    "dinkster.conditioning.t5_tokenizer_options": {
+      "displayName": "T5 Tokenizer Options"
+    },
+    "dinkster.conditioning.conditioning_average": {
+      "displayName": "Conditioning (Average)"
+    },
+    "dinkster.conditioning.conditioning_combine": {
+      "displayName": "Conditioning (Combine)"
+    },
+    "dinkster.conditioning.conditioning_concat": {
+      "displayName": "Conditioning (Concat)"
+    },
+    "dinkster.conditioning.conditioning_multiply": {
+      "displayName": "Conditioning (Multiply)"
+    },
+    "dinkster.conditioning.conditioning_set_area": {
+      "displayName": "Conditioning (Set Area)"
+    },
+    "dinkster.conditioning.conditioning_set_area_percentage": {
+      "displayName": "Conditioning (Set Area with Percentage)"
+    },
+    "dinkster.conditioning.conditioning_set_area_percentage_video": {
+      "displayName": "Conditioning (Set Area with Percentage for Video)"
+    },
+    "dinkster.conditioning.conditioning_set_area_strength": {
+      "displayName": "Conditioning (Set Area Strength)"
+    },
+    "dinkster.conditioning.conditioning_set_mask": {
+      "displayName": "Conditioning (Set Mask)"
+    },
+    "dinkster.conditioning.conditioning_zero_out": {
+      "displayName": "Conditioning Zero Out"
+    },
+    "dinkster.conditioning.conditioning_set_timestep_range": {
+      "displayName": "ConditioningSetTimestepRange"
+    },
+    "dinkster.conditioning.pi_d_conditioning": {
+      "displayName": "PiD Conditioning"
+    },
+    "dinkster.conditioning.reference_latent": {
+      "displayName": "Set Reference Latent"
+    },
+    "dinkster.conditioning.reference_multi_latent": {
+      "displayName": "Set Reference Multi Latent"
+    },
+    "dinkster.conditioning.inpaint_model_conditioning": {
+      "displayName": "InpaintModelConditioning"
+    },
+    "dinkster.conditioning.control_net_apply": {
+      "displayName": "Apply ControlNet (DEPRECATED)"
+    },
+    "dinkster.conditioning.control_net_apply_advanced": {
+      "displayName": "Apply ControlNet"
+    },
+    "dinkster.conditioning.set_union_control_net_type": {
+      "displayName": "Set Union ControlNet Type"
+    },
+    "dinkster.conditioning.control_net_inpainting_ali_mama_apply": {
+      "displayName": "Apply ControlNet Inpainting (AliMama)"
+    },
+    "dinkster.conditioning.conditioning_loader": {
+      "displayName": "Load Conditioning"
+    },
+    "dinkster.conditioning.save_conditioning": {
+      "displayName": "Save Conditioning"
+    }
+  },
+  "searchTerms": {
+    "dinkster.conditioning.audio_encoder_loader": [
+      "AudioEncoderLoader"
+    ],
+    "dinkster.conditioning.audio_encoder_encode": [
+      "AudioEncoderEncode"
+    ],
+    "dinkster.conditioning.clip_text_encode": [
+      "text",
+      "prompt",
+      "text prompt",
+      "positive prompt",
+      "negative prompt",
+      "encode text",
+      "text encoder",
+      "encode prompt",
+      "CLIPTextEncode"
+    ],
+    "dinkster.conditioning.clip_set_last_layer": [
+      "CLIPSetLastLayer"
+    ],
+    "dinkster.conditioning.clip_vision_encode": [
+      "CLIPVisionEncode"
+    ],
+    "dinkster.conditioning.style_model_apply": [
+      "style transfer",
+      "StyleModelApply"
+    ],
+    "dinkster.conditioning.clip_text_encode_controlnet": [
+      "CLIPTextEncodeControlnet"
+    ],
+    "dinkster.conditioning.t5_tokenizer_options": [
+      "T5TokenizerOptions"
+    ],
+    "dinkster.conditioning.conditioning_average": [
+      "ConditioningAverage"
+    ],
+    "dinkster.conditioning.conditioning_combine": [
+      "ConditioningCombine"
+    ],
+    "dinkster.conditioning.conditioning_concat": [
+      "ConditioningConcat"
+    ],
+    "dinkster.conditioning.conditioning_multiply": [
+      "ConditioningMultiply"
+    ],
+    "dinkster.conditioning.conditioning_set_area": [
+      "ConditioningSetArea"
+    ],
+    "dinkster.conditioning.conditioning_set_area_percentage": [
+      "ConditioningSetAreaPercentage"
+    ],
+    "dinkster.conditioning.conditioning_set_area_percentage_video": [
+      "ConditioningSetAreaPercentageVideo"
+    ],
+    "dinkster.conditioning.conditioning_set_area_strength": [
+      "ConditioningSetAreaStrength"
+    ],
+    "dinkster.conditioning.conditioning_set_mask": [
+      "ConditioningSetMask"
+    ],
+    "dinkster.conditioning.conditioning_zero_out": [
+      "ConditioningZeroOut"
+    ],
+    "dinkster.conditioning.conditioning_set_timestep_range": [
+      "ConditioningSetTimestepRange"
+    ],
+    "dinkster.conditioning.pi_d_conditioning": [
+      "PiDConditioning"
+    ],
+    "dinkster.conditioning.reference_latent": [
+      "ReferenceLatent"
+    ],
+    "dinkster.conditioning.reference_multi_latent": [
+      "ReferenceMultiLatent"
+    ],
+    "dinkster.conditioning.inpaint_model_conditioning": [
+      "InpaintModelConditioning"
+    ],
+    "dinkster.conditioning.control_net_apply": [
+      "ControlNetApply"
+    ],
+    "dinkster.conditioning.control_net_apply_advanced": [
+      "controlnet",
+      "apply controlnet",
+      "use controlnet",
+      "control net",
+      "ControlNetApplyAdvanced"
+    ],
+    "dinkster.conditioning.set_union_control_net_type": [
+      "set controlnet type",
+      "union controlnet type",
+      "SetUnionControlNetType"
+    ],
+    "dinkster.conditioning.control_net_inpainting_ali_mama_apply": [
+      "masked controlnet",
+      "ControlNetInpaintingAliMamaApply"
+    ],
+    "dinkster.conditioning.conditioning_loader": [
+      "ConditioningLoader"
+    ],
+    "dinkster.conditioning.save_conditioning": [
+      "save conditioning",
+      "export conditioning",
+      "cache text encoder output",
+      "SaveConditioning"
+    ]
+  }
+}

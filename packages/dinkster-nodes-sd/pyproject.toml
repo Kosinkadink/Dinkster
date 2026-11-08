@@ -1,0 +1,23 @@
+[project]
+name = "dinkster-nodes-sd"
+version = "0.0.2"
+description = "Dinkster sd nodes"
+requires-python = ">=3.12"
+dependencies = ["dinkster-api", "dinkster-inference==0.1.1", "torch", "dinkster-nodes-conditioning", "dinkster-nodes-sampling"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_nodes_sd"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_sd_pack/dinkster-pack.toml"
+"src/dinkster_nodes_sd" = "dinkster_sd_pack/dinkster_nodes_sd"
+"locales" = "dinkster_sd_pack/locales"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-nodes-conditioning = { workspace = true }
+dinkster-nodes-sampling = { workspace = true }

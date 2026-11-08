@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, register_media_types
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
@@ -43,19 +43,10 @@ from dinkster_image_document.interchange import (
     import_psd,
     load_document,
 )
-from dinkster_nodes_image import (
-    AddLayer,
-    CreateLayeredImage,
-    EditLayers,
-    FlattenLayers,
-    LayersFromBoundingBoxes,
-    LoadLayers,
-    Region,
-    SaveLayers,
-    SplitLayers,
-    register_image_types,
-)
-from dinkster_nodes_media_io import register_media_types
+from dinkster_nodes_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
+from dinkster_nodes_image.layer_document import EditLayers, FlattenLayers, SplitLayers
+from dinkster_nodes_image.layer_io import LoadLayers, SaveLayers
+from dinkster_nodes_image.types import Region, register_image_types
 from dinkster_protocol import InvocationResult, SavedArtifact
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import (
@@ -74,6 +65,33 @@ from PIL import Image
 from tests.async_scenarios import run_scenario
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
+
+@pytest.fixture
+def layer_document_pack(tmp_path: Path) -> Path:
+    (tmp_path / "layer_document_fixture.py").write_text(
+        "from dinkster_api.v1 import register_media_types\n"
+        "from dinkster_nodes_image.compositor import AddLayer\n"
+        "from dinkster_nodes_image.layer_document import EditLayers, FlattenLayers\n"
+        "from dinkster_nodes_image.layer_io import SaveLayers\n"
+        "from dinkster_nodes_image.types import register_image_types\n"
+        "NODES = (AddLayer, EditLayers, FlattenLayers, SaveLayers)\n"
+        "def register_types(registry):\n"
+        "    register_media_types(registry)\n"
+        "    register_image_types(registry)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "layer-document.toml"
+    manifest.write_text(
+        '[pack]\nname="dinkster-nodes-image"\npublisher="dinkster"\n'
+        'namespaces=["dinkster.layers"]\n'
+        'type-namespaces=["dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"]\n'
+        "[pack.sandbox]\nwritable-mounts=true\n"
+        '[pack.entry]\nnodes="layer_document_fixture:NODES"\n'
+        'types="layer_document_fixture:register_types"\n',
+        encoding="ascii",
+    )
+    return manifest
 
 
 def document() -> ImageDocument:
@@ -1872,7 +1890,6 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
     from contextlib import suppress
 
     from dinkster_assets.scratch import claim_inactive_produced_scratch, hold_produced_vault
-    from dinkster_nodes_foundation.routing import RouteGate
     from dinkster_nodes_image.compositor_types import (
         CompositorSourceLayer,
         LayerStack,
@@ -1915,7 +1932,13 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
         class MeasuredGate(Node):
             @classmethod
             def define_schema(cls) -> NodeSchema:
-                return RouteGate.define_schema()
+                return NodeSchema(
+                    "test.lazy-document",
+                    inputs=(
+                        InputSpec("condition", TypeExpr.concrete(CORE_BOOLEAN)),
+                        InputSpec("value", TypeExpr.concrete("dinkster.layers"), lazy=True),
+                    ),
+                )
 
             @classmethod
             async def check_lazy_status(cls, *, condition: bool, value: object) -> tuple[str, ...]:
@@ -1928,7 +1951,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
                     await release.wait()
                     if outcome == "error":
                         raise ValueError("controlled lazy hook failure")
-                    return RouteGate.check_lazy_status(condition=condition, value=value)
+                    return ()
                 finally:
                     settled.set()
 
@@ -1958,7 +1981,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
         )
         try:
             await session.begin(reader, writer, timeout=5)
-            schema = RouteGate.define_schema()
+            schema = MeasuredGate.define_schema()
             request = asyncio.create_task(
                 session.check_lazy_status(
                     LazyStatusInvocation(
@@ -2005,7 +2028,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
     "case", ["modern", "legacy", "missing", "truncated", "corrupt", "host-missing"]
 )
 def test_isolated_document_rendition_adopts_all_resources_before_return(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, layer_document_pack: Path
 ) -> None:
     from dinkster_assets import AssetError, AssetVault, digest_bytes
     from dinkster_assets.produced import ProducedAssetInventory
@@ -2080,17 +2103,9 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
     fingerprint = source.fingerprint
 
     async def run() -> None:
-        packages = Path(__file__).parents[1] / "packages"
         group = GroupIsolatedWorker(
             "rendition-test",
-            [
-                packages / name / "dinkster-pack.toml"
-                for name in (
-                    "dinkster-nodes-foundation",
-                    "dinkster-nodes-media-io",
-                    "dinkster-nodes-image",
-                )
-            ],
+            [layer_document_pack],
             registry,
             extra_env={"DINKSTER_ASSET_VAULT": str(producer.root)},
         )
@@ -2138,7 +2153,7 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
 
 @pytest.mark.parametrize("case", ["legacy", "unused", "host-missing"])
 def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, layer_document_pack: Path
 ) -> None:
     import time
 
@@ -2214,17 +2229,9 @@ def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
     before, _ = codec.encode(source, before_blobs, before_segments)
 
     async def run() -> None:
-        packages = Path(__file__).parents[1] / "packages"
         group = GroupIsolatedWorker(
             "native-save-test",
-            [
-                packages / name / "dinkster-pack.toml"
-                for name in (
-                    "dinkster-nodes-foundation",
-                    "dinkster-nodes-media-io",
-                    "dinkster-nodes-image",
-                )
-            ],
+            [layer_document_pack],
             registry,
             extra_env={
                 "DINKSTER_ASSET_VAULT": str(producer.root),
@@ -2300,7 +2307,7 @@ def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
 
 @pytest.mark.parametrize("large", [False, True])
 def test_isolated_worker_shm_flatten_matches_in_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, large: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, large: bool, layer_document_pack: Path
 ) -> None:
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
 
@@ -2309,17 +2316,9 @@ def test_isolated_worker_shm_flatten_matches_in_process(
         register_core_types(registry)
         register_media_types(registry)
         register_image_types(registry)
-        packages = Path(__file__).parents[1] / "packages"
         group = GroupIsolatedWorker(
             "layer-test",
-            [
-                packages / name / "dinkster-pack.toml"
-                for name in (
-                    "dinkster-nodes-foundation",
-                    "dinkster-nodes-media-io",
-                    "dinkster-nodes-image",
-                )
-            ],
+            [layer_document_pack],
             registry,
             shm_threshold=1,
         )

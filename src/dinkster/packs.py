@@ -11,8 +11,11 @@ record, never from a schema's own claims.
 
 from __future__ import annotations
 
+import importlib.metadata
+import tomllib
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 
 from dinkster_server import (
     PackBlueprintAsset,
@@ -34,10 +37,51 @@ from dinkster_workers import (
 
 __all__ = [
     "blueprint_assets",
+    "first_party_pack_metadata",
     "pack_info_from_manifest",
     "pack_info_from_presentation",
     "template_assets",
 ]
+
+
+def first_party_pack_metadata(root: Path) -> dict[str, tuple[str, str]]:
+    """Read checkout or wheel entry modules and distribution names without importing nodes."""
+    candidates: list[tuple[Path, str]] = []
+    for project_path in sorted((root / "packages").glob("dinkster-nodes-*/pyproject.toml")):
+        package = project_path.parent
+        if package.name == "dinkster-nodes-dev":
+            continue
+        project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
+        manifests = [
+            package / "dinkster-pack.toml",
+            *sorted(package.glob("*_pack/dinkster-pack.toml")),
+        ]
+        for path in manifests:
+            if path.is_file():
+                candidates.append((path, project["name"]))
+    if not (root / "packages").is_dir():
+        seen_paths: set[Path] = set()
+        for distribution in sorted(
+            importlib.metadata.distributions(), key=lambda item: item.metadata["Name"]
+        ):
+            for file in distribution.files or ():
+                if file.name == "dinkster-pack.toml" and file.parent.name.endswith("_pack"):
+                    path = Path(str(distribution.locate_file(file))).resolve()
+                    # Engine-carried packs can share a physical sidecar with
+                    # editable workspace distribution metadata.
+                    if path not in seen_paths:
+                        candidates.append((path, distribution.metadata["Name"]))
+                        seen_paths.add(path)
+    result: dict[str, tuple[str, str]] = {}
+    for path, distribution_name in candidates:
+        pack = tomllib.loads(path.read_text(encoding="utf-8"))["pack"]
+        if pack.get("publisher") != "dinkster":
+            continue
+        name = pack["name"]
+        if name in result:
+            raise ValueError(f"duplicate installed pack identity: {name}")
+        result[name] = (pack["entry"]["nodes"].partition(":")[0], distribution_name)
+    return result
 
 
 def _docs_asset(manifest: PackManifest) -> PackDocsAsset | None:

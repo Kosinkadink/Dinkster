@@ -1,0 +1,207 @@
+{
+  "nodes": {
+    "dinkster.wan.generate_tracks": {
+      "displayName": "Generate Video Tracks"
+    },
+    "dinkster.wan.scail2_colored_mask": {
+      "displayName": "Create SCAIL-2 Colored Mask"
+    },
+    "dinkster.wan.wan22_fun_control_to_video": {
+      "displayName": "Wan22FunControlToVideo"
+    },
+    "dinkster.wan.wan22_image_to_video_latent": {
+      "displayName": "Wan22ImageToVideoLatent"
+    },
+    "dinkster.wan.wan_animate2_cache": {
+      "displayName": "WanAnimate2Cache"
+    },
+    "dinkster.wan.wan_animate2_to_video": {
+      "displayName": "WanAnimate2ToVideo"
+    },
+    "dinkster.wan.wan_animate_to_video": {
+      "displayName": "WanAnimateToVideo"
+    },
+    "dinkster.wan.wan_camera_embedding": {
+      "displayName": "WanCameraEmbedding"
+    },
+    "dinkster.wan.wan_camera_image_to_video": {
+      "displayName": "WanCameraImageToVideo"
+    },
+    "dinkster.wan.wan_context_windows_manual": {
+      "displayName": "Wan Context Windows"
+    },
+    "dinkster.wan.wan_dancer_encode_audio": {
+      "displayName": "WanDancerEncodeAudio"
+    },
+    "dinkster.wan.wan_dancer_pad_keyframes": {
+      "displayName": "WanDancerPadKeyframes"
+    },
+    "dinkster.wan.wan_dancer_pad_keyframes_list": {
+      "displayName": "WanDancerPadKeyframesList"
+    },
+    "dinkster.wan.wan_dancer_video": {
+      "displayName": "WanDancerVideo"
+    },
+    "dinkster.wan.wan_first_last_frame_to_video": {
+      "displayName": "WanFirstLastFrameToVideo"
+    },
+    "dinkster.wan.wan_fun_control_to_video": {
+      "displayName": "WanFunControlToVideo"
+    },
+    "dinkster.wan.wan_fun_inpaint_to_video": {
+      "displayName": "WanFunInpaintToVideo"
+    },
+    "dinkster.wan.wan_hu_mo_image_to_video": {
+      "displayName": "WanHuMoImageToVideo"
+    },
+    "dinkster.wan.wan_image_to_video": {
+      "displayName": "WanImageToVideo"
+    },
+    "dinkster.wan.wan_infinite_talk_to_video": {
+      "displayName": "WanInfiniteTalkToVideo"
+    },
+    "dinkster.wan.wan_move_concat_track": {
+      "displayName": "WanMoveConcatTrack"
+    },
+    "dinkster.wan.wan_move_track_to_video": {
+      "displayName": "WanMoveTrackToVideo"
+    },
+    "dinkster.wan.wan_move_tracks_from_coords": {
+      "displayName": "WanMoveTracksFromCoords"
+    },
+    "dinkster.wan.wan_move_visualize_tracks": {
+      "displayName": "WanMoveVisualizeTracks"
+    },
+    "dinkster.wan.wan_phantom_subject_to_video": {
+      "displayName": "WanPhantomSubjectToVideo"
+    },
+    "dinkster.wan.wan_scail_to_video": {
+      "displayName": "WanSCAILToVideo"
+    },
+    "dinkster.wan.wan_sound_image_to_video": {
+      "displayName": "WanSoundImageToVideo"
+    },
+    "dinkster.wan.wan_sound_image_to_video_extend": {
+      "displayName": "WanSoundImageToVideoExtend"
+    },
+    "dinkster.wan.wan_track_to_video": {
+      "displayName": "WanTrackToVideo"
+    },
+    "dinkster.wan.wan_uni3_c_controlnet_apply": {
+      "displayName": "Apply Wan Uni3C ControlNet"
+    },
+    "dinkster.wan.wan_vace_to_video": {
+      "displayName": "WanVaceToVideo"
+    },
+    "dinkster.wan.wan_block_swap": {
+      "displayName": "wanBlockSwap"
+    }
+  },
+  "searchTerms": {
+    "dinkster.wan.generate_tracks": [
+      "motion paths",
+      "camera movement",
+      "trajectory",
+      "GenerateTracks"
+    ],
+    "dinkster.wan.scail2_colored_mask": [
+      "SCAIL2ColoredMask"
+    ],
+    "dinkster.wan.wan22_fun_control_to_video": [
+      "Wan22FunControlToVideo"
+    ],
+    "dinkster.wan.wan22_image_to_video_latent": [
+      "Wan22ImageToVideoLatent"
+    ],
+    "dinkster.wan.wan_animate2_cache": [
+      "WanAnimate2Cache"
+    ],
+    "dinkster.wan.wan_animate2_to_video": [
+      "WanAnimate2ToVideo"
+    ],
+    "dinkster.wan.wan_animate_to_video": [
+      "WanAnimateToVideo"
+    ],
+    "dinkster.wan.wan_camera_embedding": [
+      "WanCameraEmbedding"
+    ],
+    "dinkster.wan.wan_camera_image_to_video": [
+      "WanCameraImageToVideo"
+    ],
+    "dinkster.wan.wan_context_windows_manual": [
+      "WanContextWindowsManual"
+    ],
+    "dinkster.wan.wan_dancer_encode_audio": [
+      "WanDancerEncodeAudio"
+    ],
+    "dinkster.wan.wan_dancer_pad_keyframes": [
+      "WanDancerPadKeyframes"
+    ],
+    "dinkster.wan.wan_dancer_pad_keyframes_list": [
+      "WanDancerPadKeyframesList"
+    ],
+    "dinkster.wan.wan_dancer_video": [
+      "WanDancerVideo"
+    ],
+    "dinkster.wan.wan_first_last_frame_to_video": [
+      "WanFirstLastFrameToVideo"
+    ],
+    "dinkster.wan.wan_fun_control_to_video": [
+      "WanFunControlToVideo"
+    ],
+    "dinkster.wan.wan_fun_inpaint_to_video": [
+      "WanFunInpaintToVideo"
+    ],
+    "dinkster.wan.wan_hu_mo_image_to_video": [
+      "WanHuMoImageToVideo"
+    ],
+    "dinkster.wan.wan_image_to_video": [
+      "WanImageToVideo"
+    ],
+    "dinkster.wan.wan_infinite_talk_to_video": [
+      "WanInfiniteTalkToVideo"
+    ],
+    "dinkster.wan.wan_move_concat_track": [
+      "WanMoveConcatTrack"
+    ],
+    "dinkster.wan.wan_move_track_to_video": [
+      "WanMoveTrackToVideo"
+    ],
+    "dinkster.wan.wan_move_tracks_from_coords": [
+      "WanMoveTracksFromCoords"
+    ],
+    "dinkster.wan.wan_move_visualize_tracks": [
+      "WanMoveVisualizeTracks"
+    ],
+    "dinkster.wan.wan_phantom_subject_to_video": [
+      "WanPhantomSubjectToVideo"
+    ],
+    "dinkster.wan.wan_scail_to_video": [
+      "WanSCAILToVideo"
+    ],
+    "dinkster.wan.wan_sound_image_to_video": [
+      "WanSoundImageToVideo"
+    ],
+    "dinkster.wan.wan_sound_image_to_video_extend": [
+      "WanSoundImageToVideoExtend"
+    ],
+    "dinkster.wan.wan_track_to_video": [
+      "motion tracking",
+      "trajectory video",
+      "point tracking",
+      "keypoint animation",
+      "WanTrackToVideo"
+    ],
+    "dinkster.wan.wan_uni3_c_controlnet_apply": [
+      "WanUni3CControlnetApply"
+    ],
+    "dinkster.wan.wan_vace_to_video": [
+      "video conditioning",
+      "video control",
+      "WanVaceToVideo"
+    ],
+    "dinkster.wan.wan_block_swap": [
+      "wanBlockSwap"
+    ]
+  }
+}

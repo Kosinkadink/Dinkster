@@ -23,11 +23,11 @@ def test_recorded_prompts_compile_to_native_loop_nodes() -> None:
     inner_close = graph.nodes["inner_close"]
     assert isinstance(outer, GraphNode)
     assert isinstance(inner_close, GraphNode)
-    assert outer.node_type == "StartLoop"
-    assert inner_close.node_type == "EndLoop"
+    assert outer.node_type == "dinkster.utilities.start_loop"
+    assert inner_close.node_type == "dinkster.utilities.end_loop"
     assert isinstance(graph.nodes["capture"], RegionNode)
     assert any(
-        isinstance(node, GraphNode) and node.node_type == "std.list.element"
+        isinstance(node, GraphNode) and node.node_type == "dinkster.utilities.list_element"
         for node in graph.nodes.values()
     )
 

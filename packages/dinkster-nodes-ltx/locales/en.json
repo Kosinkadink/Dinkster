@@ -1,0 +1,206 @@
+{
+  "nodes": {
+    "dinkster.ltx.empty_ltxv_latent_video": {
+      "displayName": "Empty LTXV Latent Video"
+    },
+    "dinkster.ltx.get_ic_lo_ra_parameters": {
+      "displayName": "Get IC-LoRA Parameters"
+    },
+    "dinkster.ltx.ltxav_text_encoder_loader": {
+      "displayName": "Load LTXV Audio Text Encoder"
+    },
+    "dinkster.ltx.ltxv_add_generated_keyframes": {
+      "displayName": "LTXV Add Generated Keyframes"
+    },
+    "dinkster.ltx.ltxv_add_guide": {
+      "displayName": "LTXVAddGuide"
+    },
+    "dinkster.ltx.ltxv_add_latent_guide": {
+      "displayName": "LTXV Add Latent Guide"
+    },
+    "dinkster.ltx.ltxv_audio_vae_decode": {
+      "displayName": "LTXV Audio VAE Decode"
+    },
+    "dinkster.ltx.ltxv_audio_vae_encode": {
+      "displayName": "LTXV Audio VAE Encode"
+    },
+    "dinkster.ltx.ltxv_audio_vae_loader": {
+      "displayName": "Load LTXV Audio VAE"
+    },
+    "dinkster.ltx.ltxv_concat_av_latent": {
+      "displayName": "Concat AV Latent"
+    },
+    "dinkster.ltx.ltxv_conditioning": {
+      "displayName": "LTXVConditioning"
+    },
+    "dinkster.ltx.ltxv_context_windows": {
+      "displayName": "LTXV Context Windows"
+    },
+    "dinkster.ltx.ltxv_crop_guides": {
+      "displayName": "LTXVCropGuides"
+    },
+    "dinkster.ltx.ltxv_dual_cfg_guider": {
+      "displayName": "LTXV Dual CFG Guider"
+    },
+    "dinkster.ltx.ltxv_duration_predictor": {
+      "displayName": "LTXV Duration Predictor"
+    },
+    "dinkster.ltx.ltxv_empty_latent_audio": {
+      "displayName": "Empty LTXV Latent Audio"
+    },
+    "dinkster.ltx.ltxv_freeze_latent": {
+      "displayName": "LTXV Freeze Latent"
+    },
+    "dinkster.ltx.ltxv_generated_keyframes_to_guides": {
+      "displayName": "LTXV Generated Keyframes to Guides"
+    },
+    "dinkster.ltx.ltxv_img_to_video": {
+      "displayName": "LTXVImgToVideo"
+    },
+    "dinkster.ltx.ltxv_img_to_video_inplace": {
+      "displayName": "LTXVImgToVideoInplace"
+    },
+    "dinkster.ltx.ltxv_latent_upsampler": {
+      "displayName": "LTXVLatentUpsampler"
+    },
+    "dinkster.ltx.ltxv_modality_guidance": {
+      "displayName": "LTXV Modality Guidance (A/V coupling)"
+    },
+    "dinkster.ltx.ltxv_preprocess": {
+      "displayName": "LTXV Preprocess"
+    },
+    "dinkster.ltx.ltxv_reference_audio": {
+      "displayName": "LTXV Reference Audio (ID-LoRA)"
+    },
+    "dinkster.ltx.ltxv_scheduler": {
+      "displayName": "LTXVScheduler"
+    },
+    "dinkster.ltx.ltxv_separate_av_latent": {
+      "displayName": "Separate AV Latent"
+    },
+    "dinkster.ltx.ltxv_separate_generated_keyframes": {
+      "displayName": "LTXV Separate Generated Keyframes"
+    },
+    "dinkster.ltx.ltxv_spatio_temporal_guidance": {
+      "displayName": "LTXV Spatio-Temporal Guidance (STG)"
+    },
+    "dinkster.ltx.model_sampling_ltxv": {
+      "displayName": "ModelSamplingLTXV"
+    },
+    "dinkster.ltx.text_generate_ltx2_prompt": {
+      "displayName": "Generate LTX2 Prompt"
+    }
+  },
+  "searchTerms": {
+    "dinkster.ltx.empty_ltxv_latent_video": [
+      "EmptyLTXVLatentVideo"
+    ],
+    "dinkster.ltx.get_ic_lo_ra_parameters": [
+      "ic-lora",
+      "ic lora",
+      "iclora",
+      "downscale factor",
+      "reference downscale",
+      "GetICLoRAParameters"
+    ],
+    "dinkster.ltx.ltxav_text_encoder_loader": [
+      "LTXAVTextEncoderLoader"
+    ],
+    "dinkster.ltx.ltxv_add_generated_keyframes": [
+      "detailing",
+      "dfr",
+      "generated keyframes",
+      "LTXVAddGeneratedKeyframes"
+    ],
+    "dinkster.ltx.ltxv_add_guide": [
+      "LTXVAddGuide"
+    ],
+    "dinkster.ltx.ltxv_add_latent_guide": [
+      "latent guide",
+      "add latent guide",
+      "guide latent",
+      "LTXVAddLatentGuide"
+    ],
+    "dinkster.ltx.ltxv_audio_vae_decode": [
+      "LTXVAudioVAEDecode"
+    ],
+    "dinkster.ltx.ltxv_audio_vae_encode": [
+      "LTXVAudioVAEEncode"
+    ],
+    "dinkster.ltx.ltxv_audio_vae_loader": [
+      "LTXVAudioVAELoader"
+    ],
+    "dinkster.ltx.ltxv_concat_av_latent": [
+      "LTXVConcatAVLatent"
+    ],
+    "dinkster.ltx.ltxv_conditioning": [
+      "LTXVConditioning"
+    ],
+    "dinkster.ltx.ltxv_context_windows": [
+      "LTXVContextWindows"
+    ],
+    "dinkster.ltx.ltxv_crop_guides": [
+      "LTXVCropGuides"
+    ],
+    "dinkster.ltx.ltxv_dual_cfg_guider": [
+      "LTXVDualCFGGuider"
+    ],
+    "dinkster.ltx.ltxv_duration_predictor": [
+      "LTXVDurationPredictor"
+    ],
+    "dinkster.ltx.ltxv_empty_latent_audio": [
+      "LTXVEmptyLatentAudio"
+    ],
+    "dinkster.ltx.ltxv_freeze_latent": [
+      "LTXVFreezeLatent"
+    ],
+    "dinkster.ltx.ltxv_generated_keyframes_to_guides": [
+      "detailing",
+      "dfr",
+      "keyframe guides",
+      "LTXVGeneratedKeyframesToGuides"
+    ],
+    "dinkster.ltx.ltxv_img_to_video": [
+      "LTXVImgToVideo"
+    ],
+    "dinkster.ltx.ltxv_img_to_video_inplace": [
+      "LTXVImgToVideoInplace"
+    ],
+    "dinkster.ltx.ltxv_latent_upsampler": [
+      "LTXVLatentUpsampler"
+    ],
+    "dinkster.ltx.ltxv_modality_guidance": [
+      "LTXVModalityGuidance"
+    ],
+    "dinkster.ltx.ltxv_preprocess": [
+      "LTXVPreprocess"
+    ],
+    "dinkster.ltx.ltxv_reference_audio": [
+      "LTXVReferenceAudio"
+    ],
+    "dinkster.ltx.ltxv_scheduler": [
+      "LTXVScheduler"
+    ],
+    "dinkster.ltx.ltxv_separate_av_latent": [
+      "LTXVSeparateAVLatent"
+    ],
+    "dinkster.ltx.ltxv_separate_generated_keyframes": [
+      "detailing",
+      "dfr",
+      "peel keyframes",
+      "LTXVSeparateGeneratedKeyframes"
+    ],
+    "dinkster.ltx.ltxv_spatio_temporal_guidance": [
+      "LTXVSpatioTemporalGuidance"
+    ],
+    "dinkster.ltx.model_sampling_ltxv": [
+      "ModelSamplingLTXV"
+    ],
+    "dinkster.ltx.text_generate_ltx2_prompt": [
+      "prompt enhance",
+      "LLM",
+      "gemma",
+      "TextGenerateLTX2Prompt"
+    ]
+  }
+}

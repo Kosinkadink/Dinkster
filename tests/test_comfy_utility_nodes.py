@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import math
 import sys
-from pathlib import Path
 from typing import cast
 
 import pytest
 from dinkster_api.v1 import schema_to_wire
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.utilities import ComfyNumberConvert, SeedNode
+from dinkster_nodes_utilities.utilities import ComfyNumberConvert, SeedNode
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import ServingComposer, _installed_pack_spec
 from tests.async_scenarios import run_scenario
 
 
@@ -86,19 +85,27 @@ def test_isolated_manifest_converts_text_and_linked_seed_without_rounding_intege
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            manifest = (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            await composer.add_pack(
+                _installed_pack_spec(
+                    "dinkster-utilities", "dinkster_nodes_utilities", in_process=False
+                )
             )
-            await composer.add_pack(PackSpec(manifest=manifest))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
-                        "seed": GraphNode("SeedNode", {"seed": 9007199254740993}),
-                        "linked": GraphNode("ComfyNumberConvert", {"value": Link("seed", "seed")}),
-                        "source": GraphNode("PrimitiveString", {"value": " 9007199254740993 "}),
+                        "seed": GraphNode(
+                            "dinkster.utilities.seed_node", {"seed": 9007199254740993}
+                        ),
+                        "linked": GraphNode(
+                            "dinkster.utilities.comfy_number_convert",
+                            {"value": Link("seed", "seed")},
+                        ),
+                        "source": GraphNode(
+                            "dinkster.utilities.primitive_string", {"value": " 9007199254740993 "}
+                        ),
                         "text": GraphNode(
-                            "ComfyNumberConvert", {"value": Link("source", "STRING")}
+                            "dinkster.utilities.comfy_number_convert",
+                            {"value": Link("source", "STRING")},
                         ),
                     }
                 ),

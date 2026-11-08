@@ -6,10 +6,15 @@ from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_comfy.post_processing import (
-    POST_PROCESSING_NODES,
+from dinkster_nodes_image import NODES as IMAGE_NODES
+from dinkster_nodes_image.ported.post_processing import (
+    BatchImagesNode,
+    BatchMasksNode,
     ColorTransfer,
+    ResizeImageMaskNode,
 )
+from dinkster_nodes_latent import NODES as LATENT_NODES
+from dinkster_nodes_latent.post_processing import BatchLatentsNode
 
 
 def _wire(node: type[Any]) -> dict[str, Any]:
@@ -17,15 +22,19 @@ def _wire(node: type[Any]) -> dict[str, Any]:
 
 
 def test_post_processing_schemas_use_exact_core_ids_and_dynamic_interfaces() -> None:
-    schemas = {node.schema().node_type: _wire(node) for node in POST_PROCESSING_NODES}
-    assert tuple(schemas) == (
-        "ResizeImageMaskNode",
-        "BatchImagesNode",
-        "BatchMasksNode",
-        "BatchLatentsNode",
-        "ColorTransfer",
+    nodes = (ResizeImageMaskNode, BatchImagesNode, BatchMasksNode, BatchLatentsNode, ColorTransfer)
+    assert all(
+        node in (LATENT_NODES if node is BatchLatentsNode else IMAGE_NODES) for node in nodes
     )
-    resize = schemas["ResizeImageMaskNode"]
+    schemas = {node.schema().node_type: _wire(node) for node in nodes}
+    assert tuple(schemas) == (
+        "dinkster.image.resize_image_mask_node",
+        "dinkster.image.batch_images_node",
+        "dinkster.image.batch_masks_node",
+        "dinkster.latent.batch_latents_node",
+        "dinkster.image.color_transfer",
+    )
+    resize = schemas["dinkster.image.resize_image_mask_node"]
     assert [item["id"] for item in resize["interface"]] == [
         "input",
         "resize_type",
@@ -49,9 +58,9 @@ def test_post_processing_schemas_use_exact_core_ids_and_dynamic_interfaces() -> 
         "scale to multiple",
     ]
     for node_type, family, prefix, template_name, value_type in (
-        ("BatchImagesNode", "images", "image", "image", "IMAGE"),
-        ("BatchMasksNode", "masks", "mask", "mask", "MASK"),
-        ("BatchLatentsNode", "latents", "latent", "latent", "LATENT"),
+        ("dinkster.image.batch_images_node", "images", "image", "image", "IMAGE"),
+        ("dinkster.image.batch_masks_node", "masks", "mask", "mask", "MASK"),
+        ("dinkster.latent.batch_latents_node", "latents", "latent", "latent", "LATENT"),
     ):
         interface = schemas[node_type]["interface"]
         assert interface[0]["id"] == family
@@ -60,7 +69,7 @@ def test_post_processing_schemas_use_exact_core_ids_and_dynamic_interfaces() -> 
         assert interface[0]["template"][0]["id"] == template_name
         assert interface[0]["template"][0]["type"]["types"] == [value_type]
         assert interface[1]["type"]["types"] == [value_type]
-    color = schemas["ColorTransfer"]
+    color = schemas["dinkster.image.color_transfer"]
     assert [item["id"] for item in color["interface"]] == [
         "image_target",
         "image_ref",
@@ -81,7 +90,7 @@ def test_color_transfer_identity_strength_does_not_materialize_the_reference(
 ) -> None:
     target = object()
     monkeypatch.setattr(
-        "dinkster_nodes_comfy.post_processing.materialize_image", lambda value: value
+        "dinkster_nodes_image.ported.post_processing.materialize_image", lambda value: value
     )
     assert (
         ColorTransfer.execute(

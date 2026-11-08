@@ -8,18 +8,18 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.clip_model_specific import CLIPTextEncodeKandinsky5
+from dinkster_nodes_misc_models import NODES
+from dinkster_nodes_misc_models.clip_model_specific import CLIPTextEncodeKandinsky5
 
 
 def test_kandinsky_text_schema_and_registration() -> None:
     schema = CLIPTextEncodeKandinsky5.schema()
-    assert CLIPTextEncodeKandinsky5 in COMFY_NODES
+    assert NODES.count(CLIPTextEncodeKandinsky5) == 1
     assert (schema.node_type, schema.display_name, schema.category, schema.search_terms) == (
-        "CLIPTextEncodeKandinsky5",
+        "dinkster.misc.models.clip_text_encode_kandinsky5",
         "CLIP Text Encode (Kandinsky 5)",
         "model/conditioning/kandinsky",
-        ("kandinsky prompt",),
+        ("kandinsky prompt", "CLIPTextEncodeKandinsky5"),
     )
     assert [
         (item.id, item.type.types[0], item.required, item.default) for item in schema.inputs

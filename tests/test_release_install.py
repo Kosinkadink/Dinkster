@@ -412,12 +412,46 @@ def test_default_pack_admission_uses_complete_version_history() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
     )
+    triggers = workflow[True]
+    assert "push" not in triggers
+    assert triggers["workflow_run"] == {
+        "workflows": ["Independent official pack publication"],
+        "types": ["completed"],
+        "branches": ["main"],
+    }
+    assert "pull_request" in triggers
+    selection = workflow["jobs"]["select"]
+    assert "github.event.workflow_run.event == 'workflow_run'" in selection["if"]
+    assert "github.event.workflow_run.conclusion == 'success'" in selection["if"]
+    assert (
+        "github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'"
+        in (selection["if"])
+    )
+    publication = next(step for step in selection["steps"] if step.get("id") == "publication")
+    assert "job.name === 'publish' && job.conclusion === 'success'" in publication["with"]["script"]
+    identity = next(step for step in selection["steps"] if step.get("id") == "identity")
+    assert (
+        "core.setOutput('engine', context.payload.pull_request.head.sha)"
+        in identity["with"]["script"]
+    )
+    assert "core.setOutput('engine', engine.commit)" in identity["with"]["script"]
+    assert "engine.repository !== 'Kosinkadink/Dinkster'" in identity["with"]["script"]
     checkout = next(
         step
         for step in workflow["jobs"]["admission"]["steps"]
         if step.get("uses") == "actions/checkout@v4"
     )
     assert checkout["with"]["fetch-depth"] == 0
+    assert checkout["with"]["ref"] == "${{ needs.select.outputs.engine }}"
+    for job in (selection, workflow["jobs"]["admission"]):
+        download = next(
+            step for step in job["steps"] if step.get("uses") == "actions/download-artifact@v4"
+        )
+        assert download["with"]["name"] == "official-publication-inputs"
+        assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
+    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    assert '--candidate-base "$CANDIDATE_BASE"' in command
+    assert "--published-sources .publication/sources/official-packs.lock" in command
 
 
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
@@ -698,6 +732,14 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     supervisor = tmp_path / "packages/supervisor/pyproject.toml"
     supervisor.parent.mkdir()
     supervisor.write_text('[project]\nname = "dinkster-supervisor"\nversion = "7.8.9"\n')
+    for name, manifest in (
+        ("dinkster-nodes-remote", "dinkster-pack.toml"),
+        ("dinkster-nodes-vision", "hed_pack/dinkster-pack.toml"),
+    ):
+        pack = tmp_path / "packages" / name
+        (pack / manifest).parent.mkdir(parents=True)
+        (pack / manifest).write_text('[pack]\nversion = "4.5.6"\n')
+        (pack / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "4.5.6"\n')
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "root"\nversion = "1.2.3"\n', encoding="utf-8"
     )
@@ -819,6 +861,13 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
+        for member in ("remote", "image", "dev"):
+            relative = f"packages/dinkster-nodes-{member}/pyproject.toml"
+            committed = tomllib.loads(
+                subprocess.check_output(["git", "show", f"HEAD:{relative}"], cwd=ROOT, text=True)
+            )["project"]["version"]
+            actual = tomllib.loads((staged / relative).read_text())["project"]["version"]
+            assert actual == (committed if member in {"remote", "image"} else version)
         for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -2538,7 +2587,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     output = tmp_path / "outputs"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setenv("PACKS", '["dinkster-nodes-foundation"]')
+    monkeypatch.setenv("PACKS", '["dinkster-image"]')
     try:
         if problem not in {None, "candidate"}:
             with pytest.raises((ValueError, environment_downloads.DownloadError)):
@@ -2546,7 +2595,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                     tmp_path,
                     tmp_path / ".official-publication",
                     "c" * 40,
-                    ["dinkster-nodes-foundation"],
+                    ["dinkster-image"],
                 )
             assert not output.exists()
         else:
@@ -2554,7 +2603,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 tmp_path,
                 tmp_path / ".official-publication",
                 "c" * 40,
-                ["dinkster-nodes-foundation"],
+                ["dinkster-image"],
                 candidate=problem == "candidate",
             ) == [
                 {"variant": "linux-cpu", "runner": "ubuntu-latest"},
@@ -2571,7 +2620,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-nodes-foundation", "0.0.2")
+                ("dinkster-image", "0.0.1")
             ]
     finally:
         server.shutdown()

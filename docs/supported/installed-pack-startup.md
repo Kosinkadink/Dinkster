@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- The default install selection contains all 35 ComfyUI-origin first-party
+  packs plus the remote pack. Checkout serving verifies their locked sources
+  and isolates every selected pack. The engine carries no draft node packs.
+- Official packs retain independent versions when the engine is released;
+  changed remote pack dependencies use a new version rather than replacing
+  an immutable published artifact.
 - Published software history can rebuild a pruned generation without restoring
   workflows, models or outputs. Missing engine inputs expose read-only alternatives
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
@@ -69,8 +75,13 @@
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
-  fourteen pack identities and node entry points without importing node code.
-  Generation schemas remain engine-carried rather than separate official packs.
+  manifest-declared pack identities and node entry points without importing node
+  code. New node-pack directories are discovered without a family allowlist.
+  Development scaffolding stays unpublished.
+- First-party source resolution reads runtime IDs and node entry modules from
+  manifests and distribution names from project metadata or installed wheel
+  records. Runtime, distribution and import names need not match. Discovery
+  does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
   Engine-only pushes select no pack. PR, fork and tag events build and
@@ -84,15 +95,15 @@
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
 - Prepared official source catalogs preserve dependency-owned codecs without
-  claiming them as pack-owned declarations. Existing comfy and image node IDs
-  execute from these archives without rewriting saved workflows or pack bytes.
+  claiming them as pack-owned declarations. First-party pack node IDs execute
+  from these archives without rewriting their source bytes.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
 - Pack manifests can declare an independent public pack version and a PEP 440
   engine compatibility range. Invalid or incomplete declarations are rejected
   without importing pack code. Every first-party node pack declares both,
-  including development and engine-carried generation packs.
+  including the development pack.
 - The registry client can select the newest active pack version meeting a
   minimum version and target engine range across paginated results. Active
   prereleases inside those bounds remain eligible. Historical releases without
@@ -116,6 +127,9 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Missing defaults, rejected packs and security
   review requirements fail the check without publishing any pack.
+- Selected-archive behavioral tests use each first-party pack's independent
+  distribution, including vision packs. They verify selected source provenance
+  and refuse checkout fallbacks or replacement of engine-owned tests.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks

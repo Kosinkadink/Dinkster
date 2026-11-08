@@ -38,7 +38,7 @@ from dinkster_workers import (
     compose_workgroup_configuration,
 )
 from dinkster_workers.service import READY_LINE_PREFIX
-from test_isolated import DEV_MANIFEST, FOUNDATION_MANIFEST, core_registry, image_graph
+from test_isolated import DEV_MANIFEST, UTILITIES_MANIFEST, core_registry, image_graph
 from test_relay import eventually
 
 from tests.async_scenarios import run_scenario
@@ -167,9 +167,10 @@ def big_image_graph() -> Graph:
     )
 
 
-def test_remote_lazy_route_executes_only_the_selected_dynamic_member(tmp_path: Path) -> None:
+@pytest.mark.parametrize("selected", (False, True))
+def test_remote_switch_executes_only_the_selected_input(tmp_path: Path, selected: bool) -> None:
     async def scenario() -> None:
-        proc, host, port = await start_service(FOUNDATION_MANIFEST, tmp_path)
+        proc, host, port = await start_service(UTILITIES_MANIFEST, tmp_path)
         try:
             registry = core_registry()
             worker = remote_worker(host, port, registry)
@@ -178,22 +179,27 @@ def test_remote_lazy_route_executes_only_the_selected_dynamic_member(tmp_path: P
                 engine = make_engine(registry, worker)
                 graph = Graph(
                     {
-                        "first": GraphNode("dinkster.string", {"value": "first"}),
-                        "second": GraphNode("dinkster.string", {"value": "second"}),
+                        "first": GraphNode(
+                            "dinkster.utilities.primitive_string", {"value": "first"}
+                        ),
+                        "second": GraphNode(
+                            "dinkster.utilities.primitive_string", {"value": "second"}
+                        ),
                         "route": GraphNode(
-                            "dinkster.route.switch",
+                            "dinkster.utilities.comfy_switch_node",
                             {
-                                "index": 1,
-                                "values.first": Link("first", "value"),
-                                "values.second": Link("second", "value"),
+                                "switch": selected,
+                                "on_false": Link("first", "STRING"),
+                                "on_true": Link("second", "STRING"),
                             },
                         ),
                     }
                 )
 
                 result = await engine.run(graph, ["route"])
-                assert result.outputs["route"]["value"].resolve() == "second"
-                assert set(result.executed) == {"second", "route"}
+                expected = "second" if selected else "first"
+                assert result.outputs["route"]["output"].resolve() == expected
+                assert set(result.executed) == {expected, "route"}
             finally:
                 await worker.close()
         finally:

@@ -1,0 +1,39 @@
+{
+  "nodes": {
+    "dinkster.vision.sam3.sam3_detect": {
+      "displayName": "SAM3 Detect"
+    },
+    "dinkster.vision.sam3.sam3_track_preview": {
+      "displayName": "SAM3 Track Preview"
+    },
+    "dinkster.vision.sam3.sam3_track_to_mask": {
+      "displayName": "SAM3 Track to Mask"
+    },
+    "dinkster.vision.sam3.sam3_video_track": {
+      "displayName": "Run SAM3 Video Track"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.sam3.sam3_detect": [
+      "sam3",
+      "segment anything",
+      "open vocabulary",
+      "text detection",
+      "segment",
+      "SAM3_Detect"
+    ],
+    "dinkster.vision.sam3.sam3_track_preview": [
+      "SAM3_TrackPreview"
+    ],
+    "dinkster.vision.sam3.sam3_track_to_mask": [
+      "SAM3_TrackToMask"
+    ],
+    "dinkster.vision.sam3.sam3_video_track": [
+      "sam3",
+      "video",
+      "track",
+      "propagate",
+      "SAM3_VideoTrack"
+    ]
+  }
+}

@@ -8,13 +8,18 @@ from typing import Any, cast
 import pytest
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
 from dinkster_graph import Graph, GraphNode
-from dinkster_nodes_comfy.color_resolution import ColorToRGBInt, ResolutionSelector
+from dinkster_nodes_utilities import NODES
+from dinkster_nodes_utilities.color_resolution import ColorToRGBInt, ResolutionSelector
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 
 def test_color_and_resolution_schemas_preserve_public_types_and_positional_inputs() -> None:
+    assert ColorToRGBInt in NODES
+    assert ResolutionSelector in NODES
+    assert ColorToRGBInt.schema().node_type == "dinkster.utilities.color_to_rgb_int"
+    assert ResolutionSelector.schema().node_type == "dinkster.utilities.resolution_selector"
     color = cast(dict[str, Any], schema_to_wire(ColorToRGBInt.schema()))
     assert color["interface"][0]["type"] == {"kind": "concrete", "types": ["COLOR"]}
     assert color["interface"][0]["default"] == "#ffffff"
@@ -76,17 +81,22 @@ def test_resolution_rounds_to_requested_multiple_and_ignores_preview_payload() -
 def test_color_and_resolution_execute_twice_through_the_native_pack(in_process: bool) -> None:
     async def scenario() -> None:
         manifest = (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1]
+            / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
         )
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
+            )
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
-                    "color": GraphNode("ColorToRGBInt", {"color": "#aB12CD80"}),
+                    "color": GraphNode(
+                        "dinkster.utilities.color_to_rgb_int", {"color": "#aB12CD80"}
+                    ),
                     "resolution": GraphNode(
-                        "ResolutionSelector",
+                        "dinkster.utilities.resolution_selector",
                         {"aspect_ratio": "21:9 (Ultrawide)", "megapixels": 1.0, "multiple": 8},
                     ),
                 }

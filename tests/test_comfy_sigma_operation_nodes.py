@@ -10,8 +10,26 @@ from dinkster_api.v1 import (
     NumberWidget,
     TypeExpr,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.sigma_operations import SIGMA_OPERATION_NODES
+from dinkster_nodes_sampling import NODES
+from dinkster_nodes_sampling.sigma_operations import (
+    ExtendIntermediateSigmas,
+    FlipSigmas,
+    ManualSigmas,
+    SamplingPercentToSigma,
+    SetFirstSigma,
+    SplitSigmas,
+    SplitSigmasDenoise,
+)
+
+SIGMA_OPERATION_NODES = (
+    SplitSigmas,
+    SplitSigmasDenoise,
+    FlipSigmas,
+    SetFirstSigma,
+    ExtendIntermediateSigmas,
+    SamplingPercentToSigma,
+    ManualSigmas,
+)
 
 
 def test_sigma_operation_interfaces_are_registered_in_canonical_order() -> None:
@@ -24,9 +42,15 @@ def test_sigma_operation_interfaces_are_registered_in_canonical_order() -> None:
         "SamplingPercentToSigma",
         "ManualSigmas",
     )
-    assert all(node in COMFY_NODES for node in SIGMA_OPERATION_NODES)
+    assert all(NODES.count(node) == 1 for node in SIGMA_OPERATION_NODES)
     assert [node.schema().node_type for node in SIGMA_OPERATION_NODES] == [
-        node.__name__ for node in SIGMA_OPERATION_NODES
+        "dinkster.sampling.split_sigmas",
+        "dinkster.sampling.split_sigmas_denoise",
+        "dinkster.sampling.flip_sigmas",
+        "dinkster.sampling.set_first_sigma",
+        "dinkster.sampling.extend_intermediate_sigmas",
+        "dinkster.sampling.sampling_percent_to_sigma",
+        "dinkster.sampling.manual_sigmas",
     ]
 
 
@@ -60,7 +84,7 @@ def test_sigma_operation_schemas_preserve_core_inputs_outputs_and_widgets() -> N
     }
     for node in SIGMA_OPERATION_NODES:
         schema = node.schema()
-        input_ids, output_ids = expected[schema.node_type]
+        input_ids, output_ids = expected[node.__name__]
         assert schema.category == "model/sampling/sigmas"
         assert tuple(item.id for item in schema.inputs) == input_ids
         assert tuple(item.id for item in schema.outputs) == output_ids
@@ -92,4 +116,4 @@ def test_sigma_operation_schemas_preserve_core_inputs_outputs_and_widgets() -> N
     manual = SIGMA_OPERATION_NODES[6].schema()
     assert manual.inputs[0].type == scalar_types["sigmas_text"]
     assert manual.inputs[0].default == "1, 0.5"
-    assert manual.search_terms == ("custom noise schedule", "define sigmas")
+    assert manual.search_terms == ("custom noise schedule", "define sigmas", "ManualSigmas")

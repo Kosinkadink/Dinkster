@@ -8,23 +8,25 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import ABSENT, TypeRegistry
-from dinkster_nodes_image import (
+from dinkster_api.v1 import (
+    ABSENT,
     DETECTION_TYPE,
     REGION_TYPE,
-    RESERVED_TYPE_IDS,
     SEGMENTATION_TYPE,
     VECTOR_TYPE,
+    Region,
+    TypeRegistry,
+)
+from dinkster_nodes_image.geometry import (
     ImageCrop,
     ImageInfo,
     ImageResize,
     ImageTransform,
     ImageUncrop,
     MakeRegion,
-    Region,
     RegionInfo,
-    register_image_types,
 )
+from dinkster_nodes_image.types import RESERVED_TYPE_IDS, register_image_types
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "image_geometry_e20d433a.json"
 GOLDEN = cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))

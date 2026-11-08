@@ -9,13 +9,13 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.ar_video import SamplerARVideo
+from dinkster_nodes_misc_models import NODES
+from dinkster_nodes_misc_models.ar_video import SamplerARVideo
 
 
 def test_ar_video_sampler_schema_and_cold_discovery() -> None:
     schema = SamplerARVideo.schema()
-    assert schema.node_type == "SamplerARVideo"
+    assert schema.node_type == "dinkster.misc.models.sampler_ar_video"
     assert schema.display_name == "Sampler AR Video"
     assert schema.category == "model/sampling/samplers"
     (input_,) = schema.inputs
@@ -29,4 +29,4 @@ def test_ar_video_sampler_schema_and_cold_discovery() -> None:
     )
     assert schema.outputs == (OutputSpec("SAMPLER", TypeExpr.concrete(SAMPLER_TYPE)),)
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    assert SamplerARVideo in COMFY_NODES
+    assert NODES.count(SamplerARVideo) == 1

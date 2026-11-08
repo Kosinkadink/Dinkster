@@ -1,0 +1,26 @@
+[pack]
+name = "dinkster-vision-sdpose"
+version = "0.0.1"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.vision.sdpose"]
+requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26"]
+
+[pack.inference]
+imports = ["model_management", "sample", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+dinkster-misc-models = ">=0.0.1,<1"
+dinkster-image = ">=0.0.1,<1"
+
+[pack.entry]
+nodes = "dinkster_nodes_vision_sdpose:NODES"
+types = "dinkster_nodes_vision_sdpose:register_types"

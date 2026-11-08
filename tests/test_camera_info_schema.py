@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import (
@@ -13,8 +12,9 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.camera_info import CreateCameraInfo
+from dinkster_nodes_3d import NODES
+from dinkster_nodes_3d.camera_info import CreateCameraInfo
+from dinkster_workers import load_manifest
 
 
 def test_camera_info_schema_and_production_claim_are_canonical() -> None:
@@ -40,11 +40,11 @@ def test_camera_info_schema_and_production_claim_are_canonical() -> None:
         "look_at",
         "quaternion",
     ]
-    assert sum(node is CreateCameraInfo for node in COMFY_NODES) == 1
-    manifest = (
-        Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    assert sum(node is CreateCameraInfo for node in NODES) == 1
+    manifest = load_manifest(
+        Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-3d/dinkster-pack.toml"
     )
-    assert tomllib.loads(manifest.read_text())["pack"]["namespaces"].count("CreateCameraInfo") == 1
+    assert "dinkster.3d" in manifest.namespaces
 
 
 def test_camera_info_discovery_does_not_import_inference_or_torch() -> None:
@@ -55,8 +55,8 @@ def test_camera_info_discovery_does_not_import_inference_or_torch() -> None:
             "import sys\n"
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_nodes_comfy.camera_info import CreateCameraInfo\n"
-            "assert CreateCameraInfo.schema().node_type == 'CreateCameraInfo'\n",
+            "from dinkster_nodes_3d.camera_info import CreateCameraInfo\n"
+            "assert CreateCameraInfo.schema().node_type == 'dinkster.3d.create_camera_info'\n",
         ],
         check=True,
     )

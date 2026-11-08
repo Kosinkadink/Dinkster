@@ -9,16 +9,17 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from dinkster_nodes_wan import NODES
+from dinkster_nodes_wan.wandancer_keyframes import WanDancerPadKeyframes, WanDancerPadKeyframesList
 
 
 def test_wandancer_keyframe_schemas_and_cold_discovery() -> None:
-    assert tuple(node.schema().node_type for node in WANDANCER_KEYFRAME_NODES) == (
-        "WanDancerPadKeyframes",
-        "WanDancerPadKeyframesList",
+    nodes = (WanDancerPadKeyframes, WanDancerPadKeyframesList)
+    assert tuple(node.schema().node_type for node in nodes) == (
+        "dinkster.wan.wan_dancer_pad_keyframes",
+        "dinkster.wan.wan_dancer_pad_keyframes_list",
     )
-    for node, list_output in zip(WANDANCER_KEYFRAME_NODES, (False, True), strict=True):
+    for node, list_output in zip(nodes, (False, True), strict=True):
         schema = node.schema()
         assert schema.category == "image/video"
         assert [i.id for i in schema.inputs] == [
@@ -42,4 +43,4 @@ def test_wandancer_keyframe_schemas_and_cold_discovery() -> None:
             TypeExpr.list_of(t) if list_output else t for t in outputs
         ]
         assert schema_from_wire(schema_to_wire(schema)) == schema
-        assert node in COMFY_NODES
+        assert NODES.count(node) == 1

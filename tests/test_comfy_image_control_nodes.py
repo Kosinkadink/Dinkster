@@ -1,8 +1,12 @@
 """Cold public schemas for image-control model patches."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.image_control_patches import IMAGE_CONTROL_PATCH_NODES
+from dinkster_nodes_flux import NODES as FLUX_NODES
+from dinkster_nodes_flux.image_control_patches import USOStyleReference
+from dinkster_nodes_misc_models import NODES as MISC_NODES
+from dinkster_nodes_misc_models.image_control_patches import ZImageFunControlnet
+from dinkster_nodes_qwen import NODES as QWEN_NODES
+from dinkster_nodes_qwen.image_control_patches import QwenImageDiffsynthControlnet
 
 
 def test_image_control_public_contracts() -> None:
@@ -30,9 +34,22 @@ def test_image_control_public_contracts() -> None:
         ),
         ("model", "model_patch", "clip_vision_output"),
     )
-    for node, names in zip(IMAGE_CONTROL_PATCH_NODES, expected, strict=True):
-        assert node in COMFY_NODES
+    for (node, registered, node_type), names in zip(
+        (
+            (
+                QwenImageDiffsynthControlnet,
+                QWEN_NODES,
+                "dinkster.qwen.qwen_image_diffsynth_controlnet",
+            ),
+            (ZImageFunControlnet, MISC_NODES, "dinkster.misc.models.z_image_fun_controlnet"),
+            (USOStyleReference, FLUX_NODES, "dinkster.flux.uso_style_reference"),
+        ),
+        expected,
+        strict=True,
+    ):
+        assert node in registered
         schema = node.schema()
+        assert schema.node_type == node_type
         assert tuple(item.id for item in schema.inputs) == names
         assert schema.outputs[0].id == "MODEL"
         assert schema_from_wire(schema_to_wire(schema)) == schema

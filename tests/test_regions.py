@@ -33,19 +33,17 @@ from dinkster_graph import (
     validate,
 )
 from dinkster_graph.model import BindingMode, RegionKind
-from dinkster_nodes_foundation import (
-    ListElement,
-    RouteGate,
-    RouteSwitch,
-    RouteSwitchByName,
-    ValueSelect,
-)
 from dinkster_schema import (
+    ABSENT,
     AbsentOutput,
+    ComboWidget,
+    InputFamilyOptionSource,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
+    SelectorSpec,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -54,6 +52,7 @@ from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
     TypeRegistry,
+    Value,
     is_absent,
     list_children,
     register_core_types,
@@ -67,6 +66,128 @@ BOOL = TypeExpr.concrete("BOOLEAN")
 COMBO = TypeExpr.concrete("COMBO")
 STRING = TypeExpr.concrete("STRING")
 GENERIC = TypeExpr.variable("T")
+
+
+class ListElement(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="std.list.element",
+            inputs=(InputSpec("list", TypeExpr.list_of(GENERIC)), InputSpec("index", INT)),
+            outputs=(OutputSpec("item", GENERIC),),
+            input_values=True,
+        )
+
+    @classmethod
+    def execute(cls, *, index: int, input_values: Mapping[str, Value]) -> Mapping[str, object]:
+        children = list_children(input_values["list"])
+        assert children is not None
+        return cls.outputs(item=children[index])
+
+
+class RouteSwitch(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.route.switch",
+            inputs=(InputSpec("index", INT, default=0),),
+            input_families=(
+                InputFamilySpec("values", (InputSpec("value", GENERIC, lazy=True),), min_members=1),
+            ),
+            outputs=(OutputSpec("value", GENERIC),),
+        )
+
+    @classmethod
+    def check_lazy_status(
+        cls, *, index: int, values: Mapping[str, object | None]
+    ) -> tuple[str, ...]:
+        suffix, value = tuple(values.items())[index]
+        return (f"values.{suffix}",) if value is None else ()
+
+    @classmethod
+    def execute(cls, *, index: int, values: Mapping[str, object | None]) -> Mapping[str, object]:
+        return cls.outputs(value=tuple(values.values())[index])
+
+
+class RouteSwitchByName(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.route.switch_by_name",
+            editor_role="named-route-switch",
+            inputs=(
+                InputSpec(
+                    "choice",
+                    COMBO,
+                    widget=ComboWidget(
+                        option_source=InputFamilyOptionSource(input_family="values")
+                    ),
+                ),
+            ),
+            input_families=(
+                InputFamilySpec("values", (InputSpec("value", GENERIC, lazy=True),), min_members=1),
+            ),
+            outputs=(OutputSpec("value", GENERIC),),
+        )
+
+    @classmethod
+    def check_lazy_status(
+        cls, *, choice: str, values: Mapping[str, object | None]
+    ) -> tuple[str, ...]:
+        return (f"values.{choice}",) if values[choice] is None else ()
+
+    @classmethod
+    def execute(cls, *, choice: str, values: Mapping[str, object | None]) -> Mapping[str, object]:
+        return cls.outputs(value=values[choice])
+
+
+class RouteGate(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.route.gate",
+            inputs=(InputSpec("condition", BOOL), InputSpec("value", GENERIC, lazy=True)),
+            outputs=(OutputSpec("value", GENERIC, optional=True),),
+        )
+
+    @classmethod
+    def check_lazy_status(cls, *, condition: bool, value: object | None) -> tuple[str, ...]:
+        return ("value",) if condition and value is None else ()
+
+    @classmethod
+    def execute(cls, *, condition: bool, value: object | None) -> Mapping[str, object]:
+        return cls.outputs(value=value if condition else ABSENT)
+
+
+class ValueSelect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.value.select",
+            inputs=(
+                InputSpec("condition", BOOL),
+                InputSpec("on_false", GENERIC, lazy=True),
+                InputSpec("on_true", GENERIC, lazy=True),
+            ),
+            outputs=(OutputSpec("value", GENERIC),),
+            selector=SelectorSpec("condition", {"false": "on_false", "true": "on_true"}),
+        )
+
+    @classmethod
+    def check_lazy_status(
+        cls, *, condition: bool, on_false: object | None, on_true: object | None
+    ) -> tuple[str, ...]:
+        if condition and on_true is None:
+            return ("on_true",)
+        if not condition and on_false is None:
+            return ("on_false",)
+        return ()
+
+    @classmethod
+    def execute(
+        cls, *, condition: bool, on_false: object | None, on_true: object | None
+    ) -> Mapping[str, object]:
+        return cls.outputs(value=on_true if condition else on_false)
 
 
 class AddOne(Node):

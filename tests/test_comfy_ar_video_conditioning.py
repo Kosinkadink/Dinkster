@@ -11,13 +11,13 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.ar_video import ARVideoI2V
+from dinkster_nodes_misc_models import NODES
+from dinkster_nodes_misc_models.ar_video import ARVideoI2V
 
 
 def test_ar_video_conditioning_schema_and_cold_discovery() -> None:
     schema = ARVideoI2V.schema()
-    assert schema.node_type == "ARVideoI2V"
+    assert schema.node_type == "dinkster.misc.models.ar_video_i2_v"
     assert schema.category == "model/conditioning/autoregressive"
     assert [(i.id, i.type) for i in schema.inputs[:3]] == [
         ("model", TypeExpr.concrete(MODEL_TYPE)),
@@ -36,4 +36,4 @@ def test_ar_video_conditioning_schema_and_cold_discovery() -> None:
     ]
     assert all(i.required for i in schema.inputs)
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    assert ARVideoI2V in COMFY_NODES
+    assert NODES.count(ARVideoI2V) == 1

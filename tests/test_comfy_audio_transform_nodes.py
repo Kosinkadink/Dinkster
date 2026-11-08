@@ -1,8 +1,8 @@
 """Torch-free schemas for native ComfyUI audio transform nodes."""
 
 from dinkster_api.v1 import AUDIO_TYPE, CORE_INT, NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.audio_transform import (
+from dinkster_nodes_audio import NODES
+from dinkster_nodes_audio.audio_transform import (
     AUDIO_TRANSFORM_NODES,
     AudioAdjustVolume,
     SplitAudioChannels,
@@ -13,9 +13,9 @@ def test_audio_transform_interfaces_match_comfy_schemas() -> None:
     assert AUDIO_TRANSFORM_NODES == (SplitAudioChannels, AudioAdjustVolume)
     split = SplitAudioChannels.schema()
     volume = AudioAdjustVolume.schema()
-    assert all(node in COMFY_NODES for node in AUDIO_TRANSFORM_NODES)
+    assert all(node in NODES for node in AUDIO_TRANSFORM_NODES)
     assert (split.node_type, split.display_name, split.category) == (
-        "SplitAudioChannels",
+        "dinkster.audio.split_audio_channels",
         "Split Audio Channels",
         "audio",
     )
@@ -26,7 +26,7 @@ def test_audio_transform_interfaces_match_comfy_schemas() -> None:
         ("right", (AUDIO_TYPE,)),
     )
     assert (volume.node_type, volume.display_name, volume.category) == (
-        "AudioAdjustVolume",
+        "dinkster.audio.audio_adjust_volume",
         "Adjust Audio Volume",
         "audio",
     )

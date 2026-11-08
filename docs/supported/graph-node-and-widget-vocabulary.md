@@ -20,6 +20,9 @@
   order to target naming positions instead of preserving suffix IDs. The option
   composes with historical-template metadata; omitted options retain their wire
   shape. This is a declaration contract, not a claim of frontend migration support.
+- First-party pack schemas declare one ordinary ComfyUI-class conversion rule.
+  They do not retain migration rules for pre-split Dinkster documents or draft
+  pack identities. Existing Dinkster fixtures must use the new node IDs.
 - Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
   Expression publish same-type rules for historical family member identities.
   Rules preserve the math expression and output identities, and identify the
@@ -134,7 +137,9 @@
   produces an absent output. The two arms share one type template.
 - Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
   body escape paths, and accumulation controls fed from their own body,
-  including boundaries inside region bodies.
+  including boundaries inside region bodies. Boundaries use
+  `dinkster.utilities.start_loop` and `dinkster.utilities.end_loop`;
+  bare ComfyUI class names must be translated before validation.
 - Native loop boundaries expand simple counts, For ranges, and typed lists
   into run-local body occurrences. They carry values between iterations,
   collect final or accumulated results, and preserve nested occurrence identity.

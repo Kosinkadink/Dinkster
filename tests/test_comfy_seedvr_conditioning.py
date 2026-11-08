@@ -5,24 +5,27 @@ from dinkster_api.v1 import (
     LATENT_TYPE,
     MODEL_TYPE,
     InputSpec,
+    MappingSource,
     NodeSchema,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.seedvr_conditioning import SeedVR2Conditioning
+from dinkster_nodes_seedvr import NODES
+from dinkster_nodes_seedvr.seedvr_conditioning import SeedVR2Conditioning
 
 
 def test_seedvr_conditioning_schema() -> None:
     schema = SeedVR2Conditioning.schema()
     assert schema == NodeSchema(
-        node_type="SeedVR2Conditioning",
+        node_type="dinkster.seedvr.seed_vr2_conditioning",
         display_name="Apply SeedVR2 Conditioning",
         category="model/conditioning",
         description="Build SeedVR2 positive/negative conditioning from a VAE latent.",
-        search_terms=("seedvr2", "upscale", "conditioning"),
+        search_terms=("seedvr2", "upscale", "conditioning", "SeedVR2Conditioning"),
         inputs=(
             InputSpec("model", TypeExpr.concrete(MODEL_TYPE), doc="The SeedVR2 model."),
             InputSpec("vae_conditioning", TypeExpr.concrete(LATENT_TYPE), display_name="latent"),
@@ -41,6 +44,21 @@ def test_seedvr_conditioning_schema() -> None:
                 doc="The negative conditioning for sampling.",
             ),
         ),
+        replacements=(
+            ReplacementRule(
+                from_type="SeedVR2Conditioning",
+                cases=(
+                    ReplacementCase.build(
+                        "dinkster.seedvr.seed_vr2_conditioning",
+                        inputs={
+                            "model": MappingSource.copy("model"),
+                            "vae_conditioning": MappingSource.copy("vae_conditioning"),
+                        },
+                        outputs={"positive": "positive", "negative": "negative"},
+                    ),
+                ),
+            ),
+        ),
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    assert SeedVR2Conditioning in COMFY_NODES
+    assert NODES.count(SeedVR2Conditioning) == 1

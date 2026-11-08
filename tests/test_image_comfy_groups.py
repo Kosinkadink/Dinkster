@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, cast
 
-from dinkster_nodes_image import IMAGE_NODES
+from dinkster_nodes_image._draft_initialization import IMAGE_NODES
 from dinkster_schema import (
     comfy_group_registry_from_wire,
     comfy_group_registry_problems,
@@ -15,7 +15,7 @@ from dinkster_schema import (
 from tools.gen_image_comfy_groups import build_registry
 
 ROOT = Path(__file__).parent.parent
-GROUP_PATH = ROOT / "packages" / "dinkster-nodes-image" / "comfy-groups.json"
+GROUP_PATH = ROOT / "packages" / "dinkster-nodes-image" / "draft-comfy-groups.json"
 
 
 def _registry_wire() -> dict[str, Any]:
@@ -155,9 +155,10 @@ def test_background_group_selects_birefnet() -> None:
     assert case["outputs"] == {"mask": "mask"}
 
 
-def test_image_pack_bundles_group_registry() -> None:
+def test_image_pack_does_not_bundle_draft_group_registry() -> None:
     configuration = tomllib.loads(
         (ROOT / "packages" / "dinkster-nodes-image" / "pyproject.toml").read_text(encoding="utf-8")
     )
     force_include = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert force_include["comfy-groups.json"] == ("dinkster_nodes_image_pack/comfy-groups.json")
+    assert "comfy-groups.json" not in force_include
+    assert "draft-comfy-groups.json" not in force_include
