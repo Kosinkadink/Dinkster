@@ -157,7 +157,11 @@ def main() -> int:
             if not self.passed:
                 session.exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
 
-    return int(pytest.main(["-q", *config["tests"]], plugins=[RequireExecutedTests()]))
+    return int(
+        pytest.main(
+            ["-q", "--import-mode=importlib", *config["tests"]], plugins=[RequireExecutedTests()]
+        )
+    )
 
 
 if __name__ == "__main__":
