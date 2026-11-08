@@ -36,7 +36,7 @@ from dinkster_api.v1 import (
 from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def register_fixture_types(registry: TypeRegistry) -> None:
@@ -191,7 +191,6 @@ HOST_NODES = (Source, Consumer)
 @pytest.mark.parametrize("in_process", [True, False])
 def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
         (tmp_path / "video_guides_entry.py").write_text(
             "from test_video_guides_hosts_torch import HOST_NODES, register_fixture_types\n",
             encoding="ascii",
@@ -204,24 +203,37 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
             'types="video_guides_entry:register_fixture_types"\n',
             encoding="ascii",
         )
-        native = package / "dinkster-pack.toml"
+        providers = [
+            _installed_pack_spec(identity, module, in_process=in_process)
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-llm", "dinkster_nodes_llm"),
+                ("dinkster-models", "dinkster_nodes_models"),
+                ("dinkster-video", "dinkster_nodes_video"),
+                ("dinkster-ltx", "dinkster_nodes_ltx"),
+                ("dinkster-minimax", "dinkster_nodes_minimax"),
+            )
+        ]
+        specs = [*providers, PackSpec(fixture, in_process=in_process)]
+        manifests = tuple(spec.manifest for spec in specs)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
             }
         )
         try:
-            for manifest in (native, fixture):
+            for spec in specs:
                 await composer.add_pack(
                     PackSpec(
-                        manifest=manifest,
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
                         in_process=in_process,
                         worker_group=None if in_process else "video-guides-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             conds = {"positive": Link("source", "positive"), "negative": Link("source", "negative")}
@@ -229,7 +241,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                 nodes={
                     "source": GraphNode("video-guides-fixture.source"),
                     "generated": GraphNode(
-                        "LTXVAddGeneratedKeyframes",
+                        "dinkster.ltx.ltxv_add_generated_keyframes",
                         {
                             **conds,
                             "vae": Link("source", "vae"),
@@ -238,7 +250,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "separated": GraphNode(
-                        "LTXVSeparateGeneratedKeyframes",
+                        "dinkster.ltx.ltxv_separate_generated_keyframes",
                         {
                             "positive": Link("generated", "positive"),
                             "negative": Link("generated", "negative"),
@@ -246,7 +258,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "converted": GraphNode(
-                        "LTXVGeneratedKeyframesToGuides",
+                        "dinkster.ltx.ltxv_generated_keyframes_to_guides",
                         {
                             "positive": Link("separated", "positive"),
                             "negative": Link("separated", "negative"),
@@ -256,7 +268,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "attached": GraphNode(
-                        "LTXVAddLatentGuide",
+                        "dinkster.ltx.ltxv_add_latent_guide",
                         {
                             "positive": Link("converted", "positive"),
                             "negative": Link("converted", "negative"),
@@ -268,15 +280,15 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "stg": GraphNode(
-                        "LTXVSpatioTemporalGuidance",
+                        "dinkster.ltx.ltxv_spatio_temporal_guidance",
                         {"model": Link("source", "model"), "scale": 2.0, "blocks": "2,7"},
                     ),
                     "modality": GraphNode(
-                        "LTXVModalityGuidance",
+                        "dinkster.ltx.ltxv_modality_guidance",
                         {"model": Link("stg", "MODEL"), "modality_scale": 3.0},
                     ),
                     "audio": GraphNode(
-                        "LTXVReferenceAudio",
+                        "dinkster.ltx.ltxv_reference_audio",
                         {
                             **conds,
                             "model": Link("modality", "MODEL"),
@@ -286,7 +298,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "guider": GraphNode(
-                        "LTXVDualCFGGuider",
+                        "dinkster.ltx.ltxv_dual_cfg_guider",
                         {
                             "model": Link("audio", "MODEL"),
                             "positive": Link("audio", "positive"),
@@ -294,7 +306,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "reference": GraphNode(
-                        "MiniMaxH3ReferenceToVideo",
+                        "dinkster.minimax.mini_max_h3_reference_to_video",
                         {
                             "clip": Link("source", "clip"),
                             "prompt": "host references",
@@ -305,7 +317,7 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
                         },
                     ),
                     "control": GraphNode(
-                        "MiniMaxH3FunControlNetApply",
+                        "dinkster.minimax.mini_max_h3_fun_control_net_apply",
                         {
                             "model": Link("source", "model"),
                             "model_patch": Link("source", "model_patch"),

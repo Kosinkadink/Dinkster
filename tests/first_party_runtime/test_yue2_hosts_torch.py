@@ -41,7 +41,7 @@ from dinkster_api.v1 import (
 from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 class Clip:
@@ -116,8 +116,7 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
-        checkout = package.parents[1]
+        checkout = Path(__file__).resolve().parents[2]
         (tmp_path / "yue2_host_entry.py").write_text(
             "from test_yue2_hosts_torch import HOST_NODES, register_inference_types\n",
             encoding="ascii",
@@ -130,7 +129,16 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
             'types="yue2_host_entry:register_inference_types"\n',
             encoding="ascii",
         )
-        native = package / "dinkster-pack.toml"
+        providers = [
+            _installed_pack_spec(identity, module, in_process=in_process)
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-audio-models", "dinkster_nodes_audio_models"),
+            )
+        ]
+        specs = [*providers, PackSpec(fixture, in_process=in_process)]
+        manifests = tuple(spec.manifest for spec in specs)
         paths = (tmp_path, Path(__file__).parent, checkout / "src")
         composer = ServingComposer(
             worker_env={
@@ -142,19 +150,21 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
             }
         )
         try:
-            for manifest in (native, fixture):
+            for spec in specs:
                 await composer.add_pack(
                     PackSpec(
-                        manifest=manifest,
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
                         in_process=in_process,
                         worker_group=None if in_process else "yue2-host-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             nodes = {
                 "source": GraphNode("yue2-host-fixture.source"),
                 "abc": GraphNode(
-                    "YuE2GenerateABC",
+                    "dinkster.audio.models.yu_e2_generate_abc",
                     {
                         "clip": Link("source", "clip"),
                         "style": "piano",
@@ -169,7 +179,7 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
                 for cfg in ("default", "explicit"):
                     name = f"{abc}-{cfg}"
                     nodes[name] = GraphNode(
-                        "YuE2GenerateMusic",
+                        "dinkster.audio.models.yu_e2_generate_music",
                         {
                             "clip": Link("source", "clip"),
                             "style": "piano",
