@@ -6,6 +6,7 @@ import asyncio
 import copy
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -42,7 +43,7 @@ from dinkster_nodes_vision_mediapipe.mediapipe_detection import (
     MediaPipeFaceLandmarker,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
 
 def _packet() -> dict[str, Any]:
@@ -206,13 +207,18 @@ def test_face_drawing_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
     module = f"face_fixture_{int(in_process)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_mediapipe_torch import Source, Inspect\n"
-        "from dinkster_api.v1 import register_inference_types\n"
+        "from dinkster_nodes_vision_mediapipe import register_types as register_face\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-mediapipe', "
+        "('FACE_DETECTION_MODEL', 'FACE_LANDMARKS'), allow_bare=True):\n"
+        "        register_face(registry)\n"
         "NODES = (Source, Inspect)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="face-fixture"\npublisher="dinkster"\nnamespaces=["face-fixture"]\n'
+        '[pack.dependencies]\ndinkster-vision-mediapipe=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
@@ -228,11 +234,17 @@ def test_face_drawing_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
         )
         try:
             for manifest in (native, fixture):
+                spec = (
+                    default_pack_spec("dinkster-vision-mediapipe")
+                    if manifest == native
+                    else PackSpec(fixture, trust_reserved=True)
+                )
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest, worker_group="face", group_manifests=(native, fixture)
+                    replace(
+                        spec,
+                        in_process=in_process,
+                        worker_group=None if in_process else "face",
+                        group_manifests=() if in_process else (native, fixture),
                     )
                 )
             graph = graph_from_wire(
@@ -598,7 +610,11 @@ def test_face_loader_detection_ordinary_hosts_twice(
         "import sys\nfrom types import SimpleNamespace\n"
         "from test_mediapipe_torch import (LoaderLandmarker, DetectionSource, DetectionInspect, "
         "_loaded_geometry_probe)\n"
-        "from dinkster_api.v1 import register_inference_types\n"
+        "from dinkster_nodes_vision_mediapipe import register_types as register_face\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-mediapipe', "
+        "('FACE_DETECTION_MODEL', 'FACE_LANDMARKS'), allow_bare=True):\n"
+        "        register_face(registry)\n"
         f"sys.modules[{model_module!r}] = SimpleNamespace(FaceLandmarker=LoaderLandmarker)\n"
         f"sys.modules[{geometry_module!r}] = SimpleNamespace("
         "transformation_matrix_from_detection=_loaded_geometry_probe)\n"
@@ -609,6 +625,7 @@ def test_face_loader_detection_ordinary_hosts_twice(
     fixture.write_text(
         '[pack]\nname="face-detection-fixture"\npublisher="dinkster"\n'
         'namespaces=["face-detection-fixture"]\n'
+        '[pack.dependencies]\ndinkster-vision-mediapipe=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
@@ -625,13 +642,17 @@ def test_face_loader_detection_ordinary_hosts_twice(
         )
         try:
             for manifest in (native, fixture):
+                spec = (
+                    default_pack_spec("dinkster-vision-mediapipe")
+                    if manifest == native
+                    else PackSpec(fixture, trust_reserved=True)
+                )
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest,
-                        worker_group="detection",
-                        group_manifests=(native, fixture),
+                    replace(
+                        spec,
+                        in_process=in_process,
+                        worker_group=None if in_process else "detection",
+                        group_manifests=() if in_process else (native, fixture),
                     )
                 )
             graph = graph_from_wire(

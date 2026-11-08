@@ -6,6 +6,7 @@ import json
 import os
 import struct
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -32,7 +33,7 @@ from dinkster_nodes_vision_sam3d_body.sam3d_openpose_glb import build_glb_openpo
 from dinkster_nodes_vision_sam3d_body.sam3d_skeletal import build_glb_skeletal
 from scipy.spatial.transform import Rotation
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
 
 def _pose(*, branching: bool = False) -> dict[str, Any]:
@@ -614,23 +615,31 @@ def test_pose_file_ordinary_hosts_and_cache(
     module = f"export_fixture_{int(in_process)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_export_torch import ExportSource, ExportInspect\n"
-        "from dinkster_api.v1 import register_inference_types as inference_types, "
-        "register_file3d_types, resolver_from_env\n"
+        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
         "NODES = (ExportSource, ExportInspect)\n"
         "def register_types(registry):\n"
-        "    inference_types(registry)\n"
-        "    register_file3d_types(registry, resolver_from_env())\n",
+        "    with registry.registering_pack('dinkster-vision-sam3d-body', "
+        "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"
+        "        register_sam3d(registry)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="export-fixture"\npublisher="dinkster"\nnamespaces=["export-fixture"]\n'
+        '[pack.dependencies]\ndinkster-image=">=0.0.1,<1"\n'
+        'dinkster-vision-sam3=">=0.0.1,<1"\ndinkster-vision-sam3d-body=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_types"\n',
         encoding="ascii",
     )
 
     async def scenario() -> None:
-        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        specs = (
+            default_pack_spec("dinkster-image"),
+            default_pack_spec("dinkster-vision-sam3"),
+            default_pack_spec("dinkster-vision-sam3d-body"),
+            PackSpec(fixture, trust_reserved=True),
+        )
+        manifests = tuple(spec.manifest for spec in specs)
         composer = ServingComposer(
             pack_scratch_root=tmp_path / "scratch",
             worker_env={
@@ -640,12 +649,13 @@ def test_pose_file_ordinary_hosts_and_cache(
             },
         )
         try:
-            for manifest in (native, fixture):
+            for spec in specs:
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest, worker_group="export", group_manifests=(native, fixture)
+                    replace(
+                        spec,
+                        in_process=in_process,
+                        worker_group=None if in_process else "export",
+                        group_manifests=() if in_process else manifests,
                     )
                 )
             nodes = {"source": GraphNode("export-fixture.source")}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ from dinkster_nodes_vision_depth_anything_3.depth_anything_3 import (
 )
 from safetensors.torch import save_file
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
 
 def test_pack_registers_only_its_vision_packet_and_preserves_existing_authority() -> None:
@@ -327,7 +328,12 @@ def test_da3_ordinary_hosts_twice(
     module_name = f"da3_fixture_{mode}_{int(in_process)}"
     (tmp_path / f"{module_name}.py").write_text(
         "from test_da3_torch import Source, Inspect, _controlled_load\n"
-        "from dinkster_api.v1 import initialize_inference_process, register_inference_types\n"
+        "from dinkster_api.v1 import initialize_inference_process\n"
+        "from dinkster_nodes_vision_depth_anything_3 import register_types as register_da3\n"
+        "def register_inference_types(registry):\n"
+        "    with registry.registering_pack('dinkster-vision-depth-anything-3', "
+        "('DA3_MODEL', 'DA3_GEOMETRY'), allow_bare=True):\n"
+        "        register_da3(registry)\n"
         "initialize_inference_process()\n"
         "from dinkster_inference import sd\n"
         "sd.load_diffusion_model = _controlled_load\n"
@@ -337,6 +343,7 @@ def test_da3_ordinary_hosts_twice(
     fixture = tmp_path / "fixture.toml"
     fixture.write_text(
         '[pack]\nname="da3-fixture"\npublisher="dinkster"\nnamespaces=["da3-fixture"]\n'
+        '[pack.dependencies]\ndinkster-vision-depth-anything-3=">=0.0.1,<1"\n'
         f'[pack.entry]\nnodes="{module_name}:NODES"\n'
         f'types="{module_name}:register_inference_types"\n',
         encoding="ascii",
@@ -354,11 +361,17 @@ def test_da3_ordinary_hosts_twice(
         )
         try:
             for manifest in (native, fixture):
+                spec = (
+                    default_pack_spec("dinkster-vision-depth-anything-3")
+                    if manifest == native
+                    else PackSpec(fixture, trust_reserved=True)
+                )
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest, worker_group="da3", group_manifests=(native, fixture)
+                    replace(
+                        spec,
+                        in_process=in_process,
+                        worker_group=None if in_process else "da3",
+                        group_manifests=() if in_process else (native, fixture),
                     )
                 )
             graph = Graph(

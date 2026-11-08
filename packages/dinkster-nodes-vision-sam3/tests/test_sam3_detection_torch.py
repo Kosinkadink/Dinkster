@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,7 +34,7 @@ from dinkster_api.v1 import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_vision_sam3.sam3_detection import SAM3_Detect
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
 
 @pytest.fixture(autouse=True)
@@ -321,14 +322,19 @@ def test_native_manifest_detects_and_transports_results_twice(
         module = f"sam3_detect_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_sam3_detection_torch import DetectionSource, DetectionInspect\n"
-            "from dinkster_nodes_vision_sam3 import register_types as register_inference_types\n"
+            "from dinkster_nodes_vision_sam3 import register_types as register_sam3\n"
+            "def register_inference_types(registry):\n"
+            "    with registry.registering_pack('dinkster-vision-sam3', "
+            "('SAM3_TRACK_DATA',), allow_bare=True):\n"
+            "        register_sam3(registry)\n"
             "NODES = (DetectionSource, DetectionInspect)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "fixture.toml"
         fixture.write_text(
             '[pack]\nname="sam3-detect-fixture"\npublisher="dinkster"\n'
-            'namespaces=["sam3-detect-fixture"]\n[pack.entry]\n'
+            'namespaces=["sam3-detect-fixture"]\n'
+            '[pack.dependencies]\ndinkster-vision-sam3=">=0.0.1,<1"\n[pack.entry]\n'
             f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
             encoding="ascii",
         )
@@ -341,13 +347,17 @@ def test_native_manifest_detects_and_transports_results_twice(
         )
         try:
             for manifest in (native, fixture):
+                spec = (
+                    default_pack_spec("dinkster-vision-sam3")
+                    if manifest == native
+                    else PackSpec(fixture, trust_reserved=True)
+                )
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, in_process=True)
-                    if in_process
-                    else PackSpec(
-                        manifest=manifest,
-                        worker_group="sam3-detect-fixture",
-                        group_manifests=(native, fixture),
+                    replace(
+                        spec,
+                        in_process=in_process,
+                        worker_group=None if in_process else "sam3-detect-fixture",
+                        group_manifests=() if in_process else (native, fixture),
                     )
                 )
             graph = Graph(
