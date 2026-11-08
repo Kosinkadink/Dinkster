@@ -3166,17 +3166,10 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-def test_degraded_default_ordering_composes_media_io_before_image(
+def test_degraded_default_ordering_composes_latent_before_conditioning(
     tmp_path: Path,
 ) -> None:
-    """One pack with unresolvable contracts must not send the healthy defaults
-    back to load order: dinkster-nodes-image sorts before dinkster-nodes-media-io
-    alphabetically, so composing in load order validates the image pack's
-    media-io requirement before the media-io pack has announced.
-
-    Regression for Kosinkadink/comfy-vibe-station#242, where exactly this took
-    down every hosted pack depending on the media-io chain.
-    """
+    """A broken pack must not make healthy consumers compose before providers."""
     import dinkster.serve as serve
     from dinkster.compose import (
         CompositionError,
@@ -3198,16 +3191,15 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         encoding="utf-8",
     )
     specs: list[PackSpec] = [
-        default_pack_spec("dinkster-nodes-foundation"),
-        default_pack_spec("dinkster-nodes-image"),
-        default_pack_spec("dinkster-nodes-media-io"),
+        default_pack_spec("dinkster-conditioning"),
+        default_pack_spec("dinkster-latent"),
         PackSpec(manifest=broken / "dinkster-pack.toml"),
     ]
     # Load order is alphabetical, and it puts the consumer before its provider.
     from dinkster.compose import default_pack_ids
 
     load_order = list(default_pack_ids())
-    assert load_order.index("dinkster-nodes-image") < load_order.index("dinkster-nodes-media-io")
+    assert load_order.index("dinkster-conditioning") < load_order.index("dinkster-latent")
     composer = ServingComposer()
 
     async def scenario() -> None:
@@ -3226,15 +3218,18 @@ def test_degraded_default_ordering_composes_media_io_before_image(
                 deltas[pack] = set(delta.schemas)
         assert list(errors) == ["dinkster-ordering-probe"]
         assert "dinkster.ordering.probe" in errors["dinkster-ordering-probe"]
-        assert "dinkster-nodes-media-io" in deltas
-        assert "dinkster.load_video" in deltas["dinkster-nodes-media-io"]
-        assert "dinkster-nodes-image" in deltas, errors
-        assert "dinkster.image.resize" in deltas["dinkster-nodes-image"]
+        assert "dinkster-latent" in deltas
+        assert "dinkster.latent.empty_latent_image" in deltas["dinkster-latent"]
+        assert "dinkster-conditioning" in deltas, errors
+        assert "dinkster.conditioning.clip_text_encode" in deltas["dinkster-conditioning"]
 
-    try:
-        run_scenario(scenario())
-    finally:
-        run_scenario(composer.close())
+    async def compose_and_close() -> None:
+        try:
+            await scenario()
+        finally:
+            await composer.close()
+
+    run_scenario(compose_and_close())
 
 
 def test_degraded_default_ordering_retains_first_party_packs(tmp_path: Path) -> None:
