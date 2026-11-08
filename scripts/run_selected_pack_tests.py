@@ -21,26 +21,16 @@ from dinkster_workers import load_manifest
 from dinkster.compose import _FIRST_PARTY_PACK_DISTRIBUTIONS, _installed_pack_digest
 
 _SUITES = {
-    "dinkster-nodes-foundation": (
-        "tests/test_primitives.py",
-        "tests/test_numeric_stdlib.py",
-        "tests/test_string_stdlib.py",
-        "tests/test_routing_stdlib.py",
-        "tests/test_conversion_curve_stdlib.py",
-        "tests/test_lists.py",
-        "tests/test_regions.py",
-        "tests/test_foundation_guide.py",
-        "tests/test_combo_nodes.py",
-        "tests/test_string_comfy_aliases.py",
-        "tests/test_output_descriptors.py",
-        "tests/test_composed_schema.py",
-        "tests/test_editor_roles.py",
-    ),
+    **{
+        pack: (f"packages/{distribution}/tests/test_*.py",)
+        for pack, distribution in _FIRST_PARTY_PACK_DISTRIBUTIONS.items()
+    },
     "dinkster-utilities": (
         "packages/dinkster-nodes-utilities/tests/test_*.py",
         "tests/test_comfy_loops.py",
     ),
-    "dinkster-nodes-image": (
+    "dinkster-image": (
+        "packages/dinkster-nodes-image/tests/test_*.py",
         "tests/test_image_*.py",
         "tests/test_mask_operations.py",
         "tests/test_detection_nodes.py",
@@ -53,39 +43,34 @@ _SUITES = {
         "tests/test_storage_inputs.py",
         "tests/test_vision_line_edge_schema.py",
     ),
-    "dinkster-nodes-media-io": (
-        "tests/test_video_*.py",
+    "dinkster-audio": (
+        "packages/dinkster-nodes-audio/tests/test_*.py",
         "tests/test_audio_*.py",
         "tests/test_media_*.py",
-        "tests/test_text_io.py",
-        "tests/test_latent_codec.py",
+    ),
+    "dinkster-video": (
+        "packages/dinkster-nodes-video/tests/test_*.py",
+        "tests/test_video_*.py",
+        "tests/test_media_*.py",
+        "tests/test_capture_io.py",
+        "tests/test_workflow_library.py",
+    ),
+    "dinkster-3d": (
+        "packages/dinkster-nodes-3d/tests/test_*.py",
         "tests/test_model3d_*.py",
         "tests/test_splat_*.py",
         "tests/test_layer_documents.py",
-        "tests/test_capture_io.py",
-        "tests/test_workflow_library.py",
+    ),
+    "dinkster-latent": (
+        "packages/dinkster-nodes-latent/tests/test_*.py",
+        "tests/test_latent_codec.py",
+    ),
+    "dinkster-text": (
+        "tests/test_comfy_text_nodes.py",
+        "tests/test_save_text.py",
+        "tests/test_text_io.py",
         "tests/test_text_comfy_goldens.py",
     ),
-    "dinkster-nodes-comfy": ("packages/dinkster-nodes-comfy/tests/test_*.py",),
-    "dinkster-nodes-remote": ("packages/dinkster-nodes-remote/tests/test_*.py",),
-    "dinkster-text": ("tests/test_comfy_text_nodes.py", "tests/test_save_text.py"),
-    "dinkster-upscale": ("packages/dinkster-nodes-upscale/tests/test_*.py",),
-    **{
-        f"dinkster-vision-{name.replace('_', '-')}": (
-            f"packages/dinkster-nodes-vision/tests/test_{name}.py",
-        )
-        for name in (
-            "birefnet",
-            "depth_anything_v2",
-            "depth_anything_v3",
-            "detr",
-            "efficient_sam",
-            "hed",
-            "rtdetr",
-            "sam31",
-            "upscale",
-        )
-    },
 }
 
 
@@ -132,42 +117,29 @@ def run_selected_tests(
         modules: dict[str, str] = {}
         checkout_packs = []
         for pack in catalog.packs:
-            if pack.pack.startswith("dinkster-vision-"):
-                package = checkout / "packages/dinkster-nodes-vision"
-                destination = package / (pack.pack.replace("-", "_") + "_pack")
-            else:
-                distribution = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack.pack, pack.pack)
-                package = checkout / "packages" / distribution
-                destination = work / "packs" / pack.pack
+            distribution = _FIRST_PARTY_PACK_DISTRIBUTIONS[pack.pack]
+            package = checkout / "packages" / distribution
+            destination = work / "packs" / pack.pack
             archive = pack_archive_path(artifacts, pack.artifact_digest)
             unpack_artifact(archive, destination, pack.artifact_digest)
             manifest = load_manifest(destination / "dinkster-pack.toml")
             if manifest.name != pack.pack:
                 raise ValueError(f"selected test archive names {manifest.name}, not {pack.pack}")
-            if not pack.pack.startswith("dinkster-vision-"):
-                package.mkdir(parents=True, exist_ok=True)
-                for source in destination.iterdir():
-                    if source.name == "tests":
-                        raise ValueError(f"selected {pack.pack} cannot replace engine tests")
-                    target = package / source.name
-                    if source.is_dir():
-                        shutil.copytree(source, target)
-                    else:
-                        shutil.copy2(source, target)
-                destination = package
+            package.mkdir(parents=True, exist_ok=True)
+            for source in destination.iterdir():
+                if source.name == "tests":
+                    raise ValueError(f"selected {pack.pack} cannot replace engine tests")
+                target = package / source.name
+                if source.is_dir():
+                    shutil.copytree(source, target)
+                else:
+                    shutil.copy2(source, target)
+            destination = package
             # Keep manifest-relative assets and src imports on the same selected bytes.
             src = package / "src"
             src.mkdir(exist_ok=True)
             for module in destination.glob("dinkster_*"):
-                if module.name == "dinkster_nodes_vision":
-                    namespace = src / module.name
-                    namespace.mkdir(exist_ok=True)
-                    for provider in module.iterdir():
-                        if provider.is_dir():
-                            target = namespace / provider.name
-                            shutil.move(provider, target)
-                            provider.symlink_to(target, target_is_directory=True)
-                elif module.is_dir() and not (src / module.name).exists():
+                if module.is_dir() and not (src / module.name).exists():
                     target = src / module.name
                     shutil.move(module, target)
                     module.symlink_to(target, target_is_directory=True)

@@ -1307,7 +1307,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "    assert tomllib.loads((pack_root / 'pyproject.toml').read_text()) "
         "== {'project': {'name': 'selected-image'}}\n"
         "    from dinkster.compose import default_pack_spec\n"
-        "    info = default_pack_spec('dinkster-nodes-image').packs['dinkster-nodes-image']\n"
+        "    info = default_pack_spec('dinkster-image').packs['dinkster-image']\n"
         "    assert info.version == '1.2.3'\n"
         "    assert info.source == f'local:{pack_root}'\n"
         "    assert Path(dinkster_nodes_image.__file__).resolve()"
@@ -1408,7 +1408,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     source.mkdir()
     (source / "pyproject.toml").write_text('[project]\nname = "selected-image"\n')
     (source / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
+        '[pack]\nname = "dinkster-image"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
         'namespaces = ["image-fixture"]\n'
         '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
@@ -1430,15 +1430,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     else:
         from dinkster_store import pack_archive_path
 
-        selected = pack_archive_path(
-            artifacts, digest, label="dinkster-nodes-image/2026-11-03-1.2.3"
-        )
+        selected = pack_archive_path(artifacts, digest, label="dinkster-image/2026-11-03-1.2.3")
         selected.parent.mkdir(parents=True)
         archive.rename(selected)
     catalog = Lockfile.of(
         [
             LockedPack(
-                pack="dinkster-nodes-image",
+                pack="dinkster-image",
                 version="1.2.3",
                 artifact_digest=digest,
                 publisher="dinkster",
@@ -1475,9 +1473,9 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     from scripts.run_selected_pack_tests import run_selected_tests
 
     engine = tmp_path / "engine"
-    distribution = "dinkster-nodes-vision" if vision else "dinkster-nodes-text"
-    pack_id = "dinkster-vision-hed" if vision else "dinkster-text"
-    entry = "dinkster_nodes_vision.hed" if vision else "dinkster_nodes_text"
+    distribution = "dinkster-nodes-vision-sam3" if vision else "dinkster-nodes-text"
+    pack_id = "dinkster-vision-sam3" if vision else "dinkster-text"
+    entry = "dinkster_nodes_vision_sam3" if vision else "dinkster_nodes_text"
     tests = engine / "tests"
     tests.mkdir(parents=True)
     (engine / "pyproject.toml").write_text("")
@@ -1490,12 +1488,9 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     checkout_module.mkdir(parents=True)
     (checkout_module / "__init__.py").write_text("VALUE = 17\n")
     if vision:
-        (engine / "packages" / distribution / "pyproject.toml").write_text(
-            f'[project]\nname = "{distribution}"\n'
-        )
         tests = engine / "packages" / distribution / "tests"
         tests.mkdir()
-    (tests / ("test_hed.py" if vision else "test_comfy_text_nodes.py")).write_text(
+    (tests / ("test_sam3_torch.py" if vision else "test_comfy_text_nodes.py")).write_text(
         f"from pathlib import Path\nimport {entry} as pack\n"
         "def test_selected_archive():\n"
         "    assert pack.VALUE == 17\n"
@@ -1507,8 +1502,7 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
         + "    assert Path(pack.__file__).resolve().is_relative_to(root / 'src')\n"
         "    from dinkster.compose import default_pack_spec\n"
         f"    info = default_pack_spec('{pack_id}').packs['{pack_id}']\n"
-        + (f"    root = root / '{pack_id.replace('-', '_')}_pack'\n" if vision else "")
-        + "    assert info.source == f'local:{root}'\n"
+        "    assert info.source == f'local:{root}'\n"
     )
     subprocess.run(["git", "init", "-q", str(engine)], check=True)
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
@@ -1516,10 +1510,7 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     module = source / entry.replace(".", "/")
     module.mkdir(parents=True)
     (module / "__init__.py").write_text(f"VALUE = {selected_value}\nNODES = []\n")
-    if vision:
-        (source / "dinkster_nodes_vision/__init__.py").write_text("")
-    else:
-        (source / "pyproject.toml").write_text(f'[project]\nname = "{distribution}"\n')
+    (source / "pyproject.toml").write_text(f'[project]\nname = "{distribution}"\n')
     (source / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{pack_id}"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'

@@ -127,6 +127,9 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Missing defaults, rejected packs and security
   review requirements fail the check without publishing any pack.
+- Selected-archive behavioral tests use each first-party pack's independent
+  distribution, including vision packs. They verify selected source provenance
+  and refuse checkout fallbacks or replacement of engine-owned tests.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
