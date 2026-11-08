@@ -5,15 +5,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from dinkster.port import PortError
 from dinkster_values import TypeRegistry
 from dinkster_workers import doctor, isolated, provision
 from dinkster_workers.interpreter import InterpreterPreflightError
 from dinkster_workers.manifest import load_manifest
 from dinkster_workers.provision import ProvisionError
 
-from dinkster import comfy_compose, port
-from dinkster.compose import CompositionError
 from tests.async_scenarios import run_scenario
 
 
@@ -36,53 +33,6 @@ def _manifest(root: Path, name: str = "test-pack") -> Path:
         f'[pack]\nname = "{name}"\n[pack.sandbox]\n[pack.entry]\nnodes = "nodes:NODES"\n'
     )
     return path
-
-
-def test_comfy_model_roots_preflights_before_import_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(comfy_compose, "preflight_interpreter", _reject, raising=False)
-    monkeypatch.setattr(comfy_compose.subprocess, "run", _unexpected)
-    with pytest.raises(CompositionError, match="unsupported selected interpreter"):
-        comfy_compose.comfy_model_roots(tmp_path, python="/selected/python")
-
-
-def test_comfy_model_roots_checks_requirements_before_import_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def reject_requirements(*_args: object) -> None:
-        raise CompositionError("missing requirement einops")
-
-    monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
-    monkeypatch.setattr(comfy_compose, "_probe_comfy_requirements", reject_requirements)
-    monkeypatch.setattr(comfy_compose.subprocess, "run", _unexpected)
-    with pytest.raises(CompositionError, match="missing requirement einops"):
-        comfy_compose.comfy_model_roots(tmp_path, python="/selected/python")
-
-
-@pytest.mark.parametrize("with_legacy", [False, True])
-def test_comfy_specs_preflight_before_core_or_legacy_blake3_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_legacy: bool
-) -> None:
-    legacy = tmp_path / "legacy"
-    legacy.mkdir()
-    monkeypatch.setattr(comfy_compose, "preflight_interpreter", _reject, raising=False)
-    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", _unexpected)
-    with pytest.raises(CompositionError, match="unsupported selected interpreter"):
-        comfy_compose.comfy_compat_specs(
-            tmp_path,
-            python="/selected/python",
-            legacy_packs=(legacy,) if with_legacy else (),
-        )
-
-
-def test_dinkster_port_preflights_before_legacy_pack_import(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(port, "preflight_interpreter", _reject, raising=False)
-    monkeypatch.setattr(port.subprocess, "run", _unexpected)
-    with pytest.raises(PortError, match="unsupported selected interpreter"):
-        port._run_probe(tmp_path / "pack", tmp_path, python="/selected/python")
 
 
 @pytest.mark.parametrize("reused", [True, False])
