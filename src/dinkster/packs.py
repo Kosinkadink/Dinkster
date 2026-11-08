@@ -11,7 +11,6 @@ record, never from a schema's own claims.
 
 from __future__ import annotations
 
-import importlib.metadata
 import tomllib
 from collections.abc import Sequence
 from dataclasses import replace
@@ -34,6 +33,7 @@ from dinkster_workers import (
     PackPresentation,
     PackTemplate,
 )
+from dinkster_workers.pack_wheel import installed_pack_manifests
 
 __all__ = [
     "blueprint_assets",
@@ -61,17 +61,10 @@ def first_party_pack_metadata(root: Path) -> dict[str, tuple[str, str]]:
                 candidates.append((path, project["name"]))
     if not (root / "packages").is_dir():
         seen_paths: set[Path] = set()
-        for distribution in sorted(
-            importlib.metadata.distributions(), key=lambda item: item.metadata["Name"]
-        ):
-            for file in distribution.files or ():
-                if file.name == "dinkster-pack.toml" and file.parent.name.endswith("_pack"):
-                    path = Path(str(distribution.locate_file(file))).resolve()
-                    # Engine-carried packs can share a physical sidecar with
-                    # editable workspace distribution metadata.
-                    if path not in seen_paths:
-                        candidates.append((path, distribution.metadata["Name"]))
-                        seen_paths.add(path)
+        for distribution, path in installed_pack_manifests():
+            if path not in seen_paths:
+                candidates.append((path, distribution.metadata["Name"]))
+                seen_paths.add(path)
     result: dict[str, tuple[str, str]] = {}
     for path, distribution_name in candidates:
         pack = tomllib.loads(path.read_text(encoding="utf-8"))["pack"]

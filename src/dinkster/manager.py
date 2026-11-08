@@ -1313,10 +1313,10 @@ def main() -> None:
 
     archive = commands.add_parser(
         "archive",
-        help="build a deterministic registry-compatible pack archive",
+        help="build a deterministic registry-compatible pack wheel",
     )
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
-    archive.add_argument("--output", required=True, metavar="FILE.zip", help="archive to write")
+    archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
 
     sources = commands.add_parser(

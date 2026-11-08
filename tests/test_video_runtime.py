@@ -31,7 +31,12 @@ from dinkster_values import (
 )
 from dinkster_values.audio_codec import audio_from_source
 from dinkster_values.storage import image_input
-from dinkster_video_runtime import assemble_video, concatenate_video, disassemble_video, save_video_stream
+from dinkster_video_runtime import (
+    assemble_video,
+    concatenate_video,
+    disassemble_video,
+    save_video_stream,
+)
 
 from tests.async_scenarios import run_scenario
 

@@ -35,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -45,6 +45,7 @@ from dinkster_protocol.extension_contribution_kinds import (
 )
 from dinkster_schema import claim_covers, reserved_root
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from .accelerator import detect_accelerator
 from .interpreter import InterpreterPreflightError, module_command, preflight_interpreter
@@ -58,6 +59,13 @@ from .manifest import (
     validate_pack_blueprint,
     validate_pack_icon,
     validate_pack_template,
+)
+from .pack_wheel import (
+    PackArchiveError,
+    check_pack_project,
+    installed_pack_manifests,
+    pack_import_name,
+    pack_source_directory,
 )
 from .sandbox import ProbeJail, SandboxError, detect_probe_jail, probe_environment
 
@@ -329,12 +337,59 @@ def _check_requirement_strings(
     return findings
 
 
-def _check_requires(manifest: PackManifest) -> list[Finding]:
+def _known_pack_names(manifest: PackManifest, published_packs: Collection[str]) -> set[str]:
+    pack_names = {canonicalize_name(name) for name in published_packs}
+    pack_names.add(canonicalize_name(manifest.name))
+    pack_names.update(
+        canonicalize_name(distribution.metadata["Name"])
+        for distribution, _ in installed_pack_manifests()
+    )
+    for path in manifest.root.parent.glob("*/dinkster-pack.toml"):
+        pack = tomllib.loads(path.read_text(encoding="utf-8")).get("pack", {})
+        if isinstance(pack.get("name"), str):
+            pack_names.add(canonicalize_name(pack["name"]))
+    return pack_names
+
+
+def _check_requires(manifest: PackManifest, pack_names: Collection[str]) -> list[Finding]:
     findings = _check_requirement_strings(manifest, manifest.requires, "[pack] requires")
     for accelerator, extras in manifest.extra_requires:
         findings.extend(
             _check_requirement_strings(manifest, extras, f"[pack.extra-requires] {accelerator}")
         )
+    requirements = (*manifest.requires, *(raw for _, extras in manifest.extra_requires for raw in extras))
+    for raw in requirements:
+        try:
+            requirement = Requirement(raw)
+        except InvalidRequirement:
+            continue
+        if canonicalize_name(requirement.name) in pack_names:
+            findings.append(
+                Finding(
+                    "error",
+                    "wheel.requires-pack",
+                    f"requires entry {raw!r} names a pack, not a library",
+                    "move shared code into a library wheel without a pack manifest",
+                    str(manifest.path),
+                )
+            )
+    return findings
+
+
+def _check_pack_identity(manifest: PackManifest) -> list[Finding]:
+    findings: list[Finding] = []
+    for check in (check_pack_project, pack_source_directory):
+        try:
+            check(manifest)
+        except PackArchiveError as exc:
+            code, _, message = str(exc).partition(": ")
+            findings.append(
+                Finding(
+                    "error", code, message,
+                    "use the pack name for the distribution and its underscore spelling for the package",
+                    str(manifest.path),
+                )
+            )
     return findings
 
 
@@ -393,11 +448,19 @@ def _classify_import(
     module: str,
     names: str | None,
     own_modules: frozenset[str] = frozenset(),
-    dependency_modules: frozenset[str] = frozenset(),
+    pack_modules: frozenset[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """Return (code, fix) for a problematic dinkster import, else None."""
     parts = module.split(".")
     root = parts[0]
+    if root not in own_modules and (
+        root in pack_modules or root.startswith(_PACK_IMPLEMENTATION_PREFIXES)
+    ):
+        return (
+            "imports.pack-implementation",
+            f"use registered ids or move shared code ({root}) into a versioned library; "
+            "pack dependencies do not grant implementation imports",
+        )
     if not root.startswith("dinkster"):
         return None
     if any(part.startswith("_") for part in parts[1:]):
@@ -417,16 +480,6 @@ def _classify_import(
             "imports.host-machinery",
             f"packs must not import host machinery ({root}); everything a "
             f"pack needs is in dinkster_api.v1",
-        )
-    if (
-        root.startswith(_PACK_IMPLEMENTATION_PREFIXES)
-        and root not in own_modules
-        and root not in dependency_modules
-    ):
-        return (
-            "imports.pack-implementation",
-            f"declare the provider pack dependency before importing public helpers ({root}); "
-            "otherwise depend on registered ids or a versioned library",
         )
     if root in _INTERNAL_SURFACE:
         return (
@@ -770,7 +823,7 @@ def _check_templates(manifest: PackManifest) -> list[Finding]:
     return findings
 
 
-def _scan_sources(manifest: PackManifest) -> list[Finding]:
+def _scan_sources(manifest: PackManifest, pack_names: Collection[str]) -> list[Finding]:
     findings: list[Finding] = []
     paths = tuple(
         path
@@ -791,10 +844,9 @@ def _scan_sources(manifest: PackManifest) -> list[Finding]:
     own_module_names.update(path.stem for path in paths)
     own_module_names.update(path.parent.name for path in paths if path.name == "__init__.py")
     own_modules = frozenset(own_module_names)
-    dependency_modules = frozenset(
-        "dinkster_nodes_" + dependency.pack.removeprefix("dinkster-").replace("-", "_")
-        for dependency in manifest.dependencies
-        if dependency.pack.startswith("dinkster-")
+    pack_modules = frozenset(
+        pack_import_name(name)
+        for name in (*pack_names, *(dependency.pack for dependency in manifest.dependencies))
     )
     for path in paths:
         try:
@@ -820,7 +872,7 @@ def _scan_sources(manifest: PackManifest) -> list[Finding]:
                         (node.module, ",".join(alias.name for alias in node.names), node.lineno)
                     )
         for module, names, lineno in sorted(imports, key=lambda item: (item[2], item[0])):
-            problem = _classify_import(module, names, own_modules, dependency_modules)
+            problem = _classify_import(module, names, own_modules, pack_modules)
             if problem is None:
                 continue
             code, fix = problem
@@ -1153,7 +1205,12 @@ def _check_extension_consumers(manifest: PackManifest) -> list[Finding]:
     return findings
 
 
-def diagnose_static(pack_root: Path | str, manifest: PackManifest) -> StaticDoctorReport:
+def diagnose_static(
+    pack_root: Path | str,
+    manifest: PackManifest,
+    *,
+    published_packs: Collection[str] = (),
+) -> StaticDoctorReport:
     """Check an extracted pack tree without importing or executing pack code.
 
     ``pack_root`` is the extracted directory containing ``manifest``. The
@@ -1166,7 +1223,9 @@ def diagnose_static(pack_root: Path | str, manifest: PackManifest) -> StaticDoct
         raise ValueError("pack_root must contain the supplied manifest")
 
     findings: list[Finding] = []
-    findings.extend(_check_requires(manifest))
+    pack_names = _known_pack_names(manifest, published_packs)
+    findings.extend(_check_pack_identity(manifest))
+    findings.extend(_check_requires(manifest, pack_names))
     findings.extend(_check_environment(manifest))
     findings.extend(_check_sandbox_needs(manifest))
     findings.extend(_check_reserved_namespaces(manifest))
@@ -1175,7 +1234,7 @@ def diagnose_static(pack_root: Path | str, manifest: PackManifest) -> StaticDoct
     findings.extend(_check_assets(manifest))
     findings.extend(_check_templates(manifest))
     findings.extend(_check_extension_consumers(manifest))
-    findings.extend(_scan_sources(manifest))
+    findings.extend(_scan_sources(manifest, pack_names))
     return StaticDoctorReport(
         report_version=DOCTOR_REPORT_VERSION,
         findings=tuple(findings),
