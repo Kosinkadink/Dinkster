@@ -10,7 +10,7 @@ from typing import cast
 import cv2
 import numpy as np
 import pytest
-from dinkster_nodes_image import IMAGE_NODES
+from dinkster_nodes_image import NODES
 from dinkster_nodes_image.preprocess import (
     PREPROCESSOR_NODES,
     BinaryPreprocessor,
@@ -37,7 +37,7 @@ GOLDEN_CASES = cast("dict[str, object]", GOLDEN["cases"])
 HINT_GOLDEN_PATH = Path(__file__).parent / "goldens" / "hint_resize_controlnet_aux_59b1fc4.json"
 HINT_GOLDEN = cast("dict[str, object]", json.loads(HINT_GOLDEN_PATH.read_text(encoding="utf-8")))
 ALIAS_PATH = (
-    Path(__file__).parent.parent / "packages" / "dinkster-nodes-image" / "comfy-aliases.json"
+    Path(__file__).parent.parent / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
 )
 
 
@@ -182,7 +182,7 @@ def test_preprocessor_goldens_pin_the_source_revision() -> None:
     }
 
 
-def test_preprocessor_nodes_are_registered_with_unique_native_ids() -> None:
+def test_preprocessor_support_nodes_remain_outside_the_published_catalog() -> None:
     expected = {
         "dinkster.preprocess.binary",
         "dinkster.preprocess.color_hint",
@@ -204,7 +204,7 @@ def test_preprocessor_nodes_are_registered_with_unique_native_ids() -> None:
         "dinkster.preprocess.tile_hint",
     }
     assert {node.schema().node_type for node in PREPROCESSOR_NODES} == expected
-    assert all(node in IMAGE_NODES for node in PREPROCESSOR_NODES)
+    assert expected.isdisjoint(node.schema().node_type for node in NODES)
 
 
 def test_controlnet_aux_aliases_preserve_preprocessor_parameters() -> None:
