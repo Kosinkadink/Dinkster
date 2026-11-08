@@ -39,8 +39,8 @@
     "dinkster-wan"
   ],
   "extraOwners": {
-    "ImageCompare": "dinkster-nodes-image",
-    "GLSLShader": "dinkster-nodes-image"
+    "ImageCompare": "dinkster-image",
+    "GLSLShader": "dinkster-image"
   },
   "exclusions": [
     {

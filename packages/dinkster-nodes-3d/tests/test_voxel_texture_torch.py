@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d.voxel_texture import BakeTextureFromVoxel
 from dinkster_api.v1 import MESH_TYPE, VOXEL_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.voxel_texture import BakeTextureFromVoxel
 from geometry_pack_fixtures import geometry_pack_specs
 from test_mesh_bake_torch import plane
 
@@ -95,7 +95,7 @@ def test_voxel_bake_large_sparse_keys_and_many_distant_texels() -> None:
 def test_voxel_bake_oom_fallback_does_not_hide_other_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_nodes_3d import voxel_texture
+    from dinkster_3d import voxel_texture
 
     mesh, voxel = fixture()
     voxel["data"] = voxel["data"][:1]
@@ -144,7 +144,7 @@ def test_voxel_bake_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
     module = f"voxel_bake_source_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_voxel_texture_torch import VoxelSource\n"
-        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "from dinkster_3d import register_types as register_inference_types\n"
         "NODES=(VoxelSource,)\n",
         encoding="ascii",
     )

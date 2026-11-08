@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_conditioning.clip_model_specific import CLIPTextEncodeControlnet
+from dinkster_conditioning.clip_model_specific import CLIPTextEncodeControlnet
 
 
 class TensorEncoder:

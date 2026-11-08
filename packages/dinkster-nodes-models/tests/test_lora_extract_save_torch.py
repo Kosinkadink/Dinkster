@@ -12,7 +12,7 @@ from typing import Any
 
 os.environ["DINKSTER_ACCELERATOR"] = "cpu"
 
-import dinkster_nodes_models.lora_extract_save as lora
+import dinkster_models.lora_extract_save as lora
 import pytest
 import torch
 from dinkster_api.v1 import (

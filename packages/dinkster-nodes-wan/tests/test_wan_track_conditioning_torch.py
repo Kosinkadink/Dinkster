@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy
 import torch
-from dinkster_nodes_wan.wan_track_conditioning import (
+from dinkster_wan.wan_track_conditioning import (
     WanTrackToVideo,
     pad_pts,
     parse_json_tracks,

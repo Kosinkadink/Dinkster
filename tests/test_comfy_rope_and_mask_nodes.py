@@ -1,8 +1,8 @@
 """Public interfaces for rotary geometry and differential denoise masks."""
 
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.rope_and_mask import DifferentialDiffusion, ScaleROPE
+from dinkster_models import NODES
+from dinkster_models.rope_and_mask import DifferentialDiffusion, ScaleROPE
 
 
 def test_rope_and_mask_schemas_match_core_interfaces() -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from dinkster_nodes_wan.wan_move_tracks import (
+from dinkster_wan.wan_move_tracks import (
     GenerateTracks,
     WanMoveConcatTrack,
     WanMoveTracksFromCoords,

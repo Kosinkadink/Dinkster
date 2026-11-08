@@ -9,8 +9,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_misc_models import NODES
-from dinkster_nodes_misc_models.ar_video import SamplerARVideo
+from dinkster_misc_models import NODES
+from dinkster_misc_models.ar_video import SamplerARVideo
 
 
 def test_ar_video_sampler_schema_and_cold_discovery() -> None:

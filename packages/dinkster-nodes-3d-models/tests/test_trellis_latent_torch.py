@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from dinkster_nodes_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
+from dinkster_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
 
 
 def test_empty_trellis_latent_layout() -> None:

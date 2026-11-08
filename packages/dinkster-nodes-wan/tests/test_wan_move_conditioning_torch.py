@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from dinkster_nodes_wan.wan_move_conditioning import WanMoveTrackToVideo
+from dinkster_wan.wan_move_conditioning import WanMoveTrackToVideo
 
 
 class VAE:

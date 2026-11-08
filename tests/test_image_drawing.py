@@ -4,8 +4,8 @@ import hashlib
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.drawing import DRAWING_NODES, DrawMask, DrawRegion, DrawText, MakeImage
-from dinkster_nodes_image.types import Region
+from dinkster_image.drawing import DRAWING_NODES, DrawMask, DrawRegion, DrawText, MakeImage
+from dinkster_image.types import Region
 
 
 def _run(node: type, **kwargs: object) -> dict[str, object]:

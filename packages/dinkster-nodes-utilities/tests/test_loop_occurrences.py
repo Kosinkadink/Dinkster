@@ -10,11 +10,6 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, TypedLiteral
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
-from dinkster_nodes_utilities import NODES as UTILITY_NODES
-from dinkster_nodes_utilities.loop_lists import ListElement, MakeList
-from dinkster_nodes_utilities.math import ComfyMathExpression
-from dinkster_nodes_utilities.primitive import PrimitiveBoolean, PrimitiveInt
-from dinkster_nodes_utilities.switch import ComfySwitchNode
 from dinkster_schema import (
     ABSENT,
     InputSpec,
@@ -26,12 +21,17 @@ from dinkster_schema import (
     build_schemas,
     schema_to_wire,
 )
+from dinkster_utilities import NODES as UTILITY_NODES
+from dinkster_utilities.loop_lists import ListElement, MakeList
+from dinkster_utilities.math import ComfyMathExpression
+from dinkster_utilities.primitive import PrimitiveBoolean, PrimitiveInt
+from dinkster_utilities.switch import ComfySwitchNode
 from dinkster_values import TypeRegistry, ValueMeta, is_absent, list_children, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
 from tests.async_scenarios import run_scenario
 
-LOOP_NODES = tuple(n for n in UTILITY_NODES if n.__module__ == "dinkster_nodes_utilities.loops")
+LOOP_NODES = tuple(n for n in UTILITY_NODES if n.__module__ == "dinkster_utilities.loops")
 
 NODES = (
     *LOOP_NODES,

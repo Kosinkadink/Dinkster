@@ -1,14 +1,14 @@
 """Torch-free native audio latent interfaces."""
 
 from dinkster_api.v1 import CORE_FLOAT, CORE_INT, LATENT_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio_models import NODES as AUDIO_MODEL_NODES
-from dinkster_nodes_audio_models.audio_latent import (
+from dinkster_audio_models import NODES as AUDIO_MODEL_NODES
+from dinkster_audio_models.audio_latent import (
     EmptyAceStep15LatentAudio,
     EmptyAceStepLatentAudio,
     EmptyYuE2LatentAudio,
 )
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.audio_latent import EmptyLatentAudio, GetAudioLatentSize
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.audio_latent import EmptyLatentAudio, GetAudioLatentSize
 
 
 def test_audio_latent_interfaces_roundtrip() -> None:

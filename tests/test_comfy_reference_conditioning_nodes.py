@@ -5,9 +5,9 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-import dinkster_nodes_conditioning
-import dinkster_nodes_hunyuan
-import dinkster_nodes_misc_models
+import dinkster_conditioning
+import dinkster_hunyuan
+import dinkster_misc_models
 import pytest
 from dinkster_api.v1 import (
     CLIP_TYPE,
@@ -25,20 +25,20 @@ from dinkster_api.v1 import (
 )
 from dinkster_engine import ParentGraphBudget, admit_parent_graph
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
-from dinkster_nodes_conditioning.reference_conditioning import (
+from dinkster_conditioning.reference_conditioning import (
     ReferenceLatent,
     ReferenceMultiLatent,
 )
-from dinkster_nodes_hidream.hidream_patches import HiDreamO1ReferenceImages
-from dinkster_nodes_misc_models.bernini_conditioning import BerniniConditioning
-from dinkster_nodes_misc_models.boogu_encoders import TextEncodeBooguEdit
-from dinkster_nodes_misc_models.fibo2_encoders import TextEncodeFibo2
-from dinkster_nodes_misc_models.joyimage_encoders import TextEncodeJoyImageEdit
-from dinkster_nodes_misc_models.mage_image_encoders import TextEncodeMageFlowEdit
-from dinkster_nodes_misc_models.ming_image_encoders import TextEncodeMingImageEdit
-from dinkster_nodes_misc_models.moss_image import TextEncodeMOSSImageEdit
-from dinkster_nodes_misc_models.reference_conditioning import InstructPixToPixConditioning
-from dinkster_nodes_qwen.qwen_image_encoders import TextEncodeQwenImage21
+from dinkster_hidream.hidream_patches import HiDreamO1ReferenceImages
+from dinkster_misc_models.bernini_conditioning import BerniniConditioning
+from dinkster_misc_models.boogu_encoders import TextEncodeBooguEdit
+from dinkster_misc_models.fibo2_encoders import TextEncodeFibo2
+from dinkster_misc_models.joyimage_encoders import TextEncodeJoyImageEdit
+from dinkster_misc_models.mage_image_encoders import TextEncodeMageFlowEdit
+from dinkster_misc_models.ming_image_encoders import TextEncodeMingImageEdit
+from dinkster_misc_models.moss_image import TextEncodeMOSSImageEdit
+from dinkster_misc_models.reference_conditioning import InstructPixToPixConditioning
+from dinkster_qwen.qwen_image_encoders import TextEncodeQwenImage21
 from dinkster_schema import ElaborationError, elaborate
 
 
@@ -46,19 +46,19 @@ def test_reference_conditioning_interfaces_and_manifest() -> None:
     for node, provider, package, node_id in (
         (
             InstructPixToPixConditioning,
-            dinkster_nodes_misc_models,
+            dinkster_misc_models,
             "misc-models",
             "dinkster.misc.models.instruct_pix_to_pix_conditioning",
         ),
         (
             ReferenceLatent,
-            dinkster_nodes_conditioning,
+            dinkster_conditioning,
             "conditioning",
             "dinkster.conditioning.reference_latent",
         ),
         (
             ReferenceMultiLatent,
-            dinkster_nodes_conditioning,
+            dinkster_conditioning,
             "conditioning",
             "dinkster.conditioning.reference_multi_latent",
         ),
@@ -92,13 +92,13 @@ def test_reference_conditioning_interfaces_and_manifest() -> None:
 
 def test_hunyuan_vision_interfaces_are_native() -> None:
     from dinkster_api.v1 import CLIP_VISION_OUTPUT_TYPE
-    from dinkster_nodes_hunyuan.hunyuan3d import (
+    from dinkster_hunyuan.hunyuan3d import (
         Hunyuan3Dv2Conditioning,
         Hunyuan3Dv2ConditioningMultiView,
     )
 
     for node in (Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView):
-        assert node in dinkster_nodes_hunyuan.NODES
+        assert node in dinkster_hunyuan.NODES
         schema = node.schema()
         assert schema.category == "model/conditioning/hunyuan 3d"
         assert [(port.id, port.type) for port in schema.outputs] == [

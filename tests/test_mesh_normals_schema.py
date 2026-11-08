@@ -13,8 +13,8 @@ def test_mesh_normals_cold_schema() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.mesh_normals import MeshSmoothNormals
+from dinkster_3d import NODES
+from dinkster_3d.mesh_normals import MeshSmoothNormals
 from dinkster_workers import load_manifest
 assert NODES.count(MeshSmoothNormals) == 1
 schema = MeshSmoothNormals.schema()

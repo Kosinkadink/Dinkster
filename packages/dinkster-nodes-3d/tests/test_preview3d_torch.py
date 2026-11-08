@@ -10,6 +10,8 @@ from typing import cast
 
 import numpy as np
 import pytest
+from dinkster_3d import register_types as register_inference_types
+from dinkster_3d.preview3d import Preview3D
 from dinkster_api.v1 import (
     FILE_3D_TYPE,
     IMAGE_TYPE,
@@ -29,8 +31,6 @@ from dinkster_assets import (
     load_file3d,
 )
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_3d import register_types as register_inference_types
-from dinkster_nodes_3d.preview3d import Preview3D
 from dinkster_server.library import ServerLibrary
 from dinkster_server.preflight import bind_model_names
 from dinkster_values import ABSENT_REASON_META_KEY, TypeRegistry, register_core_types
@@ -121,7 +121,7 @@ def test_deprecated_preview_preserves_granted_file_and_optional_metadata(
     module = f"preview_metadata_{in_process}_{canonical}_{metadata}"
     (tmp_path / f"{module}.py").write_text(
         "from test_preview3d_torch import PreviewMetadata\n"
-        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "from dinkster_3d import register_types as register_inference_types\n"
         "NODES=(PreviewMetadata,)\n",
         encoding="ascii",
     )

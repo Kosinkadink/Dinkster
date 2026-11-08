@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_vision_sam3d_body.sam3d_render import SAM3DBody_Render
+from dinkster_vision_sam3d_body.sam3d_render import SAM3DBody_Render
 
 from tools.compare_nodes import compare
 
@@ -33,8 +33,8 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import IMAGE_TYPE, MHR_POSE_DATA_TYPE, KIMODO_POSE_DATA_TYPE, TypeExpr
-from dinkster_nodes_vision_sam3d_body import NODES
-from dinkster_nodes_vision_sam3d_body.sam3d_render import SAM3DBody_Render
+from dinkster_vision_sam3d_body import NODES
+from dinkster_vision_sam3d_body.sam3d_render import SAM3DBody_Render
 from dinkster_workers import load_manifest
 schema = SAM3DBody_Render.define_schema()
 assert SAM3DBody_Render in NODES
@@ -51,8 +51,8 @@ assert [option.key for option in schema.combos[0].options] == [
 shader = schema.combos[0].options[0].inputs[0]
 assert [option.key for option in shader.options] == [
     'default', 'normals', 'rainbow', 'rainbow_face_normal', 'rainbow_face_semantic', 'depth']
-assert 'dinkster_nodes_vision_sam3d_body.sam3d_rasterizer' not in sys.modules
-assert 'dinkster_nodes_vision_sam3d_body.sam3d_openpose' not in sys.modules
+assert 'dinkster_vision_sam3d_body.sam3d_rasterizer' not in sys.modules
+assert 'dinkster_vision_sam3d_body.sam3d_openpose' not in sys.modules
 """,
         ],
         check=True,

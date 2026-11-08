@@ -1,8 +1,8 @@
 """Torch-free public ACE Step text-conditioning schemas."""
 
 from dinkster_api.v1 import ComboWidget, NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio_models import NODES
-from dinkster_nodes_audio_models.ace_text_conditioning import (
+from dinkster_audio_models import NODES
+from dinkster_audio_models.ace_text_conditioning import (
     TextEncodeAceStepAudio,
     TextEncodeAceStepAudio15,
 )

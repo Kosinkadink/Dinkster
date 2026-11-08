@@ -1,22 +1,27 @@
 [project]
-name = "dinkster-nodes-qwen"
-version = "0.0.2"
+name = "dinkster-qwen"
+version = "0.0.1"
 description = "Dinkster qwen nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-inference==0.1.1", "torch", "dinkster-nodes-conditioning"]
+dependencies = [
+    "dinkster-api",
+    "dinkster-inference==0.1.1",
+    "torch",
+    "dinkster-conditioning>=0.0.1,<1",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster_nodes_qwen"]
+packages = ["src/dinkster_qwen"]
+
 
 [tool.hatch.build.targets.wheel.force-include]
-"dinkster-pack.toml" = "dinkster_qwen_pack/dinkster-pack.toml"
-"src/dinkster_nodes_qwen" = "dinkster_qwen_pack/dinkster_nodes_qwen"
-"locales" = "dinkster_qwen_pack/locales"
+"dinkster-pack.toml" = "dinkster_qwen/dinkster-pack.toml"
+"locales" = "dinkster_qwen/locales"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-nodes-conditioning = { workspace = true }
+dinkster-conditioning = { workspace = true }

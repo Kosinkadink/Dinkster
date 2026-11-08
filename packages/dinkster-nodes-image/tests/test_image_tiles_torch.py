@@ -23,10 +23,10 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.image_tiles import ImageMergeTileList, SplitImageToTileList
-from dinkster_nodes_image.ported.mask_preview import MaskPreview
-from dinkster_nodes_utilities.utilities import PreviewAny
+from dinkster_image.ported.image_tiles import ImageMergeTileList, SplitImageToTileList
+from dinkster_image.ported.mask_preview import MaskPreview
 from dinkster_schema import use_reporter
+from dinkster_utilities.utilities import PreviewAny
 
 from dinkster.compose import PackSpec, ServingComposer, compose_serving
 
@@ -171,7 +171,7 @@ def test_registered_image_and_list_tools_execute_twice_in_ordinary_hosts(
         manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "image_tools_consumer_entry.py").write_text(
             "from test_image_tiles_torch import ToolSource, ToolObserver\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (ToolSource, ToolObserver)\n",
             encoding="ascii",
         )

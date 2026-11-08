@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 from dinkster_api.v1 import Node, schema_to_wire
-from dinkster_nodes_image.bounding_boxes import CreateBoundingBoxes
-from dinkster_nodes_image.layers_from_bounding_boxes import LayersFromBoundingBoxes
+from dinkster_image.bounding_boxes import CreateBoundingBoxes
+from dinkster_image.layers_from_bounding_boxes import LayersFromBoundingBoxes
 
 from tools.compare_nodes import compare
 

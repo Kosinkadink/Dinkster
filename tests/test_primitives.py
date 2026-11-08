@@ -12,8 +12,8 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, Invocation
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_utilities import NODES, register_types
-from dinkster_nodes_utilities.utilities import PreviewAny
+from dinkster_utilities import NODES, register_types
+from dinkster_utilities.utilities import PreviewAny
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import EncodedPayload, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker

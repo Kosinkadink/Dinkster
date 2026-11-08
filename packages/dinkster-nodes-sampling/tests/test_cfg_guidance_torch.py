@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_sampling.cfg_guidance import (
+from dinkster_sampling.cfg_guidance import (
     APG,
     TCFG,
     CFGNorm,

@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
-from dinkster_nodes_conditioning.conditioning_files import ConditioningLoader, SaveConditioning
+from dinkster_conditioning.conditioning_files import ConditioningLoader, SaveConditioning
 from safetensors import safe_open
 from safetensors.torch import save_file
 

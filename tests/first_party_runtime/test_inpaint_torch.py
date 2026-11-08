@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_conditioning.inpaint import InpaintModelConditioning
-from dinkster_nodes_latent.inpaint import VAEEncodeForInpaint
+from dinkster_conditioning.inpaint import InpaintModelConditioning
+from dinkster_latent.inpaint import VAEEncodeForInpaint
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -181,8 +181,8 @@ def test_manifest_executes_inpainting_nodes_with_decoded_inputs(
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

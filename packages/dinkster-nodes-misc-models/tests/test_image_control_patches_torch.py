@@ -7,7 +7,7 @@ import torch
 from dinkster_api.v1 import (
     initialize_inference_process,
 )
-from dinkster_nodes_misc_models.image_control_patches import ZImageFunControlnet
+from dinkster_misc_models.image_control_patches import ZImageFunControlnet
 
 
 class _Sampling:

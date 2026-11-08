@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_wan.wan_control_conditioning import (
+from dinkster_wan.wan_control_conditioning import (
     Wan22FunControlToVideo,
     WanFunControlToVideo,
     WanPhantomSubjectToVideo,

@@ -211,7 +211,7 @@ sys.modules["torch"] = None
 sys.modules["dinkster_inference"] = None
 from dinkster_api.v1 import TypeRegistry, register_inference_types
 from dinkster_native.native import register_native_types
-from dinkster_nodes_sampling import NODES
+from dinkster_sampling import NODES
 registry = TypeRegistry()
 register_inference_types(registry)
 register_native_types(registry)

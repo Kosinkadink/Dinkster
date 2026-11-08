@@ -1,8 +1,8 @@
 """Torch-free public interfaces for ComfyUI compositing nodes."""
 
 from dinkster_api.v1 import ComboOption, ComboWidget, schema_to_wire
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.ported.compositing import (
+from dinkster_image import NODES
+from dinkster_image.ported.compositing import (
     JoinImageWithAlpha,
     PorterDuffImageComposite,
     PorterDuffMode,

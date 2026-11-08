@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import dinkster_nodes_models.model_patch_loader as loader
+import dinkster_models.model_patch_loader as loader
 import pytest
 import torch
 from dinkster_api.v1 import (
@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault
 from dinkster_assets.identity import digest_file
-from dinkster_nodes_models.model_patch_loader import (
+from dinkster_models.model_patch_loader import (
     ModelPatchLoader,
     _multi_talk_patch,
     _qwen_blockwise_controlnet,

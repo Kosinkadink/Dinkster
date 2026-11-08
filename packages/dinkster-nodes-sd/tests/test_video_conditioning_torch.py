@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from dinkster_nodes_sd.video_conditioning import SVD_img2vid_Conditioning
+from dinkster_sd.video_conditioning import SVD_img2vid_Conditioning
 
 
 class ClipVision:

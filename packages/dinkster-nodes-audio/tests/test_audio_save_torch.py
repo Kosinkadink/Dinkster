@@ -10,19 +10,19 @@ import wave
 from pathlib import Path
 
 import av
-import dinkster_nodes_audio.audio_io as audio_io
+import dinkster_audio.audio_io as audio_io
 import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import MountWidget, decode_audio, materialize_audio
 from dinkster_assets import MountDef, MountTable
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio.audio_save import (
+from dinkster_audio.audio_save import (
     SaveAudio,
     SaveAudioAdvanced,
     SaveAudioMP3,
     SaveAudioOpus,
 )
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import EncodedPayload
 
 from dinkster.compose import PackSpec, ServingComposer

@@ -279,7 +279,7 @@ def test_gallery_explicit_pack_surface(
             }
             assert set(plain.packs) == {
                 "dinkster-nodes-foundation",
-                "dinkster-nodes-image",
+                "dinkster-image",
                 "dinkster-nodes-media-io",
                 "dinkster-nodes-remote",
                 "dinkster-vision-birefnet",

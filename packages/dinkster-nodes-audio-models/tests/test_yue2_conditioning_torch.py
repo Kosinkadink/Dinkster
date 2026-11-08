@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_audio_models.yue2_conditioning import YuE2GenerateMusic
+from dinkster_audio_models.yue2_conditioning import YuE2GenerateMusic
 
 
 class YuE2Clip:
@@ -37,7 +37,7 @@ class YuE2Clip:
 @pytest.fixture
 def yue2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "dinkster_nodes_audio_models.yue2_conditioning.initialize_inference_process", lambda: None
+        "dinkster_audio_models.yue2_conditioning.initialize_inference_process", lambda: None
     )
     monkeypatch.setitem(
         sys.modules,

@@ -4,8 +4,8 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ASSET_TYPE, CORE_FLOAT, MODEL_TYPE, AssetWidget, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.hypernetwork import HypernetworkLoader
+from dinkster_models import NODES
+from dinkster_models.hypernetwork import HypernetworkLoader
 
 
 def test_hypernetwork_schema_and_cold_registration() -> None:

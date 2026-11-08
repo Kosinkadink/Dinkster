@@ -3,8 +3,8 @@
 from typing import Any, cast
 
 from dinkster_api.v1 import IMAGE_TYPE, MASK_TYPE, schema_to_wire
-from dinkster_nodes_image.ported.image_tiles import ImageMergeTileList, SplitImageToTileList
-from dinkster_nodes_image.ported.mask_preview import MaskPreview
+from dinkster_image.ported.image_tiles import ImageMergeTileList, SplitImageToTileList
+from dinkster_image.ported.mask_preview import MaskPreview
 
 
 def test_tile_node_schemas_preserve_types_defaults_and_aliases() -> None:

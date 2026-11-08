@@ -17,8 +17,8 @@ from dinkster_values import STYLE_MODEL_TYPE as values_type
 from dinkster_values.builtin_types import STYLE_MODEL_TYPE as builtin_type
 from dinkster_memory.resident import default_pool
 from dinkster_native.native import register_native_types
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.style_model import StyleModelApply
+from dinkster_conditioning import NODES
+from dinkster_conditioning.style_model import StyleModelApply
 assert StyleModelApply.schema().display_name == 'Apply Style Model'
 assert STYLE_MODEL_TYPE == values_type == builtin_type == 'STYLE_MODEL'
 registry = TypeRegistry()
@@ -57,7 +57,7 @@ from dinkster_api.v1 import (
     MOGE_MODEL_TYPE, MOGE_GEOMETRY_TYPE, TypeRegistry, register_inference_types)
 from dinkster_memory.resident import default_pool
 from dinkster_native.native import register_native_types
-from dinkster_nodes_vision_moge import register_types
+from dinkster_vision_moge import register_types
 from dinkster_values import ResidentLookupError
 registry = TypeRegistry()
 registrations = (register_native_types, register_types)
@@ -81,7 +81,7 @@ assert model.decode(encoded) is source
 assert model.encode(source) == encoded
 foreign = '''
 from dinkster_api.v1 import MOGE_MODEL_TYPE, MOGE_GEOMETRY_TYPE, TypeRegistry
-from dinkster_nodes_vision_moge import register_types
+from dinkster_vision_moge import register_types
 from dinkster_values import ResidentLookupError
 registry = TypeRegistry()
 with registry.registering_pack('dinkster-vision-moge', (), allow_bare=True):
@@ -117,7 +117,7 @@ assert not any(name.startswith('dinkster_inference.') for name in sys.modules)
 def test_moge_registration_preserves_existing_authority(type_id: str) -> None:
     from dinkster_api.v1 import TypeRegistry, register_inference_types
     from dinkster_native.native import register_native_types
-    from dinkster_nodes_vision_moge import register_types
+    from dinkster_vision_moge import register_types
 
     registry = TypeRegistry()
     with registry.registering_pack("dinkster-vision-moge", (), allow_bare=True):
@@ -141,7 +141,7 @@ from dinkster_values import {type_name} as values_type
 from dinkster_values.builtin_types import {type_name} as builtin_type
 from dinkster_memory.resident import default_pool
 from dinkster_native.native import register_native_types
-from dinkster_nodes_models import NODES
+from dinkster_models import NODES
 assert resident_type == values_type == builtin_type == {type_name.removesuffix("_TYPE")!r}
 registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)

@@ -812,7 +812,7 @@ def test_exact_ids_and_file_widget_exemption(
 def test_painter_empty_file_uses_an_optional_asset_without_losing_other_contracts() -> None:
     from copy import deepcopy
 
-    from dinkster_nodes_image.ported.image_file_tools import Painter
+    from dinkster_image.ported.image_file_tools import Painter
     from dinkster_schema import schema_to_wire
 
     from tools.compare_nodes import compare_registry

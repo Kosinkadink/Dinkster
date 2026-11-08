@@ -13,7 +13,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
-from dinkster_nodes_sd.checkpoint_save import ImageOnlyCheckpointSave
+from dinkster_sd.checkpoint_save import ImageOnlyCheckpointSave
 from safetensors import safe_open
 from safetensors.torch import load_file
 

@@ -19,7 +19,7 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_graph import Graph, GraphNode, graph_to_wire
-from dinkster_nodes_text.save_text import SaveText
+from dinkster_text.save_text import SaveText
 from dinkster_protocol import AssetFolderContext
 from dinkster_server import ServerLibrary, create_app
 

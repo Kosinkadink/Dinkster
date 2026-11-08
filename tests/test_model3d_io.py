@@ -44,14 +44,14 @@ from dinkster_assets.value import value_asset_references
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_3d import register_types
-from dinkster_nodes_3d.load3d import Load3DAdvanced
-from dinkster_nodes_3d.preview3d import (
+from dinkster_3d import register_types
+from dinkster_3d.load3d import Load3DAdvanced
+from dinkster_3d.preview3d import (
     Preview3DAdvanced,
     PreviewGaussianSplat,
     PreviewPointCloud,
 )
-from dinkster_nodes_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
+from dinkster_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_server import PackInfo
 from dinkster_values import TypeRegistry, register_core_types
@@ -69,7 +69,7 @@ pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 def test_native_advanced_loader_empty_selection_and_viewport_fallback(
     selection: str | None, viewport: object
 ) -> None:
-    from dinkster_nodes_3d.load3d import Load3DAdvanced
+    from dinkster_3d.load3d import Load3DAdvanced
 
     result = Load3DAdvanced.execute(
         model_file=selection, viewport_state=viewport, width=37, height=91
@@ -84,7 +84,7 @@ def test_native_advanced_loader_empty_selection_and_viewport_fallback(
 
 
 def test_native_advanced_loader_preserves_original_files_and_viewport(tmp_path: Path) -> None:
-    from dinkster_nodes_3d.load3d import Load3DAdvanced
+    from dinkster_3d.load3d import Load3DAdvanced
 
     root = tmp_path / "input"
     root.mkdir()
@@ -119,7 +119,7 @@ def test_native_advanced_loader_preserves_original_files_and_viewport(tmp_path: 
 def test_native_advanced_loader_runs_after_common_source_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, selection: str
 ) -> None:
-    from dinkster_nodes_3d.load3d import Load3DAdvanced
+    from dinkster_3d.load3d import Load3DAdvanced
     from dinkster_server.library import ServerLibrary
     from dinkster_server.preflight import bind_model_names
 
@@ -857,7 +857,7 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
     module = f"preview_3d_source_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_model3d_io import Preview3DFileSource\n"
-        "from dinkster_nodes_3d import register_types\nNODES=(Preview3DFileSource,)\n",
+        "from dinkster_3d import register_types\nNODES=(Preview3DFileSource,)\n",
         encoding="ascii",
     )
     manifest = tmp_path / "source.toml"
@@ -895,7 +895,7 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
                         in_process=in_process,
                         trust_reserved=path != manifest,
                         packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-nodes-image"
+                        if path.parent.name == "dinkster-image"
                         else None,
                     )
                 )
@@ -1193,7 +1193,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     module = f"advanced_source_{case}"
     (tmp_path / f"{module}.py").write_text(
         "from test_model3d_io import Advanced3DFileSource\n"
-        "from dinkster_nodes_3d import register_types\n"
+        "from dinkster_3d import register_types\n"
         "NODES=(Advanced3DFileSource,)\n",
         encoding="ascii",
     )
@@ -1224,7 +1224,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
                         in_process=in_process,
                         trust_reserved=path != manifest,
                         packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-nodes-image"
+                        if path.parent.name == "dinkster-image"
                         else None,
                     )
                 )

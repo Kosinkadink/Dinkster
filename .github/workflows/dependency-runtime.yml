@@ -14,7 +14,7 @@ on:
       - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
-      - packages/dinkster-video-runtime/pyproject.toml
+      - packages/dinkster-nodes-video-runtime/pyproject.toml
 
 permissions:
   contents: read

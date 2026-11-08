@@ -1,9 +1,9 @@
 """Encoder export schemas retain their source inputs and mount layout."""
 
 from dinkster_api.v1 import CLIP_TYPE, MODEL_TYPE, VAE_TYPE, MountWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.lora_extract_save import LoraSave
-from dinkster_nodes_models.model_file_savers import CheckpointSave, CLIPSave, ModelSave, VAESave
+from dinkster_models import NODES
+from dinkster_models.lora_extract_save import LoraSave
+from dinkster_models.model_file_savers import CheckpointSave, CLIPSave, ModelSave, VAESave
 from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 

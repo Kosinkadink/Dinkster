@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import WEBCAM_TYPE, TypeRegistry, schema_to_wire
 from dinkster_assets import LocalAssetRef, MountDef, MountTable, digest_bytes
-from dinkster_nodes_image import register_types
-from dinkster_nodes_image.webcam import WebcamCapture
+from dinkster_image import register_types
+from dinkster_image.webcam import WebcamCapture
 from PIL import Image
 
 from tools.compare_nodes import compare

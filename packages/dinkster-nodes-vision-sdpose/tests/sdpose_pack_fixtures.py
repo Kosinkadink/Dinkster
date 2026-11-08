@@ -12,11 +12,11 @@ from dinkster.compose import PackSpec
 
 def sdpose_pack_specs(*fixtures: Path, in_process: bool) -> tuple[PackSpec, ...]:
     providers = (
-        "dinkster_nodes_latent",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_qwen",
-        "dinkster_nodes_misc_models",
-        "dinkster_nodes_image",
+        "dinkster_latent",
+        "dinkster_conditioning",
+        "dinkster_qwen",
+        "dinkster_misc_models",
+        "dinkster_image",
     )
     manifests = tuple(
         Path(cast(str, importlib.import_module(name).__file__)).resolve().parents[2]

@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_nodes_sampling.noise import AddNoise, DisableNoise, RandomNoise
+from dinkster_sampling.noise import AddNoise, DisableNoise, RandomNoise
 
 
 def test_sampling_manifest_registers_consumer_codecs_without_unrelated_types() -> None:

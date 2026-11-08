@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import torch
-from dinkster_nodes_flux.cache import FluxKVCache
+from dinkster_flux.cache import FluxKVCache
 
 
 class FluxModel:

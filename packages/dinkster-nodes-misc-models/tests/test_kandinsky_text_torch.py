@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_misc_models.clip_model_specific import CLIPTextEncodeKandinsky5
+from dinkster_misc_models.clip_model_specific import CLIPTextEncodeKandinsky5
 
 
 class KandinskyClip:

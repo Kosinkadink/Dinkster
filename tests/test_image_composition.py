@@ -6,7 +6,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.composition import (
+from dinkster_image.composition import (
     BLEND_MODES,
     PORTER_DUFF_MODES,
     ImageComposite,

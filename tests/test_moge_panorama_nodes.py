@@ -13,8 +13,8 @@ def test_moge_panorama_cold_schema_and_registration() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_vision_moge import NODES
-from dinkster_nodes_vision_moge.moge_panorama import MoGePanoramaInference
+from dinkster_vision_moge import NODES
+from dinkster_vision_moge.moge_panorama import MoGePanoramaInference
 from dinkster_workers import load_manifest
 schema = MoGePanoramaInference.define_schema()
 manifest = load_manifest('packages/dinkster-nodes-vision-moge/dinkster-pack.toml')

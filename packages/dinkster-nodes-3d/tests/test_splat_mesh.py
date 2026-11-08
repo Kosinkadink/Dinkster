@@ -13,7 +13,7 @@ from dinkster_api.v1 import initialize_inference_process, schema_to_wire
 
 from tools.compare_nodes import compare
 
-SplatToMesh = importlib.import_module("dinkster_nodes_3d.splat_mesh").SplatToMesh
+SplatToMesh = importlib.import_module("dinkster_3d.splat_mesh").SplatToMesh
 
 
 def test_splat_mesh_schema_matches_reference_except_frozen_id() -> None:

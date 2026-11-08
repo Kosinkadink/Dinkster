@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 from dinkster_inference.latent_formats import Wan22
-from dinkster_nodes_wan.wan22_latent import Wan22ImageToVideoLatent
+from dinkster_wan.wan22_latent import Wan22ImageToVideoLatent
 
 
 class VAE:

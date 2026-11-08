@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_ltx.ltx_dual_cfg import LTXVDualCFGGuider
+from dinkster_ltx.ltx_dual_cfg import LTXVDualCFGGuider
 
 initialize_inference_process()
 samplers = importlib.import_module("dinkster_inference.samplers")

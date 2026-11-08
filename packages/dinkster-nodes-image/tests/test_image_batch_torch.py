@@ -13,7 +13,7 @@ def test_empty_image_initializes_cpu_policy_in_a_cold_process() -> None:
             sys.executable,
             "-c",
             "import sys\n"
-            "from dinkster_nodes_image.ported.image_core import EmptyImage\n"
+            "from dinkster_image.ported.image_core import EmptyImage\n"
             "assert 'dinkster_inference.model_management' not in sys.modules\n"
             "image = EmptyImage.execute(\n"
             "    width=73, height=41, batch_size=2, color=0x32B76D)['IMAGE']\n"

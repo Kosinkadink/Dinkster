@@ -1,8 +1,8 @@
 """Public native schemas for noise and frequency guidance."""
 
 from dinkster_api.v1 import CORE_FLOAT, CORE_INT, MODEL_TYPE, TypeExpr
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.noise_guidance import EpsilonScaling, FreSca, TemporalScoreRescaling
+from dinkster_sampling import NODES
+from dinkster_sampling.noise_guidance import EpsilonScaling, FreSca, TemporalScoreRescaling
 
 
 def test_noise_guidance_schemas_preserve_core_sockets_and_controls() -> None:

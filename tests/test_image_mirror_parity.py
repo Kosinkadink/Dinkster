@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from dinkster_nodes_image.adjust import (
+from dinkster_image.adjust import (
     ADJUST_MIRROR_PER_CHANNEL_TOLERANCE,
     ADJUST_MIRROR_SOURCE,
     ADJUST_OPERATIONS,
     ImageAdjust,
 )
-from dinkster_nodes_image.filters import (
+from dinkster_image.filters import (
     FILTER_MIRROR_PER_CHANNEL_TOLERANCE,
     FILTER_MIRROR_SOURCE,
     ImageFilter,

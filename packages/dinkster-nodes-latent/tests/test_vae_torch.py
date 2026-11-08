@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_image,
 )
-from dinkster_nodes_latent.vae import VAEDecode, VAEDecodeTiled, VAEEncode, VAEEncodeTiled
+from dinkster_latent.vae import VAEDecode, VAEDecodeTiled, VAEEncode, VAEEncodeTiled
 
 torch: Any = importlib.import_module("torch")
 

@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 from dinkster_api.v1 import AssetWidget, schema_to_wire
-from dinkster_nodes_vision_depth_anything_3 import NODES
-from dinkster_nodes_vision_depth_anything_3.depth_anything_3 import (
+from dinkster_vision_depth_anything_3 import NODES
+from dinkster_vision_depth_anything_3.depth_anything_3 import (
     DA3GeometryToMesh,
     DA3Inference,
     DA3Render,
@@ -45,7 +45,7 @@ def test_da3_discovery_does_not_import_tensor_runtime() -> None:
             "import sys\n"
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_nodes_vision_depth_anything_3 import NODES\n"
+            "from dinkster_vision_depth_anything_3 import NODES\n"
             "nodes = [n for n in NODES if n.__module__.endswith('.depth_anything_3')]\n"
             "assert len(nodes) == 4\n"
             "assert all(n.define_schema() for n in nodes)\n",

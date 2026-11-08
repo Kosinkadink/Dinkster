@@ -1,8 +1,8 @@
 """Torch-free Stable Zero123 and Stable Video 3D public interfaces."""
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_sd import NODES
-from dinkster_nodes_sd.stable3d import (
+from dinkster_sd import NODES
+from dinkster_sd.stable3d import (
     StableZero123_Conditioning,
     StableZero123_Conditioning_Batched,
     SV3D_Conditioning,

@@ -38,7 +38,7 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_nodes_audio.audio_io import LoadAudio
+from dinkster_audio.audio_io import LoadAudio
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app

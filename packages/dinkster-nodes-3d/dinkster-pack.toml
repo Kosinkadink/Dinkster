@@ -23,5 +23,5 @@ api = "dinkster-api/v1"
 dinkster-image = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_3d:NODES"
-types = "dinkster_nodes_3d:register_types"
+nodes = "dinkster_3d:NODES"
+types = "dinkster_3d:register_types"

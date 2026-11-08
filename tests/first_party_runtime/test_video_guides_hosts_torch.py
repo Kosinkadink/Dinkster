@@ -206,13 +206,13 @@ def test_video_guides_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bo
         providers = [
             _installed_pack_spec(identity, module, in_process=in_process)
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-llm", "dinkster_nodes_llm"),
-                ("dinkster-models", "dinkster_nodes_models"),
-                ("dinkster-video", "dinkster_nodes_video"),
-                ("dinkster-ltx", "dinkster_nodes_ltx"),
-                ("dinkster-minimax", "dinkster_nodes_minimax"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-llm", "dinkster_llm"),
+                ("dinkster-models", "dinkster_models"),
+                ("dinkster-video", "dinkster_video"),
+                ("dinkster-ltx", "dinkster_ltx"),
+                ("dinkster-minimax", "dinkster_minimax"),
             )
         ]
         specs = [*providers, PackSpec(fixture, in_process=in_process)]

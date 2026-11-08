@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     register_box_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.bbox_crop import CropByBBoxes
+from dinkster_image.ported.bbox_crop import CropByBBoxes
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -153,7 +153,7 @@ def test_ordinary_manifest_crops_twice_in_both_hosts(tmp_path: Path, in_process:
         module = f"bbox_crop_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_bbox_crop_torch import CropSource, CropInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (CropSource, CropInspect)\n",
             encoding="ascii",
         )

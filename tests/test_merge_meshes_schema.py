@@ -14,8 +14,8 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import MESH_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.mesh import MergeMeshes
+from dinkster_3d import NODES
+from dinkster_3d.mesh import MergeMeshes
 from dinkster_workers import load_manifest
 schema = schema_from_wire(schema_to_wire(MergeMeshes.schema()))
 assert schema.node_type == 'dinkster.3d.merge_meshes'

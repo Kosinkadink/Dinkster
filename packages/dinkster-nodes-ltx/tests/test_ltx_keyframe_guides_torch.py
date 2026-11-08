@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_ltx.ltx_guides import add_image_guide
-from dinkster_nodes_ltx.ltx_keyframe_guides import (
+from dinkster_ltx.ltx_guides import add_image_guide
+from dinkster_ltx.ltx_keyframe_guides import (
     LTXVAddGeneratedKeyframes,
     LTXVGeneratedKeyframesToGuides,
     LTXVSeparateGeneratedKeyframes,

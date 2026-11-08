@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.model_merging import (
+from dinkster_models.model_merging import (
     CLIPMergeAdd,
     CLIPMergeSimple,
     CLIPMergeSubtract,
@@ -175,7 +175,7 @@ def test_manifest_registers_model_types_for_graph_execution(
             )
             (tmp_path / "merging_fixture_sources.py").write_text(
                 "from test_comfy_model_merging_nodes import PATCHER_NODES\n"
-                "from dinkster_nodes_models.types import register_types\n"
+                "from dinkster_models.types import register_types\n"
                 "NODES = PATCHER_NODES\n",
                 encoding="ascii",
             )

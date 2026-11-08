@@ -34,7 +34,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_wan.wandancer_video import WanDancerVideo
+from dinkster_wan.wandancer_video import WanDancerVideo
 from wan_pack_fixtures import compose_wan_packs
 
 from dinkster.compose import ServingComposer
@@ -147,7 +147,7 @@ def test_schema_and_cold_source_tree_discovery() -> None:
         (
             "import json",
             "import sys",
-            "import dinkster_nodes_wan.wandancer_video as module",
+            "import dinkster_wan.wandancer_video as module",
             "module.WanDancerVideo.define_schema()",
             "forbidden = sorted(name for name in sys.modules if (",
             "    name == 'torch' or name.startswith('torch.')",
@@ -168,7 +168,7 @@ def test_schema_and_cold_source_tree_discovery() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     discovery = json.loads(result.stdout)
     assert Path(discovery["path"]).resolve() == (
-        root / "packages/dinkster-nodes-wan/src/dinkster_nodes_wan/wandancer_video.py"
+        root / "packages/dinkster-nodes-wan/src/dinkster_wan/wandancer_video.py"
     )
     assert discovery["forbidden"] == []
 
@@ -467,11 +467,11 @@ def test_wandancer_video_runs_twice_in_ordinary_hosts(tmp_path: Path, in_process
             str(root / "src"),
             *(str(path) for path in sorted(root.glob("packages/*/src"))),
         )
-        source_module = package / "src/dinkster_nodes_wan/wandancer_video.py"
+        source_module = package / "src/dinkster_wan/wandancer_video.py"
         entry = tmp_path / "wandancer_video_host_entry.py"
         entry.write_text(
             "from pathlib import Path\n"
-            "import dinkster_nodes_wan.wandancer_video as native\n"
+            "import dinkster_wan.wandancer_video as native\n"
             f"assert Path(native.__file__).resolve() == Path({str(source_module)!r}).resolve()\n"
             "from test_wandancer_video_torch import HOST_NODES, register_inference_types\n",
             encoding="ascii",

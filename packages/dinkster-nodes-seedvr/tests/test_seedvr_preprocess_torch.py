@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_seedvr.seedvr_preprocess import SeedVR2Preprocess
+from dinkster_seedvr.seedvr_preprocess import SeedVR2Preprocess
 
 from dinkster.compose import PackSpec, ServingComposer
 

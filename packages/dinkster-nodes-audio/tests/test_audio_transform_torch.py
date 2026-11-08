@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_audio,
 )
+from dinkster_audio.audio_transform import AudioAdjustVolume, SplitAudioChannels
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio.audio_transform import AudioAdjustVolume, SplitAudioChannels
 
 from dinkster.compose import PackSpec, ServingComposer
 

@@ -26,9 +26,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets.identity import AssetError
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video.video_components import CreateVideo
-from dinkster_nodes_video.video_save import SaveVideo
 from dinkster_schema import elaborate
+from dinkster_video.video_components import CreateVideo
+from dinkster_video.video_save import SaveVideo
 from video_pack_fixtures import compose_video_packs
 
 from dinkster.compose import ServingComposer
@@ -136,7 +136,7 @@ def test_save_video_schema_exposes_native_format_controls() -> None:
 def test_save_video_writes_selected_mount_metadata_and_original_video(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_nodes_video import video_save
+    from dinkster_video import video_save
 
     default, alternate, _ = _mounts(tmp_path, monkeypatch)
     video = _video()

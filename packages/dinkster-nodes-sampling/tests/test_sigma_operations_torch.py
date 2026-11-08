@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_nodes_sampling.sigma_operations import (
+from dinkster_sampling.sigma_operations import (
     ExtendIntermediateSigmas,
     FlipSigmas,
     ManualSigmas,

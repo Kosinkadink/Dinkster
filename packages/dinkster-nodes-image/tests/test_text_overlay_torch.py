@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     schema_to_wire,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.text_overlay import TextOverlay
+from dinkster_image.ported.text_overlay import TextOverlay
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -175,7 +175,7 @@ def test_text_overlay_ordinary_native_hosts_consume_image_and_cache(
         native = package / "dinkster-pack.toml"
         (tmp_path / "overlay_fixture.py").write_text(
             "from test_text_overlay_torch import OverlaySource, OverlayConsumer\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (OverlaySource, OverlayConsumer)\n",
             encoding="ascii",
         )

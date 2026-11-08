@@ -114,7 +114,7 @@ _KILLED_RETURN_CODE = 1 if os.name == "nt" else -_SIGKILL
 # pack (test scaffolding, never a user surface) - so the isolated worker
 # under test hosts dinkster-nodes-dev.
 DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
-UTILITIES_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-utilities" / "dinkster-pack.toml"
+UTILITIES_MANIFEST = REPO_ROOT / "packages" / "dinkster-utilities" / "dinkster-pack.toml"
 TESTS_DIR = Path(__file__).parent
 
 

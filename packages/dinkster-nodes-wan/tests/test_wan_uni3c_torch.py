@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_wan.wan_uni3c import WanUni3CControlnetApply
+from dinkster_wan.wan_uni3c import WanUni3CControlnetApply
 
 initialize_inference_process()
 WanUni3CControlnet = importlib.import_module("dinkster_inference.ldm.wan.uni3c").WanUni3CControlnet

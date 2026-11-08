@@ -1,8 +1,8 @@
 """Cold schema for native SUPIR model patching."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_misc_models import NODES
-from dinkster_nodes_misc_models.supir import SUPIRApply
+from dinkster_misc_models import NODES
+from dinkster_misc_models.supir import SUPIRApply
 
 
 def test_supir_schema_preserves_guidance_controls_and_registration() -> None:

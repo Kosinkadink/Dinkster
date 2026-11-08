@@ -13,8 +13,8 @@ from dinkster_api.v1 import (
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
-from dinkster_nodes_utilities.list_utilities import CreateList, GetItemFromList
-from dinkster_nodes_utilities.primitive import PrimitiveInt
+from dinkster_utilities.list_utilities import CreateList, GetItemFromList
+from dinkster_utilities.primitive import PrimitiveInt
 from dinkster_schema import bind_type_variables, build_node_types, build_schemas
 from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker

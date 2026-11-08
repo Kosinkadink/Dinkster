@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 from dinkster_api.v1 import ASSET_TYPE, AssetRef, AssetWidget, ComboWidget, TypeExpr, digest_bytes
-from dinkster_nodes_ltx import model_file_loaders as ltx_loaders
-from dinkster_nodes_models import model_file_loaders
-from dinkster_nodes_sd import model_file_loaders as sd_loaders
+from dinkster_ltx import model_file_loaders as ltx_loaders
+from dinkster_models import model_file_loaders
+from dinkster_sd import model_file_loaders as sd_loaders
 
 MODEL_FILE_LOADER_NODES = (
     model_file_loaders.CheckpointLoaderSimple,

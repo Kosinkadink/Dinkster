@@ -19,9 +19,9 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_nodes_audio.audio_generators import EmptyAudio
-from dinkster_nodes_audio.audio_io import LoadAudio
-from dinkster_nodes_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
+from dinkster_audio.audio_generators import EmptyAudio
+from dinkster_audio.audio_io import LoadAudio
+from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 

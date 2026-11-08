@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.image_histogram import ImageHistogram
+from dinkster_image.ported.image_histogram import ImageHistogram
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -108,7 +108,7 @@ def test_histogram_outputs_execute_and_cache_in_ordinary_hosts(
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "histogram_fixture.py").write_text(
             "from test_image_histogram_torch import HistogramSource, HistogramConsumer\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (HistogramSource, HistogramConsumer)\n",
             encoding="ascii",
         )

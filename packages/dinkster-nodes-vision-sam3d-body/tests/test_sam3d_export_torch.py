@@ -27,10 +27,10 @@ from dinkster_api.v1 import (
     materialize_vision_packet,
 )
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_vision_sam3d_body.sam3d_bvh import build_bvh
-from dinkster_nodes_vision_sam3d_body.sam3d_export import BuildPoseFile
-from dinkster_nodes_vision_sam3d_body.sam3d_openpose_glb import build_glb_openpose
-from dinkster_nodes_vision_sam3d_body.sam3d_skeletal import build_glb_skeletal
+from dinkster_vision_sam3d_body.sam3d_bvh import build_bvh
+from dinkster_vision_sam3d_body.sam3d_export import BuildPoseFile
+from dinkster_vision_sam3d_body.sam3d_openpose_glb import build_glb_openpose
+from dinkster_vision_sam3d_body.sam3d_skeletal import build_glb_skeletal
 from scipy.spatial.transform import Rotation
 
 from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
@@ -312,7 +312,7 @@ def test_skeletal_glb_native_skin_truncation_morphs_and_model_dtype(
     if public_node:
         monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
         monkeypatch.setattr(
-            "dinkster_nodes_vision_sam3d_body.sam3d_export.initialize_inference_process",
+            "dinkster_vision_sam3d_body.sam3d_export.initialize_inference_process",
             lambda: None,
         )
         monkeypatch.setitem(
@@ -615,7 +615,7 @@ def test_pose_file_ordinary_hosts_and_cache(
     module = f"export_fixture_{int(in_process)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_export_torch import ExportSource, ExportInspect\n"
-        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "from dinkster_vision_sam3d_body import register_types as register_sam3d\n"
         "NODES = (ExportSource, ExportInspect)\n"
         "def register_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-sam3d-body', "

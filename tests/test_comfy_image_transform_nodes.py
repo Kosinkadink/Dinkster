@@ -1,7 +1,7 @@
 """Core image transform schemas preserve the ComfyUI workflow contract."""
 
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.ported.image_transform import (
+from dinkster_image import NODES
+from dinkster_image.ported.image_transform import (
     ImageAddNoise,
     ImageCrop,
     ImageFlip,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from dinkster_3d.camera_info import CreateCameraInfo
 from dinkster_api.v1 import (
     CAMERA_INFO_STATE_TYPE,
     CORE_BOOLEAN,
@@ -21,7 +22,6 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.camera_info import CreateCameraInfo
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer
@@ -163,7 +163,7 @@ def test_camera_info_ordinary_production_manifest_twice(tmp_path: Path, in_proce
     async def scenario() -> None:
         (tmp_path / "camera_info_fixture.py").write_text(
             "from test_camera_info_torch import CameraStateSource, CameraInfoInspect\n"
-            "from dinkster_nodes_3d import register_types as register_inference_types\n"
+            "from dinkster_3d import register_types as register_inference_types\n"
             "NODES = (CameraStateSource, CameraInfoInspect)\n",
             encoding="ascii",
         )

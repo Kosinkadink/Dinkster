@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from dinkster_api.v1 import MODEL_TYPE, ComboOption, ComboWidget, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES, device_routing, model_advanced
+from dinkster_models import NODES, device_routing, model_advanced
 
 MODEL_ADVANCED_NODES = (
     model_advanced.ModelSamplingDiscrete,
@@ -215,8 +215,8 @@ class NoTensorRuntime(importlib.abc.MetaPathFinder):
             raise AssertionError('cold discovery requested ' + fullname)
 
 sys.meta_path.insert(0, NoTensorRuntime())
-from dinkster_nodes_models.model_advanced import ModelAttentionBackend
-from dinkster_nodes_models.device_routing import (
+from dinkster_models.model_advanced import ModelAttentionBackend
+from dinkster_models.device_routing import (
     MultiGPUWorkUnits, SelectModelDevice, SelectCLIPDevice, SelectVAEDevice, device_choices,
 )
 from dinkster_schema import schema_to_wire

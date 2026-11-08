@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     AssetRef,
     digest_file,
 )
-from dinkster_nodes_audio.audio_io import LoadAudio, PreviewAudio, RecordAudio
+from dinkster_audio.audio_io import LoadAudio, PreviewAudio, RecordAudio
 
 
 class _Resolver:
@@ -90,7 +90,7 @@ def test_record_audio_schema_and_cold_discovery() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; from dinkster_nodes_audio.audio_io import RecordAudio; "
+            "import sys; from dinkster_audio.audio_io import RecordAudio; "
             "RecordAudio.schema(); "
             "assert not {'torch', 'av', 'dinkster_inference'} & sys.modules.keys()",
         ],

@@ -30,5 +30,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_image:NODES"
-types = "dinkster_nodes_image:register_types"
+nodes = "dinkster_image:NODES"
+types = "dinkster_image:register_types"

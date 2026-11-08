@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import numpy as np
-from dinkster_nodes_image.adjust import ADJUST_MIRROR_PER_CHANNEL_TOLERANCE, ImageAdjust
+from dinkster_image.adjust import ADJUST_MIRROR_PER_CHANNEL_TOLERANCE, ImageAdjust
 
 OUTPUT_PATH = (
     Path(__file__).parents[1] / "tests" / "fixtures" / "mirror-parity" / "image_adjust_v1.json"

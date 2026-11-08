@@ -13,8 +13,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_image.ported.image_crop import ImageCropToMask, ImageCropV2
-from dinkster_nodes_utilities.image_crop import PrimitiveBoundingBox
+from dinkster_image.ported.image_crop import ImageCropToMask, ImageCropV2
+from dinkster_utilities.image_crop import PrimitiveBoundingBox
 
 
 def _entry(wire: dict[str, object], entry_id: str) -> dict[str, Any]:

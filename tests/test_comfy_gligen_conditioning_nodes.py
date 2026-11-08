@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     schema_to_wire,
 )
-from dinkster_nodes_sd import NODES
-from dinkster_nodes_sd.gligen_conditioning import GLIGENTextBoxApply
+from dinkster_sd import NODES
+from dinkster_sd.gligen_conditioning import GLIGENTextBoxApply
 from dinkster_schema import claim_covers
 
 

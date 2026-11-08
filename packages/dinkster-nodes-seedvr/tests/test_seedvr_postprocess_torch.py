@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_seedvr.seedvr_postprocess import SeedVR2PostProcessing
+from dinkster_seedvr.seedvr_postprocess import SeedVR2PostProcessing
 
 from dinkster.compose import PackSpec, ServingComposer
 

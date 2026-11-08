@@ -1,8 +1,8 @@
 """Torch-free SeedVR2 preprocessing schema and discovery."""
 
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_seedvr import NODES
-from dinkster_nodes_seedvr.seedvr_preprocess import SeedVR2Preprocess
+from dinkster_seedvr import NODES
+from dinkster_seedvr.seedvr_preprocess import SeedVR2Preprocess
 
 
 def test_seedvr_preprocess_schema() -> None:

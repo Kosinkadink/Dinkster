@@ -15,9 +15,9 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_minimax import NODES
-from dinkster_nodes_minimax.minimax_h3_latent import MiniMaxH3AddGuide
-from dinkster_nodes_minimax.minimax_h3_reference import MiniMaxH3ReferenceToVideo
+from dinkster_minimax import NODES
+from dinkster_minimax.minimax_h3_latent import MiniMaxH3AddGuide
+from dinkster_minimax.minimax_h3_reference import MiniMaxH3ReferenceToVideo
 
 
 def test_minimax_h3_add_guide_schema_and_cold_discovery() -> None:

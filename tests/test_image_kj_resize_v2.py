@@ -8,7 +8,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import ABSENT
-from dinkster_nodes_image.geometry import ImageResize
+from dinkster_image.geometry import ImageResize
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "kj_resize_v2_827fe6ee.json"
 GOLDEN_BYTES = GOLDEN_PATH.read_bytes()

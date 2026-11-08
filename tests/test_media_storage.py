@@ -273,7 +273,7 @@ def test_audio_storage_facts_match_canonical_payload_across_boundary(
     host_registration: bool, dtype: str, shm: bool
 ) -> None:
     from dinkster_inference_wire import register_inference_types
-    from dinkster_nodes_audio import register_types as register_audio_types
+    from dinkster_audio import register_types as register_audio_types
     from dinkster_values import TypeRegistry
     from dinkster_workers import ValueCodec
     from dinkster_workers.boundary import release_segment
@@ -355,7 +355,7 @@ def test_video_components_preserve_semantic_trailer() -> None:
 
 
 def test_inline_layer_rasters_share_array_accounting_without_duplicate_layers() -> None:
-    from dinkster_nodes_image.compositor_types import (
+    from dinkster_image.compositor_types import (
         CompositorSourceLayer,
         LayerStack,
         layer_stack_meta,

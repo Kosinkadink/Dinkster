@@ -13,8 +13,8 @@ def test_moge_render_schema_is_cold_and_registered_once() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_vision_moge import NODES
-from dinkster_nodes_vision_moge.moge_render import MoGeRender
+from dinkster_vision_moge import NODES
+from dinkster_vision_moge.moge_render import MoGeRender
 from dinkster_workers import load_manifest
 manifest = load_manifest('packages/dinkster-nodes-vision-moge/dinkster-pack.toml')
 schema = MoGeRender.define_schema()

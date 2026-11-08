@@ -1,8 +1,8 @@
 """Torch-free LTXV AV latent node schemas."""
 
 from dinkster_api.v1 import LATENT_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_av_latent import LTXVConcatAVLatent, LTXVSeparateAVLatent
+from dinkster_ltx import NODES
+from dinkster_ltx.ltx_av_latent import LTXVConcatAVLatent, LTXVSeparateAVLatent
 
 
 def test_ltx_av_latent_schemas_and_registration() -> None:

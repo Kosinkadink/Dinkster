@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_audio,
 )
+from dinkster_audio.audio_effects import AudioEqualizer3Band, TrimAudioDuration
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio.audio_effects import AudioEqualizer3Band, TrimAudioDuration
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -160,7 +160,7 @@ def test_audio_effect_nodes_execute_twice_in_both_manifest_hosts(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "audio_effects_fixture.py").write_text(
                 "from test_audio_effects_torch import AudioInspect, AudioSource\n"
-                "from dinkster_nodes_audio import NODES as AUDIO_NODES, register_types\n"
+                "from dinkster_audio import NODES as AUDIO_NODES, register_types\n"
                 "NODES = (*AUDIO_NODES, AudioSource, AudioInspect)\n",
                 encoding="ascii",
             )
@@ -168,9 +168,9 @@ def test_audio_effect_nodes_execute_twice_in_both_manifest_hosts(
             fixture.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-effects-fixture",')
-                .replace("dinkster_nodes_audio:NODES", "audio_effects_fixture:NODES")
+                .replace("dinkster_audio:NODES", "audio_effects_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_audio:register_types", "audio_effects_fixture:register_types"
+                    "dinkster_audio:register_types", "audio_effects_fixture:register_types"
                 ),
                 encoding="ascii",
             )

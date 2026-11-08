@@ -3,7 +3,7 @@ from typing import Any
 from dinkster_api.v1 import (
     initialize_inference_process,
 )
-from dinkster_nodes_misc_models.ar_video import SamplerARVideo
+from dinkster_misc_models.ar_video import SamplerARVideo
 
 
 def _assert_sampler(sampler: Any, frames: int) -> None:

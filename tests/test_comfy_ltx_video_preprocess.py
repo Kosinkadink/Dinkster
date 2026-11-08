@@ -1,8 +1,8 @@
 """Torch-free schemas for native LTXV preprocessing."""
 
 from dinkster_api.v1 import CORE_INT, IMAGE_TYPE, NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_video_preprocess import LTXVPreprocess
+from dinkster_ltx import NODES
+from dinkster_ltx.ltx_video_preprocess import LTXVPreprocess
 
 
 def test_ltx_video_preprocess_schema() -> None:

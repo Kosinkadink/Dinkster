@@ -13,7 +13,7 @@ import pytest
 from dinkster_api.v1 import VIDEO_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_assets.value import register_video_value_type, value_asset_references
-from dinkster_nodes_image.drawing import DrawText
+from dinkster_image.drawing import DrawText
 from dinkster_values import (
     TypeRegistry,
     annotate_image,

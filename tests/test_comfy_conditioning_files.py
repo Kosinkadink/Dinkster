@@ -4,8 +4,8 @@ import subprocess
 import sys
 
 from dinkster_api.v1 import ASSET_TYPE, CONDITIONING_TYPE, AssetWidget, MountWidget
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.conditioning_files import ConditioningLoader, SaveConditioning
+from dinkster_conditioning import NODES
+from dinkster_conditioning.conditioning_files import ConditioningLoader, SaveConditioning
 from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 
@@ -49,8 +49,8 @@ def test_conditioning_file_import_is_torch_free() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; import dinkster_nodes_conditioning; "
-            "from dinkster_nodes_conditioning.conditioning_files import "
+            "import sys; import dinkster_conditioning; "
+            "from dinkster_conditioning.conditioning_files import "
             "ConditioningLoader, SaveConditioning; "
             "ConditioningLoader.schema(); SaveConditioning.schema(); "
             "assert 'torch' not in sys.modules; "

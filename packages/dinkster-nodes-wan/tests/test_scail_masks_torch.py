@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 from dinkster_api.v1 import IMAGE_TYPE, MASK_TYPE, SAM3_TRACK_DATA_TYPE
-from dinkster_nodes_wan.scail_masks import SCAIL2ColoredMask
+from dinkster_wan.scail_masks import SCAIL2ColoredMask
 
 
 def _pack(masks: torch.Tensor) -> torch.Tensor:

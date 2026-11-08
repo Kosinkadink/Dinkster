@@ -12,7 +12,7 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
 )
-from dinkster_nodes_image.ported.image_file_tools import (
+from dinkster_image.ported.image_file_tools import (
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
@@ -22,7 +22,7 @@ from dinkster_nodes_image.ported.image_file_tools import (
     SaveAnimatedWEBP,
     SaveImage,
 )
-from dinkster_nodes_image.ported.save_image_advanced import SaveImageAdvanced
+from dinkster_image.ported.save_image_advanced import SaveImageAdvanced
 from dinkster_schema import schema_to_wire
 
 
@@ -98,7 +98,7 @@ def test_image_file_inputs_use_the_bound_asset_contract() -> None:
 
 
 def test_painter_retains_order_with_an_optional_granted_mask() -> None:
-    from dinkster_nodes_image import NODES as COMFY_NODES
+    from dinkster_image import NODES as COMFY_NODES
     from dinkster_schema import schema_from_wire
 
     schema = Painter.schema()

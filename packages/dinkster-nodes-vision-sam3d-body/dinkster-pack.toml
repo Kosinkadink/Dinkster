@@ -23,5 +23,5 @@ dinkster-image = ">=0.0.1,<1"
 dinkster-vision-sam3 = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_vision_sam3d_body:NODES"
-types = "dinkster_nodes_vision_sam3d_body:register_types"
+nodes = "dinkster_vision_sam3d_body:NODES"
+types = "dinkster_vision_sam3d_body:register_types"

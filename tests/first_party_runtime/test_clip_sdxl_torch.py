@@ -93,10 +93,10 @@ def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: 
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-sampling", "dinkster_nodes_sampling"),
-                ("dinkster-sd", "dinkster_nodes_sd"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-sampling", "dinkster_sampling"),
+                ("dinkster-sd", "dinkster_sd"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

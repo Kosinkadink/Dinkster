@@ -1,12 +1,12 @@
 """Cold public schemas for image-control model patches."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_flux import NODES as FLUX_NODES
-from dinkster_nodes_flux.image_control_patches import USOStyleReference
-from dinkster_nodes_misc_models import NODES as MISC_NODES
-from dinkster_nodes_misc_models.image_control_patches import ZImageFunControlnet
-from dinkster_nodes_qwen import NODES as QWEN_NODES
-from dinkster_nodes_qwen.image_control_patches import QwenImageDiffsynthControlnet
+from dinkster_flux import NODES as FLUX_NODES
+from dinkster_flux.image_control_patches import USOStyleReference
+from dinkster_misc_models import NODES as MISC_NODES
+from dinkster_misc_models.image_control_patches import ZImageFunControlnet
+from dinkster_qwen import NODES as QWEN_NODES
+from dinkster_qwen.image_control_patches import QwenImageDiffsynthControlnet
 
 
 def test_image_control_public_contracts() -> None:

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import AUDIO_ENCODER_OUTPUT_TYPE, TypeRegistry, register_inference_types
-from dinkster_nodes_wan.wan_infinite_talk import WanInfiniteTalkToVideo
+from dinkster_wan.wan_infinite_talk import WanInfiniteTalkToVideo
 
 
 class Model:

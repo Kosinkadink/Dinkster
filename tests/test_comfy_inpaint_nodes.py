@@ -1,10 +1,10 @@
 """Torch-free public interfaces for native ComfyUI inpainting nodes."""
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_conditioning import NODES as CONDITIONING_NODES
-from dinkster_nodes_conditioning.inpaint import InpaintModelConditioning
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.inpaint import VAEEncodeForInpaint
+from dinkster_conditioning import NODES as CONDITIONING_NODES
+from dinkster_conditioning.inpaint import InpaintModelConditioning
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.inpaint import VAEEncodeForInpaint
 
 
 def test_inpaint_schemas_match_core_interfaces() -> None:

@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_models.spatial_model_patches import (
+from dinkster_models.spatial_model_patches import (
     HyperTile,
     PatchModelAddDownscale,
     TomePatchModel,

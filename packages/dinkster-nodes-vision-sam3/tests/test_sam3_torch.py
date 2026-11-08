@@ -29,7 +29,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sam3.sam3 import SAM3_TrackToMask, SAM3_VideoTrack
+from dinkster_vision_sam3.sam3 import SAM3_TrackToMask, SAM3_VideoTrack
 
 from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
@@ -265,7 +265,7 @@ def test_native_manifest_tracks_and_selects_twice(tmp_path: Path, in_process: bo
         module = f"sam3_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_sam3_torch import TrackingSource, TrackingInspect\n"
-            "from dinkster_nodes_vision_sam3 import register_types as register_sam3\n"
+            "from dinkster_vision_sam3 import register_types as register_sam3\n"
             "def register_inference_types(registry):\n"
             "    with registry.registering_pack('dinkster-vision-sam3', "
             "('SAM3_TRACK_DATA',), allow_bare=True):\n"

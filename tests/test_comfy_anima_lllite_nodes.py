@@ -1,8 +1,8 @@
 """Public schema for native Anima LLLite model patching."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_misc_models import NODES
-from dinkster_nodes_misc_models.anima_lllite import AnimaLLLiteApply
+from dinkster_misc_models import NODES
+from dinkster_misc_models.anima_lllite import AnimaLLLiteApply
 
 
 def test_anima_lllite_preserves_input_order_bounds_and_optional_mask() -> None:

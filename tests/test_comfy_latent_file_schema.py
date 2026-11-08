@@ -1,8 +1,8 @@
 """Public latent file schemas remain usable without Torch."""
 
 from dinkster_api.v1 import ASSET_TYPE, LATENT_TYPE, MountWidget, TypeExpr
-from dinkster_nodes_latent import NODES
-from dinkster_nodes_latent.latent_file_tools import LoadLatent, SaveLatent
+from dinkster_latent import NODES
+from dinkster_latent.latent_file_tools import LoadLatent, SaveLatent
 
 
 def test_latent_file_slots_preserve_source_order_and_mount_layout() -> None:

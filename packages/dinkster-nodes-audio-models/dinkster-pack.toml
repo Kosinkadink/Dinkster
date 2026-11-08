@@ -21,5 +21,5 @@ api = "dinkster-api/v1"
 dinkster-conditioning = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_audio_models:NODES"
-types = "dinkster_nodes_audio_models:register_types"
+nodes = "dinkster_audio_models:NODES"
+types = "dinkster_audio_models:register_types"

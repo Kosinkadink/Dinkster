@@ -1209,7 +1209,7 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
                         if sidecar.name.endswith("_LICENSE"):
                             target.write_bytes(target.read_bytes().replace(b"\r\n", b"\n"))
             else:
-                shutil.copytree(module_root, root / module_root.name)
+                shutil.copytree(module_root, root, dirs_exist_ok=True)
             for filename in _PACK_ARTIFACT_SIDECARS:
                 sidecar = manifest.parent / filename
                 if sidecar.is_file():
@@ -1258,21 +1258,22 @@ def _installed_pack_spec(
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
         raise CompositionError(f"installed {pack_id} package is not discoverable")
+    module_origin = Path(module.origin).resolve()
     source_manifest = next(
         (
             parent / "dinkster-pack.toml"
-            for parent in Path(module.origin).resolve().parents
-            if (parent / "dinkster-pack.toml").is_file()
+            for parent in module_origin.parents
+            if parent != module_origin.parent and (parent / "dinkster-pack.toml").is_file()
         ),
         None,
     )
     if source_manifest is None:
         source_manifest = next(
             (
-                parent / f"{sidecar}_pack" / "dinkster-pack.toml"
-                for parent in Path(module.origin).resolve().parents
-                if Path(module.origin).resolve().is_relative_to(parent / "src")
-                and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
+                parent / sidecar / "dinkster-pack.toml"
+                for parent in module_origin.parents
+                if module_origin.is_relative_to(parent / "src")
+                and (parent / sidecar / "dinkster-pack.toml").is_file()
             ),
             None,
         )
@@ -1288,7 +1289,7 @@ def _installed_pack_spec(
                 f"installed pack distribution {distribution_id!r} is unavailable"
             ) from exc
         version = distribution.version
-        bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
+        bundled = Path(str(distribution.locate_file(f"{sidecar}/dinkster-pack.toml")))
     if source_manifest is not None:
         manifest = source_manifest
         source = f"local:{manifest.parent.resolve()}"

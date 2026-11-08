@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_minimax.audio_music_conditioning import (
+from dinkster_minimax.audio_music_conditioning import (
     MiniMaxMusic3TextEncode,
     ReferenceTimbreAudio,
 )
@@ -183,9 +183,9 @@ def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process
         try:
             (tmp_path / "music_fixture.py").write_text(
                 "from test_audio_music_conditioning_torch import MusicSource, MusicInspect\n"
-                "from dinkster_nodes_minimax import NODES as COMFY_NODES\n"
+                "from dinkster_minimax import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, MusicSource, MusicInspect)\n",
                 encoding="ascii",
             )
@@ -194,13 +194,13 @@ def test_music_conditioning_chain_twice_in_both_hosts(tmp_path: Path, in_process
                 (package / "dinkster-pack.toml")
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["music-fixture",')
-                .replace("dinkster_nodes_minimax:NODES", "music_fixture:NODES")
+                .replace("dinkster_minimax:NODES", "music_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "music_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_minimax:register_types",
+                    "dinkster_minimax:register_types",
                     "music_fixture:register_inference_types",
                 ),
                 encoding="ascii",

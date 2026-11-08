@@ -8,16 +8,16 @@ tests use the component pack node sets to pin what a real user surface contains.
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from dinkster_api.v1 import TypeRegistry
-from dinkster_nodes_audio import NODES as AUDIO_NODES
-from dinkster_nodes_audio import register_types as register_audio_types
+from dinkster_audio import NODES as AUDIO_NODES
+from dinkster_audio import register_types as register_audio_types
 from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_nodes_dev import combo_choices as dev_combo_choices
-from dinkster_nodes_image import NODES as IMAGE_NODES
-from dinkster_nodes_image import register_types as register_image_types
-from dinkster_nodes_utilities import NODES as UTILITY_NODES
-from dinkster_nodes_utilities import register_types as register_utility_types
-from dinkster_nodes_video import NODES as VIDEO_NODES
-from dinkster_nodes_video import register_types as register_video_types
+from dinkster_image import NODES as IMAGE_NODES
+from dinkster_image import register_types as register_image_types
+from dinkster_utilities import NODES as UTILITY_NODES
+from dinkster_utilities import register_types as register_utility_types
+from dinkster_video import NODES as VIDEO_NODES
+from dinkster_video import register_types as register_video_types
 
 SCAFFOLD_NODES = [*UTILITY_NODES, *AUDIO_NODES, *VIDEO_NODES, *IMAGE_NODES, *PACK_NODES]
 

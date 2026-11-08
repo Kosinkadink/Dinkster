@@ -1,8 +1,8 @@
 """Torch-free interfaces for native video CFG guidance nodes."""
 
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr, schema_to_wire
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.video_guidance import VideoLinearCFGGuidance, VideoTriangleCFGGuidance
+from dinkster_sampling import NODES
+from dinkster_sampling.video_guidance import VideoLinearCFGGuidance, VideoTriangleCFGGuidance
 
 
 def test_video_cfg_guidance_schemas_are_registered_with_canonical_types() -> None:

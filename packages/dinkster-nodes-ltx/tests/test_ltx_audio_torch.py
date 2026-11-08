@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_audio,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
+from dinkster_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
 from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import (
@@ -156,10 +156,10 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "ltx_audio_fixture.py").write_text(
                 "from test_ltx_audio_torch import LTXAudioInspect, LTXAudioSource\n"
-                "from dinkster_nodes_ltx import NODES as COMFY_NODES\n"
-                "from dinkster_nodes_ltx import register_types as register_ltx_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
-                "from dinkster_nodes_audio import register_types as register_audio_types\n"
+                "from dinkster_ltx import NODES as COMFY_NODES\n"
+                "from dinkster_ltx import register_types as register_ltx_types\n"
+                "from dinkster_models.device_routing import device_choices\n"
+                "from dinkster_audio import register_types as register_audio_types\n"
                 "NODES = (*COMFY_NODES, LTXAudioSource, LTXAudioInspect)\n"
                 "\ndef register_types(registry):\n"
                 "    register_ltx_types(registry)\n"
@@ -174,13 +174,13 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
                     "[pack.dependencies]",
                     '[pack.dependencies]\n"dinkster-audio" = ">=0.0.1"',
                 )
-                .replace("dinkster_nodes_ltx:NODES", "ltx_audio_fixture:NODES")
+                .replace("dinkster_ltx:NODES", "ltx_audio_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "ltx_audio_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_ltx:register_types",
+                    "dinkster_ltx:register_types",
                     "ltx_audio_fixture:register_types",
                 ),
                 encoding="ascii",

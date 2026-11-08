@@ -32,8 +32,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported import image_file_tools
-from dinkster_nodes_image.ported.image_file_tools import (
+from dinkster_image.ported import image_file_tools
+from dinkster_image.ported.image_file_tools import (
     LoadImage,
     LoadImageMask,
     Painter,
@@ -42,7 +42,7 @@ from dinkster_nodes_image.ported.image_file_tools import (
     SaveAnimatedWEBP,
     SaveImage,
 )
-from dinkster_nodes_image.ported.save_image_advanced import SaveImageAdvanced
+from dinkster_image.ported.save_image_advanced import SaveImageAdvanced
 from dinkster_schema.reporting import capture_saved_artifacts
 from PIL import Image
 
@@ -649,7 +649,7 @@ def test_image_file_nodes_execute_twice_through_unchanged_manifest(
         module = f"image_file_host_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _FileHostInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (_FileHostInspect,)\n",
             encoding="ascii",
         )
@@ -1004,7 +1004,7 @@ def test_advanced_image_exports_use_native_manifest_twice(
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _AdvancedImageHostSource, "
             "_AdvancedImageHostInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (_AdvancedImageHostSource, _AdvancedImageHostInspect)\n",
             encoding="ascii",
         )
@@ -1156,7 +1156,7 @@ def test_advanced_avif_exports_use_nested_variants_through_native_hosts(
         module = f"advanced_avif_host_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _AdvancedAVIFHostSource, _AdvancedAVIFHostInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (_AdvancedAVIFHostSource, _AdvancedAVIFHostInspect)\n",
             encoding="ascii",
         )
@@ -1276,7 +1276,7 @@ def test_advanced_image_exports_consume_submission_metadata(
         module = f"advanced_metadata_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _AdvancedAVIFHostSource\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "from dinkster_api.v1 import initialize_inference_process\n"
             "initialize_inference_process()\n"
             "from dinkster_inference.cli_args import args\n"
@@ -1404,7 +1404,7 @@ def test_save_image_attaches_every_batch_file_on_repeated_host_execution(
         module = f"batch_attachment_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _ImageBatchAttachmentSource\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (_ImageBatchAttachmentSource,)\n",
             encoding="ascii",
         )
@@ -1521,7 +1521,7 @@ def test_advanced_exports_attach_every_published_file_on_repeated_host_execution
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import "
             "_ImageBatchAttachmentSource, _AdvancedAVIFHostSource\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (_ImageBatchAttachmentSource, _AdvancedAVIFHostSource)\n",
             encoding="ascii",
         )
@@ -1732,7 +1732,7 @@ class _EXRPreviewSource(Node):
 def test_exr_exports_associate_lazy_optional_previews(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, policy: str
 ) -> None:
-    from dinkster_nodes_image.ported import advanced_image_encoding
+    from dinkster_image.ported import advanced_image_encoding
 
     monkeypatch.setattr(
         advanced_image_encoding, "encode_exr_preview", advanced_image_encoding.encode_exr_preview
@@ -1754,8 +1754,8 @@ def test_exr_exports_associate_lazy_optional_previews(
         (tmp_path / f"{module}.py").write_text(
             "from pathlib import Path\n"
             "from test_save_image_torch import _EXRPreviewSource\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
-            "from dinkster_nodes_image.ported import advanced_image_encoding as encoding\n"
+            "from dinkster_image import register_types as register_inference_types\n"
+            "from dinkster_image.ported import advanced_image_encoding as encoding\n"
             "original = encoding.encode_exr_preview\n"
             "def encode(*args):\n"
             f" with Path({str(calls)!r}).open('a') as log: log.write('call\\n')\n"
@@ -1889,7 +1889,7 @@ def test_animated_exports_attach_exact_mounted_files_on_each_execution(
         module = f"animated_attachment_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _AdvancedAVIFHostSource\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (_AdvancedAVIFHostSource,)\n",
             encoding="ascii",
         )
@@ -2005,7 +2005,7 @@ def test_image_savers_consume_submission_metadata(
         module = f"image_metadata_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_save_image_torch import _AdvancedAVIFHostSource\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "from dinkster_api.v1 import initialize_inference_process\n"
             "initialize_inference_process()\n"
             "from dinkster_inference.cli_args import args\n"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_misc_models.bernini_conditioning import BerniniConditioning
+from dinkster_misc_models.bernini_conditioning import BerniniConditioning
 
 
 class ControlledVAE:
@@ -16,7 +16,7 @@ class ControlledVAE:
 
 
 def test_bernini_encodes_ordered_context_and_preserves_sources(monkeypatch: Any) -> None:
-    import dinkster_nodes_misc_models.bernini_conditioning as module
+    import dinkster_misc_models.bernini_conditioning as module
 
     monkeypatch.setattr(module, "initialize_inference_process", lambda: None)
     management = type("Management", (), {"intermediate_device": staticmethod(lambda: "cpu")})

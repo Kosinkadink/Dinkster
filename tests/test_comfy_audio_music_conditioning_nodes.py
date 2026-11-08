@@ -1,8 +1,8 @@
 """Torch-free public audio music conditioning schemas."""
 
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_minimax import NODES
-from dinkster_nodes_minimax.audio_music_conditioning import (
+from dinkster_minimax import NODES
+from dinkster_minimax.audio_music_conditioning import (
     MiniMaxMusic3TextEncode,
     ReferenceTimbreAudio,
 )

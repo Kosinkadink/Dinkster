@@ -173,8 +173,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_values import EncodedLatentTensor
 from dinkster_api.v1 import TriangleMeshBatch
-from dinkster_nodes_3d import NODES as geometry_nodes
-from dinkster_nodes_hunyuan import NODES as hunyuan_nodes
+from dinkster_3d import NODES as geometry_nodes
+from dinkster_hunyuan import NODES as hunyuan_nodes
 from dinkster_workers import load_manifest
 runtimes = {node.schema().node_type: node.schema() for node in (*geometry_nodes, *hunyuan_nodes)}
 names = {'dinkster.3d.rotate_mesh', 'dinkster.3d.get_mesh_info',

@@ -1,23 +1,28 @@
 [project]
-name = "dinkster-nodes-conditioning"
-version = "0.0.2"
+name = "dinkster-conditioning"
+version = "0.0.1"
 description = "First-party Dinkster conditioning nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-inference-wire", "dinkster-nodes-latent"]
+dependencies = [
+    "dinkster-api",
+    "torch",
+    "safetensors",
+    "dinkster-inference==0.1.1",
+    "dinkster-latent>=0.0.1,<1",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster_nodes_conditioning"]
+packages = ["src/dinkster_conditioning"]
+
 
 [tool.hatch.build.targets.wheel.force-include]
-"dinkster-pack.toml" = "dinkster_conditioning_pack/dinkster-pack.toml"
-"src/dinkster_nodes_conditioning" = "dinkster_conditioning_pack/dinkster_nodes_conditioning"
-"locales" = "dinkster_conditioning_pack/locales"
+"dinkster-pack.toml" = "dinkster_conditioning/dinkster-pack.toml"
+"locales" = "dinkster_conditioning/locales"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-inference-wire = { workspace = true }
-dinkster-nodes-latent = { workspace = true }
+dinkster-latent = { workspace = true }

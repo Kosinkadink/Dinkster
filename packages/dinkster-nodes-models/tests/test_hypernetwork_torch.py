@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
-from dinkster_nodes_models.hypernetwork import HypernetworkLoader
+from dinkster_models.hypernetwork import HypernetworkLoader
 
 
 def _model() -> Any:

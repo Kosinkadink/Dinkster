@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_wan.wan_animate import (
+from dinkster_wan.wan_animate import (
     WanAnimate2Cache,
     WanAnimate2ToVideo,
     WanAnimateToVideo,

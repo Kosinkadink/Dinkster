@@ -11,9 +11,9 @@ from dinkster_api.v1 import (
     AssetWidget,
     NumberWidget,
 )
-from dinkster_nodes_video import NODES
-from dinkster_nodes_video.interpolation import FrameInterpolate
-from dinkster_nodes_video.interpolation_loader import FrameInterpolationModelLoader
+from dinkster_video import NODES
+from dinkster_video.interpolation import FrameInterpolate
+from dinkster_video.interpolation_loader import FrameInterpolationModelLoader
 from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 
@@ -56,8 +56,8 @@ def test_interpolation_loader_cold_import_does_not_load_torch() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; import dinkster_nodes_video; "
-            "from dinkster_nodes_video.interpolation_loader import FrameInterpolationModelLoader; "
+            "import sys; import dinkster_video; "
+            "from dinkster_video.interpolation_loader import FrameInterpolationModelLoader; "
             "FrameInterpolationModelLoader.schema(); "
             "assert 'torch' not in sys.modules; "
             "assert not any(k.startswith('dinkster_inference.') for k in sys.modules)",

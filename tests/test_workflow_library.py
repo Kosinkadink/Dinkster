@@ -1381,10 +1381,10 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     import numpy as np
-    from dinkster_nodes_audio.audio_save import SaveAudio
-    from dinkster_nodes_image.ported.image_file_tools import SaveImage
-    from dinkster_nodes_text.save_text import SaveText
-    from dinkster_nodes_video.video_save import SaveVideo
+    from dinkster_audio.audio_save import SaveAudio
+    from dinkster_image.ported.image_file_tools import SaveImage
+    from dinkster_text.save_text import SaveText
+    from dinkster_video.video_save import SaveVideo
     from dinkster_video_runtime import assemble_video
     from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 

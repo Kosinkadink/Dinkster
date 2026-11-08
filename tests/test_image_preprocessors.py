@@ -10,8 +10,8 @@ from typing import cast
 import cv2
 import numpy as np
 import pytest
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.preprocess import (
+from dinkster_image import NODES
+from dinkster_image.preprocess import (
     PREPROCESSOR_NODES,
     BinaryPreprocessor,
     ColorHintPreprocessor,
@@ -37,7 +37,7 @@ GOLDEN_CASES = cast("dict[str, object]", GOLDEN["cases"])
 HINT_GOLDEN_PATH = Path(__file__).parent / "goldens" / "hint_resize_controlnet_aux_59b1fc4.json"
 HINT_GOLDEN = cast("dict[str, object]", json.loads(HINT_GOLDEN_PATH.read_text(encoding="utf-8")))
 ALIAS_PATH = (
-    Path(__file__).parent.parent / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
+    Path(__file__).parent.parent / "packages" / "dinkster-image" / "draft-comfy-aliases.json"
 )
 
 
@@ -382,7 +382,7 @@ def test_inpaint_hint_resizes_and_broadcasts_masks() -> None:
 def test_inpaint_hint_enforces_the_image_operation_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_nodes_image.support.MAX_IMAGE_BYTES", 1)
+    monkeypatch.setattr("dinkster_image.support.MAX_IMAGE_BYTES", 1)
     with pytest.raises(ValueError, match="image operation limit"):
         InpaintHintPreprocessor.execute(
             image=np.zeros((1, 1, 1, 3), dtype=np.float32),

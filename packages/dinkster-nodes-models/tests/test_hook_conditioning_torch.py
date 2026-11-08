@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.hook_conditioning import (
+from dinkster_models.hook_conditioning import (
     ConditioningSetDefaultCombine,
     ConditioningSetProperties,
     ConditioningSetPropertiesAndCombine,
@@ -417,7 +417,7 @@ def test_hook_conditioning_reaches_native_reference_consumer(
                         manifest=manifest,
                         in_process=True,
                         packs={"dinkster-latent": PackInfo(display_name="Latent", version="0.0.1")}
-                        if manifest.parent.name == "dinkster-nodes-latent"
+                        if manifest.parent.name == "dinkster-latent"
                         else None,
                     )
                     if in_process

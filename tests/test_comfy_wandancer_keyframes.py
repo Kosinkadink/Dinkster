@@ -9,8 +9,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_wan import NODES
-from dinkster_nodes_wan.wandancer_keyframes import WanDancerPadKeyframes, WanDancerPadKeyframesList
+from dinkster_wan import NODES
+from dinkster_wan.wandancer_keyframes import WanDancerPadKeyframes, WanDancerPadKeyframesList
 
 
 def test_wandancer_keyframe_schemas_and_cold_discovery() -> None:

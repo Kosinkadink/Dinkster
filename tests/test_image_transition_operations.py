@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.transition import ImageTransition, _ease, _transition_mask
+from dinkster_image.transition import ImageTransition, _ease, _transition_mask
 
 
 def _image(values: list[float], *, height: int = 1, width: int = 1) -> np.ndarray:

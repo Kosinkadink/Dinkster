@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from dinkster_api.v1 import ASSET_TYPE, CLIP_TYPE, CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, TypeExpr
-from dinkster_nodes_models import lora_file_loaders as loaders
+from dinkster_models import lora_file_loaders as loaders
 
 
 class _VerifiedAsset:
@@ -46,8 +46,8 @@ def test_lora_file_loader_schemas_are_torch_free() -> None:
             "-c",
             """
 import sys
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models import lora_file_loaders as loaders
+from dinkster_models import NODES
+from dinkster_models import lora_file_loaders as loaders
 
 nodes = (
     loaders.LoraLoader, loaders.LoraLoaderModelOnly, loaders.LoadLoraModel,

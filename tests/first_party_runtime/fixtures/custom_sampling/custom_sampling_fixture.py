@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_latent,
     register_inference_types,
 )
-from dinkster_nodes_sampling.noise import RandomNoise
+from dinkster_sampling.noise import RandomNoise
 from test_standard_sampling_torch import _TinyModel
 
 

@@ -8,8 +8,8 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import CORE_FLOAT, IMAGE_TYPE, SAM3_TRACK_DATA_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_vision_sam3 import NODES
-from dinkster_nodes_vision_sam3.sam3_preview import SAM3_TrackPreview
+from dinkster_vision_sam3 import NODES
+from dinkster_vision_sam3.sam3_preview import SAM3_TrackPreview
 from dinkster_schema import claim_covers
 
 
@@ -44,7 +44,7 @@ def test_sam3_preview_schema_import_is_cold() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; from dinkster_nodes_vision_sam3.sam3_preview import SAM3_TrackPreview; "
+            "import sys; from dinkster_vision_sam3.sam3_preview import SAM3_TrackPreview; "
             "SAM3_TrackPreview.define_schema(); "
             "assert not any(x == 'torch' or x.startswith(('torch.', 'dinkster_inference.')) "
             "for x in sys.modules)",

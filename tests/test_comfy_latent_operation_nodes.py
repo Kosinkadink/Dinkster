@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_latent.latent_operations import (
+from dinkster_latent.latent_operations import (
     LatentApplyOperation,
     LatentApplyOperationCFG,
     LatentOperationBlend,
@@ -91,7 +91,7 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
         (tmp_path / "resident_fixture_nodes.py").write_text(
             "from test_comfy_latent_operation_nodes import (\n"
             "ResidentSource, ResidentInspect, ResidentStorage)\n"
-            "from dinkster_nodes_latent.types import register_types\n"
+            "from dinkster_latent.types import register_types\n"
             "NODES = (ResidentSource, ResidentInspect, ResidentStorage)\n",
             encoding="ascii",
         )

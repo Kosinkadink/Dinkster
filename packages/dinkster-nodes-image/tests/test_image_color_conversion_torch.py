@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.image_color_conversion import ImageColorSpace, ImageSDRToHDR
+from dinkster_image.ported.image_color_conversion import ImageColorSpace, ImageSDRToHDR
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -169,8 +169,8 @@ def test_color_conversion_ordinary_manifest_twice(tmp_path: Path, in_process: bo
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "color_fixture.py").write_text(
                 "from test_image_color_conversion_torch import ColorSource, ColorInspect\n"
-                "from dinkster_nodes_image import NODES as COMFY_NODES\n"
-                "from dinkster_nodes_image import register_types as register_inference_types\n"
+                "from dinkster_image import NODES as COMFY_NODES\n"
+                "from dinkster_image import register_types as register_inference_types\n"
                 "NODES = (*COMFY_NODES, ColorSource, ColorInspect)\n",
                 encoding="ascii",
             )
@@ -178,13 +178,13 @@ def test_color_conversion_ordinary_manifest_twice(tmp_path: Path, in_process: bo
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["color-fixture",')
-                .replace("dinkster_nodes_image:NODES", "color_fixture:NODES")
+                .replace("dinkster_image:NODES", "color_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_image.ported.device_routing:device_choices",
+                    "dinkster_image.ported.device_routing:device_choices",
                     "color_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_image:register_types",
+                    "dinkster_image:register_types",
                     "color_fixture:register_inference_types",
                 ),
                 encoding="ascii",

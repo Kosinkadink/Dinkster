@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_models.rope_and_mask import DifferentialDiffusion
+from dinkster_models.rope_and_mask import DifferentialDiffusion
 
 
 class Patcher:

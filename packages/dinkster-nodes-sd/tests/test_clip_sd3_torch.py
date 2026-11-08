@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_sd.clip_sd3 import CLIPTextEncodeSD3
+from dinkster_sd.clip_sd3 import CLIPTextEncodeSD3
 
 
 class TripleEncoder:
