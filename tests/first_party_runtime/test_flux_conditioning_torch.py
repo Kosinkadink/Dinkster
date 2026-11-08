@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +19,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 class ConditioningSource(Node):
@@ -77,51 +76,44 @@ class InspectConditioning(Node):
 @pytest.mark.parametrize("in_process", (True,))
 def test_flux_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        composer = ServingComposer(
-            worker_env={
-                "PYTHONPATH": os.pathsep.join(
-                    (str(root / "tests"), str(root / "src"), os.environ.get("PYTHONPATH", ""))
-                )
-            }
-        )
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
             (tmp_path / "flux_fixture.py").write_text(
                 "from test_flux_conditioning_torch import ConditioningSource, InspectConditioning\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, ConditioningSource, InspectConditioning)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (ConditioningSource, InspectConditioning)\n",
                 encoding="ascii",
             )
             manifest = tmp_path / "dinkster-pack.toml"
             manifest.write_text(
-                (root / "dinkster-pack.toml")
-                .read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["flux-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "flux_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "flux_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "flux_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "flux-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["flux-fixture"]\n[pack.entry]\n'
+                'nodes = "flux_fixture:NODES"\n'
+                'types = "flux_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-flux", "dinkster_nodes_flux"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("flux-fixture.source"),
                     "guided": GraphNode(
-                        "FluxGuidance",
+                        "dinkster.flux.flux_guidance",
                         {"conditioning": Link("source", "conditioning"), "guidance": 0.0},
                     ),
                     "disabled": GraphNode(
-                        "FluxDisableGuidance", {"conditioning": Link("guided", "CONDITIONING")}
+                        "dinkster.flux.flux_disable_guidance",
+                        {"conditioning": Link("guided", "CONDITIONING")},
                     ),
                     "reference": GraphNode(
-                        "FluxKontextMultiReferenceLatentMethod",
+                        "dinkster.flux.flux_kontext_multi_reference_latent_method",
                         {
                             "conditioning": Link("disabled", "CONDITIONING"),
                             "reference_latents_method": "uxo/uno",
