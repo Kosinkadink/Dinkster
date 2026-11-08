@@ -1464,6 +1464,35 @@ def test_moved_pack_census_requires_frozen_ids_and_preserves_interface_drift() -
     assert result["rows"][0]["status"] == "absent"
 
 
+def test_census_support_nodes_require_declared_identity_owner_and_selected_pack() -> None:
+    from tools.compare_nodes import ID_TABLE, SCOPE_RULES, compare_registry
+
+    table = json.loads(ID_TABLE.read_text())
+    scope = json.loads(SCOPE_RULES.read_text())
+    reference = {"nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}]}
+    support = table["supportNodes"][0]
+    node_type = support["nodeType"]
+    schema = {"nodeType": node_type, "pack": support["pack"], "interface": []}
+    registry = {"nodes": {"Example": {"nodeType": "Example", "interface": []}, node_type: schema}}
+    result = compare_registry(reference, registry)
+    assert result["passed"]
+    assert result["eligible_node_count"] == 1
+    assert result["counts"] == {"identical": 1, "Dinkster-only": 1}
+    for owner in ("custom-pack", None):
+        schema["pack"] = owner
+        assert compare_registry(reference, registry)["registry_errors"] == [
+            f"core class id {node_type!r} is claimed by pack {owner!r}"
+        ]
+    schema["pack"] = support["pack"]
+    scope["migratedPacks"].remove(support["pack"])
+    assert compare_registry(reference, registry, scope=scope)["registry_errors"] == [
+        f"prefixed node id: {node_type}"
+    ]
+    table["supportNodes"].append(support)
+    with pytest.raises(ValueError, match="support node id collides"):
+        compare_registry(reference, registry, id_table=table)
+
+
 def test_census_rejects_ambiguous_table_and_unknown_pack_selection() -> None:
     from tools.compare_nodes import ID_TABLE, SCOPE_RULES, compare_registry
 

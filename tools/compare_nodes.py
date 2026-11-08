@@ -609,6 +609,12 @@ def compare_registry(
     ids = set(owners)
     owners.update({node_type: pack for node_type, pack in identities.values()})
     moved_ids = {node_type for node_type, _ in identities.values()}
+    for row in id_table.get("supportNodes", []):
+        if row["pack"] in migrated:
+            if row["nodeType"] in owners:
+                raise ValueError("support node id collides with another declared node")
+            owners[row["nodeType"]] = row["pack"]
+            moved_ids.add(row["nodeType"])
     for key, schema in served.items():
         if key != schema.get("nodeType"):
             errors.append(f"registry key {key!r} differs from nodeType {schema.get('nodeType')!r}")
