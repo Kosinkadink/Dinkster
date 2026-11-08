@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
 from pathlib import Path
 
 import pytest
@@ -22,15 +21,14 @@ from dinkster_api.v1 import (
 )
 from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.audio_latent import (
+from dinkster_nodes_audio_models.audio_latent import (
     EmptyAceStep15LatentAudio,
     EmptyAceStepLatentAudio,
-    EmptyLatentAudio,
     EmptyYuE2LatentAudio,
-    GetAudioLatentSize,
 )
+from dinkster_nodes_latent.audio_latent import EmptyLatentAudio, GetAudioLatentSize
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 @pytest.mark.parametrize(
@@ -67,14 +65,20 @@ def test_ordinary_manifest_creates_audio_latents_twice(in_process: bool) -> None
             worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"}
         )
         cases = (
-            ("EmptyLatentAudio", (3, 64, 22), 2048),
-            ("EmptyAceStepLatentAudio", (3, 8, 16, 10), None),
-            ("EmptyAceStep1.5LatentAudio", (3, 64, 26), 1764),
-            ("EmptyYuE2LatentAudio", (3, 64, 26), 1920),
+            ("dinkster.latent.empty_latent_audio", (3, 64, 22), 2048),
+            ("dinkster.audio.models.empty_ace_step_latent_audio", (3, 8, 16, 10), None),
+            ("dinkster.audio.models.empty_ace_step1_5_latent_audio", (3, 64, 26), 1764),
+            ("dinkster.audio.models.empty_yu_e2_latent_audio", (3, 64, 26), 1920),
         )
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-audio-models", "dinkster_nodes_audio_models"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             graph = Graph(
                 nodes={
                     name: GraphNode(name, {"seconds": 1.02, "batch_size": 3})
@@ -190,42 +194,39 @@ class SizeInspect(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 def test_audio_size_production_manifest_both_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(package / "src"))),
+                "PYTHONPATH": str(Path(__file__).parent),
             }
         )
         (tmp_path / "audio_size_fixture.py").write_text(
             "from test_audio_latent_torch import SizeSource, SizeInspect\n"
-            "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-            "from dinkster_nodes_comfy.device_routing import device_choices\n"
-            "NODES = (*COMFY_NODES, SizeSource, SizeInspect)\n",
+            "from dinkster_api.v1 import register_inference_types\n"
+            "NODES = (SizeSource, SizeInspect)\n",
             encoding="ascii",
         )
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            (package / "dinkster-pack.toml")
-            .read_text()
-            .replace("namespaces = [", 'namespaces = ["audio-size-fixture",')
-            .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_size_fixture:NODES")
-            .replace(
-                "dinkster_nodes_comfy.device_routing:device_choices",
-                "audio_size_fixture:device_choices",
-            )
-            .replace(
-                "dinkster_nodes_comfy:register_inference_types",
-                "audio_size_fixture:register_inference_types",
-            ),
+            '[pack]\nname = "audio-size-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["audio-size-fixture"]\n[pack.entry]\n'
+            'nodes = "audio_size_fixture:NODES"\n'
+            'types = "audio_size_fixture:register_inference_types"\n',
             encoding="ascii",
         )
         try:
+            await composer.add_pack(
+                _installed_pack_spec(
+                    "dinkster-latent", "dinkster_nodes_latent", in_process=in_process
+                )
+            )
             await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             nodes = {"source": GraphNode("audio-size-fixture.source")}
             for name in ("plain", "channel", "joint"):
-                nodes[name] = GraphNode("GetAudioLatentSize", {"latent": Link("source", name)})
+                nodes[name] = GraphNode(
+                    "dinkster.latent.get_audio_latent_size", {"latent": Link("source", name)}
+                )
                 nodes[name + "_inspect"] = GraphNode(
                     "audio-size-fixture.inspect",
                     {
@@ -245,7 +246,8 @@ def test_audio_size_production_manifest_both_hosts_twice(tmp_path: Path, in_proc
                     nodes={
                         "source": nodes["source"],
                         "reverse": GraphNode(
-                            "GetAudioLatentSize", {"latent": Link("source", "reverse")}
+                            "dinkster.latent.get_audio_latent_size",
+                            {"latent": Link("source", "reverse")},
                         ),
                     }
                 )
