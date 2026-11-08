@@ -23,6 +23,7 @@ import weakref
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -32,7 +33,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
-from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import EngineEvent
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
 from dinkster_memory import (
@@ -41,9 +41,7 @@ from dinkster_memory import (
     MemoryGovernor,
     ReportedTelemetry,
 )
-from dinkster_nodes_foundation import FOUNDATION_NODES
-from dinkster_nodes_image import IMAGE_NODES
-from dinkster_nodes_media_io import MEDIA_IO_NODES
+from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
@@ -70,7 +68,15 @@ TESTS_DIR = Path(__file__).parent
 DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
-DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
+FIRST_PARTY_NODE_PACKS = {
+    row["nodeType"]: row["pack"]
+    for row in json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())[
+        "nodes"
+    ]
+} | {
+    "dinkster.utilities.make_list": "dinkster-utilities",
+    "dinkster.utilities.list_element": "dinkster-utilities",
+}
 
 
 @pytest.mark.parametrize("source", ["image-list", "video-asset"])
@@ -411,33 +417,6 @@ def test_image_pack_starts_with_canonical_inference_types() -> None:
             await composer.close()
 
     run_scenario(scenario())
-
-
-STANDARD_OWNER_PACKS = {
-    "dinkster-nodes-foundation",
-    "dinkster-nodes-image",
-    "dinkster-nodes-media-io",
-}
-STANDARD_VISION_PACKS = {
-    "dinkster-vision-birefnet",
-    "dinkster-vision-depth-anything-v2",
-    "dinkster-vision-depth-anything-v3",
-    "dinkster-vision-detr",
-    "dinkster-vision-efficient-sam",
-    "dinkster-vision-hed",
-    "dinkster-vision-rtdetr",
-    "dinkster-vision-sam31",
-    "dinkster-vision-upscale",
-}
-HED_PROVIDER_NODES = (
-    "dinkster.preprocess.model_edges",
-    "dinkster.preprocess.lineart_realistic",
-    "dinkster.preprocess.lineart_anime",
-    "dinkster.preprocess.lineart_manga",
-    "dinkster.preprocess.anyline",
-    "dinkster.preprocess.teed",
-    "dinkster.preprocess.mlsd",
-)
 
 
 @pytest.fixture
@@ -1263,38 +1242,18 @@ def test_compose_defaults_only(
 
     async def scenario() -> None:
         async with defaults as composition:
-            assert set(composition.schemas) == set(build_schemas(DEFAULT_NODES))
+            assert set(composition.schemas) == set(FIRST_PARTY_NODE_PACKS)
             assert not any(t.startswith("dev.") for t in composition.schemas)
             assert set(composition.packs) == (
-                STANDARD_OWNER_PACKS | STANDARD_VISION_PACKS | {"dinkster-nodes-remote"}
+                set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}
             )
-            assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
-            assert len(FOUNDATION_NODES) == 54
-            assert len(IMAGE_NODES) == 89
-            assert len(MEDIA_IO_NODES) == 66
-            assert {
-                node_type
-                for node_type, pack_id in composition.node_packs.items()
-                if pack_id == "dinkster-nodes-foundation"
-            } == set(build_schemas(FOUNDATION_NODES))
-            assert {
-                node_type
-                for node_type, pack_id in composition.node_packs.items()
-                if pack_id == "dinkster-nodes-media-io"
-            } == set(build_schemas(MEDIA_IO_NODES))
-            assert {
-                node_type
-                for node_type, pack_id in composition.node_packs.items()
-                if pack_id == "dinkster-nodes-image"
-            } == set(build_schemas(IMAGE_NODES))
+            assert composition.node_packs == FIRST_PARTY_NODE_PACKS
             locked = default_pack_specs()
             assert {
                 next(iter(spec.packs))
                 for spec in locked
                 if spec.packs is not None and not spec.in_process
-            } == STANDARD_VISION_PACKS | {"dinkster-nodes-remote"}
-            for node_type in HED_PROVIDER_NODES:
-                assert composition.choices[f"{node_type}.providers"] == ("dinkster-vision-hed",)
+            } == set(composition.packs)
             expected_digests = {
                 pack_id: info.artifact_digest
                 for spec in locked
@@ -1305,20 +1264,16 @@ def test_compose_defaults_only(
                 pack.pack: pack.artifact_digest for pack in composition.generation.packs
             } == expected_digests
             engine = composition.make_engine(lambda event: None)
-            runtime = engine.pin_execution()
-            assert runtime.resolve_providers is not None
-            for node_type in HED_PROVIDER_NODES:
-                unresolved = Graph(nodes={"vision": GraphNode(node_type, {})})
-                resolved = runtime.resolve_providers(unresolved)
-                unresolved_node = unresolved.nodes["vision"]
-                resolved_node = resolved.nodes["vision"]
-                assert isinstance(unresolved_node, GraphNode)
-                assert isinstance(resolved_node, GraphNode)
-                assert "provider" not in unresolved_node.inputs
-                assert resolved_node.inputs["provider"] == "dinkster-vision-hed"
-            graph = Graph(nodes={"g": GraphNode("std.math.add_ints", {"a": 2, "b": 3})})
+            graph = Graph(
+                nodes={
+                    "g": GraphNode(
+                        "dinkster.text.string_concatenate",
+                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
+                    )
+                }
+            )
             result = await engine.run(graph, ["g"])
-            assert result.outputs["g"]["sum"].resolve() == 5
+            assert result.outputs["g"]["STRING"].resolve() == "left:right"
 
             library = ServerLibrary(
                 vault=AssetVault(tmp_path / "vault"),
@@ -1335,49 +1290,10 @@ def test_compose_defaults_only(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                exact_graph = Graph(
-                    nodes={
-                        "source": GraphNode(
-                            "dinkster.image.generate",
-                            {"width": 8, "height": 8},
-                            slot_variants={"color_source": "hex", "operation": "solid"},
-                        ),
-                        "realistic-line-art": GraphNode(
-                            "dinkster.preprocess.lineart_realistic",
-                            {"image": Link("source", "image")},
-                        ),
-                    }
-                )
-                response = await client.post(
-                    "/api/jobs",
-                    json={
-                        "clientId": "realistic-line-art",
-                        "jobId": "preflight",
-                        "graph": graph_to_wire(exact_graph),
-                        "targets": ["realistic-line-art"],
-                    },
-                )
+                response = await client.get("/api/nodes")
                 payload = await response.json()
-                assert response.status == 409, payload
-                assert payload["error"] == "assets-missing"
-                assert {asset["name"] for asset in payload["assets"]} == {
-                    "ControlNet realistic line-art detector",
-                    "ControlNet coarse realistic line-art detector",
-                }
-                assert all(asset["fetchable"] for asset in payload["assets"])
-                assert {asset["name"]: asset["sources"] for asset in payload["assets"]} == {
-                    "ControlNet realistic line-art detector": [
-                        "https://huggingface.co/lllyasviel/Annotators/resolve/"
-                        "982e7edaec38759d914a963c48c4726685de7d96/sk_model.pth"
-                    ],
-                    "ControlNet coarse realistic line-art detector": [
-                        "https://huggingface.co/lllyasviel/Annotators/resolve/"
-                        "982e7edaec38759d914a963c48c4726685de7d96/sk_model2.pth"
-                    ],
-                }
-                exact_node = exact_graph.nodes["realistic-line-art"]
-                assert isinstance(exact_node, GraphNode)
-                assert "provider" not in exact_node.inputs
+                assert response.status == 200, payload
+                assert set(payload["nodes"]) == set(FIRST_PARTY_NODE_PACKS)
             finally:
                 await client.close()
 
@@ -3371,15 +3287,22 @@ def test_serving_composer_incremental(tmp_path: Path) -> None:
                 await composer.add_pack(standard) for standard in default_pack_specs()
             ]
             assert set().union(*(delta.schemas for delta in standard_deltas)) == set(
-                build_schemas(DEFAULT_NODES)
+                FIRST_PARTY_NODE_PACKS
             )
             for standard_delta in standard_deltas:
                 engine.announce_schemas(standard_delta.schemas)
             result = await engine.run(
-                Graph(nodes={"g": GraphNode("std.math.add_ints", {"a": 2, "b": 3})}),
+                Graph(
+                    nodes={
+                        "g": GraphNode(
+                            "dinkster.text.string_concatenate",
+                            {"string_a": "left", "string_b": "right", "delimiter": ":"},
+                        )
+                    }
+                ),
                 ["g"],
             )
-            assert "g" in result.outputs
+            assert result.outputs["g"]["STRING"].resolve() == "left:right"
 
             delta = await composer.add_pack(write_iso_manifest(tmp_path))
             assert delta.pack == "isopack"
