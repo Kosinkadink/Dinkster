@@ -43,16 +43,13 @@ def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatc
 
 
 async def _default_pack_names() -> tuple[str, ...]:
-    from dinkster.comfy_compose import comfy_compat_specs
     from dinkster_workers import load_manifest
 
-    from dinkster.compose import ServingComposer, default_pack_specs, model_pack_specs
+    from dinkster.compose import ServingComposer, default_pack_specs
 
     composer = ServingComposer()
     try:
-        specs = composer.order_pack_entries(
-            (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
-        )
+        specs = composer.order_pack_entries(default_pack_specs())
         return tuple(load_manifest(Path(spec.manifest)).name for spec in specs)
     finally:
         await composer.close()
@@ -3297,12 +3294,11 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         run_scenario(composer.close())
 
 
-def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> None:
-    from dinkster.comfy_compose import comfy_compat_specs
+def test_degraded_default_ordering_retains_first_party_packs(tmp_path: Path) -> None:
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
-    from dinkster.compose import PackSpec, ServingComposer, default_pack_specs, model_pack_specs
+    from dinkster.compose import PackSpec, ServingComposer, default_pack_ids, default_pack_specs
 
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
@@ -3314,7 +3310,7 @@ def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> N
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
         encoding="utf-8",
     )
-    defaults = (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+    defaults = default_pack_specs()
     specs = (*defaults, PackSpec(manifest=broken / "dinkster-pack.toml"))
     composer = ServingComposer()
     try:
@@ -3323,7 +3319,10 @@ def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> N
         run_scenario(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
-    assert "dinkster-nodes-comfy" in names
+    assert set(names) == {*default_pack_ids(), "dinkster-ordering-probe"}
+    assert len(names) == len(set(names))
+    assert {"dinkster-sampling", "dinkster-image", "dinkster-video"} <= set(names)
+    assert "dinkster-nodes-comfy" not in names
     assert "dinkster-nodes-generation" not in names
 
 
