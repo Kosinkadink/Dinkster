@@ -17,7 +17,6 @@ from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_compat_comfy import translate_mappings
 from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
@@ -615,28 +614,57 @@ def test_visibility_is_independent_of_schedule_and_cache_incidents() -> None:
 
 
 def test_current_runtime_executes_sync_scalar_lazy_inputs() -> None:
-    class FutureLazy:
-        RETURN_TYPES = ("INT",)
-        FUNCTION = "run"
+    integer = TypeExpr.concrete(CORE_INT)
+
+    class LazyIdentity(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.lazy-identity",
+                inputs=(InputSpec("value", integer, lazy=True),),
+                outputs=(OutputSpec("value", integer),),
+            )
 
         @classmethod
-        def INPUT_TYPES(cls) -> object:
-            return {"required": {"value": ("INT", {"lazy": True})}}
-
-        def run(self, value):  # noqa: ANN001, ANN201
-            return (value,)
+        def execute(cls, value: int) -> Mapping[str, object]:
+            return cls.outputs(value=value)
 
         @classmethod
-        def check_lazy_status(cls, value):  # noqa: ANN001, ANN206
+        def check_lazy_status(cls, value: int | None) -> list[str]:
             return [] if value is not None else ["value"]
 
+    class Source(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema("test.scalar-source", outputs=(OutputSpec("value", integer),))
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(value=37)
+
     runtime = cast("dict[str, object]", _fixture()["currentRuntime"])
-    translation = translate_mappings({"FutureLazy": FutureLazy})
     assert runtime["engineImplementation"] is True
-    assert "FutureLazy" not in translation.skipped
-    (node_class,) = translation.node_classes
-    value = node_class.define_schema().input("value")
-    assert value is not None and value.lazy
+
+    async def scenario() -> None:
+        nodes = (Source, LazyIdentity)
+        registry = TypeRegistry()
+        register_core_types(registry)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph(
+            {
+                "source": GraphNode("test.scalar-source"),
+                "identity": GraphNode("test.lazy-identity", {"value": Link("source", "value")}),
+            }
+        )
+        result = await engine.run(graph, ["identity"])
+        assert result.outputs["identity"]["value"].resolve() == 37
+
+    run_scenario(scenario())
 
 
 def test_current_comfy_whole_list_projection_is_source_pinned() -> None:
