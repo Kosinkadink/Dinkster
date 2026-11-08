@@ -1430,6 +1430,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "inherited-device")
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cuda")
+    monkeypatch.setenv("DINKSTER_TEST_HISTORY_ROOT", str(tmp_path / "wrong-history"))
     engine = tmp_path / "engine"
     tests = engine / "tests"
     tests.mkdir(parents=True)
@@ -1465,6 +1466,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + "    assert VALUE == 47\n"
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
         "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
+        "    history = Path(os.environ['DINKSTER_TEST_HISTORY_ROOT'])\n"
+        "    assert not (Path.cwd() / '.git').exists()\n"
+        "    assert str(history) not in sys.path\n"
+        "    assert subprocess.check_output(['git', 'show', ':pyproject.toml'], "
+        "cwd=history) == b''\n"
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
         "    assert tomllib.loads((pack_root / 'pyproject.toml').read_text()) "
         "== {'project': {'name': 'selected-image'}}\n"

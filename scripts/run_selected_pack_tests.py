@@ -197,6 +197,8 @@ def run_selected_tests(
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         child_env["CUDA_VISIBLE_DEVICES"] = ""
         child_env["DINKSTER_ACCELERATOR"] = "cpu"
+        # Historical evidence is read from Git, never added to the import search path.
+        child_env["DINKSTER_TEST_HISTORY_ROOT"] = str(root)
         child = work / "test-child.py"
         shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
         shutil.copy2(child, checkout / "_selected_pack_test_child.py")

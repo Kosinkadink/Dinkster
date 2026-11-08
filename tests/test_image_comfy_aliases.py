@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
 import tomllib
 from collections import defaultdict
@@ -779,7 +780,7 @@ def test_image_comfy_alias_confidence_has_pinned_evidence() -> None:
             if historical:
                 evidence = subprocess.check_output(
                     ["git", "show", f"{revision}:{path_text}"],
-                    cwd=ROOT,
+                    cwd=os.environ.get("DINKSTER_TEST_HISTORY_ROOT", ROOT),
                     text=True,
                     encoding="utf-8",
                 )
