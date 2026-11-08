@@ -22,10 +22,10 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_inference.latent_formats import SD3, SDXL, Flux, Flux2, Wan21
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.pid_conditioning import PiDConditioning
+from dinkster_nodes_conditioning import NODES
+from dinkster_nodes_conditioning.pid_conditioning import PiDConditioning
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -73,7 +73,7 @@ def test_pid_conditioning_selects_the_reference_latent_format_and_preserves_inpu
     )["CONDITIONING"]
     metadata = output[0][1]
 
-    assert PiDConditioning in COMFY_NODES
+    assert PiDConditioning in NODES
     assert output[0][0] is positive[0][0]
     assert metadata is not positive[0][1]
     assert metadata["preserved"] == "metadata"
@@ -102,7 +102,7 @@ def test_pid_conditioning_uses_the_first_video_latent_frame() -> None:
 
 def test_pid_conditioning_schema_matches_the_fixed_reference() -> None:
     schema = PiDConditioning.define_schema()
-    assert schema.node_type == "PiDConditioning"
+    assert schema.node_type == "dinkster.conditioning.pi_d_conditioning"
     assert schema.display_name == "PiD Conditioning"
     assert schema.category == "model/conditioning"
     assert [input.id for input in schema.inputs] == [
@@ -153,11 +153,10 @@ class Inspect(Node):
 
 
 @pytest.mark.parametrize("in_process", (True,))
-def test_pid_conditioning_executes_twice_through_both_production_hosts(
+def test_pid_conditioning_executes_twice_through_production_host(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -166,17 +165,15 @@ def test_pid_conditioning_executes_twice_through_both_production_hosts(
                     (
                         str(tmp_path),
                         str(Path(__file__).parent),
-                        str(source_root),
                         os.environ.get("PYTHONPATH", ""),
                     )
                 ),
             }
         )
         try:
-            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "pid_conditioning_fixture.py").write_text(
                 "from test_pid_conditioning_torch import Inspect, Source\n"
-                "from dinkster_nodes_comfy import register_inference_types\n"
+                "from dinkster_api.v1 import register_inference_types\n"
                 "NODES = (Source, Inspect)\n",
                 encoding="ascii",
             )
@@ -188,20 +185,19 @@ def test_pid_conditioning_executes_twice_through_both_production_hosts(
                 'types = "pid_conditioning_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            for manifest in (native_manifest, fixture_manifest):
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+            ):
                 await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "pid-conditioning-fixture",
-                        group_manifests=() if in_process else (native_manifest, fixture_manifest),
-                    )
+                    _installed_pack_spec(identity, module, in_process=in_process)
                 )
+            await composer.add_pack(PackSpec(fixture_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("pid-conditioning-fixture.source"),
                     "conditioning": GraphNode(
-                        "PiDConditioning",
+                        "dinkster.conditioning.pi_d_conditioning",
                         {
                             "positive": Link("source", "positive"),
                             "latent": Link("source", "latent"),
