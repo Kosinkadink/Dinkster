@@ -7,7 +7,7 @@ import torch
 from dinkster_api.v1 import (
     materialize_latent,
 )
-from dinkster_nodes_misc_models.kandinsky_video import Kandinsky5ImageToVideo
+from dinkster_misc_models.kandinsky_video import Kandinsky5ImageToVideo
 
 
 class VAE:

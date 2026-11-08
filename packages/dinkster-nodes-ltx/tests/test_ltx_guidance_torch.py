@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_ltx.ltx_guidance import (
+from dinkster_ltx.ltx_guidance import (
     LTXVModalityGuidance,
     LTXVReferenceAudio,
     LTXVSpatioTemporalGuidance,

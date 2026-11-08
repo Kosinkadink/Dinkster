@@ -234,7 +234,7 @@ jobs:
           --cov=dinkster_api --cov=dinkster_assets
           --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
           --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
-          --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
+          --cov=dinkster_image --cov=dinkster_nodes_media_io
           --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
           --cov=dinkster_workers --cov-branch --cov-report=
         if: runner.os == 'Linux'
@@ -380,7 +380,7 @@ jobs:
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
             --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
-            --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io `
+            --cov=dinkster_image --cov=dinkster_nodes_media_io `
             --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values `
             --cov=dinkster_workers --cov-branch --cov-report=
           exit $LASTEXITCODE

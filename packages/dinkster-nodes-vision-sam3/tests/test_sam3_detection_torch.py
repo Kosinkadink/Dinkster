@@ -32,7 +32,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sam3.sam3_detection import SAM3_Detect
+from dinkster_vision_sam3.sam3_detection import SAM3_Detect
 
 from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
@@ -322,7 +322,7 @@ def test_native_manifest_detects_and_transports_results_twice(
         module = f"sam3_detect_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_sam3_detection_torch import DetectionSource, DetectionInspect\n"
-            "from dinkster_nodes_vision_sam3 import register_types as register_sam3\n"
+            "from dinkster_vision_sam3 import register_types as register_sam3\n"
             "def register_inference_types(registry):\n"
             "    with registry.registering_pack('dinkster-vision-sam3', "
             "('SAM3_TRACK_DATA',), allow_bare=True):\n"

@@ -4,7 +4,7 @@ import math
 
 import pytest
 import torch
-from dinkster_nodes_ltx.video_latent_ops import LTXVFreezeLatent
+from dinkster_ltx.video_latent_ops import LTXVFreezeLatent
 
 
 @pytest.mark.parametrize(

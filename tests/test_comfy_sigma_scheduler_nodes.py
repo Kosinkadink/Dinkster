@@ -1,7 +1,7 @@
 """Public schemas for native ComfyUI sigma scheduler nodes."""
 
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.sigma_schedulers import (
+from dinkster_sampling import NODES
+from dinkster_sampling.sigma_schedulers import (
     BasicScheduler,
     BetaSamplingScheduler,
     ExponentialScheduler,

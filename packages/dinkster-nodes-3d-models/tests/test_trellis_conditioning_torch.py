@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d_models.trellis_conditioning import Trellis2Conditioning
 from dinkster_api.v1 import (
     CLIP_VISION_TYPE,
     CONDITIONING_TYPE,
@@ -23,7 +24,6 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d_models.trellis_conditioning import Trellis2Conditioning
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -137,7 +137,7 @@ def test_native_manifest_conditions_twice(tmp_path: Path, in_process: bool) -> N
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "trellis_vision_fixture.py").write_text(
             "from test_trellis_conditioning_torch import VisionSource, VisionInspect\n"
-            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
+            "from dinkster_3d_models import register_types as register_inference_types\n"
             "NODES = (VisionSource, VisionInspect)\n",
             encoding="ascii",
         )

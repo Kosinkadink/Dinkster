@@ -291,7 +291,7 @@ def _order_default_pack_specs(
     raises (one broken pack must not take the ordering down with it), the
     defaults still compose in manifest-requirement order: composing them in
     load order validates a pack before a declared dependency that sorts
-    later, so dinkster-nodes-image would fail its media-io requirement
+    later, so dinkster-image would fail its media-io requirement
     against a dinkster-nodes-media-io that has not announced yet.
     """
     try:

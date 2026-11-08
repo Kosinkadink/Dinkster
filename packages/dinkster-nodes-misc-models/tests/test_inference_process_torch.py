@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-from dinkster_nodes_misc_models.mochi import EmptyMochiLatentVideo
+from dinkster_misc_models.mochi import EmptyMochiLatentVideo
 
 
 def test_mochi_temporal_boundary_and_asymmetric_dimensions() -> None:

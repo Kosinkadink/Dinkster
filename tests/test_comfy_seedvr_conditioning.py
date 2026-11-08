@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_seedvr import NODES
-from dinkster_nodes_seedvr.seedvr_conditioning import SeedVR2Conditioning
+from dinkster_seedvr import NODES
+from dinkster_seedvr.seedvr_conditioning import SeedVR2Conditioning
 
 
 def test_seedvr_conditioning_schema() -> None:

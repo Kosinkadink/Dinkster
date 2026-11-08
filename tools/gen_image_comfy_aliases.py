@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from dinkster_compat_comfy import CompatTranslation, translate_node, translate_v3_schema
-from dinkster_nodes_image import IMAGE_NODES
+from dinkster_image import IMAGE_NODES
 from dinkster_schema import (
     DynamicComboSpec,
     DynamicSlotSpec,
@@ -55,7 +55,7 @@ KJ_BASELINE = "827fe6ee0ed7348d8daa988ed852bedf1272380c"
 ESSENTIALS_BASELINE = "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9"
 CONTROLNET_AUX_BASELINE = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 REPO = Path(__file__).resolve().parent.parent
-OUT = REPO / "packages" / "dinkster-nodes-image" / "comfy-aliases.json"
+OUT = REPO / "packages" / "dinkster-image" / "comfy-aliases.json"
 DEPTH_ANYTHING_V2_OUT = (
     REPO / "packages" / "dinkster-vision-depth-anything-v2" / "comfy-aliases.inactive.json"
 )

@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.ltx_duration import LTXVDurationPredictor
+from dinkster_ltx.ltx_duration import LTXVDurationPredictor
 from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import ServingComposer

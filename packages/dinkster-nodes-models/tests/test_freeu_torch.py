@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_models.freeu import FreeU, FreeU_V2
+from dinkster_models.freeu import FreeU, FreeU_V2
 
 
 class _ModelConfig:

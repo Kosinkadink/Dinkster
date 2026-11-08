@@ -3,17 +3,17 @@
 from typing import cast
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_cosmos import NODES as COSMOS_NODES
-from dinkster_nodes_cosmos.video_latent import EmptyCosmosLatentVideo
-from dinkster_nodes_hunyuan import NODES as HUNYUAN_NODES
-from dinkster_nodes_hunyuan.video_latent import EmptyHunyuanLatentVideo, EmptyHunyuanVideo15Latent
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.video_latent_ops import NormalizeVideoLatentStart, TrimVideoLatent
-from dinkster_nodes_ltx import NODES as LTX_NODES
-from dinkster_nodes_ltx.video_latent import EmptyLTXVLatentVideo
-from dinkster_nodes_ltx.video_latent_ops import LTXVFreezeLatent
-from dinkster_nodes_misc_models import NODES as MISC_NODES
-from dinkster_nodes_misc_models.video_latent import EmptyARVideoLatent
+from dinkster_cosmos import NODES as COSMOS_NODES
+from dinkster_cosmos.video_latent import EmptyCosmosLatentVideo
+from dinkster_hunyuan import NODES as HUNYUAN_NODES
+from dinkster_hunyuan.video_latent import EmptyHunyuanLatentVideo, EmptyHunyuanVideo15Latent
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.video_latent_ops import NormalizeVideoLatentStart, TrimVideoLatent
+from dinkster_ltx import NODES as LTX_NODES
+from dinkster_ltx.video_latent import EmptyLTXVLatentVideo
+from dinkster_ltx.video_latent_ops import LTXVFreezeLatent
+from dinkster_misc_models import NODES as MISC_NODES
+from dinkster_misc_models.video_latent import EmptyARVideoLatent
 
 
 def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:

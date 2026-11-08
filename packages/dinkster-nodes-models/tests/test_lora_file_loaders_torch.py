@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_assets import MountDef, MountTable
-from dinkster_nodes_models.lora_file_loaders import (
+from dinkster_models.lora_file_loaders import (
     LoadLoraModel,
     LoadLoraTextEncoder,
     LoraLoader,

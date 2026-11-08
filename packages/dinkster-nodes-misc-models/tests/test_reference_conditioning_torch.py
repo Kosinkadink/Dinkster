@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_misc_models.reference_conditioning import InstructPixToPixConditioning
+from dinkster_misc_models.reference_conditioning import InstructPixToPixConditioning
 
 
 class ImageVAE:

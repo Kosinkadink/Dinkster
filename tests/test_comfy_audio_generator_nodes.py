@@ -1,10 +1,10 @@
 """Torch-free public schemas for the audio generator nodes."""
 
 from dinkster_api.v1 import AUDIO_TYPE, LATENT_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio import NODES as AUDIO_NODES
-from dinkster_nodes_audio.audio_generators import EmptyAudio
-from dinkster_nodes_minimax import NODES as MINIMAX_NODES
-from dinkster_nodes_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
+from dinkster_audio import NODES as AUDIO_NODES
+from dinkster_audio.audio_generators import EmptyAudio
+from dinkster_minimax import NODES as MINIMAX_NODES
+from dinkster_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
 
 
 def test_audio_generator_schemas() -> None:

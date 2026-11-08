@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_misc_models.mage_image_encoders import TextEncodeMageFlowEdit
-from dinkster_nodes_misc_models.ming_image_encoders import TextEncodeMingImageEdit
+from dinkster_misc_models.mage_image_encoders import TextEncodeMageFlowEdit
+from dinkster_misc_models.ming_image_encoders import TextEncodeMingImageEdit
 
 
 class Clip:

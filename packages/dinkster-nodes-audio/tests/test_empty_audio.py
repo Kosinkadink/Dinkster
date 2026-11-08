@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from dinkster_nodes_audio.audio_generators import EmptyAudio
+from dinkster_audio.audio_generators import EmptyAudio
 
 
 @pytest.mark.parametrize(

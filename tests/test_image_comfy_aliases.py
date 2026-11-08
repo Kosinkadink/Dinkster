@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from dinkster_api.v1 import BOUNDING_BOX_TYPE
-from dinkster_nodes_image._draft_initialization import IMAGE_NODES, MakeRegion, Region
+from dinkster_image._draft_initialization import IMAGE_NODES, MakeRegion, Region
 from dinkster_schema import schema_from_wire, schema_to_wire, validate_replacement_references
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
 
 ROOT = Path(__file__).parent.parent
-ALIAS_PATH = ROOT / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
+ALIAS_PATH = ROOT / "packages" / "dinkster-image" / "draft-comfy-aliases.json"
 MODEL_TEST_REFERENCE_COMMIT = "e1c0e72eab86e9fd7ee794f623ebf0b8984ab7b6"
 DRAFT_TEST_REFERENCE_COMMIT = "728f58b22ccf6bb64c7e2b8ee38f35c69fbf4a75"
 DYNAMIC_ALIAS_IDS = frozenset(
@@ -804,7 +804,7 @@ def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() ->
     configuration = cast(
         "dict[str, Any]",
         tomllib.loads(
-            (ROOT / "packages" / "dinkster-nodes-image" / "pyproject.toml").read_text(
+            (ROOT / "packages" / "dinkster-image" / "pyproject.toml").read_text(
                 encoding="utf-8"
             )
         ),
@@ -813,7 +813,7 @@ def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() ->
     assert "comfy-aliases.json" not in force_include
     assert "draft-comfy-aliases.json" not in force_include
     manifest = tomllib.loads(
-        (ROOT / "packages" / "dinkster-nodes-image" / "dinkster-pack.toml").read_text(
+        (ROOT / "packages" / "dinkster-image" / "dinkster-pack.toml").read_text(
             encoding="utf-8"
         )
     )
@@ -823,7 +823,7 @@ def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() ->
 def test_new_image_aliases_execute() -> None:
     import numpy as np
     from dinkster_api.v1 import ABSENT, annotate_image, media_semantics
-    from dinkster_nodes_image._draft_initialization import (
+    from dinkster_image._draft_initialization import (
         ImageBatchCombine,
         ImageCompare,
         ImageResize,
@@ -877,7 +877,7 @@ def test_exact_image_compare_has_no_outputs_and_previews_each_nonempty_side() ->
     from io import BytesIO
 
     import numpy as np
-    from dinkster_nodes_image.compare import NativeImageCompare
+    from dinkster_image.compare import NativeImageCompare
     from dinkster_schema import schema_from_wire, schema_to_wire, use_reporter
     from PIL import Image
 
@@ -927,7 +927,7 @@ def test_draft_image_alias_records_keep_the_current_wire_contract() -> None:
 
 def test_new_image_aliases_match_pinned_goldens() -> None:
     import numpy as np
-    from dinkster_nodes_image._draft_initialization import ImageBatchCombine, ImageResize
+    from dinkster_image._draft_initialization import ImageBatchCombine, ImageResize
 
     fixture = json.loads((ROOT / "tests/goldens/image_aliases_b78cec87.json").read_text())
     assert fixture["baseline"] == "b78cec879b9460d5cb25228a83a942fb78d2cd24"

@@ -3,8 +3,8 @@
 from typing import Any, cast
 
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.sparse_attention import BlockSparseAttention
+from dinkster_models import NODES
+from dinkster_models.sparse_attention import BlockSparseAttention
 
 
 def test_sparse_attention_wire_keeps_method_before_schedule_and_single_line_blocks() -> None:

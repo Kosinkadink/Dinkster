@@ -1,8 +1,8 @@
 """Torch-free schemas for native LTXV audio VAE nodes."""
 
 from dinkster_api.v1 import AUDIO_TYPE, LATENT_TYPE, VAE_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
+from dinkster_ltx import NODES
+from dinkster_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
 
 
 def test_ltx_audio_interfaces_match_comfy_schemas() -> None:

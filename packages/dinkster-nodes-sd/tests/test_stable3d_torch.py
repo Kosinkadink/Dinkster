@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch
-from dinkster_nodes_sd.stable3d import (
+from dinkster_sd.stable3d import (
     StableZero123_Conditioning,
     StableZero123_Conditioning_Batched,
     SV3D_Conditioning,

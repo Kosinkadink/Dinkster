@@ -26,9 +26,9 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_void import NODES as COMFY_NODES
-from dinkster_nodes_void import register_types as register_types
-from dinkster_nodes_void.void_warped_noise import VOIDWarpedNoise
+from dinkster_void import NODES as COMFY_NODES
+from dinkster_void import register_types as register_types
+from dinkster_void.void_warped_noise import VOIDWarpedNoise
 from void_pack_fixtures import void_providers
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -93,7 +93,7 @@ def test_schema_is_canonical_and_cold_import_avoids_tensor_runtime(tmp_path: Pat
         (
             "import json",
             "import sys",
-            "import dinkster_nodes_void.void_warped_noise as module",
+            "import dinkster_void.void_warped_noise as module",
             "module.VOIDWarpedNoise.schema()",
             "forbidden = sorted(name for name in sys.modules if (",
             "    name == 'torch' or name.startswith('torch.')",
@@ -114,7 +114,7 @@ def test_schema_is_canonical_and_cold_import_avoids_tensor_runtime(tmp_path: Pat
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert Path(payload["path"]).resolve() == (
-        root / "packages/dinkster-nodes-void/src/dinkster_nodes_void/void_warped_noise.py"
+        root / "packages/dinkster-nodes-void/src/dinkster_void/void_warped_noise.py"
     )
     assert payload["forbidden"] == []
 
@@ -173,7 +173,7 @@ def test_node_quantizes_video_and_resamples_controlled_warped_noise(
         "dinkster_inference.model_management.intermediate_device", lambda: torch.device("cpu")
     )
     monkeypatch.setattr(
-        "dinkster_nodes_void._void_noise_warp.get_noise_from_video", controlled_noise
+        "dinkster_void._void_noise_warp.get_noise_from_video", controlled_noise
     )
 
     samples = VOIDWarpedNoise.execute(
@@ -204,10 +204,10 @@ class _FixtureSource(Node):
 
     @classmethod
     def execute(cls) -> dict[str, object]:
-        import dinkster_nodes_void.void_warped_noise as module
+        import dinkster_void.void_warped_noise as module
 
         assert Path(module.__file__).resolve() == (
-            Path(__file__).resolve().parents[1] / "src/dinkster_nodes_void/void_warped_noise.py"
+            Path(__file__).resolve().parents[1] / "src/dinkster_void/void_warped_noise.py"
         )
         return cls.outputs(flow=_patcher(), video=_video(5))
 

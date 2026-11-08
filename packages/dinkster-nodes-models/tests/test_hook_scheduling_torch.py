@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_models.hook_scheduling import (
+from dinkster_models.hook_scheduling import (
     CombineHooks2,
     CombineHooks4,
     CombineHooks8,

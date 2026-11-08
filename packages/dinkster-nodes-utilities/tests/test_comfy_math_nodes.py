@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_utilities.math import ComfyMathExpression
+from dinkster_utilities.math import ComfyMathExpression
 from simpleeval import FeatureNotAvailable
 
 from dinkster.compose import PackSpec, ServingComposer

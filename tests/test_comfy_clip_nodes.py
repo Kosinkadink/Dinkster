@@ -18,24 +18,24 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_conditioning.clip import (
+from dinkster_conditioning.clip import (
     CLIPSetLastLayer,
     CLIPTextEncode,
     CLIPVisionEncode,
 )
-from dinkster_nodes_conditioning.clip_model_specific import T5TokenizerOptions
-from dinkster_nodes_flux.flux_conditioning import (
+from dinkster_conditioning.clip_model_specific import T5TokenizerOptions
+from dinkster_flux.flux_conditioning import (
     CLIPTextEncodeFlux,
     FluxDisableGuidance,
     FluxGuidance,
     FluxKontextMultiReferenceLatentMethod,
 )
-from dinkster_nodes_hidream.clip_model_specific import CLIPTextEncodeHiDream
-from dinkster_nodes_misc_models.clip_model_specific import (
+from dinkster_hidream.clip_model_specific import CLIPTextEncodeHiDream
+from dinkster_misc_models.clip_model_specific import (
     CLIPTextEncodeLumina2,
     CLIPTextEncodePixArtAlpha,
 )
-from dinkster_nodes_sd.clip import unCLIPConditioning
+from dinkster_sd.clip import unCLIPConditioning
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 from tests.async_scenarios import run_scenario
@@ -303,8 +303,8 @@ def test_ordinary_pack_encodes_original_and_selected_layers(
             specs = [
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
                 )
             ]
             specs.append(PackSpec(source_manifest, in_process=in_process))

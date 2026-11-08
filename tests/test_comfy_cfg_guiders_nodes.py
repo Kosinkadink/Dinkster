@@ -9,8 +9,8 @@ from dinkster_api.v1 import (
     MODEL_TYPE,
     TypeExpr,
 )
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.cfg_guiders import (
+from dinkster_sampling import NODES
+from dinkster_sampling.cfg_guiders import (
     BasicGuider,
     CFGGuider,
     CFGOverride,
@@ -24,7 +24,7 @@ def test_cfg_guider_schemas_are_cold_and_registered_in_source_order() -> None:
         [
             sys.executable,
             "-c",
-            "from dinkster_nodes_sampling import NODES; "
+            "from dinkster_sampling import NODES; "
             "[node.schema() for node in NODES]; "
             "import sys; assert 'torch' not in sys.modules",
         ],

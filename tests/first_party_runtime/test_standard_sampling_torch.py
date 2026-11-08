@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent, initialize_inference_process
-from dinkster_nodes_sampling import custom_sampling, standard_sampling
-from dinkster_nodes_sampling.noise import DisableNoise
-from dinkster_nodes_sampling.standard_sampling import KSampler, KSamplerAdvanced
+from dinkster_sampling import custom_sampling, standard_sampling
+from dinkster_sampling.noise import DisableNoise
+from dinkster_sampling.standard_sampling import KSampler, KSamplerAdvanced
 
 # Expected values below are hand-derived from the fixture model x -> x / 4,
 # Euler's one-step update, and the explicitly supplied noise and masks.
@@ -454,9 +454,9 @@ def test_standard_samplers_execute_on_both_ordinary_hosts(in_process: bool) -> N
             *(
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                    ("dinkster-sampling", "dinkster_nodes_sampling"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
+                    ("dinkster-sampling", "dinkster_sampling"),
                 )
             ),
             PackSpec(root / "fixtures/standard_sampling/dinkster-pack.toml"),

@@ -6,10 +6,10 @@ import subprocess
 import sys
 
 from dinkster_api.v1 import CORE_COMBO, MODEL_TYPE, TypeExpr
-from dinkster_nodes_models import NODES as MODEL_NODES
-from dinkster_nodes_models.compile import TorchCompileModel
-from dinkster_nodes_wan import NODES as WAN_NODES
-from dinkster_nodes_wan.compile import wanBlockSwap
+from dinkster_models import NODES as MODEL_NODES
+from dinkster_models.compile import TorchCompileModel
+from dinkster_wan import NODES as WAN_NODES
+from dinkster_wan.compile import wanBlockSwap
 
 
 def test_compile_nodes_are_registered_once_with_their_public_schemas() -> None:
@@ -37,8 +37,8 @@ def test_compile_schemas_serialize_without_importing_torch() -> None:
             "-c",
             "import sys; "
             "from dinkster_api.v1 import schema_to_wire; "
-            "from dinkster_nodes_models.compile import TorchCompileModel; "
-            "from dinkster_nodes_wan.compile import wanBlockSwap; "
+            "from dinkster_models.compile import TorchCompileModel; "
+            "from dinkster_wan.compile import wanBlockSwap; "
             "assert len([schema_to_wire(node.schema()) "
             "for node in (TorchCompileModel, wanBlockSwap)]) == 2; "
             "assert 'torch' not in sys.modules",

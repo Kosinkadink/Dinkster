@@ -9,7 +9,7 @@ from packaging.requirements import Requirement
 def test_opentimelineio_requirements_use_the_published_distribution() -> None:
     root = Path(__file__).parents[1]
     umbrella = tomllib.loads((root / "pyproject.toml").read_text())
-    video = tomllib.loads((root / "packages/dinkster-video-runtime/pyproject.toml").read_text())
+    video = tomllib.loads((root / "packages/dinkster-nodes-video-runtime/pyproject.toml").read_text())
     api = tomllib.loads((root / "packages/dinkster-api/pyproject.toml").read_text())
     for metadata, requirements in (
         (umbrella, umbrella["dependency-groups"]["dev"]),

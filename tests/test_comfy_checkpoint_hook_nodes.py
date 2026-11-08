@@ -6,8 +6,8 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ASSET_TYPE, CORE_FLOAT, HOOKS_TYPE, AssetWidget, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.hook_checkpoint import (
+from dinkster_models import NODES
+from dinkster_models.hook_checkpoint import (
     CreateHookModelAsLora,
     CreateHookModelAsLoraModelOnly,
 )

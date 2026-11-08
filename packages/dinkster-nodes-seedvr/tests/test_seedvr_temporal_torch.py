@@ -5,7 +5,7 @@ import math
 import os
 from pathlib import Path
 
-import dinkster_nodes_seedvr.seedvr_temporal as seedvr_temporal
+import dinkster_seedvr.seedvr_temporal as seedvr_temporal
 import pytest
 import torch
 from dinkster_api.v1 import (
@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_seedvr.seedvr_temporal import SeedVR2TemporalChunk, SeedVR2TemporalMerge
+from dinkster_seedvr.seedvr_temporal import SeedVR2TemporalChunk, SeedVR2TemporalMerge
 
 from dinkster.compose import PackSpec, ServingComposer
 

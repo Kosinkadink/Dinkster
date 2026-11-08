@@ -14,7 +14,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
-from dinkster_nodes_text.text import StringConcatenate, StringFormat
+from dinkster_text.text import StringConcatenate, StringFormat
 from dinkster_schema import Node, NodeSchema, claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
@@ -255,8 +255,8 @@ def test_pack_identity_preserves_the_effective_display_name(display_name: str) -
 
 
 def test_retained_image_classes_have_ordinary_identity_rules() -> None:
-    from dinkster_nodes_image.compare import NativeImageCompare
-    from dinkster_nodes_image.glsl import NativeGlslShader
+    from dinkster_image.compare import NativeImageCompare
+    from dinkster_image.glsl import NativeGlslShader
 
     schemas = []
     for node, expected in (

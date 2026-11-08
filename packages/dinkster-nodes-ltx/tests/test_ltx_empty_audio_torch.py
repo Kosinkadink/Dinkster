@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_ltx.ltx_audio import LTXVEmptyLatentAudio
+from dinkster_ltx.ltx_audio import LTXVEmptyLatentAudio
 from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import ServingComposer
@@ -122,9 +122,9 @@ def test_empty_audio_executes_twice_through_both_production_hosts(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "ltx_empty_audio_fixture.py").write_text(
                 "from test_ltx_empty_audio_torch import LTXLatentInspect, LTXVAESource\n"
-                "from dinkster_nodes_ltx import NODES as COMFY_NODES\n"
+                "from dinkster_ltx import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, LTXVAESource, LTXLatentInspect)\n",
                 encoding="ascii",
             )
@@ -132,13 +132,13 @@ def test_empty_audio_executes_twice_through_both_production_hosts(
             fixture.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["ltx-empty-audio-fixture",')
-                .replace("dinkster_nodes_ltx:NODES", "ltx_empty_audio_fixture:NODES")
+                .replace("dinkster_ltx:NODES", "ltx_empty_audio_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "ltx_empty_audio_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_ltx:register_types",
+                    "dinkster_ltx:register_types",
                     "ltx_empty_audio_fixture:register_inference_types",
                 ),
                 encoding="ascii",

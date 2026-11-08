@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_ltx.text_generation import TextGenerateLTX2Prompt
+from dinkster_ltx.text_generation import TextGenerateLTX2Prompt
 
 
 class Clip:

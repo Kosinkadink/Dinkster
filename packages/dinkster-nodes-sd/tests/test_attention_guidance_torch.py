@@ -7,7 +7,7 @@ import torch
 from dinkster_api.v1 import (
     initialize_inference_process,
 )
-from dinkster_nodes_sd.attention_guidance import SkipLayerGuidanceSD3
+from dinkster_sd.attention_guidance import SkipLayerGuidanceSD3
 
 
 class Sampling:

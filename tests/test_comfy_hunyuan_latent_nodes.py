@@ -3,8 +3,8 @@
 from typing import cast
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_hunyuan import NODES
-from dinkster_nodes_hunyuan.hunyuan_latent import EmptyHunyuanImageLatent, HunyuanRefinerLatent
+from dinkster_hunyuan import NODES
+from dinkster_hunyuan.hunyuan_latent import EmptyHunyuanImageLatent, HunyuanRefinerLatent
 
 
 def test_hunyuan_image_latent_schemas_match_the_fixed_reference_contract() -> None:

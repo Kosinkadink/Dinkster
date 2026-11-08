@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_misc_models import NODES
-from dinkster_nodes_misc_models.ar_video import ARVideoI2V
+from dinkster_misc_models import NODES
+from dinkster_misc_models.ar_video import ARVideoI2V
 
 
 def test_ar_video_conditioning_schema_and_cold_discovery() -> None:

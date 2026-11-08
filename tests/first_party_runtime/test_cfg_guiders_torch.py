@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.cfg_guiders import (
+from dinkster_sampling import NODES
+from dinkster_sampling.cfg_guiders import (
     BasicGuider,
     CFGGuider,
     CFGOverride,
@@ -255,9 +255,9 @@ def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
             *(
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                    ("dinkster-sampling", "dinkster_nodes_sampling"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
+                    ("dinkster-sampling", "dinkster_sampling"),
                 )
             ),
             PackSpec(fixture_manifest),

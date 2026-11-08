@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_minimax.minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
+from dinkster_minimax.minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
 from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer

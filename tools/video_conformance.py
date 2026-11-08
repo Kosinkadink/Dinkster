@@ -72,10 +72,10 @@ def _measure(path: Path, self_test_allocation_mib: int = 0) -> dict[str, object]
     import av
     from dinkster_assets import AssetRef, MountSnapshotResolver, digest_file
     from dinkster_inference_wire.process import inference_mode
-    from dinkster_nodes_video.video_load import LoadVideo
-    from dinkster_nodes_video.video_save import SaveVideo
     from dinkster_schema.reporting import capture_saved_artifacts
     from dinkster_values import edit_video, video_meta
+    from dinkster_video.video_load import LoadVideo
+    from dinkster_video.video_save import SaveVideo
 
     class Resolver:
         def resolve(self, digest: str) -> Path:

@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
 from dinkster_graph import Graph, GraphNode
-from dinkster_nodes_utilities import NODES
-from dinkster_nodes_utilities.color_resolution import ColorToRGBInt, ResolutionSelector
+from dinkster_utilities import NODES
+from dinkster_utilities.color_resolution import ColorToRGBInt, ResolutionSelector
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario

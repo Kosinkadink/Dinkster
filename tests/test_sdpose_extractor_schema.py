@@ -14,8 +14,8 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import POSE_KEYPOINT_TYPE, TypeExpr
-from dinkster_nodes_vision_sdpose import NODES
-from dinkster_nodes_vision_sdpose.sdpose_extract import SDPoseKeypointExtractor
+from dinkster_vision_sdpose import NODES
+from dinkster_vision_sdpose.sdpose_extract import SDPoseKeypointExtractor
 from dinkster_workers import load_manifest
 s = SDPoseKeypointExtractor.define_schema()
 assert SDPoseKeypointExtractor in NODES

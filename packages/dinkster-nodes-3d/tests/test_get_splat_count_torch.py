@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from dinkster_3d.gaussian_splat import GetSplatCount
 from dinkster_api.v1 import (
     CORE_STRING,
     SPLAT_TYPE,
@@ -19,7 +20,6 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.gaussian_splat import GetSplatCount
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer

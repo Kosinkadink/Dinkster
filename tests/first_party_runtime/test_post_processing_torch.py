@@ -28,13 +28,13 @@ from dinkster_api.v1 import (  # noqa: E402
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link  # noqa: E402
-from dinkster_nodes_image.ported.post_processing import (  # noqa: E402
+from dinkster_image.ported.post_processing import (  # noqa: E402
     BatchImagesNode,
     BatchMasksNode,
     ColorTransfer,
     ResizeImageMaskNode,
 )
-from dinkster_nodes_latent.post_processing import BatchLatentsNode  # noqa: E402
+from dinkster_latent.post_processing import BatchLatentsNode  # noqa: E402
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec  # noqa: E402
 
@@ -293,8 +293,8 @@ def test_ordinary_manifest_executes_post_processing_dynamic_nodes_with_decoded_n
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-image", "dinkster_nodes_image"),
-                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-image", "dinkster_image"),
+                ("dinkster-latent", "dinkster_latent"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

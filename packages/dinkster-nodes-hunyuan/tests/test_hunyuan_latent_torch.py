@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_hunyuan.hunyuan_latent import EmptyHunyuanImageLatent, HunyuanRefinerLatent
+from dinkster_hunyuan.hunyuan_latent import EmptyHunyuanImageLatent, HunyuanRefinerLatent
 from hunyuan_pack_fixtures import hunyuan_providers
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -138,9 +138,9 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "hunyuan_latent_fixture.py").write_text(
                 "from test_hunyuan_latent_torch import HunyuanInspect, HunyuanSource\n"
-                "from dinkster_nodes_hunyuan import NODES as COMFY_NODES\n"
+                "from dinkster_hunyuan import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, HunyuanSource, HunyuanInspect)\n",
                 encoding="ascii",
             )
@@ -149,15 +149,15 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
                 .replace(
-                    "dinkster_nodes_hunyuan:NODES",
+                    "dinkster_hunyuan:NODES",
                     "hunyuan_latent_fixture:NODES",
                 )
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "hunyuan_latent_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_hunyuan:register_types",
+                    "dinkster_hunyuan:register_types",
                     "hunyuan_latent_fixture:register_inference_types",
                 ),
                 encoding="ascii",

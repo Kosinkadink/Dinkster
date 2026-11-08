@@ -23,10 +23,10 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_hunyuan import NODES as HUNYUAN_NODES
-from dinkster_nodes_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
-from dinkster_nodes_ltx import NODES as LTX_NODES
-from dinkster_nodes_ltx.latent_upscale import LTXVLatentUpsampler
+from dinkster_hunyuan import NODES as HUNYUAN_NODES
+from dinkster_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
+from dinkster_ltx import NODES as LTX_NODES
+from dinkster_ltx.latent_upscale import LTXVLatentUpsampler
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -191,13 +191,13 @@ def test_latent_upscale_nodes_execute_twice_in_ordinary_hosts(
             *(
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                    ("dinkster-video", "dinkster_nodes_video"),
-                    ("dinkster-models", "dinkster_nodes_models"),
-                    ("dinkster-llm", "dinkster_nodes_llm"),
-                    ("dinkster-hunyuan", "dinkster_nodes_hunyuan"),
-                    ("dinkster-ltx", "dinkster_nodes_ltx"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
+                    ("dinkster-video", "dinkster_video"),
+                    ("dinkster-models", "dinkster_models"),
+                    ("dinkster-llm", "dinkster_llm"),
+                    ("dinkster-hunyuan", "dinkster_hunyuan"),
+                    ("dinkster-ltx", "dinkster_ltx"),
                 )
             ),
             PackSpec(fixture_manifest),
@@ -344,10 +344,10 @@ def test_hunyuan_one_zero_dimension_uses_width_height_in_the_core_order(monkeypa
             return latent + 3
 
     monkeypatch.setattr(
-        "dinkster_nodes_hunyuan.latent_upscale.initialize_inference_process", lambda: None
+        "dinkster_hunyuan.latent_upscale.initialize_inference_process", lambda: None
     )
     monkeypatch.setattr(
-        "dinkster_nodes_hunyuan.latent_upscale.importlib.import_module",
+        "dinkster_hunyuan.latent_upscale.importlib.import_module",
         lambda name: SimpleNamespace(
             common_upscale=lambda tensor, width, height, _method, _crop: (
                 calls.append((width, height)) or tensor.new_ones((1, 2, height, width))
@@ -389,10 +389,10 @@ def test_ltx_normalizes_around_the_model_and_removes_noise_mask(monkeypatch) -> 
         intermediate_device=lambda: torch.device("cpu"),
     )
     monkeypatch.setattr(
-        "dinkster_nodes_ltx.latent_upscale.initialize_inference_process", lambda: None
+        "dinkster_ltx.latent_upscale.initialize_inference_process", lambda: None
     )
     monkeypatch.setattr(
-        "dinkster_nodes_ltx.latent_upscale.importlib.import_module", lambda _name: management
+        "dinkster_ltx.latent_upscale.importlib.import_module", lambda _name: management
     )
     source = {
         "samples": torch.tensor([[[[2.0]]]], dtype=torch.float32),

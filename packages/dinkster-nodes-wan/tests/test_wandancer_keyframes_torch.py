@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_wan.wandancer_keyframes import (
+from dinkster_wan.wandancer_keyframes import (
     WanDancerPadKeyframes,
     WanDancerPadKeyframesList,
 )

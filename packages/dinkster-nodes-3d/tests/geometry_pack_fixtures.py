@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-import dinkster_nodes_image
+import dinkster_image
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec
@@ -12,7 +12,7 @@ from dinkster.compose import PackSpec
 def geometry_pack_specs(
     *fixtures: Path, in_process: bool, worker_group: str | None = None
 ) -> tuple[PackSpec, ...]:
-    image = Path(dinkster_nodes_image.__file__).resolve().parents[2] / "dinkster-pack.toml"
+    image = Path(dinkster_image.__file__).resolve().parents[2] / "dinkster-pack.toml"
     geometry = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
     manifests = (image, geometry, *fixtures)
     specs: list[PackSpec] = []

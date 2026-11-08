@@ -24,8 +24,8 @@ from dinkster_assets import (
     MountSnapshotWriter,
     digest_bytes,
 )
-from dinkster_nodes_video.video_load import LoadVideo
-from dinkster_nodes_video.webm_save import EncodedVideoSpool
+from dinkster_video.video_load import LoadVideo
+from dinkster_video.webm_save import EncodedVideoSpool
 from dinkster_values import edit_video
 from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
 
@@ -532,7 +532,7 @@ def test_late_start_bounds_video_decode_and_preserves_audio_window(
 
 
 def test_encoded_output_spools_to_disk_and_enforces_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_nodes_video import webm_save
+    from dinkster_video import webm_save
 
     monkeypatch.setattr(webm_save, "ENCODED_MEDIA_LIMIT_BYTES", 10 * 1024 * 1024)
     spool = EncodedVideoSpool()

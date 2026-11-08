@@ -10,8 +10,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     TypeExpr,
 )
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.sigma_operations import (
+from dinkster_sampling import NODES
+from dinkster_sampling.sigma_operations import (
     ExtendIntermediateSigmas,
     FlipSigmas,
     ManualSigmas,

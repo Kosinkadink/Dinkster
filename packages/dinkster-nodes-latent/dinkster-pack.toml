@@ -18,5 +18,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_latent:NODES"
-types = "dinkster_nodes_latent.types:register_types"
+nodes = "dinkster_latent:NODES"
+types = "dinkster_latent.types:register_types"

@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.device_routing import (
+from dinkster_models import NODES
+from dinkster_models.device_routing import (
     MultiGPUWorkUnits,
     SelectCLIPDevice,
     SelectModelDevice,
@@ -146,7 +146,7 @@ def test_pack_schemas_accept_portable_gpu_values() -> None:
 def test_device_routing_preserves_sources_restores_defaults_and_syncs_wrappers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import dinkster_nodes_models.device_routing as routing
+    import dinkster_models.device_routing as routing
 
     monkeypatch.setattr(routing, "_model_management", DeviceManagement)
     gpu0 = Device("meta")
@@ -186,7 +186,7 @@ def test_device_routing_preserves_sources_restores_defaults_and_syncs_wrappers(
 def test_unavailable_devices_and_multigpu_work_units_use_runtime_seams(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import dinkster_nodes_models.device_routing as routing
+    import dinkster_models.device_routing as routing
 
     class MultiGPU:
         def create_multigpu_deepclones(
@@ -334,7 +334,7 @@ def test_all_device_nodes_run_twice_through_both_production_hosts(
         )
         try:
             models = _installed_pack_spec(
-                "dinkster-models", "dinkster_nodes_models", in_process=in_process
+                "dinkster-models", "dinkster_models", in_process=in_process
             )
             manifests = (Path(models.manifest), fixture)
             worker_group = "device-routing" if not in_process else None

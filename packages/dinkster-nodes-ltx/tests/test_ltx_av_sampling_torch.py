@@ -28,9 +28,9 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent, initialize_inference_process
-from dinkster_nodes_ltx.ltx_dual_cfg import LTXVDualCFGGuider
-from dinkster_nodes_sampling.custom_sampling import SamplerCustomAdvanced
-from dinkster_nodes_sampling.noise import DisableNoise, RandomNoise
+from dinkster_ltx.ltx_dual_cfg import LTXVDualCFGGuider
+from dinkster_sampling.custom_sampling import SamplerCustomAdvanced
+from dinkster_sampling.noise import DisableNoise, RandomNoise
 
 
 @pytest.mark.parametrize("video_cfg,audio_cfg", [(2.0, 5.0), (1.0, 0.0), (0.0, 1.0)])

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_hunyuan.video_latent import EmptyHunyuanLatentVideo, EmptyHunyuanVideo15Latent
+from dinkster_hunyuan.video_latent import EmptyHunyuanLatentVideo, EmptyHunyuanVideo15Latent
 
 
 @pytest.mark.parametrize(

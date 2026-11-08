@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from dinkster_api.v1 import TypeRegistry
-from dinkster_nodes_video import register_types
+from dinkster_video import register_types
 
 from dinkster.compose import PackInfo, PackSpec, ServingComposer
 

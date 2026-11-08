@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 from dinkster_api.v1 import Node, inference_nodes, initialize_inference_process
-from dinkster_nodes_latent import NODES
-from dinkster_nodes_latent.vae import VAEDecode, VAEDecodeTiled, VAEEncode, VAEEncodeTiled
+from dinkster_latent import NODES
+from dinkster_latent.vae import VAEDecode, VAEDecodeTiled, VAEEncode, VAEEncodeTiled
 
 
 def test_vae_core_interfaces() -> None:

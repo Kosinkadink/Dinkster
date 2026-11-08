@@ -124,72 +124,72 @@ ALLOWED: dict[str, set[str]] = {
     },
     # Family packs compose only their named sibling dependencies. Shared
     # runtime contracts still cross the pack-author API, not private layers.
-    "dinkster_nodes_3d": {"dinkster_api", "dinkster_nodes_image"},
-    "dinkster_nodes_3d_models": {"dinkster_api"},
-    "dinkster_nodes_audio": {"dinkster_api"},
-    "dinkster_nodes_audio_models": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_conditioning": {"dinkster_api", "dinkster_nodes_latent"},
-    "dinkster_nodes_cosmos": {"dinkster_api", "dinkster_nodes_video"},
-    "dinkster_nodes_flux": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_hidream": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_hunyuan": {
+    "dinkster_3d": {"dinkster_api", "dinkster_image"},
+    "dinkster_3d_models": {"dinkster_api"},
+    "dinkster_audio": {"dinkster_api"},
+    "dinkster_audio_models": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_conditioning": {"dinkster_api", "dinkster_latent"},
+    "dinkster_cosmos": {"dinkster_api", "dinkster_video"},
+    "dinkster_flux": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_hidream": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_hunyuan": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_video",
+        "dinkster_conditioning",
+        "dinkster_video",
     },
-    "dinkster_nodes_image": {"dinkster_api"},
-    "dinkster_nodes_latent": {"dinkster_api"},
-    "dinkster_nodes_llm": {"dinkster_api"},
-    "dinkster_nodes_ltx": {
+    "dinkster_image": {"dinkster_api"},
+    "dinkster_latent": {"dinkster_api"},
+    "dinkster_llm": {"dinkster_api"},
+    "dinkster_ltx": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_latent",
-        "dinkster_nodes_llm",
-        "dinkster_nodes_models",
-        "dinkster_nodes_video",
+        "dinkster_conditioning",
+        "dinkster_latent",
+        "dinkster_llm",
+        "dinkster_models",
+        "dinkster_video",
     },
-    "dinkster_nodes_minimax": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_misc_models": {
+    "dinkster_minimax": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_misc_models": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_qwen",
+        "dinkster_conditioning",
+        "dinkster_qwen",
     },
-    "dinkster_nodes_models": {"dinkster_api"},
-    "dinkster_nodes_qwen": {"dinkster_api", "dinkster_nodes_conditioning"},
+    "dinkster_models": {"dinkster_api"},
+    "dinkster_qwen": {"dinkster_api", "dinkster_conditioning"},
     "dinkster_nodes_remote": {"dinkster_api"},
-    "dinkster_nodes_sampling": {
+    "dinkster_sampling": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_latent",
+        "dinkster_conditioning",
+        "dinkster_latent",
     },
-    "dinkster_nodes_sd": {
+    "dinkster_sd": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_sampling",
+        "dinkster_conditioning",
+        "dinkster_sampling",
     },
-    "dinkster_nodes_seedvr": {"dinkster_api"},
-    "dinkster_nodes_text": {"dinkster_api"},
-    "dinkster_nodes_upscale": {"dinkster_api"},
-    "dinkster_nodes_utilities": {"dinkster_api"},
-    "dinkster_nodes_video": {"dinkster_api"},
-    "dinkster_nodes_vision_background_removal": {"dinkster_api"},
-    "dinkster_nodes_vision_depth_anything_3": {"dinkster_api"},
-    "dinkster_nodes_vision_marigold": {"dinkster_api"},
-    "dinkster_nodes_vision_mediapipe": {"dinkster_api"},
-    "dinkster_nodes_vision_moge": {"dinkster_api"},
-    "dinkster_nodes_vision_rtdetr": {"dinkster_api"},
-    "dinkster_nodes_vision_sam3": {"dinkster_api"},
-    "dinkster_nodes_vision_sam3d_body": {"dinkster_api", "dinkster_nodes_image"},
-    "dinkster_nodes_vision_sdpose": {
+    "dinkster_seedvr": {"dinkster_api"},
+    "dinkster_text": {"dinkster_api"},
+    "dinkster_upscale": {"dinkster_api"},
+    "dinkster_utilities": {"dinkster_api"},
+    "dinkster_video": {"dinkster_api"},
+    "dinkster_vision_background_removal": {"dinkster_api"},
+    "dinkster_vision_depth_anything_3": {"dinkster_api"},
+    "dinkster_vision_marigold": {"dinkster_api"},
+    "dinkster_vision_mediapipe": {"dinkster_api"},
+    "dinkster_vision_moge": {"dinkster_api"},
+    "dinkster_vision_rtdetr": {"dinkster_api"},
+    "dinkster_vision_sam3": {"dinkster_api"},
+    "dinkster_vision_sam3d_body": {"dinkster_api", "dinkster_image"},
+    "dinkster_vision_sdpose": {
         "dinkster_api",
-        "dinkster_nodes_image",
-        "dinkster_nodes_misc_models",
+        "dinkster_image",
+        "dinkster_misc_models",
     },
-    "dinkster_nodes_void": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_wan": {
+    "dinkster_void": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_wan": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_models",
+        "dinkster_conditioning",
+        "dinkster_models",
     },
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
@@ -360,7 +360,7 @@ def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
 
 
 def test_bundled_video_preview_imports_only_the_pack_api() -> None:
-    source = REPO_ROOT / "packages/dinkster-video-runtime/preview/src/dinkster_video_preview"
+    source = REPO_ROOT / "packages/dinkster-nodes-video-runtime/preview/src/dinkster_video_preview"
     modules = list(source.rglob("*.py"))
     assert modules
     for module in modules:
@@ -371,7 +371,7 @@ def test_media_packages_share_comfyuis_pyav_runtime() -> None:
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     assert packages["av"]["version"] == "18.1.0"
-    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video-runtime"):
+    for package in ("dinkster-audio", "dinkster-video", "dinkster-video-runtime"):
         project = tomllib.loads(
             (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
         )

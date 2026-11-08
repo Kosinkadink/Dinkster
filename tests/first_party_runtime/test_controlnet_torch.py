@@ -24,13 +24,13 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_conditioning.controlnet import (
+from dinkster_conditioning.controlnet import (
     ControlNetApply,
     ControlNetApplyAdvanced,
     ControlNetInpaintingAliMamaApply,
     SetUnionControlNetType,
 )
-from dinkster_nodes_sd.controlnet import ControlNetApplySD3
+from dinkster_sd.controlnet import ControlNetApplySD3
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -268,9 +268,9 @@ def test_ordinary_manifest_executes_controlnet_nodes(
             (tmp_path / f"{module_name}.py").write_text(
                 "from tests.first_party_runtime.test_controlnet_torch "
                 "import ControlSource, ControlInspect\n"
-                "from dinkster_nodes_models.types import register_types as models\n"
-                "from dinkster_nodes_conditioning.types import register_types as conditioning\n"
-                "from dinkster_nodes_image import register_types as image\n"
+                "from dinkster_models.types import register_types as models\n"
+                "from dinkster_conditioning.types import register_types as conditioning\n"
+                "from dinkster_image import register_types as image\n"
                 "def register_types(registry):\n"
                 "    for owner, register in (('dinkster-models', models), "
                 "('dinkster-conditioning', conditioning), ('dinkster-image', image)):\n"

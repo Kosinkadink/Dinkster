@@ -19,12 +19,12 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_audio,
 )
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio.audio_combine import (
+from dinkster_audio.audio_combine import (
     AudioConcat,
     AudioMerge,
     JoinAudioChannels,
 )
+from dinkster_graph import Graph, GraphNode, Link
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -231,7 +231,7 @@ def test_audio_combine_nodes_execute_twice_in_both_manifest_hosts(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "audio_combine_fixture.py").write_text(
                 "from test_audio_combine_torch import AudioInspect, AudioSource\n"
-                "from dinkster_nodes_audio import NODES as AUDIO_NODES, register_types\n"
+                "from dinkster_audio import NODES as AUDIO_NODES, register_types\n"
                 "NODES = (*AUDIO_NODES, AudioSource, AudioInspect)\n",
                 encoding="ascii",
             )
@@ -239,9 +239,9 @@ def test_audio_combine_nodes_execute_twice_in_both_manifest_hosts(
             fixture.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-combine-fixture",')
-                .replace("dinkster_nodes_audio:NODES", "audio_combine_fixture:NODES")
+                .replace("dinkster_audio:NODES", "audio_combine_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_audio:register_types", "audio_combine_fixture:register_types"
+                    "dinkster_audio:register_types", "audio_combine_fixture:register_types"
                 ),
                 encoding="ascii",
             )

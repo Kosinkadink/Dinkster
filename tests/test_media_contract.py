@@ -371,8 +371,8 @@ def test_image_and_layer_color_preserve_unknown_ffmpeg_enums() -> None:
 
 @pytest.mark.parametrize("image_first", [False, True])
 def test_pack_registration_order_preserves_mask_contract(image_first: bool) -> None:
-    from dinkster_nodes_image import register_types as register_image_types
-    from dinkster_nodes_video import register_types as register_video_types
+    from dinkster_image import register_types as register_image_types
+    from dinkster_video import register_types as register_video_types
 
     registry = TypeRegistry()
     registrations = [register_image_types, register_video_types]

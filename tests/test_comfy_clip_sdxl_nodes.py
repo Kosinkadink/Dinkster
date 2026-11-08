@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_sd.clip_sdxl import CLIPTextEncodeSDXL, CLIPTextEncodeSDXLRefiner
+from dinkster_sd.clip_sdxl import CLIPTextEncodeSDXL, CLIPTextEncodeSDXLRefiner
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -128,7 +128,7 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
             )
             (tmp_path / "sdxl_fixture.py").write_text(
                 "from test_comfy_clip_sdxl_nodes import SDXL_FIXTURES\n"
-                "from dinkster_nodes_sd import NODES as SD_NODES, register_types\n"
+                "from dinkster_sd import NODES as SD_NODES, register_types\n"
                 "NODES = (*SD_NODES, *SDXL_FIXTURES)\n",
                 encoding="ascii",
             )
@@ -136,8 +136,8 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("\nnamespaces = [", '\nnamespaces = ["sdxl-fixture",')
-                .replace("dinkster_nodes_sd:NODES", "sdxl_fixture:NODES")
-                .replace("dinkster_nodes_sd:register_types", "sdxl_fixture:register_types"),
+                .replace("dinkster_sd:NODES", "sdxl_fixture:NODES")
+                .replace("dinkster_sd:register_types", "sdxl_fixture:register_types"),
                 encoding="ascii",
             )
             for dependency in ("latent", "conditioning", "sampling"):

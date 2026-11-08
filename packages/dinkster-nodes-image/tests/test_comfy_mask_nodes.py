@@ -1,8 +1,8 @@
 """Core mask node schemas preserve the ComfyUI workflow contract."""
 
-from dinkster_nodes_image.ported import NODES
+from dinkster_image.ported import NODES
 
-MASK_NODES = tuple(node for node in NODES if node.__module__ == "dinkster_nodes_image.ported.mask")
+MASK_NODES = tuple(node for node in NODES if node.__module__ == "dinkster_image.ported.mask")
 
 
 def test_mask_nodes_have_the_exact_core_interfaces() -> None:

@@ -6456,8 +6456,8 @@ def test_values_endpoint_layer_document_rendition(
     from dinkster_image_document.compat import register_comfy_layers
     from dinkster_image_document.document import ImageDocument
     from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
-    from dinkster_nodes_image.compositor import AddLayer
-    from dinkster_nodes_image.types import register_image_types
+    from dinkster_image.compositor import AddLayer
+    from dinkster_image.types import register_image_types
 
     pixels = np.array([[[[1, 0, 0, 1], [0, 1, 0, 0.5]]]], dtype=np.float32)
     expected = cast(ImageDocument, AddLayer.execute(image=pixels)["layers"]).data
@@ -6638,8 +6638,8 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
     from dinkster_api.v1 import VIDEO_TYPE
-    from dinkster_nodes_video import register_types as register_video_types
-    from dinkster_nodes_video.video_components import CreateVideo
+    from dinkster_video import register_types as register_video_types
+    from dinkster_video.video_components import CreateVideo
 
     class ComponentVideo(Node):
         @classmethod
@@ -6701,7 +6701,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
 
     import numpy as np
     from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
-    from dinkster_nodes_video import register_types as register_video_types
+    from dinkster_video import register_types as register_video_types
 
     from tests.test_video_probe import _encode
 

@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
-from dinkster_nodes_models.hook_checkpoint import (
+from dinkster_models.hook_checkpoint import (
     CreateHookModelAsLora,
     CreateHookModelAsLoraModelOnly,
 )

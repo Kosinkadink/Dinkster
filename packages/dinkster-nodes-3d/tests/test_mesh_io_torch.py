@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
+from dinkster_3d.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_api.v1 import (
     FILE_3D_GLTF_TYPE,
     MESH_TYPE,
@@ -33,7 +34,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
 from dinkster_protocol import use_export_snapshot
 from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import register_core_types
@@ -156,7 +156,7 @@ def test_ordinary_mesh_export_hosts_twice(
 
     async def scenario() -> None:
         (tmp_path / "mesh_export_fixture.py").write_text(
-            "from dinkster_nodes_3d import register_types as register_inference_types\n"
+            "from dinkster_3d import register_types as register_inference_types\n"
             "from test_mesh_io_torch import MeshExportSource\nNODES=(MeshExportSource,)\n",
             encoding="ascii",
         )
@@ -292,7 +292,7 @@ def test_ordinary_save_glb_hosts_twice(
     async def scenario() -> None:
         (tmp_path / "save_glb_fixture.py").write_text(
             "from test_mesh_io_torch import MeshExportSource\n"
-            "from dinkster_nodes_3d import register_types as register_inference_types\n"
+            "from dinkster_3d import register_types as register_inference_types\n"
             "NODES=(MeshExportSource,)\n",
             encoding="ascii",
         )
@@ -724,7 +724,7 @@ def test_ordinary_mesh_io_hosts_twice(
 
     async def scenario() -> None:
         (tmp_path / "mesh_io_fixture.py").write_text(
-            "from dinkster_nodes_3d import register_types as register_inference_types\n"
+            "from dinkster_3d import register_types as register_inference_types\n"
             "from test_mesh_io_torch import File3DSource\nNODES=(File3DSource,)\n",
             encoding="ascii",
         )

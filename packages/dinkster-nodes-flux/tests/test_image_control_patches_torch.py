@@ -8,7 +8,7 @@ import torch
 from dinkster_api.v1 import (
     initialize_inference_process,
 )
-from dinkster_nodes_flux.image_control_patches import USOStyleReference
+from dinkster_flux.image_control_patches import USOStyleReference
 
 
 class _Sampling:
@@ -48,7 +48,7 @@ def _installed(patcher: Any, name: str) -> Any:
 def test_uso_reference_initializes_runtime_and_preserves_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import dinkster_nodes_flux.image_control_patches as image_controls
+    import dinkster_flux.image_control_patches as image_controls
 
     source = _patcher(_Host())
     projector = _patcher(_Projector())

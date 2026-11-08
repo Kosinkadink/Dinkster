@@ -4,11 +4,11 @@ from dataclasses import replace
 
 import pytest
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_image.ported.post_processing import BatchImagesNode, BatchMasksNode
-from dinkster_nodes_latent.post_processing import BatchLatentsNode
-from dinkster_nodes_utilities.list_utilities import CreateList
-from dinkster_nodes_utilities.logic import ComfyAndNode, ComfyOrNode
-from dinkster_nodes_utilities.math import ComfyMathExpression
+from dinkster_image.ported.post_processing import BatchImagesNode, BatchMasksNode
+from dinkster_latent.post_processing import BatchLatentsNode
+from dinkster_utilities.list_utilities import CreateList
+from dinkster_utilities.logic import ComfyAndNode, ComfyOrNode
+from dinkster_utilities.math import ComfyMathExpression
 from dinkster_schema import Node, schema_signature, validate_replacement_references
 
 

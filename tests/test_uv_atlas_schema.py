@@ -13,9 +13,9 @@ def test_uv_atlas_cold_schema() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.uv_atlas import RenderUVAtlas
-from dinkster_nodes_3d.mesh_unwrap import UnwrapMesh
+from dinkster_3d import NODES
+from dinkster_3d.uv_atlas import RenderUVAtlas
+from dinkster_3d.mesh_unwrap import UnwrapMesh
 from dinkster_workers import load_manifest
 assert NODES.count(RenderUVAtlas) == 1
 schema = RenderUVAtlas.schema()

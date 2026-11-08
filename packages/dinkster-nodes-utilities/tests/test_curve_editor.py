@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from dinkster_api.v1 import Curve
 from dinkster_graph import Graph, GraphNode
-from dinkster_nodes_utilities.curve_editor import CurveEditor
 from dinkster_schema import use_reporter
+from dinkster_utilities.curve_editor import CurveEditor
 
 from dinkster.compose import PackSpec, ServingComposer
 

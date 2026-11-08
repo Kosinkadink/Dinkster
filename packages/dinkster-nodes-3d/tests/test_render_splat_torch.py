@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from dinkster_3d.splat_render import RenderSplat
 from dinkster_api.v1 import SPLAT_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.splat_render import RenderSplat
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer
@@ -124,7 +124,7 @@ def test_render_splat_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
     module = "splat_render_source"
     (tmp_path / f"{module}.py").write_text(
         "from test_render_splat_torch import SplatSource\n"
-        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "from dinkster_3d import register_types as register_inference_types\n"
         "NODES=(SplatSource,)\n"
     )
     manifest = tmp_path / "source.toml"

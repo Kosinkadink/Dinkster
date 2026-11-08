@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_vision_sam3d_body.sam3d_openpose import render_pose_data_openpose
-from dinkster_nodes_vision_sam3d_body.sam3d_render import SAM3DBody_Render
+from dinkster_vision_sam3d_body.sam3d_openpose import render_pose_data_openpose
+from dinkster_vision_sam3d_body.sam3d_render import SAM3DBody_Render
 
 from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
@@ -201,7 +201,7 @@ def test_render_modes_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
     module = f"render_fixture_{int(in_process)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_render_torch import Source, Inspect\n"
-        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "from dinkster_vision_sam3d_body import register_types as register_sam3d\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-sam3d-body', "
         "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"

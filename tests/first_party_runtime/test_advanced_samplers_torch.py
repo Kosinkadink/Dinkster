@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.advanced_samplers import (
+from dinkster_sampling import NODES
+from dinkster_sampling.advanced_samplers import (
     SamplerEulerCFGpp,
     SamplerLCM,
     SamplerLCMUpscale,
@@ -484,9 +484,9 @@ def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
                 *(
                     _installed_pack_spec(identity, module, in_process=in_process)
                     for identity, module in (
-                        ("dinkster-latent", "dinkster_nodes_latent"),
-                        ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                        ("dinkster-sampling", "dinkster_nodes_sampling"),
+                        ("dinkster-latent", "dinkster_latent"),
+                        ("dinkster-conditioning", "dinkster_conditioning"),
+                        ("dinkster-sampling", "dinkster_sampling"),
                     )
                 ),
                 PackSpec(fixture_manifest),

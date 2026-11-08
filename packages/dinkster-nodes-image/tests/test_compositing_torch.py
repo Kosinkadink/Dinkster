@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.compositing import (
+from dinkster_image.ported.compositing import (
     JoinImageWithAlpha,
     PorterDuffImageComposite,
     SplitImageWithAlpha,
@@ -110,8 +110,8 @@ def test_manifest_links_decoded_masks_to_compositing_nodes(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "compositing_fixture_sources.py").write_text(
                 "from test_compositing_torch import CompositingInspect, CompositingSource\n"
-                "from dinkster_nodes_image import NODES as COMFY_NODES\n"
-                "from dinkster_nodes_image import register_types as register_inference_types\n"
+                "from dinkster_image import NODES as COMFY_NODES\n"
+                "from dinkster_image import register_types as register_inference_types\n"
                 "NODES = (*COMFY_NODES, CompositingSource, CompositingInspect)\n",
                 encoding="ascii",
             )
@@ -119,13 +119,13 @@ def test_manifest_links_decoded_masks_to_compositing_nodes(
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["compositing-fixture",')
-                .replace("dinkster_nodes_image:NODES", "compositing_fixture_sources:NODES")
+                .replace("dinkster_image:NODES", "compositing_fixture_sources:NODES")
                 .replace(
-                    "dinkster_nodes_image.ported.device_routing:device_choices",
+                    "dinkster_image.ported.device_routing:device_choices",
                     "compositing_fixture_sources:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_image:register_types",
+                    "dinkster_image:register_types",
                     "compositing_fixture_sources:register_inference_types",
                 ),
                 encoding="ascii",

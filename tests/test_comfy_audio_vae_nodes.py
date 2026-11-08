@@ -9,8 +9,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_latent import NODES
-from dinkster_nodes_latent.audio_vae import (
+from dinkster_latent import NODES
+from dinkster_latent.audio_vae import (
     VAEDecodeAudio,
     VAEDecodeAudioTiled,
     VAEEncodeAudio,

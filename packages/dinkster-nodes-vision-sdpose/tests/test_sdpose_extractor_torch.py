@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sdpose.sdpose_extract import SDPoseKeypointExtractor
+from dinkster_vision_sdpose.sdpose_extract import SDPoseKeypointExtractor
 from sdpose_pack_fixtures import sdpose_pack_specs
 
 from dinkster.compose import ServingComposer

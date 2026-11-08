@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetRef, AssetVault, AssetWriter, MountSnapshotResolver, digest_bytes
-from dinkster_nodes_audio.audio_generators import EmptyAudio
-from dinkster_nodes_audio.audio_io import LoadAudio, PreviewAudio
-from dinkster_nodes_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
+from dinkster_audio.audio_generators import EmptyAudio
+from dinkster_audio.audio_io import LoadAudio, PreviewAudio
+from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 from dinkster_schema import AssetWidget
 from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import render_audio_wav

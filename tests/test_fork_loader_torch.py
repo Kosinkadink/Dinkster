@@ -19,12 +19,12 @@ from dinkster_assets import (  # noqa: E402
     digest_file,
 )
 from dinkster_inference_wire.process import initialize_inference_process  # noqa: E402
-from dinkster_nodes_models.model_file_loaders import (  # noqa: E402
+from dinkster_models.model_file_loaders import (  # noqa: E402
     CheckpointLoaderSimple,
     CLIPLoader,
     UNETLoader,
 )
-from dinkster_nodes_models.model_selections import VAELoader  # noqa: E402
+from dinkster_models.model_selections import VAELoader  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

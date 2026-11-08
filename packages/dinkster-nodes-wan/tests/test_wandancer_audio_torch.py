@@ -29,7 +29,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_wan.wandancer_audio import WanDancerEncodeAudio
+from dinkster_wan.wandancer_audio import WanDancerEncodeAudio
 from wan_pack_fixtures import compose_wan_packs
 
 from dinkster.compose import ServingComposer
@@ -90,7 +90,7 @@ def test_schema_and_cold_source_tree_discovery() -> None:
         (
             "import json",
             "import sys",
-            "import dinkster_nodes_wan.wandancer_audio as module",
+            "import dinkster_wan.wandancer_audio as module",
             "module.WanDancerEncodeAudio.define_schema()",
             "prefixes = ('torch', 'torchvision', 'dinkster_inference', 'scipy')",
             "forbidden = sorted(name for name in sys.modules if any("
@@ -109,7 +109,7 @@ def test_schema_and_cold_source_tree_discovery() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
     discovery = json.loads(completed.stdout)
     assert Path(discovery["path"]).resolve() == (
-        root / "packages/dinkster-nodes-wan/src/dinkster_nodes_wan/wandancer_audio.py"
+        root / "packages/dinkster-nodes-wan/src/dinkster_wan/wandancer_audio.py"
     )
     assert discovery["forbidden"] == []
 
@@ -168,7 +168,7 @@ def test_real_mono_stereo_first_batch_features_and_input_immutability() -> None:
 def test_controlled_feature_rows_preserve_column_order_and_fps_branches(
     monkeypatch: pytest.MonkeyPatch, video_frames: int, fps: float, text: str
 ) -> None:
-    feature_module = types.ModuleType("dinkster_nodes_wan._wandancer_audio_features")
+    feature_module = types.ModuleType("dinkster_wan._wandancer_audio_features")
     feature_module.quick_tempo_estimate = lambda *_args, **_kwargs: 120.0
     feature_module._compute_mel_spectrogram = lambda *_args, **_kwargs: np.ones(
         (128, 3), dtype=np.float32
@@ -281,11 +281,11 @@ def test_wandancer_audio_runs_twice_through_ordinary_hosts(
             str(root / "src"),
             *(str(path) for path in sorted(root.glob("packages/*/src"))),
         )
-        source_module = package / "src/dinkster_nodes_wan/wandancer_audio.py"
+        source_module = package / "src/dinkster_wan/wandancer_audio.py"
         entry = tmp_path / "wandancer_audio_host_entry.py"
         entry.write_text(
             "from pathlib import Path\n"
-            "import dinkster_nodes_wan.wandancer_audio as native\n"
+            "import dinkster_wan.wandancer_audio as native\n"
             f"assert Path(native.__file__).resolve() == Path({str(source_module)!r}).resolve()\n"
             "from test_wandancer_audio_torch import HOST_NODES\n"
             "from dinkster_api.v1 import (AUDIO_TYPE, register_audio_value_type,\n"

@@ -1,4 +1,4 @@
-from dinkster_nodes_misc_models.json_prompt import BuildJsonPromptIdeogram
+from dinkster_misc_models.json_prompt import BuildJsonPromptIdeogram
 
 
 def test_json_prompt_photo_preserves_text_elements_and_palette_order() -> None:

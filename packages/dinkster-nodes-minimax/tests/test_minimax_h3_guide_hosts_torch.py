@@ -32,7 +32,7 @@ from dinkster.compose import PackSpec, ServingComposer
 
 
 def test_isolated_minimax_manifest_installs_only_consumed_codecs() -> None:
-    from dinkster_nodes_minimax import register_types
+    from dinkster_minimax import register_types
     from dinkster_workers import load_manifest
     from dinkster_workers.host import load_pack
 

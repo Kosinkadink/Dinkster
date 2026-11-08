@@ -18,5 +18,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_vision_moge:NODES"
-types = "dinkster_nodes_vision_moge:register_types"
+nodes = "dinkster_vision_moge:NODES"
+types = "dinkster_vision_moge:register_types"

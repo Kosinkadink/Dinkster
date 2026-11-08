@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d.mesh_holes import FillHoles
+from dinkster_3d.mesh_weld import WeldVertices
 from dinkster_api.v1 import (
     MESH_TYPE,
     Node,
@@ -20,8 +22,6 @@ from dinkster_api.v1 import (
     materialize_mesh,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.mesh_holes import FillHoles
-from dinkster_nodes_3d.mesh_weld import WeldVertices
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer

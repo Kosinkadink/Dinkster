@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.model_file_savers import CheckpointSave, CLIPSave, ModelSave, VAESave
+from dinkster_models.model_file_savers import CheckpointSave, CLIPSave, ModelSave, VAESave
 from dinkster_schema.reporting import capture_saved_artifacts
 from safetensors import safe_open
 
@@ -73,7 +73,7 @@ def test_weight_exports_preserve_filename_tails_and_prior_publications(
         path.write_bytes(f"complete original {stem}".encode("ascii"))
         originals[path] = path.read_bytes()
     if saver == "lora":
-        from dinkster_nodes_models.lora_extract_save import LoraSave
+        from dinkster_models.lora_extract_save import LoraSave
         from test_lora_extract_save_torch import _Patcher, _runtime
 
         _runtime(monkeypatch)

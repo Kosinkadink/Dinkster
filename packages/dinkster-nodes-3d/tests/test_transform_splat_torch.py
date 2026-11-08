@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from dinkster_3d.gaussian_splat import TransformSplat
 from dinkster_api.v1 import (
     CORE_STRING,
     SPLAT_TYPE,
@@ -20,7 +21,6 @@ from dinkster_api.v1 import (
     materialize_splat,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.gaussian_splat import TransformSplat
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer

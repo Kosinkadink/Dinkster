@@ -28,7 +28,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
-from dinkster_nodes_void.void_sampler import VOIDSampler
+from dinkster_void.void_sampler import VOIDSampler
 from void_pack_fixtures import void_providers
 
 
@@ -45,7 +45,7 @@ def test_void_sampler_schema_is_torch_free() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; from dinkster_nodes_void.void_sampler import VOIDSampler; "
+            "import sys; from dinkster_void.void_sampler import VOIDSampler; "
             "VOIDSampler.schema(); assert 'torch' not in sys.modules",
         ],
         capture_output=True,

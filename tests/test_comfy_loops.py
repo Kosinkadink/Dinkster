@@ -10,17 +10,17 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, TypedLiteral
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
-from dinkster_nodes_utilities.loop_lists import ListElement, MakeList
-from dinkster_nodes_utilities.loops import (
+from dinkster_utilities.loop_lists import ListElement, MakeList
+from dinkster_utilities.loops import (
     EndLoop,
     LoopIteration,
     LoopProgress,
     LoopResult,
     StartLoop,
 )
-from dinkster_nodes_utilities.math import ComfyMathExpression
-from dinkster_nodes_utilities.primitive import PrimitiveBoolean, PrimitiveInt
-from dinkster_nodes_utilities.switch import ComfySwitchNode
+from dinkster_utilities.math import ComfyMathExpression
+from dinkster_utilities.primitive import PrimitiveBoolean, PrimitiveInt
+from dinkster_utilities.switch import ComfySwitchNode
 from dinkster_schema import (
     ABSENT,
     InputSpec,

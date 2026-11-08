@@ -5,7 +5,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_flux import NODES
+from dinkster_flux import NODES
 from dinkster_workers import load_manifest
 
 

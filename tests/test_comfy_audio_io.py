@@ -4,8 +4,8 @@ import subprocess
 import sys
 
 from dinkster_api.v1 import ASSET_TYPE, AUDIO_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio import NODES
-from dinkster_nodes_audio.audio_io import LoadAudio, PreviewAudio
+from dinkster_audio import NODES
+from dinkster_audio.audio_io import LoadAudio, PreviewAudio
 from dinkster_workers import load_manifest
 
 
@@ -31,7 +31,7 @@ def test_native_audio_io_cold_discovery() -> None:
             sys.executable,
             "-c",
             "import sys; sys.modules['torch']=None; sys.modules['dinkster_inference']=None; "
-            "from dinkster_nodes_audio import NODES; "
+            "from dinkster_audio import NODES; "
             "assert {'dinkster.audio.load_audio','dinkster.audio.preview_audio'} "
             "<= {n.schema().node_type for n in NODES}; "
             "assert not any(n.startswith('dinkster_inference.') for n in sys.modules)",

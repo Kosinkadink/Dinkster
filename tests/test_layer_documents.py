@@ -43,10 +43,10 @@ from dinkster_image_document.interchange import (
     import_psd,
     load_document,
 )
-from dinkster_nodes_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
-from dinkster_nodes_image.layer_document import EditLayers, FlattenLayers, SplitLayers
-from dinkster_nodes_image.layer_io import LoadLayers, SaveLayers
-from dinkster_nodes_image.types import Region, register_image_types
+from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
+from dinkster_image.layer_document import EditLayers, FlattenLayers, SplitLayers
+from dinkster_image.layer_io import LoadLayers, SaveLayers
+from dinkster_image.types import Region, register_image_types
 from dinkster_protocol import InvocationResult, SavedArtifact
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import (
@@ -71,10 +71,10 @@ pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 def layer_document_pack(tmp_path: Path) -> Path:
     (tmp_path / "layer_document_fixture.py").write_text(
         "from dinkster_api.v1 import register_media_types\n"
-        "from dinkster_nodes_image.compositor import AddLayer\n"
-        "from dinkster_nodes_image.layer_document import EditLayers, FlattenLayers\n"
-        "from dinkster_nodes_image.layer_io import SaveLayers\n"
-        "from dinkster_nodes_image.types import register_image_types\n"
+        "from dinkster_image.compositor import AddLayer\n"
+        "from dinkster_image.layer_document import EditLayers, FlattenLayers\n"
+        "from dinkster_image.layer_io import SaveLayers\n"
+        "from dinkster_image.types import register_image_types\n"
         "NODES = (AddLayer, EditLayers, FlattenLayers, SaveLayers)\n"
         "def register_types(registry):\n"
         "    register_media_types(registry)\n"
@@ -83,7 +83,7 @@ def layer_document_pack(tmp_path: Path) -> Path:
     )
     manifest = tmp_path / "layer-document.toml"
     manifest.write_text(
-        '[pack]\nname="dinkster-nodes-image"\npublisher="dinkster"\n'
+        '[pack]\nname="dinkster-image"\npublisher="dinkster"\n'
         'namespaces=["dinkster.layers"]\n'
         'type-namespaces=["dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"]\n'
         "[pack.sandbox]\nwritable-mounts=true\n"
@@ -325,7 +325,7 @@ def test_document_boundary_refuses_uncovered_resources_before_exposure(type_id, 
 def test_legacy_layer_admission_does_not_publish_migrated_rasters(monkeypatch) -> None:
     from dinkster_assets import AssetError, AssetVault
     from dinkster_assets.value import value_asset_references
-    from dinkster_nodes_image.compositor_types import (
+    from dinkster_image.compositor_types import (
         CompositorSourceLayer,
         LayerStack,
         encode_layer_stack,
@@ -757,7 +757,7 @@ def test_transform_components_cannot_compete_with_affine() -> None:
 
 def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
     from dinkster_assets import digest_bytes
-    from dinkster_nodes_image.layer_recipe import replay_compositor
+    from dinkster_image.layer_recipe import replay_compositor
 
     value = document()
     identifier = value.to_record()["rootLayerIds"][0]
@@ -785,7 +785,7 @@ def test_compositor_boundary_retains_auxiliary_references_without_retrieving_doc
 ) -> None:
     from dinkster_assets import AssetRef, AssetVault, digest_bytes
     from dinkster_assets.value import value_asset_references
-    from dinkster_nodes_image.layer_recipe import replay_compositor
+    from dinkster_image.layer_recipe import replay_compositor
     from dinkster_values import default_encode
 
     value = document()
@@ -864,7 +864,7 @@ def test_compositor_boundary_preserves_existing_legacy_and_deferred_command_form
     type_id, recipe
 ) -> None:
     from dinkster_assets.value import value_asset_references
-    from dinkster_nodes_image.layer_recipe import replay_compositor
+    from dinkster_image.layer_recipe import replay_compositor
 
     registry = TypeRegistry()
     register_image_types(registry)
@@ -893,7 +893,7 @@ def test_compositor_boundary_preserves_existing_legacy_and_deferred_command_form
 @pytest.mark.parametrize("color_space", ["perceptual", "linear"])
 def test_compositor_preview_digest_binds_repeated_apply_to_input(monkeypatch, color_space) -> None:
     from dinkster_assets import digest_bytes
-    from dinkster_nodes_image import compositor as module
+    from dinkster_image import compositor as module
 
     value = document()
     original = value.data
@@ -1890,7 +1890,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
     from contextlib import suppress
 
     from dinkster_assets.scratch import claim_inactive_produced_scratch, hold_produced_vault
-    from dinkster_nodes_image.compositor_types import (
+    from dinkster_image.compositor_types import (
         CompositorSourceLayer,
         LayerStack,
         decode_layer_stack,
@@ -2032,7 +2032,7 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
 ) -> None:
     from dinkster_assets import AssetError, AssetVault, digest_bytes
     from dinkster_assets.produced import ProducedAssetInventory
-    from dinkster_nodes_image.compositor_types import (
+    from dinkster_image.compositor_types import (
         CompositorSourceLayer,
         LayerStack,
         decode_layer_stack,
@@ -2111,7 +2111,7 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
         )
         await group.start()
         try:
-            worker = group.members["dinkster-nodes-image"]
+            worker = group.members["dinkster-image"]
             if case in ("missing", "truncated", "corrupt", "host-missing"):
                 error = AssetError if case == "host-missing" else RenditionUnavailable
                 with pytest.raises(error):
@@ -2160,7 +2160,7 @@ def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
     from dinkster_assets import AssetVault, LibraryStore, digest_bytes
     from dinkster_assets.writer import AssetWriter, MountSnapshotWriter
     from dinkster_engine import RunResult
-    from dinkster_nodes_image.compositor_types import (
+    from dinkster_image.compositor_types import (
         CompositorSourceLayer,
         LayerStack,
         decode_layer_stack,
@@ -2243,7 +2243,7 @@ def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
         try:
             schema = SaveLayers.define_schema()
             started = time.time_ns()
-            result = await group.members["dinkster-nodes-image"].invoke(
+            result = await group.members["dinkster-image"].invoke(
                 Invocation(
                     "native-save",
                     "save",
@@ -2323,7 +2323,7 @@ def test_isolated_worker_shm_flatten_matches_in_process(
             shm_threshold=1,
         )
         await group.start()
-        worker = group.members["dinkster-nodes-image"]
+        worker = group.members["dinkster-image"]
         try:
             value = large_document() if large else document()
             engine = Engine(

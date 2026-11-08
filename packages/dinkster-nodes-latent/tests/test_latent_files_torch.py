@@ -28,7 +28,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_latent.latent_file_tools import LoadLatent, SaveLatent
+from dinkster_latent.latent_file_tools import LoadLatent, SaveLatent
 from dinkster_schema.reporting import capture_saved_artifacts
 from safetensors import safe_open
 from safetensors.torch import save_file

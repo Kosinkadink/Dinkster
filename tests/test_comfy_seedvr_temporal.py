@@ -1,8 +1,8 @@
 """Torch-free SeedVR2 temporal schemas and discovery."""
 
 from dinkster_api.v1 import LATENT_TYPE, NumberWidget, TypeExpr, schema_from_wire, schema_to_wire
-from dinkster_nodes_seedvr import NODES
-from dinkster_nodes_seedvr.seedvr_temporal import SeedVR2TemporalChunk, SeedVR2TemporalMerge
+from dinkster_seedvr import NODES
+from dinkster_seedvr.seedvr_temporal import SeedVR2TemporalChunk, SeedVR2TemporalMerge
 
 
 def test_seedvr_temporal_schemas_are_registered_with_bounded_merge_overlap() -> None:

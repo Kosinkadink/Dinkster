@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.ltx_video_preprocess import LTXVPreprocess
+from dinkster_ltx.ltx_video_preprocess import LTXVPreprocess
 from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import ServingComposer

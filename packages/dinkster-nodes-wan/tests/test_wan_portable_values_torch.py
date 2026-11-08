@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_wan import register_types
+from dinkster_wan import register_types
 from wan_pack_fixtures import compose_wan_packs
 
 from dinkster.compose import ServingComposer

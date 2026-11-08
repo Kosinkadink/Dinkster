@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from dinkster_nodes_sd.stable_cascade import (
+from dinkster_sd.stable_cascade import (
     StableCascade_EmptyLatentImage,
     StableCascade_StageB_Conditioning,
     StableCascade_StageC_VAEEncode,

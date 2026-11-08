@@ -42,7 +42,7 @@ from dinkster_memory import (
     ReportedTelemetry,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
@@ -264,7 +264,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     package_data = checkout / "src/dinkster"
     package_data.mkdir(parents=True)
     (checkout / "pyproject.toml").write_text("")
-    pack = tmp_path / "dinkster_nodes_text_pack"
+    pack = tmp_path / "dinkster_text"
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
@@ -277,8 +277,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     module.mkdir()
     origin = module / "__init__.py"
     origin.write_text("NODES = ()\n", encoding="utf-8")
-    archive = tmp_path / "pack.zip"
-    digest = build_artifact(pack, archive)
+    digest = compose._installed_pack_digest(pack / "dinkster-pack.toml", module)
     lock = Lockfile.of(
         [
             LockedPack(
@@ -343,7 +342,7 @@ def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPa
     requested: list[str] = []
     locked = compose._default_pack_lock().get("dinkster-text")
     assert locked is not None
-    lock = Lockfile.of([replace(locked, source="python:dinkster-nodes-text==1.2.3")])
+    lock = Lockfile.of([replace(locked, source="python:dinkster-text==1.2.3")])
     monkeypatch.setattr(compose, "_default_pack_lock", lambda: lock)
 
     def find_distribution(name: str) -> SimpleNamespace:
@@ -352,10 +351,10 @@ def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", find_distribution)
     spec = compose.default_pack_spec("dinkster-text")
-    assert requested == ["dinkster-nodes-text"]
+    assert requested == ["dinkster-text"]
     assert spec.packs is not None
     assert spec.packs["dinkster-text"].version == "0.0.1"
-    assert spec.packs["dinkster-text"].source == "python:dinkster-nodes-text==1.2.3"
+    assert spec.packs["dinkster-text"].source == "python:dinkster-text==1.2.3"
 
 
 def test_image_pack_starts_with_canonical_inference_types() -> None:
@@ -965,7 +964,7 @@ def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         compose.importlib.util,
         "find_spec",
-        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_nodes_text/__init__.py")),
+        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_text/__init__.py")),
     )
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
@@ -995,13 +994,12 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
     tracked_paths = {Path(raw.decode("utf-8")) for raw in listed.split(b"\0") if raw}
     artifact_paths: set[Path] = set()
     for pack_id, module_name in compose._FIRST_PARTY_PACK_MODULES.items():
-        distribution_id = compose._FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
-        pack_root = Path("packages") / distribution_id
-        sidecar_root = (
-            pack_root / f"{pack_id.replace('-', '_')}_pack"
-            if not (repo_root / pack_root / "dinkster-pack.toml").is_file()
-            else pack_root
+        pack_root = next(
+            path.parent.relative_to(repo_root)
+            for path in (repo_root / "packages").glob("dinkster-nodes-*/dinkster-pack.toml")
+            if tomllib.loads(path.read_text(encoding="utf-8"))["pack"]["name"] == pack_id
         )
+        sidecar_root = pack_root
         manifest_path = sidecar_root / "dinkster-pack.toml"
         manifest = tomllib.loads((repo_root / manifest_path).read_text(encoding="utf-8"))
         docs = manifest.get("pack", {}).get("docs", {})
@@ -1012,7 +1010,7 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
             prefixes.append(sidecar_root / docs_dir)
         artifact_paths.add(manifest_path)
         module_init = module_root.parent / "__init__.py"
-        if distribution_id != pack_id and module_init in tracked_paths:
+        if module_init in tracked_paths:
             artifact_paths.add(module_init)
         if module_root.parent.name == "dinkster_nodes_vision":
             artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
@@ -1099,18 +1097,16 @@ def test_default_pack_uses_embedded_wheel_artifact(
 
     lock = compose._default_pack_lock()
     source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
-    module = tmp_path / "site/dinkster_nodes_text/__init__.py"
-    shutil.copytree(source / "src/dinkster_nodes_text", module.parent)
-    bundled = tmp_path / "site/dinkster_text_pack/dinkster-pack.toml"
-    bundled.parent.mkdir(parents=True)
+    module = tmp_path / "site/dinkster_text/__init__.py"
+    shutil.copytree(source / "src/dinkster_text", module.parent)
+    bundled = tmp_path / "site/dinkster_text/dinkster-pack.toml"
     shutil.copy2(source / "dinkster-pack.toml", bundled)
-    shutil.copytree(source / "src/dinkster_nodes_text", bundled.parent / "dinkster_nodes_text")
     shutil.copytree(source / "locales", bundled.parent / "locales")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
         sidecar = source / filename
         if sidecar.is_file():
             shutil.copy2(sidecar, bundled.parent / filename)
-    distribution = SimpleNamespace(version="0.0.2", locate_file=lambda _path: bundled)
+    distribution = SimpleNamespace(version="0.0.1", locate_file=lambda _path: bundled)
 
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
@@ -1125,7 +1121,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-text"]
-    assert info.source == "python:dinkster-nodes-text==0.0.2"
+    assert info.source == "python:dinkster-text==0.0.1"
     locked = lock.get("dinkster-text")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
@@ -1231,17 +1227,17 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     from dinkster import compose
 
     source = Path(__file__).parent.parent / "packages/dinkster-nodes-image"
-    bundled = tmp_path / "dinkster_nodes_image_pack"
+    bundled = tmp_path / "dinkster_image"
     bundled.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", bundled / "dinkster-pack.toml")
-    shutil.copytree(source / "src/dinkster_nodes_image", bundled / "dinkster_nodes_image")
+    shutil.copytree(source / "src/dinkster_image", bundled, dirs_exist_ok=True)
     shutil.copytree(source / "locales", bundled / "locales")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
         if (source / filename).is_file():
             shutil.copy2(source / filename, bundled / filename)
 
     source_digest = compose._installed_pack_digest(
-        source / "dinkster-pack.toml", source / "src/dinkster_nodes_image"
+        source / "dinkster-pack.toml", source / "src/dinkster_image"
     )
     bundled_digest = compose._installed_pack_digest(bundled / "dinkster-pack.toml", None)
 
@@ -1264,11 +1260,11 @@ def test_default_pack_refuses_version_outside_suite_lock(
         .read_text()
         .replace('version = "0.0.1"', 'version = "9.0.0"')
     )
-    shutil.copytree(source / "src/dinkster_nodes_text", copied / "src/dinkster_nodes_text")
+    shutil.copytree(source / "src/dinkster_text", copied / "src/dinkster_text")
     monkeypatch.setattr(
         compose.importlib.util,
         "find_spec",
-        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_nodes_text/__init__.py")),
+        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_text/__init__.py")),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
@@ -1286,11 +1282,11 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     pack = lock.get("dinkster-text")
     assert pack is not None
     assert pack.version == "0.0.1"
-    assert pack.source == "python:dinkster-nodes-text==0.0.2"
+    assert pack.source == "python:dinkster-text==0.0.1"
     if mismatch == "pack":
         pack = replace(pack, version="0.0.2")
     elif mismatch == "distribution-name":
-        pack = replace(pack, source="python:dinkster-nodes-image==0.0.2")
+        pack = replace(pack, source="python:dinkster-image==0.0.1")
     changed = replace(
         lock, packs=tuple(pack if row.pack == pack.pack else row for row in lock.packs)
     )
@@ -1299,7 +1295,7 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
 
     def distribution(name: str):
         installed = real_distribution(name)
-        if name == "dinkster-nodes-text" and mismatch == "distribution":
+        if name == "dinkster-text" and mismatch == "distribution":
             return SimpleNamespace(version="9.0.0", locate_file=installed.locate_file)
         return installed
 
@@ -1311,7 +1307,7 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
     assert spec.packs[pack.pack].version == "0.0.1"
-    assert spec.packs[pack.pack].source == "python:dinkster-nodes-text==0.0.2"
+    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.1"
 
 
 def test_undeclared_pack_version_uses_distribution_version(
@@ -1320,7 +1316,7 @@ def test_undeclared_pack_version_uses_distribution_version(
     from dinkster import compose
 
     pack_id = "dinkster-text"
-    distribution_id = "dinkster-nodes-text"
+    distribution_id = "dinkster-text"
     lock = compose._default_pack_lock()
     changed = replace(
         lock,
@@ -1361,8 +1357,8 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     copied = tmp_path / "source"
     copied.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", copied / "dinkster-pack.toml")
-    shutil.copytree(source / "src/dinkster_nodes_text", copied / "src/dinkster_nodes_text")
-    module = copied / "src/dinkster_nodes_text/__init__.py"
+    shutil.copytree(source / "src/dinkster_text", copied / "src/dinkster_text")
+    module = copied / "src/dinkster_text/__init__.py"
     module.write_text(
         module.read_text(encoding="utf-8") + "\nLOCK_DRIFT = True\n",
         encoding="utf-8",
@@ -1752,7 +1748,7 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
 def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
     tmp_path: Path, in_process: bool
 ) -> None:
-    from dinkster_nodes_utilities import NODES
+    from dinkster_utilities import NODES
 
     claims = tuple(node.schema().node_type for node in NODES)
     manifest = TESTS_DIR.parent / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
@@ -1764,7 +1760,7 @@ def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
         '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
     )
     (tmp_path / "other_owner_fixture.py").write_text(
-        "from dinkster_nodes_utilities.primitive import PrimitiveString\n"
+        "from dinkster_utilities.primitive import PrimitiveString\n"
         "NODES = (PrimitiveString,)\n"
     )
 

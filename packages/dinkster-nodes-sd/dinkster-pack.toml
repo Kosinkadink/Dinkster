@@ -24,5 +24,5 @@ dinkster-conditioning = ">=0.0.1,<1"
 dinkster-sampling = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_sd:NODES"
-types = "dinkster_nodes_sd:register_types"
+nodes = "dinkster_sd:NODES"
+types = "dinkster_sd:register_types"

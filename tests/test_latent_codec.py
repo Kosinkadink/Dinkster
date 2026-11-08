@@ -111,8 +111,8 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
         latent_pack = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-latent"
         (tmp_path / "empty_latent_fixture.py").write_text(
             "from tests.test_latent_codec import EmptyLatentInspect, EmptyLatentSource\n"
-            "from dinkster_nodes_latent import NODES as LATENT_NODES\n"
-            "from dinkster_nodes_latent.types import register_types\n"
+            "from dinkster_latent import NODES as LATENT_NODES\n"
+            "from dinkster_latent.types import register_types\n"
             "NODES = (*LATENT_NODES, EmptyLatentSource, EmptyLatentInspect)\n",
             encoding="ascii",
         )
@@ -121,9 +121,9 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
             (latent_pack / "dinkster-pack.toml")
             .read_text(encoding="ascii")
             .replace("namespaces = [", 'namespaces = ["empty-latent-fixture",')
-            .replace("dinkster_nodes_latent:NODES", "empty_latent_fixture:NODES")
+            .replace("dinkster_latent:NODES", "empty_latent_fixture:NODES")
             .replace(
-                "dinkster_nodes_latent.types:register_types",
+                "dinkster_latent.types:register_types",
                 "empty_latent_fixture:register_types",
             ),
             encoding="ascii",

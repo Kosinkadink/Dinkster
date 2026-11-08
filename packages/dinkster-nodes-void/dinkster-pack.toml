@@ -22,5 +22,5 @@ api = "dinkster-api/v1"
 "dinkster-video" = ">=0.0.1"
 
 [pack.entry]
-nodes = "dinkster_nodes_void:NODES"
-types = "dinkster_nodes_void:register_types"
+nodes = "dinkster_void:NODES"
+types = "dinkster_void:register_types"

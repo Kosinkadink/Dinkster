@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_misc_models.sensenova_options import SenseNovaSamplingOptions
+from dinkster_misc_models.sensenova_options import SenseNovaSamplingOptions
 
 
 class Patcher:

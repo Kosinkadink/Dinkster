@@ -6,15 +6,15 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import CORE_FLOAT, CORE_STRING, MODEL_TYPE, TypeExpr, schema_to_wire
-from dinkster_nodes_sampling import NODES as SAMPLING_NODES
-from dinkster_nodes_sampling.attention_guidance import (
+from dinkster_sampling import NODES as SAMPLING_NODES
+from dinkster_sampling.attention_guidance import (
     PerturbedAttentionGuidance,
     SelfAttentionGuidance,
     SkipLayerGuidanceDiT,
     SkipLayerGuidanceDiTSimple,
 )
-from dinkster_nodes_sd import NODES as SD_NODES
-from dinkster_nodes_sd.attention_guidance import SkipLayerGuidanceSD3
+from dinkster_sd import NODES as SD_NODES
+from dinkster_sd.attention_guidance import SkipLayerGuidanceSD3
 from dinkster_schema import claim_covers
 
 

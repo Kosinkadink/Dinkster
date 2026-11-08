@@ -24,8 +24,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_clip_vision_output,
 )
+from dinkster_conditioning.style_model import StyleModelApply
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_conditioning.style_model import StyleModelApply
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -235,10 +235,10 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "style_apply_fixture.py").write_text(
                 "from test_style_model_apply_torch import FIXTURES\n"
-                "from dinkster_nodes_conditioning import NODES as PACK_NODES\n"
-                "from dinkster_nodes_conditioning.types import "
+                "from dinkster_conditioning import NODES as PACK_NODES\n"
+                "from dinkster_conditioning.types import "
                 "register_types as conditioning_types\n"
-                "from dinkster_nodes_models.types import register_types as model_types\n"
+                "from dinkster_models.types import register_types as model_types\n"
                 "def register_types(registry):\n"
                 "    conditioning_types(registry)\n"
                 "    model_types(registry)\n"
@@ -249,9 +249,9 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["style-apply-fixture",')
-                .replace("dinkster_nodes_conditioning:NODES", "style_apply_fixture:NODES")
+                .replace("dinkster_conditioning:NODES", "style_apply_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_conditioning.types:register_types",
+                    "dinkster_conditioning.types:register_types",
                     "style_apply_fixture:register_types",
                 ),
                 encoding="ascii",

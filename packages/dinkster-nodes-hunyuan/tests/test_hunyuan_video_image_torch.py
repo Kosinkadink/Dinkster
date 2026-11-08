@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_hunyuan.hunyuan_video_image import (
+from dinkster_hunyuan.hunyuan_video_image import (
     HunyuanImageToVideo,
     HunyuanVideo15ImageToVideo,
     HunyuanVideo15SuperResolution,
@@ -495,9 +495,9 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                 "from test_hunyuan_video_image_torch import (\n"
                 "    Inspect, InspectSuperResolution, InspectSuperResolutionStartImage, Source\n"
                 ")\n"
-                "from dinkster_nodes_hunyuan import NODES as COMFY_NODES\n"
+                "from dinkster_hunyuan import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, Source, Inspect, InspectSuperResolution, "
                 "InspectSuperResolutionStartImage)\n",
                 encoding="ascii",
@@ -508,15 +508,15 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-video-image-fixture",')
                 .replace(
-                    "dinkster_nodes_hunyuan:NODES",
+                    "dinkster_hunyuan:NODES",
                     "hunyuan_video_image_fixture:NODES",
                 )
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "hunyuan_video_image_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_hunyuan:register_types",
+                    "dinkster_hunyuan:register_types",
                     "hunyuan_video_image_fixture:register_inference_types",
                 ),
                 encoding="ascii",

@@ -23,12 +23,12 @@ from dinkster_api.v1 import (
     materialize_image,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_inference.latent_formats import Wan21
-from dinkster_nodes_cosmos.cosmos_conditioning import (
+from dinkster_cosmos.cosmos_conditioning import (
     CosmosImageToVideoLatent,
     CosmosPredict2ImageToVideoLatent,
 )
+from dinkster_graph import Graph, GraphNode, Link
+from dinkster_inference.latent_formats import Wan21
 
 from dinkster.compose import (
     PackSpec,
@@ -256,9 +256,9 @@ def test_ordinary_manifest_executes_both_cosmos_nodes_twice(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "cosmos_conditioning_fixture.py").write_text(
                 "from test_cosmos_conditioning_torch import Inspect, Source\n"
-                "from dinkster_nodes_cosmos import NODES as COMFY_NODES\n"
+                "from dinkster_cosmos import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, Source, Inspect)\n",
                 encoding="ascii",
             )
@@ -267,15 +267,15 @@ def test_ordinary_manifest_executes_both_cosmos_nodes_twice(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["cosmos-conditioning-fixture",')
                 .replace(
-                    "dinkster_nodes_cosmos:NODES",
+                    "dinkster_cosmos:NODES",
                     "cosmos_conditioning_fixture:NODES",
                 )
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "cosmos_conditioning_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_cosmos:register_types",
+                    "dinkster_cosmos:register_types",
                     "cosmos_conditioning_fixture:register_inference_types",
                 ),
                 encoding="ascii",

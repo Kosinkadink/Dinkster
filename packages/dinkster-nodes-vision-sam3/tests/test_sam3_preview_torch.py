@@ -27,10 +27,10 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sam3 import register_types
-from dinkster_nodes_vision_sam3.sam3_preview import SAM3_TrackPreview
 from dinkster_schema.reporting import capture_preview_artifacts
 from dinkster_server import PackInfo
+from dinkster_vision_sam3 import register_types
+from dinkster_vision_sam3.sam3_preview import SAM3_TrackPreview
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -227,7 +227,7 @@ def test_native_preview_publishes_through_ordinary_hosts_twice(
     module = f"sam3_preview_fixture_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3_preview_torch import PreviewSource\n"
-        "from dinkster_nodes_vision_sam3 import register_types as register_sam3\n"
+        "from dinkster_vision_sam3 import register_types as register_sam3\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-sam3', "
         "('SAM3_TRACK_DATA',), allow_bare=True):\n"

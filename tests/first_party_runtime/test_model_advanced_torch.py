@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.model_advanced import (
+from dinkster_models.model_advanced import (
     ModelAttentionBackend,
     ModelComputeDtype,
     ModelNoiseScale,
@@ -271,7 +271,7 @@ def test_compute_dtype_installs_torch_dtype() -> None:
 def test_attention_backend_installs_runtime_callback(
     monkeypatch: pytest.MonkeyPatch, attention: str
 ) -> None:
-    import dinkster_nodes_models.model_advanced as advanced
+    import dinkster_models.model_advanced as advanced
 
     def pytorch_attention(
         query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
@@ -355,7 +355,7 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
             (tmp_path / "advanced_model_fixture_sources.py").write_text(
                 "from tests.first_party_runtime.test_model_advanced_torch "
                 "import ADVANCED_MODEL_FIXTURE_NODES\n"
-                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "from dinkster_models.types import register_types as register_models\n"
                 "def register_types(registry):\n"
                 "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
                 "        register_models(registry)\n"
@@ -411,7 +411,7 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
 
 
 def test_pack_exports_exact_advanced_node_group() -> None:
-    from dinkster_nodes_models import NODES
+    from dinkster_models import NODES
 
     assert len(MODEL_ADVANCED_NODES) == 11
     assert all(node in NODES for node in MODEL_ADVANCED_NODES)

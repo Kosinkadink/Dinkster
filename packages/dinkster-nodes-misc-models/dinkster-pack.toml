@@ -22,5 +22,5 @@ dinkster-conditioning = ">=0.0.1,<1"
 dinkster-qwen = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_misc_models:NODES"
-types = "dinkster_nodes_misc_models:register_types"
+nodes = "dinkster_misc_models:NODES"
+types = "dinkster_misc_models:register_types"

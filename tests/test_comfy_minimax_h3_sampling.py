@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_minimax import NODES
-from dinkster_nodes_minimax.minimax_h3_sampling import MiniMaxH3SigmaShift
+from dinkster_minimax import NODES
+from dinkster_minimax.minimax_h3_sampling import MiniMaxH3SigmaShift
 
 
 def test_minimax_h3_sigma_shift_public_schema() -> None:

@@ -8,8 +8,8 @@ from typing import cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import ComboWidget, InputSpec
-from dinkster_nodes_image.drawing import MakeImage
-from dinkster_nodes_image.mask import (
+from dinkster_image.drawing import MakeImage
+from dinkster_image.mask import (
     MASK_NODES,
     ImageToMask,
     MakeMask,
@@ -19,7 +19,7 @@ from dinkster_nodes_image.mask import (
     MaskToImage,
     TextMask,
 )
-from dinkster_nodes_image.types import Region
+from dinkster_image.types import Region
 from dinkster_schema import build_schemas, schema_from_wire, schema_to_wire
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "image_mask_e20d433a.json"

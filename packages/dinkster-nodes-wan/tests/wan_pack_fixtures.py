@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from dinkster_api.v1 import TypeRegistry
-from dinkster_nodes_wan import register_types
+from dinkster_wan import register_types
 
 from dinkster.compose import (
     PackInfo,

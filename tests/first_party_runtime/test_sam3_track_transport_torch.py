@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sam3 import register_types
+from dinkster_vision_sam3 import register_types
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -247,7 +247,7 @@ def test_public_sam3_track_producer_consumer_repeats_through_ordinary_hosts(
                 encoding="ascii",
             )
         provider = _installed_pack_spec(
-            "dinkster-vision-sam3", "dinkster_nodes_vision_sam3", in_process=in_process
+            "dinkster-vision-sam3", "dinkster_vision_sam3", in_process=in_process
         )
         manifests = (Path(provider.manifest), source_manifest, consumer_manifest)
         composer = ServingComposer(

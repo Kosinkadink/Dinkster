@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_assets import digest_file
-from dinkster_nodes_sd import photomaker
-from dinkster_nodes_sd.photomaker import PhotoMakerEncode, PhotoMakerLoader
+from dinkster_sd import photomaker
+from dinkster_sd.photomaker import PhotoMakerEncode, PhotoMakerLoader
 
 
 class IdentityModel:

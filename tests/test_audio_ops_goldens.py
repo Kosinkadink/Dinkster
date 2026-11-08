@@ -21,9 +21,9 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_audio.audio_combine import AudioConcat, AudioMerge, JoinAudioChannels
-from dinkster_nodes_audio.audio_effects import AudioEqualizer3Band, TrimAudioDuration
-from dinkster_nodes_audio.audio_transform import AudioAdjustVolume, SplitAudioChannels
+from dinkster_audio.audio_combine import AudioConcat, AudioMerge, JoinAudioChannels
+from dinkster_audio.audio_effects import AudioEqualizer3Band, TrimAudioDuration
+from dinkster_audio.audio_transform import AudioAdjustVolume, SplitAudioChannels
 
 _GOLDENS = json.loads(
     (Path(__file__).parent / "goldens" / "audio_ops_e20d433a.json").read_text("utf-8")

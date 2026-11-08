@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_hidream.hidream_patches import (
+from dinkster_hidream.hidream_patches import (
     HiDreamO1PatchSeamSmoothing,
     HiDreamO1ReferenceImages,
 )

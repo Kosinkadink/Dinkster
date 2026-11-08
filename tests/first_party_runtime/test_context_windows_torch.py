@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.context_windows import LTXVContextWindows
-from dinkster_nodes_models.context_windows import ContextWindowsManual
-from dinkster_nodes_wan.context_windows import WanContextWindowsManual
+from dinkster_ltx.context_windows import LTXVContextWindows
+from dinkster_models.context_windows import ContextWindowsManual
+from dinkster_wan.context_windows import WanContextWindowsManual
 
 
 def _model_patcher() -> Any:
@@ -185,7 +185,7 @@ def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
             (tmp_path / f"{module}.py").write_text(
                 "from tests.first_party_runtime.test_context_windows_torch "
                 "import CONTEXT_WINDOW_FIXTURE_NODES\n"
-                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "from dinkster_models.types import register_types as register_models\n"
                 "def register_types(registry):\n"
                 "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
                 "        register_models(registry)\n"

@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     materialize_mesh,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_moge.moge_mesh import MoGePointMapToMesh
 from dinkster_values import decode_latent, encode_latent
+from dinkster_vision_moge.moge_mesh import MoGePointMapToMesh
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -183,7 +183,7 @@ def test_moge_mesh_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> 
         module = f"moge_mesh_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_moge_mesh_torch import MeshGeometrySource, MeshGeometryInspect\n"
-            "from dinkster_nodes_vision_moge import register_types as register_inference_types\n"
+            "from dinkster_vision_moge import register_types as register_inference_types\n"
             "NODES = (MeshGeometrySource, MeshGeometryInspect)\n",
             encoding="ascii",
         )

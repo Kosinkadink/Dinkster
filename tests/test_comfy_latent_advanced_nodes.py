@@ -9,8 +9,8 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_latent import NODES
-from dinkster_nodes_latent.latent_advanced import (
+from dinkster_latent import NODES
+from dinkster_latent.latent_advanced import (
     LatentAdd,
     LatentBatch,
     LatentBatchSeedBehavior,

@@ -1,10 +1,10 @@
 """Public schemas for native sampling cache nodes remain Torch-free."""
 
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_flux import NODES as FLUX_NODES
-from dinkster_nodes_flux.cache import FluxKVCache
-from dinkster_nodes_models import NODES as MODEL_NODES
-from dinkster_nodes_models.cache import EasyCache, LazyCache
+from dinkster_flux import NODES as FLUX_NODES
+from dinkster_flux.cache import FluxKVCache
+from dinkster_models import NODES as MODEL_NODES
+from dinkster_models.cache import EasyCache, LazyCache
 
 
 def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:

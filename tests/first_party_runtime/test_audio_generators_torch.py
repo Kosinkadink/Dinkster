@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio.audio_generators import EmptyAudio
-from dinkster_nodes_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
+from dinkster_audio.audio_generators import EmptyAudio
+from dinkster_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -103,7 +103,7 @@ def test_audio_generators_feed_consumer_twice_in_both_hosts(
             (tmp_path / "audio_generator_fixture.py").write_text(
                 "from test_audio_generators_torch import AudioGeneratorInspect\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_audio import register_types as register_audio_types\n"
+                "from dinkster_audio import register_types as register_audio_types\n"
                 "NODES = (AudioGeneratorInspect,)\n"
                 "def register_types(registry):\n"
                 "    register_inference_types(registry)\n"
@@ -122,10 +122,10 @@ def test_audio_generators_feed_consumer_twice_in_both_hosts(
                 *(
                     _installed_pack_spec(identity, module, in_process=in_process)
                     for identity, module in (
-                        ("dinkster-latent", "dinkster_nodes_latent"),
-                        ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                        ("dinkster-audio", "dinkster_nodes_audio"),
-                        ("dinkster-minimax", "dinkster_nodes_minimax"),
+                        ("dinkster-latent", "dinkster_latent"),
+                        ("dinkster-conditioning", "dinkster_conditioning"),
+                        ("dinkster-audio", "dinkster_audio"),
+                        ("dinkster-minimax", "dinkster_minimax"),
                     )
                 ),
                 PackSpec(fixture),

@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
 )
-from dinkster_nodes_sampling.video_guidance import VideoLinearCFGGuidance, VideoTriangleCFGGuidance
+from dinkster_sampling.video_guidance import VideoLinearCFGGuidance, VideoTriangleCFGGuidance
 
 
 def _model_patcher() -> Any:

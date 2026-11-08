@@ -22,5 +22,5 @@ dinkster-misc-models = ">=0.0.1,<1"
 dinkster-image = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_vision_sdpose:NODES"
-types = "dinkster_nodes_vision_sdpose:register_types"
+nodes = "dinkster_vision_sdpose:NODES"
+types = "dinkster_vision_sdpose:register_types"

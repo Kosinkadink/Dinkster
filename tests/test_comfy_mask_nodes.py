@@ -1,7 +1,7 @@
 """Core mask node schemas preserve the ComfyUI workflow contract."""
 
-from dinkster_nodes_image import NODES as IMAGE_NODES
-from dinkster_nodes_image.ported.mask import (
+from dinkster_image import NODES as IMAGE_NODES
+from dinkster_image.ported.mask import (
     CropMask,
     FeatherMask,
     GrowMask,
@@ -14,8 +14,8 @@ from dinkster_nodes_image.ported.mask import (
     SolidMask,
     ThresholdMask,
 )
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.mask import LatentCompositeMasked
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.mask import LatentCompositeMasked
 
 
 def test_mask_nodes_have_the_exact_core_interfaces() -> None:

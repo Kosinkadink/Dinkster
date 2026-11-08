@@ -9,8 +9,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_duration import LTXVDurationPredictor
+from dinkster_ltx import NODES
+from dinkster_ltx.ltx_duration import LTXVDurationPredictor
 from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 

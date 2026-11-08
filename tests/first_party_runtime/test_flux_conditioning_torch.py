@@ -93,9 +93,9 @@ def test_flux_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-flux", "dinkster_nodes_flux"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-flux", "dinkster_flux"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

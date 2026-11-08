@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_sampling.noise_guidance import EpsilonScaling, FreSca, TemporalScoreRescaling
+from dinkster_sampling.noise_guidance import EpsilonScaling, FreSca, TemporalScoreRescaling
 
 
 class Patcher:

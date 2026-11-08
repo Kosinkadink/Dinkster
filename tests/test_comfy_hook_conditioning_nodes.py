@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     TypeExpr,
 )
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.hook_conditioning import (
+from dinkster_models import NODES
+from dinkster_models.hook_conditioning import (
     ConditioningSetDefaultCombine,
     ConditioningSetProperties,
     ConditioningSetPropertiesAndCombine,
@@ -161,7 +161,7 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         [
             sys.executable,
             "-c",
-            "from dinkster_nodes_models import NODES; "
+            "from dinkster_models import NODES; "
             "[node.schema() for node in NODES]; "
             "import sys; assert 'torch' not in sys.modules",
         ],

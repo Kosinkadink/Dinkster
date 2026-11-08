@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.compile import TorchCompileModel
-from dinkster_nodes_wan.compile import wanBlockSwap
+from dinkster_models.compile import TorchCompileModel
+from dinkster_wan.compile import wanBlockSwap
 
 
 def _model_patcher() -> Any:
@@ -215,7 +215,7 @@ def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
             module = "compile_fixture_" + str(in_process)
             (tmp_path / f"{module}.py").write_text(
                 "from tests.first_party_runtime.test_compile_torch import COMPILE_FIXTURE_NODES\n"
-                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "from dinkster_models.types import register_types as register_models\n"
                 "def register_types(registry):\n"
                 "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
                 "        register_models(registry)\n"

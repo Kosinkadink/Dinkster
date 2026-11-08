@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_image.image_compositor import ImageCompositor
+from dinkster_image.image_compositor import ImageCompositor
 
 from tools.compare_nodes import compare
 

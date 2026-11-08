@@ -532,14 +532,14 @@ def test_weight_pair_ownership_survives_hook_clones_and_invalidates_dependents(
     from dinkster_api.v1 import CONDITIONING_TYPE
     from dinkster_caches import MemoryLRUCache
     from dinkster_memory.resident import ResidentPool
-    from dinkster_native.native import register_native_types
-    from dinkster_nodes_models.hook_conditioning import ConditioningSetProperties, SetClipHooks
-    from dinkster_nodes_models.hook_scheduling import (
+    from dinkster_models.hook_conditioning import ConditioningSetProperties, SetClipHooks
+    from dinkster_models.hook_scheduling import (
         CombineHooks2,
         CombineHooks4,
         CombineHooks8,
         SetHookKeyframes,
     )
+    from dinkster_native.native import register_native_types
     from dinkster_protocol import CacheKey
     from dinkster_values import ResidentLookupError
 

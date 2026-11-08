@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import AudioWindowReader
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_nodes_audio.audio_save import SaveAudio
+from dinkster_audio.audio_save import SaveAudio
 from dinkster_values import (
     AudioRangeError,
     AudioSourceUnavailableError,

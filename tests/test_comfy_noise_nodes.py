@@ -1,8 +1,8 @@
 """Public native noise schemas and manifest remain cold-process safe."""
 
 from dinkster_api.v1 import NumberWidget
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.noise import AddNoise, DisableNoise, RandomNoise
+from dinkster_sampling import NODES
+from dinkster_sampling.noise import AddNoise, DisableNoise, RandomNoise
 from dinkster_workers import load_manifest
 
 

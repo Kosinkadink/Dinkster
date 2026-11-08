@@ -403,11 +403,11 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     assert {entry.pack for entry in inventory.packs} == {
         "dinkster-nodes-comfy",
         "dinkster-nodes-foundation",
-        "dinkster-nodes-image",
+        "dinkster-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
-        "dinkster-nodes-text",
-        "dinkster-nodes-upscale",
+        "dinkster-text",
+        "dinkster-upscale",
     }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"

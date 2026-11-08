@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_moge.moge_render import MoGeRender
 from dinkster_values import decode_latent, encode_latent
+from dinkster_vision_moge.moge_render import MoGeRender
 
 from dinkster.compose import PackSpec, ServingComposer
 

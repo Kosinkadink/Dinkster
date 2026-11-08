@@ -4,7 +4,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.tiles import ImageTileMerge, ImageTileSplit, _tile_bounds, _tile_geometry
+from dinkster_image.tiles import ImageTileMerge, ImageTileSplit, _tile_bounds, _tile_geometry
 
 
 def test_tile_geometry_matches_essentials_overlap_limits() -> None:

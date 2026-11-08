@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_minimax import NODES
-from dinkster_nodes_minimax.minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
+from dinkster_minimax import NODES
+from dinkster_minimax.minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
 
 
 def test_minimax_h3_empty_av_schema_and_cold_discovery() -> None:

@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_inference.latent_formats import SD3, SDXL, Flux, Flux2, Wan21
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.pid_conditioning import PiDConditioning
+from dinkster_conditioning import NODES
+from dinkster_conditioning.pid_conditioning import PiDConditioning
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -186,8 +186,8 @@ def test_pid_conditioning_executes_twice_through_production_host(
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

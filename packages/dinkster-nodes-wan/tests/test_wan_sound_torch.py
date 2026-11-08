@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 from dinkster_api.v1 import AUDIO_ENCODER_OUTPUT_TYPE, TypeRegistry, register_inference_types
-from dinkster_nodes_wan.wan_sound import (
+from dinkster_wan.wan_sound import (
     WanHuMoImageToVideo,
     WanSoundImageToVideo,
     WanSoundImageToVideoExtend,

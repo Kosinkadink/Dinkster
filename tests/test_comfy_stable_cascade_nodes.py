@@ -1,8 +1,8 @@
 """Torch-free Stable Cascade public interfaces."""
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_sd import NODES
-from dinkster_nodes_sd.stable_cascade import (
+from dinkster_sd import NODES
+from dinkster_sd.stable_cascade import (
     StableCascade_EmptyLatentImage,
     StableCascade_StageB_Conditioning,
     StableCascade_StageC_VAEEncode,

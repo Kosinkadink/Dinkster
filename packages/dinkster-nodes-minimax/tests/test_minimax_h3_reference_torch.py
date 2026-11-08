@@ -8,7 +8,7 @@ import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent
 from dinkster_inference.audio import resample
-from dinkster_nodes_minimax.minimax_h3_reference import MiniMaxH3ReferenceToVideo
+from dinkster_minimax.minimax_h3_reference import MiniMaxH3ReferenceToVideo
 
 
 class Clip:

@@ -36,7 +36,7 @@ from dinkster_api.v1 import (
     video_from_source,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video.video_components import CreateVideo, GetVideoComponents
+from dinkster_video.video_components import CreateVideo, GetVideoComponents
 from video_pack_fixtures import compose_video_packs
 
 from dinkster.compose import ServingComposer
@@ -105,7 +105,7 @@ def _assert_components(
 
 def test_video_component_schema_and_cold_import_use_only_public_types() -> None:
     root = Path(__file__).resolve().parents[3]
-    source = root / "packages/dinkster-nodes-video/src/dinkster_nodes_video/video_components.py"
+    source = root / "packages/dinkster-nodes-video/src/dinkster_video/video_components.py"
     subprocess.run(
         [
             sys.executable,
@@ -115,8 +115,8 @@ import sys
 from pathlib import Path
 from dinkster_api.v1 import AUDIO_TYPE, CORE_COMBO, CORE_FLOAT, IMAGE_TYPE, VIDEO_TYPE, TypeExpr
 from dinkster_schema import schema_from_wire, schema_to_wire, validate_replacement_references
-import dinkster_nodes_video.video_components as module
-from dinkster_nodes_video.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
+import dinkster_video.video_components as module
+from dinkster_video.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 
 assert Path(module.__file__).resolve() == Path(sys.argv[1])
 create = CreateVideo.schema()
@@ -520,12 +520,12 @@ def test_native_concatenate_video_cross_public_hosts_twice(
         module = "video_components_concat_fixture"
         (tmp_path / f"{module}.py").write_text(
             "from pathlib import Path\n"
-            "import dinkster_nodes_video.video_components as native\n"
+            "import dinkster_video.video_components as native\n"
             "from test_video_components import (\n"
             "    ComponentConsumer, ComponentSource, ConcatenateConsumer, ConcatenateSource,\n"
             ")\n"
             "assert Path(native.__file__).resolve() == "
-            f"Path({str(package / 'src/dinkster_nodes_video/video_components.py')!r})\n"
+            f"Path({str(package / 'src/dinkster_video/video_components.py')!r})\n"
             "from video_pack_fixtures import register_video_types\n"
             "NODES = (ComponentSource, ComponentConsumer, "
             "ConcatenateSource, ConcatenateConsumer)\n",
@@ -632,10 +632,10 @@ def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_pro
         module = "video_components_public_fixture"
         (tmp_path / f"{module}.py").write_text(
             "from pathlib import Path\n"
-            "import dinkster_nodes_video.video_components as native\n"
+            "import dinkster_video.video_components as native\n"
             "from test_video_components import ComponentConsumer, ComponentSource\n"
             "assert Path(native.__file__).resolve() == "
-            f"Path({str(package / 'src/dinkster_nodes_video/video_components.py')!r})\n"
+            f"Path({str(package / 'src/dinkster_video/video_components.py')!r})\n"
             "from video_pack_fixtures import register_video_types\n"
             "NODES = (ComponentSource, ComponentConsumer)\n",
             encoding="ascii",
