@@ -63,6 +63,40 @@ def test_loop_modes_execute_twice(in_process: bool, mode: str, accumulate: bool)
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("in_process", (True, False))
+def test_make_list_preserves_document_order_across_cached_runs(in_process: bool) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    Path(__file__).resolve().parents[1] / "dinkster-pack.toml",
+                    in_process=in_process,
+                    trust_reserved=True,
+                )
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            values = {"z": 17, "a": -4, "m": 29}
+            for order in (("z", "a", "m"), ("m", "z", "a"), ("z", "a", "m")):
+                graph = Graph(
+                    {
+                        "list": GraphNode(
+                            "dinkster.utilities.make_list",
+                            {f"items.{key}": TypedLiteral("INT", values[key]) for key in order},
+                        )
+                    }
+                )
+                for _ in range(2):
+                    result = await asyncio.wait_for(engine.run(graph, ["list"]), 20)
+                    assert result.outputs["list"]["list"].resolve() == [
+                        values[key] for key in order
+                    ]
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 def test_list_support_keeps_whole_typed_elements_and_unbounded_inputs() -> None:
     registry = TypeRegistry()
     register_core_types(registry)
