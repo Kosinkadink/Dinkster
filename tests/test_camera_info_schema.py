@@ -6,14 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dinkster_3d import NODES
+from dinkster_3d.camera_info import CreateCameraInfo
 from dinkster_api.v1 import (
     CAMERA_INFO_STATE_TYPE,
     LOAD3D_CAMERA_TYPE,
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_3d import NODES
-from dinkster_3d.camera_info import CreateCameraInfo
 from dinkster_workers import load_manifest
 
 

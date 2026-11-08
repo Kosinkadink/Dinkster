@@ -10,7 +10,6 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_audio_models import NODES as AUDIO_MODEL_NODES
 from dinkster_audio_models.conditioning import ConditioningStableAudio
 from dinkster_conditioning import NODES
@@ -29,6 +28,7 @@ from dinkster_conditioning.conditioning import (
     conditioning_set_values,
     conditioning_set_values_with_timestep_range,
 )
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer

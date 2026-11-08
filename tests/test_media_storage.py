@@ -272,8 +272,8 @@ def test_shared_memory_boundary_preserves_compact_storage(audio: bool) -> None:
 def test_audio_storage_facts_match_canonical_payload_across_boundary(
     host_registration: bool, dtype: str, shm: bool
 ) -> None:
-    from dinkster_inference_wire import register_inference_types
     from dinkster_audio import register_types as register_audio_types
+    from dinkster_inference_wire import register_inference_types
     from dinkster_values import TypeRegistry
     from dinkster_workers import ValueCodec
     from dinkster_workers.boundary import release_segment

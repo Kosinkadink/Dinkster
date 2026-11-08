@@ -20,13 +20,13 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_inference_wire.latents import MultiStreamLatent
 from dinkster_cosmos.video_latent import EmptyCosmosLatentVideo
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_hunyuan.video_latent import (
     EmptyHunyuanLatentVideo,
     EmptyHunyuanVideo15Latent,
 )
+from dinkster_inference_wire.latents import MultiStreamLatent
 from dinkster_latent.video_latent_ops import (
     NormalizeVideoLatentStart,
     TrimVideoLatent,

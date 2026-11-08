@@ -172,9 +172,7 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
     in_process: bool, tmp_path: Path
 ) -> None:
     async def scenario() -> None:
-        source_root = (
-            Path(__file__).resolve().parents[1] / "packages" / "dinkster-audio" / "src"
-        )
+        source_root = Path(__file__).resolve().parents[1] / "packages" / "dinkster-audio" / "src"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
 from dinkster_api.v1 import (
     CORE_STRING,
     LATENT_TYPE,
@@ -20,9 +21,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
 from dinkster_flux.latent_model_specific import EmptyFlux2LatentImage
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_hidream.latent_model_specific import EmptyHiDreamO1LatentImage
 from dinkster_hunyuan.latent_model_specific import EmptyLatentHunyuan3Dv2
 from dinkster_misc_models.latent_model_specific import EmptyChromaRadianceLatentImage

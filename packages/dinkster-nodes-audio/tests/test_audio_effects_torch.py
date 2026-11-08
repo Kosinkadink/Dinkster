@@ -169,9 +169,7 @@ def test_audio_effect_nodes_execute_twice_in_both_manifest_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-effects-fixture",')
                 .replace("dinkster_audio:NODES", "audio_effects_fixture:NODES")
-                .replace(
-                    "dinkster_audio:register_types", "audio_effects_fixture:register_types"
-                ),
+                .replace("dinkster_audio:register_types", "audio_effects_fixture:register_types"),
                 encoding="ascii",
             )
             await composer.add_pack(

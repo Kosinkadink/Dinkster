@@ -16,7 +16,6 @@ from av.error import FFmpegError, InvalidDataError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_assets.value import value_asset_references
-from dinkster_video.video_edits import VideoCrop, VideoTrim
 from dinkster_values import (
     EncodedPayload,
     TypeRegistry,
@@ -31,6 +30,7 @@ from dinkster_values import (
 )
 from dinkster_values.audio_codec import audio_from_source
 from dinkster_values.storage import image_input
+from dinkster_video.video_edits import VideoCrop, VideoTrim
 from dinkster_video_runtime import (
     assemble_video,
     concatenate_video,
@@ -872,10 +872,10 @@ def test_alpha_encoding_cannot_silently_reduce_ten_bit_components() -> None:
 
 
 def test_native_video_chain_matches_across_worker_shared_memory() -> None:
-    from dinkster_video import NODES, register_types
     from dinkster_protocol import Invocation
     from dinkster_schema import build_node_types
     from dinkster_values import register_core_types
+    from dinkster_video import NODES, register_types
     from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker
 
     source = video_from_source(_source(depth=10))
@@ -948,8 +948,8 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     tmp_path: Path, in_process: bool
 ) -> None:
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_video import register_types
     from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
+    from dinkster_video import register_types
 
     from dinkster.compose import PackSpec, ServingComposer
 
@@ -1447,8 +1447,8 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
     from dinkster_caches import MemoryLRUCache
     from dinkster_engine import Engine
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_video import register_types
     from dinkster_values import register_core_types
+    from dinkster_video import register_types
     from dinkster_workers import RemoteWorker
     from test_remote import TLS_ARGS, TLS_CERT, TOKEN, start_service, stop_service
     from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost

@@ -32,9 +32,7 @@ def _latent(samples: object, **metadata: object) -> dict[str, object]:
 
 
 def test_concat_and_separate_preserve_explicit_roles_metadata_and_values(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "dinkster_ltx.ltx_av_latent.initialize_inference_process", lambda: None
-    )
+    monkeypatch.setattr("dinkster_ltx.ltx_av_latent.initialize_inference_process", lambda: None)
     video = torch.arange(12, dtype=torch.float64).reshape(1, 2, 2, 3)
     audio = torch.arange(8, dtype=torch.float32).reshape(1, 2, 4)
     video_mask = torch.zeros_like(video)
@@ -60,9 +58,7 @@ def test_concat_and_separate_preserve_explicit_roles_metadata_and_values(monkeyp
 
 
 def test_concat_replaces_audio_by_role_and_pads_mask_tail(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "dinkster_ltx.ltx_av_latent.initialize_inference_process", lambda: None
-    )
+    monkeypatch.setattr("dinkster_ltx.ltx_av_latent.initialize_inference_process", lambda: None)
     video = torch.full((1, 2, 2, 2, 3), 9.0, dtype=torch.float64)
     previous_audio = torch.full((1, 2, 2, 6), 4.0, dtype=torch.float32)
     new_audio = torch.tensor(
@@ -110,9 +106,7 @@ def test_concat_replaces_audio_by_role_and_pads_mask_tail(monkeypatch) -> None:
 def test_concat_keeps_exact_audio_or_truncates_without_masks(
     monkeypatch, input_length: int
 ) -> None:
-    monkeypatch.setattr(
-        "dinkster_ltx.ltx_av_latent.initialize_inference_process", lambda: None
-    )
+    monkeypatch.setattr("dinkster_ltx.ltx_av_latent.initialize_inference_process", lambda: None)
     video = torch.full((2, 2, 2, 2, 3), 3.0, dtype=torch.float64)
     previous_audio = torch.full((2, 2, 2, 6), -2.0, dtype=torch.float32)
     replacement = torch.arange(2 * 2 * 2 * input_length, dtype=torch.float32).reshape(

@@ -174,9 +174,7 @@ def test_schema_has_source_identity_required_inputs_and_stable_methods() -> None
 def test_dense_fallback_preserves_previous_override_and_all_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "dinkster_models.sparse_attention._runtime", lambda: (torch, object())
-    )
+    monkeypatch.setattr("dinkster_models.sparse_attention._runtime", lambda: (torch, object()))
     patch = _patch(minimum=8)
     calls: list[str] = []
 
@@ -199,9 +197,7 @@ def test_dense_fallback_preserves_previous_override_and_all_gates(
 
 
 def test_vsa_plan_inverse_rope_cache_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "dinkster_models.sparse_attention._runtime", lambda: (torch, object())
-    )
+    monkeypatch.setattr("dinkster_models.sparse_attention._runtime", lambda: (torch, object()))
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
     initialize_inference_process()
     minimax = __import__("dinkster_inference.ldm.minimax.model", fromlist=["PackedLayout"])

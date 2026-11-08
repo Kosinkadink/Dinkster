@@ -172,9 +172,7 @@ def test_node_quantizes_video_and_resamples_controlled_warped_noise(
     monkeypatch.setattr(
         "dinkster_inference.model_management.intermediate_device", lambda: torch.device("cpu")
     )
-    monkeypatch.setattr(
-        "dinkster_void._void_noise_warp.get_noise_from_video", controlled_noise
-    )
+    monkeypatch.setattr("dinkster_void._void_noise_warp.get_noise_from_video", controlled_noise)
 
     samples = VOIDWarpedNoise.execute(
         optical_flow=_patcher(), video=video, width=48, height=32, length=length, batch_size=3

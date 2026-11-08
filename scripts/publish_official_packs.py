@@ -158,9 +158,9 @@ def publish_official_packs(
                 or published.get("publishedBy", {}).get("principalId") != pack.publisher
                 or published.get("artifact", {}).get("digest") != pack.artifact_digest
                 or published.get("artifact", {}).get("size")
-                != (
-                    sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
-                ).stat().st_size
+                != (sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl")
+                .stat()
+                .st_size
                 or actual.keys() != expected.keys()
                 or any(
                     {key: actual[variant].get(key) for key in binding} != binding

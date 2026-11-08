@@ -24,9 +24,9 @@ from dinkster_assets import (
     MountSnapshotWriter,
     digest_bytes,
 )
+from dinkster_values import edit_video
 from dinkster_video.video_load import LoadVideo
 from dinkster_video.webm_save import EncodedVideoSpool
-from dinkster_values import edit_video
 from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")

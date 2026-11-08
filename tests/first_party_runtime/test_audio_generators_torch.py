@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     materialize_audio,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_audio.audio_generators import EmptyAudio
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec

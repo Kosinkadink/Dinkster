@@ -14,12 +14,12 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
-from dinkster_text.text import StringConcatenate, StringFormat
 from dinkster_schema import Node, NodeSchema, claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
 from dinkster_schema.wire import schema_from_wire, schema_to_wire
 from dinkster_server.auth import Principal, StaticBearerAuthenticator, install_auth
+from dinkster_text.text import StringConcatenate, StringFormat
 from dinkster_workers import load_manifest
 from dinkster_workers.manifest import resolve_entry, validate_registration_claims
 

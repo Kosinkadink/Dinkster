@@ -6,13 +6,13 @@ import sys
 from pathlib import Path
 
 from dinkster_api.v1 import schema_to_wire
+from dinkster_schema import claim_covers
 from dinkster_vision_mediapipe import NODES
 from dinkster_vision_mediapipe.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
 from dinkster_vision_mediapipe.mediapipe_detection import (
     LoadMediaPipeFaceLandmarker,
     MediaPipeFaceLandmarker,
 )
-from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 
 from tools.compare_nodes import compare

@@ -13,9 +13,9 @@ from dinkster_sampling.attention_guidance import (
     SkipLayerGuidanceDiT,
     SkipLayerGuidanceDiTSimple,
 )
+from dinkster_schema import claim_covers
 from dinkster_sd import NODES as SD_NODES
 from dinkster_sd.attention_guidance import SkipLayerGuidanceSD3
-from dinkster_schema import claim_covers
 
 
 def test_attention_guidance_schemas_are_registered_with_fixed_core_interfaces() -> None:

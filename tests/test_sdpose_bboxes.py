@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes
 from dinkster_server import PackInfo
+from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario

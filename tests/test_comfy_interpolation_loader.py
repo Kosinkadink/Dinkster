@@ -11,10 +11,10 @@ from dinkster_api.v1 import (
     AssetWidget,
     NumberWidget,
 )
+from dinkster_schema import claim_covers
 from dinkster_video import NODES
 from dinkster_video.interpolation import FrameInterpolate
 from dinkster_video.interpolation_loader import FrameInterpolationModelLoader
-from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 
 

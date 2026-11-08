@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
 )
-from dinkster_wan import register_types
 from dinkster_values import EncodedLatentTensor, encode_latent
+from dinkster_wan import register_types
 
 HALF = EncodedLatentTensor("float16", (1, 2), b"\x00\x3c\x00\xc0")
 BFLOAT = EncodedLatentTensor("bfloat16", (2, 1), b"\x80\x3f\x00\xc0")

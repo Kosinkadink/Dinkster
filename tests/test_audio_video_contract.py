@@ -33,7 +33,6 @@ from dinkster_assets import (
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import bind_video_value
 from dinkster_native.video import _VideoValue
-from dinkster_video.video_components import GetVideoComponents
 from dinkster_protocol import Invocation
 from dinkster_values import (
     TypeRegistry,
@@ -53,6 +52,7 @@ from dinkster_values.audio_codec import (
 )
 from dinkster_values.audio_lazy import LazyAudio
 from dinkster_values.video_codec import validate_video_encoded
+from dinkster_video.video_components import GetVideoComponents
 from dinkster_video_runtime import assemble_video, disassemble_video
 from dinkster_workers import RemoteWorker
 from dinkster_workers.devices import DeviceMap

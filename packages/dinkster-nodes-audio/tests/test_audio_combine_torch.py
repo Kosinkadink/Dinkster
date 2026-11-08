@@ -240,9 +240,7 @@ def test_audio_combine_nodes_execute_twice_in_both_manifest_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-combine-fixture",')
                 .replace("dinkster_audio:NODES", "audio_combine_fixture:NODES")
-                .replace(
-                    "dinkster_audio:register_types", "audio_combine_fixture:register_types"
-                ),
+                .replace("dinkster_audio:register_types", "audio_combine_fixture:register_types"),
                 encoding="ascii",
             )
             await composer.add_pack(

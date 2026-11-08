@@ -6453,11 +6453,11 @@ def test_values_endpoint_layer_document_rendition(
 ) -> None:
     import numpy as np
     from dinkster_graph import TypedLiteral
+    from dinkster_image.compositor import AddLayer
+    from dinkster_image.types import register_image_types
     from dinkster_image_document.compat import register_comfy_layers
     from dinkster_image_document.document import ImageDocument
     from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
-    from dinkster_image.compositor import AddLayer
-    from dinkster_image.types import register_image_types
 
     pixels = np.array([[[[1, 0, 0, 1], [0, 1, 0, 0.5]]]], dtype=np.float32)
     expected = cast(ImageDocument, AddLayer.execute(image=pixels)["layers"]).data

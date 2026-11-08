@@ -31,10 +31,10 @@ from dinkster_image._draft_initialization import (
     TrackedUncrop,
     register_image_types,
 )
-from dinkster_video import register_types as register_video_types
-from dinkster_video.video_components import CreateVideo
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
+from dinkster_video import register_types as register_video_types
+from dinkster_video.video_components import CreateVideo
 from dinkster_workers import InProcessWorker
 
 from tests.async_scenarios import run_scenario

@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from dinkster_graph import graph_from_wire, validate
 from dinkster_conditioning.clip import CLIPTextEncode
+from dinkster_graph import graph_from_wire, validate
 from dinkster_image.ported.image_file_tools import SaveImage
 from dinkster_latent.latent import EmptyLatentImage
 from dinkster_latent.vae import VAEDecode

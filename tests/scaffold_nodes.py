@@ -10,10 +10,10 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dinkster_api.v1 import TypeRegistry
 from dinkster_audio import NODES as AUDIO_NODES
 from dinkster_audio import register_types as register_audio_types
-from dinkster_nodes_dev import PACK_NODES, register_dev_types
-from dinkster_nodes_dev import combo_choices as dev_combo_choices
 from dinkster_image import NODES as IMAGE_NODES
 from dinkster_image import register_types as register_image_types
+from dinkster_nodes_dev import PACK_NODES, register_dev_types
+from dinkster_nodes_dev import combo_choices as dev_combo_choices
 from dinkster_utilities import NODES as UTILITY_NODES
 from dinkster_utilities import register_types as register_utility_types
 from dinkster_video import NODES as VIDEO_NODES

@@ -86,9 +86,7 @@ def test_isolated_manifest_converts_text_and_linked_seed_without_rounding_intege
         composer = ServingComposer()
         try:
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-utilities", "dinkster_utilities", in_process=False
-                )
+                _installed_pack_spec("dinkster-utilities", "dinkster_utilities", in_process=False)
             )
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(

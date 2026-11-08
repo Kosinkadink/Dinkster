@@ -19,6 +19,10 @@ from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, r
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
+from dinkster_image.layer_document import EditLayers, FlattenLayers, SplitLayers
+from dinkster_image.layer_io import LoadLayers, SaveLayers
+from dinkster_image.types import Region, register_image_types
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
@@ -43,10 +47,6 @@ from dinkster_image_document.interchange import (
     import_psd,
     load_document,
 )
-from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
-from dinkster_image.layer_document import EditLayers, FlattenLayers, SplitLayers
-from dinkster_image.layer_io import LoadLayers, SaveLayers
-from dinkster_image.types import Region, register_image_types
 from dinkster_protocol import InvocationResult, SavedArtifact
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import (

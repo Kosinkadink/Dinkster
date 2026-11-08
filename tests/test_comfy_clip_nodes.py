@@ -17,7 +17,6 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_conditioning.clip import (
     CLIPSetLastLayer,
     CLIPTextEncode,
@@ -30,6 +29,7 @@ from dinkster_flux.flux_conditioning import (
     FluxGuidance,
     FluxKontextMultiReferenceLatentMethod,
 )
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_hidream.clip_model_specific import CLIPTextEncodeHiDream
 from dinkster_misc_models.clip_model_specific import (
     CLIPTextEncodeLumina2,

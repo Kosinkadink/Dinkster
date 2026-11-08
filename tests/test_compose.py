@@ -1760,8 +1760,7 @@ def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
         '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
     )
     (tmp_path / "other_owner_fixture.py").write_text(
-        "from dinkster_utilities.primitive import PrimitiveString\n"
-        "NODES = (PrimitiveString,)\n"
+        "from dinkster_utilities.primitive import PrimitiveString\nNODES = (PrimitiveString,)\n"
     )
 
     async def scenario() -> None:

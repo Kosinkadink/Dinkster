@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_image,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_conditioning.inpaint import InpaintModelConditioning
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_latent.inpaint import VAEEncodeForInpaint
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec

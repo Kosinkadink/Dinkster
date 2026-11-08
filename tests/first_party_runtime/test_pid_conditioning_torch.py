@@ -20,10 +20,10 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_inference.latent_formats import SD3, SDXL, Flux, Flux2, Wan21
 from dinkster_conditioning import NODES
 from dinkster_conditioning.pid_conditioning import PiDConditioning
+from dinkster_graph import Graph, GraphNode, Link
+from dinkster_inference.latent_formats import SD3, SDXL, Flux, Flux2, Wan21
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 

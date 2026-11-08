@@ -360,7 +360,7 @@ def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
 
 
 def test_bundled_video_preview_imports_only_the_pack_api() -> None:
-    source = REPO_ROOT / "packages/dinkster-nodes-video-runtime/preview/src/dinkster_video_preview"
+    source = REPO_ROOT / "packages/dinkster-video-runtime/preview/src/dinkster_video_preview"
     modules = list(source.rglob("*.py"))
     assert modules
     for module in modules:

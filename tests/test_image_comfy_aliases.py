@@ -804,18 +804,14 @@ def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() ->
     configuration = cast(
         "dict[str, Any]",
         tomllib.loads(
-            (ROOT / "packages" / "dinkster-image" / "pyproject.toml").read_text(
-                encoding="utf-8"
-            )
+            (ROOT / "packages" / "dinkster-image" / "pyproject.toml").read_text(encoding="utf-8")
         ),
     )
     force_include = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
     assert "comfy-aliases.json" not in force_include
     assert "draft-comfy-aliases.json" not in force_include
     manifest = tomllib.loads(
-        (ROOT / "packages" / "dinkster-image" / "dinkster-pack.toml").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "packages" / "dinkster-image" / "dinkster-pack.toml").read_text(encoding="utf-8")
     )
     assert "dinkster-nodes-foundation" not in manifest["pack"].get("dependencies", {})
 

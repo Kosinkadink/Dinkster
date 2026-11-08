@@ -8,9 +8,9 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import CORE_FLOAT, IMAGE_TYPE, SAM3_TRACK_DATA_TYPE, NumberWidget, TypeExpr
+from dinkster_schema import claim_covers
 from dinkster_vision_sam3 import NODES
 from dinkster_vision_sam3.sam3_preview import SAM3_TrackPreview
-from dinkster_schema import claim_covers
 
 
 def test_sam3_preview_public_schema_and_manifest() -> None:

@@ -83,6 +83,7 @@ from dinkster_schema.units import MEBIBYTE
 from dinkster_store import pack_archive_path, pack_label
 from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
@@ -664,7 +665,7 @@ def registry_source_lock(selected: LockedPack, archive: Path, *, engine_version:
     try:
         with tempfile.TemporaryDirectory(prefix="dinkster-registry-source-") as directory:
             root = unpack_artifact(archive, Path(directory), selected.artifact_digest)
-            manifest = load_manifest(root / "dinkster-pack.toml")
+            manifest = load_manifest(pack_manifest_path(root))
             if canonical_name(manifest.name) != selected.pack:
                 raise ValueError(f"archive manifest names {manifest.name!r}")
             compatibility = manifest.compatibility

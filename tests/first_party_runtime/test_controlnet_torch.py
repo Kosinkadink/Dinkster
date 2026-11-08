@@ -23,13 +23,13 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_conditioning.controlnet import (
     ControlNetApply,
     ControlNetApplyAdvanced,
     ControlNetInpaintingAliMamaApply,
     SetUnionControlNetType,
 )
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_sd.controlnet import ControlNetApplySD3
 
 from dinkster.compose import PackSpec, ServingComposer

@@ -15,7 +15,6 @@ from dinkster_api.v1 import (
     Region,
     TypeRegistry,
 )
-from dinkster_image_document.document import ImageDocument
 from dinkster_image.compositor import (
     COMPOSITOR_NODES,
     AddLayer,
@@ -46,6 +45,7 @@ from dinkster_image.compositor_types import (
     source_layer_fingerprint,
 )
 from dinkster_image.types import register_image_types
+from dinkster_image_document.document import ImageDocument
 from dinkster_schema import use_reporter
 
 Captured = tuple[str, Mapping[str, object], bytes | None]

@@ -384,9 +384,7 @@ def test_manifest_executes_latent_and_mask_without_host_types(
                 encoding="ascii",
             )
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-latent", "dinkster_latent", in_process=in_process
-                )
+                _installed_pack_spec("dinkster-latent", "dinkster_latent", in_process=in_process)
             )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             tensor = EncodedLatentTensor(

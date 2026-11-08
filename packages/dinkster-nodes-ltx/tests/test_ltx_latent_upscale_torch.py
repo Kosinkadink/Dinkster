@@ -30,9 +30,7 @@ def test_ltx_normalizes_around_the_model_and_removes_noise_mask(monkeypatch) -> 
         load_models_gpu=lambda models, memory_required: calls.append((models, memory_required)),
         intermediate_device=lambda: torch.device("cpu"),
     )
-    monkeypatch.setattr(
-        "dinkster_ltx.latent_upscale.initialize_inference_process", lambda: None
-    )
+    monkeypatch.setattr("dinkster_ltx.latent_upscale.initialize_inference_process", lambda: None)
     monkeypatch.setattr(
         "dinkster_ltx.latent_upscale.importlib.import_module", lambda _name: management
     )

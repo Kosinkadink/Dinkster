@@ -11,6 +11,14 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from dinkster_3d import register_types
+from dinkster_3d.load3d import Load3DAdvanced
+from dinkster_3d.preview3d import (
+    Preview3DAdvanced,
+    PreviewGaussianSplat,
+    PreviewPointCloud,
+)
+from dinkster_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from dinkster_api.v1 import (
     CORE_STRING,
     FILE_3D_GLB_TYPE,
@@ -44,14 +52,6 @@ from dinkster_assets.value import value_asset_references
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_3d import register_types
-from dinkster_3d.load3d import Load3DAdvanced
-from dinkster_3d.preview3d import (
-    Preview3DAdvanced,
-    PreviewGaussianSplat,
-    PreviewPointCloud,
-)
-from dinkster_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_server import PackInfo
 from dinkster_values import TypeRegistry, register_core_types
