@@ -21,17 +21,15 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.latent_model_specific import (
-    EmptyChromaRadianceLatentImage,
-    EmptyFlux2LatentImage,
-    EmptyHiDreamO1LatentImage,
-    EmptyLatentHunyuan3Dv2,
-    EmptyQwenImageLayeredLatentImage,
-    EmptySD3LatentImage,
-    EmptyTrellis2LatentStructure,
-)
+from dinkster_nodes_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
+from dinkster_nodes_flux.latent_model_specific import EmptyFlux2LatentImage
+from dinkster_nodes_hidream.latent_model_specific import EmptyHiDreamO1LatentImage
+from dinkster_nodes_hunyuan.latent_model_specific import EmptyLatentHunyuan3Dv2
+from dinkster_nodes_misc_models.latent_model_specific import EmptyChromaRadianceLatentImage
+from dinkster_nodes_qwen.latent_model_specific import EmptyQwenImageLayeredLatentImage
+from dinkster_nodes_sd.latent_model_specific import EmptySD3LatentImage
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 CASES = (
     (
@@ -124,29 +122,36 @@ def test_model_latents_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
             }
         )
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "latent_fixture.py").write_text(
                 "from test_model_latents_torch import FIXTURES\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "NODES = (*COMFY_NODES, *FIXTURES)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = FIXTURES\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["latent-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "latent_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "latent_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "latent_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "latent-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["latent-fixture"]\n[pack.entry]\n'
+                'nodes = "latent_fixture:NODES"\n'
+                'types = "latent_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
+            for identity, module in (
+                ("dinkster-latent", "dinkster_nodes_latent"),
+                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                ("dinkster-sampling", "dinkster_nodes_sampling"),
+                ("dinkster-video", "dinkster_nodes_video"),
+                ("dinkster-3d-models", "dinkster_nodes_3d_models"),
+                ("dinkster-flux", "dinkster_nodes_flux"),
+                ("dinkster-hidream", "dinkster_nodes_hidream"),
+                ("dinkster-hunyuan", "dinkster_nodes_hunyuan"),
+                ("dinkster-qwen", "dinkster_nodes_qwen"),
+                ("dinkster-misc-models", "dinkster_nodes_misc_models"),
+                ("dinkster-sd", "dinkster_nodes_sd"),
+            ):
+                await composer.add_pack(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                )
             await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
             nodes = {}
             for index, (node, inputs, _, _) in enumerate(CASES):
