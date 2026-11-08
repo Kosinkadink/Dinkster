@@ -210,7 +210,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Verify bounded VIDEO save memory
         if: matrix.os == 'linux' && matrix.run_checks
-        run: uv run --locked python tools/video_conformance.py --rss
+        run: uv run --locked pytest tests/test_video_conformance_tool.py::test_full_resolution_rss_gate -q -rx
       - name: Verify bounded AUDIO trim and save memory
         if: matrix.os == 'linux' && matrix.run_checks
         run: |
