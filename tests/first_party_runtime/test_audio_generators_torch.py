@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +21,10 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.audio_generators import EmptyAudio, EmptyMiniMaxMusic3LatentAudio
+from dinkster_nodes_audio.audio_generators import EmptyAudio
+from dinkster_nodes_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 @pytest.mark.parametrize(
@@ -92,57 +92,59 @@ def test_audio_generators_feed_consumer_twice_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
-        manifest = package / "dinkster-pack.toml"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(package / "src"))),
+                "PYTHONPATH": str(Path(__file__).parent),
             }
         )
         try:
             (tmp_path / "audio_generator_fixture.py").write_text(
                 "from test_audio_generators_torch import AudioGeneratorInspect\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_comfy.device_routing import device_choices\n"
-                "from dinkster_nodes_media_io import register_media_types\n"
-                "NODES = (*COMFY_NODES, AudioGeneratorInspect)\n"
+                "from dinkster_api.v1 import register_inference_types\n"
+                "from dinkster_nodes_audio import register_types as register_audio_types\n"
+                "NODES = (AudioGeneratorInspect,)\n"
                 "def register_types(registry):\n"
                 "    register_inference_types(registry)\n"
-                "    register_media_types(registry)\n",
+                "    register_audio_types(registry)\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "dinkster-pack.toml"
             fixture.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["audio-generator-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_generator_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy.device_routing:device_choices",
-                    "audio_generator_fixture:device_choices",
-                )
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "audio_generator_fixture:register_types",
-                ),
+                '[pack]\nname = "audio-generator-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["audio-generator-fixture"]\n[pack.entry]\n'
+                'nodes = "audio_generator_fixture:NODES"\n'
+                'types = "audio_generator_fixture:register_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(
-                PackSpec(
-                    manifest=package.parent / "dinkster-nodes-media-io/dinkster-pack.toml",
-                    in_process=in_process,
-                    trust_reserved=True,
-                )
+            specs = (
+                *(
+                    _installed_pack_spec(identity, module, in_process=in_process)
+                    for identity, module in (
+                        ("dinkster-latent", "dinkster_nodes_latent"),
+                        ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                        ("dinkster-audio", "dinkster_nodes_audio"),
+                        ("dinkster-minimax", "dinkster_nodes_minimax"),
+                    )
+                ),
+                PackSpec(fixture),
             )
-            await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
+            for spec in specs:
+                await composer.add_pack(
+                    PackSpec(
+                        spec.manifest, packs=spec.packs, trust_reserved=True, in_process=in_process
+                    )
+                )
             graph = Graph(
                 nodes={
                     "audio": GraphNode(
-                        "EmptyAudio", {"duration": 0.3125, "sample_rate": 8, "channels": 2}
+                        "dinkster.audio.empty_audio",
+                        {"duration": 0.3125, "sample_rate": 8, "channels": 2},
                     ),
                     "latent": GraphNode(
-                        "EmptyMiniMaxMusic3LatentAudio", {"seconds": 0.14, "batch_size": 2}
+                        "dinkster.minimax.empty_mini_max_music3_latent_audio",
+                        {"seconds": 0.14, "batch_size": 2},
                     ),
                     "inspect": GraphNode(
                         "audio-generator-fixture.inspect",

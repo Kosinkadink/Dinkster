@@ -27,13 +27,13 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_bytes
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.audio_encoder import (
+from dinkster_nodes_audio_models.audio_encoder import SheetSage2AudioToABC
+from dinkster_nodes_conditioning.audio_encoder import (
     AudioEncoderEncode,
     AudioEncoderLoader,
-    SheetSage2AudioToABC,
 )
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def test_bound_loader_encode_and_abc_preserve_source_contract(
@@ -211,12 +211,11 @@ def test_audio_encoder_ordinary_hosts(
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
 
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1]
-        checkout = package.parents[1]
+        checkout = Path(__file__).resolve().parents[2]
         module = f"audio_encoder_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_audio_encoder_torch import _HOST_NODES\n"
-            "from dinkster_nodes_comfy import register_inference_types\nNODES = _HOST_NODES\n",
+            "from dinkster_api.v1 import register_inference_types\nNODES = _HOST_NODES\n",
             encoding="ascii",
         )
         fixture_manifest = tmp_path / "dinkster-pack.toml"
@@ -241,12 +240,25 @@ def test_audio_encoder_ordinary_hosts(
                 "PYTHONPATH": os.pathsep.join(map(str, paths)),
             }
         )
-        manifests = (package / "dinkster-pack.toml", fixture_manifest)
+        specs = (
+            *(
+                _installed_pack_spec(identity, module, in_process=in_process)
+                for identity, module in (
+                    ("dinkster-latent", "dinkster_nodes_latent"),
+                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
+                    ("dinkster-audio-models", "dinkster_nodes_audio_models"),
+                )
+            ),
+            PackSpec(fixture_manifest),
+        )
+        manifests = tuple(Path(spec.manifest) for spec in specs)
         try:
-            for manifest in manifests:
+            for spec in specs:
                 await composer.add_pack(
                     PackSpec(
-                        manifest=manifest,
+                        manifest=spec.manifest,
+                        packs=spec.packs,
+                        trust_reserved=True,
                         in_process=in_process,
                         worker_group=None if in_process else "audio-encoder-fixture",
                         group_manifests=() if in_process else manifests,
@@ -255,10 +267,11 @@ def test_audio_encoder_ordinary_hosts(
             nodes = {
                 "source": GraphNode("audio-encoder-fixture.source", {"asset": asset.to_wire()}),
                 "loader": GraphNode(
-                    "AudioEncoderLoader", {"audio_encoder_name": Link("source", "asset")}
+                    "dinkster.conditioning.audio_encoder_loader",
+                    {"audio_encoder_name": Link("source", "asset")},
                 ),
                 "encode": GraphNode(
-                    "AudioEncoderEncode",
+                    "dinkster.conditioning.audio_encoder_encode",
                     {
                         "audio_encoder": Link("loader", "AUDIO_ENCODER"),
                         "audio": Link("source", "audio"),
@@ -267,7 +280,7 @@ def test_audio_encoder_ordinary_hosts(
             }
             for mode in ("melody", "full"):
                 nodes[mode] = GraphNode(
-                    "SheetSage2AudioToABC",
+                    "dinkster.audio.models.sheet_sage2_audio_to_abc",
                     {
                         "audio_encoder": Link("loader", "AUDIO_ENCODER"),
                         "audio": Link("source", "audio"),
