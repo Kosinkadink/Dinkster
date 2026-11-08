@@ -76,7 +76,9 @@ def test_loader_preserves_admitted_model_identity_and_rejects_invalid_checkpoint
 
     monkeypatch.setattr(background_removal, "initialize_inference_process", lambda: None)
     monkeypatch.setattr(
-        background_removal.importlib, "import_module", lambda name: SimpleNamespace(load=load)
+        background_removal,
+        "importlib",
+        SimpleNamespace(import_module=lambda name: SimpleNamespace(load=load)),
     )
     if valid:
         assert LoadBackgroundRemovalModel.execute(bg_removal_name=asset)["bg_model"] is model
