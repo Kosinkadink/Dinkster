@@ -33,11 +33,6 @@ from tests.async_scenarios import run_scenario
 GOLDEN_V1_SURFACE = (
     "TriangleMeshBatch",
     "materialize_mesh",
-    "register_load3d_camera_type",
-    "register_load3d_model_info_type",
-    "register_mesh_type",
-    "register_shape_subdivides_type",
-    "register_voxel_type",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -62,9 +57,6 @@ GOLDEN_V1_SURFACE = (
     "register_comfy_layers",
     "srgb_to_linear",
     "obtain_resident",
-    "default_pool",
-    "comfy_resident_meta",
-    "register_resident_type",
     "LatentStream",
     "MultiStreamLatent",
     "inference_nodes",
@@ -80,8 +72,6 @@ GOLDEN_V1_SURFACE = (
     "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
-    "register_media_types",
-    "register_vision_packet_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -188,7 +178,6 @@ GOLDEN_V1_SURFACE = (
     "schema_from_wire",
     "schema_signature",
     "schema_to_wire",
-    "first_party_schema",
     # -- reporting and logging (dinkster-schema)
     "LOG_EVENT",
     "PREVIEW_EVENT",
@@ -300,7 +289,6 @@ GOLDEN_V1_SURFACE = (
     "VIDEO_DOCUMENT_TYPE",
     "VIDEO_EDIT_TYPE",
     "VIDEO_TYPE",
-    "WEBCAM_TYPE",
     "VOXEL_TYPE",
     "COST_META_KEY",
     "CURVE_TYPE",
@@ -420,10 +408,6 @@ GOLDEN_V1_SURFACE = (
     "video_fingerprint",
     "video_meta",
     "video_rendition_mime",
-    "decode_latent",
-    "encode_latent",
-    "latent_fingerprint",
-    "validate_latent_encoded",
     # -- memory policy (dinkster-memory)
     "ConsumerItem",
     "FullReleaseResult",
@@ -617,17 +601,14 @@ def test_upscale_model_registration_preserves_resident_identity_without_torch() 
     script = """
 import sys
 from dinkster_api.v1 import UPSCALE_MODEL_TYPE, TypeRegistry, register_inference_types
-from dinkster_nodes_upscale import register_types
 from dinkster_memory.resident import default_pool
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
 
 assert UPSCALE_MODEL_TYPE == "UPSCALE_MODEL"
 registry = TypeRegistry()
 register_inference_types(registry)
-assert UPSCALE_MODEL_TYPE not in registry
-register_types(registry)
 spec = registry.spec(UPSCALE_MODEL_TYPE)
-register_types(registry)
+register_inference_types(registry)
 assert registry.spec(UPSCALE_MODEL_TYPE) is spec
 descriptor = object()
 encoded = spec.encode(descriptor)
@@ -655,16 +636,11 @@ assert "torch" not in sys.modules
 def test_model_registration_preserves_resident_identity_without_torch(
     native_first: bool, type_name: str, preexisting: bool
 ) -> None:
-    producer = {
-        "GLIGEN": "dinkster_nodes_sd",
-        "PHOTOMAKER": "dinkster_nodes_sd",
-        "BACKGROUND_REMOVAL": "dinkster_nodes_vision_background_removal",
-    }[type_name]
     script = f"""
 import sys
 from dinkster_api.v1 import {type_name}_TYPE, TypeRegistry, register_inference_types
 from dinkster_memory.resident import ResidentPool, default_pool
-from {producer} import register_types as register_native_types
+from dinkster_native.native import register_native_types
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, register_resident_type
 
 model_type = {type_name}_TYPE
@@ -678,9 +654,6 @@ registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
-if model_type == "PHOTOMAKER" and not {native_first!r} and not {preexisting!r}:
-    assert model_type not in registry
-    registrations[1](registry)
 spec = registry.spec(model_type)
 if original is not None:
     assert spec is original
@@ -723,23 +696,20 @@ sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import {type_name}_TYPE as model_type, TypeRegistry, register_inference_types
 from dinkster_memory.resident import ResidentPool, default_pool
-from dinkster_nodes_video import register_types as register_native_types
+from dinkster_native.native import register_native_types
 from dinkster_values import ResidentLookupError, register_resident_type
 from dinkster_values.builtin_types import {type_name}_TYPE as builtin_type, BUILTIN_TYPE_IDS
 from dinkster_values import {type_name}_TYPE as values_type
 from dinkster_workers.boundary import ValueCodec
 
 assert model_type == values_type == builtin_type == {type_name!r}
-assert model_type not in BUILTIN_TYPE_IDS
+assert model_type in BUILTIN_TYPE_IDS
 holding_pool = default_pool()
 registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
-if not {native_first!r}:
-    assert model_type not in registry
-    registrations[1](registry)
 spec = registry.spec(model_type)
 for registration in (*registrations, *registrations):
     registration(registry)
@@ -761,12 +731,10 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import TypeRegistry, register_inference_types
-from dinkster_nodes_video import register_types
 from dinkster_values import ResidentLookupError
 from dinkster_workers.boundary import ValueCodec
 registry = TypeRegistry()
 register_inference_types(registry)
-register_types(registry)
 wire, blob_hex = json.loads(sys.stdin.read())
 codec = ValueCodec(registry)
 value, _ = codec.decode(wire, [bytes.fromhex(blob) for blob in blob_hex], [])
@@ -831,9 +799,7 @@ from dinkster_inference_wire import materialize_voxel
 from dinkster_native.native import register_native_types
 assert materialize_voxel is api.materialize_voxel
 for registrations in ((api.register_inference_types, register_native_types),
-                      (register_native_types, api.register_inference_types),
-                      (api.register_voxel_type, register_native_types),
-                      (register_native_types, api.register_voxel_type)):
+                      (register_native_types, api.register_inference_types)):
     for preexisting in (True, False):
         registry = api.TypeRegistry()
         first = registry.register(api.VOXEL_TYPE) if preexisting else None
@@ -858,7 +824,7 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import BOUNDING_BOX_TYPE, TypeRegistry, register_inference_types
-from dinkster_nodes_vision_rtdetr import register_types as register_pack_types
+from dinkster_nodes_comfy import register_inference_types as register_pack_types
 
 # Hand-derived plain JSON values: an optional default, one frame, and
 # multiple frames including an empty frame must retain structure and order.
@@ -964,33 +930,18 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_image_document.document as document
     import dinkster_image_document.format as document_format
     import dinkster_image_document.interchange as document_interchange
-    import dinkster_inference_wire.camera_wire as camera_wire
-    import dinkster_inference_wire.geometry_wire as geometry_wire
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
-    import dinkster_inference_wire.shape_subdivides_wire as shape_wire
     import dinkster_inference_wire.sparse as sparse_values
     import dinkster_inference_wire.types as inference_types
-    import dinkster_inference_wire.voxel_wire as voxel_wire
     import dinkster_memory
-    import dinkster_memory.resident as resident_pool
     import dinkster_protocol
     import dinkster_schema
-    import dinkster_schema.first_party as first_party
     import dinkster_values
-    import dinkster_values.resident as resident_codec
     import dinkster_video
     import dinkster_workers.execution as worker_execution
 
     document_sources = {
-        "register_load3d_camera_type": camera_wire,
-        "register_load3d_model_info_type": camera_wire,
-        "register_mesh_type": geometry_wire,
-        "register_shape_subdivides_type": shape_wire,
-        "register_voxel_type": voxel_wire,
-        "first_party_schema": first_party,
-        "default_pool": resident_pool,
-        "comfy_resident_meta": resident_codec,
         "IMAGE_DOCUMENT_MEDIA_TYPE": document_format,
         "BLEND_MODES": document_format,
         "canonical_json": document_format,

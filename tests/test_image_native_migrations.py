@@ -9,7 +9,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any, cast
 
-from dinkster_nodes_image._draft_initialization import IMAGE_NODES
+from dinkster_nodes_image import IMAGE_NODES
 from dinkster_schema import (
     ComboWidget,
     DynamicComboSpec,

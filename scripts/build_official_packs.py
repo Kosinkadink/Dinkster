@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 import tomllib
 from collections.abc import Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from dinkster_registry import LockedPack, Lockfile, build_artifact, unpack_artifact
 from dinkster_registry.model import validate_version
@@ -22,18 +22,7 @@ from dinkster_workers import load_manifest
 from dinkster_workers.doctor import DoctorReport, diagnose_static
 from dinkster_workers.pack_lock import resolve_pack_lock
 
-
-def is_official_pack_manifest(path: PurePosixPath) -> bool:
-    """Recognize package manifests, excluding scaffolding and engine-carried schemas."""
-    return path.name == "dinkster-pack.toml" and (
-        len(path.parts) == 3
-        and path.parts[0] == "packages"
-        and path.parts[1].startswith("dinkster-nodes-")
-        and path.parts[1] not in {"dinkster-nodes-dev", "dinkster-nodes-generation"}
-        or len(path.parts) == 4
-        and path.parent.parent == PurePosixPath("packages/dinkster-nodes-vision")
-        and path.parent.name.endswith("_pack")
-    )
+OFFICIAL_PACK_FAMILIES = ("comfy", "foundation", "image", "media-io", "remote")
 
 
 def build(
@@ -87,11 +76,7 @@ def build(
         with tarfile.open(fileobj=io.BytesIO(tracked)) as archive:
             archive.extractall(staged, filter="data")
         packages = staged / "packages"
-        roots = [
-            manifest.parent
-            for manifest in sorted(packages.glob("*/dinkster-pack.toml"))
-            if is_official_pack_manifest(PurePosixPath(manifest.relative_to(staged).as_posix()))
-        ]
+        roots = [packages / f"dinkster-nodes-{family}" for family in OFFICIAL_PACK_FAMILIES]
         vision = packages / "dinkster-nodes-vision"
         for manifest in sorted(vision.glob("*_pack/dinkster-pack.toml")):
             pack_root = manifest.parent

@@ -20,43 +20,21 @@ from dinkster_api.v1 import (
     NumberWidget,
     TypeExpr,
 )
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.hook_conditioning import (
-    ConditioningSetDefaultCombine,
-    ConditioningSetProperties,
-    ConditioningSetPropertiesAndCombine,
-    ConditioningTimestepsRange,
-    PairConditioningCombine,
-    PairConditioningSetDefaultCombine,
-    PairConditioningSetProperties,
-    PairConditioningSetPropertiesAndCombine,
-    SetClipHooks,
-)
-
-HOOK_CONDITIONING_NODES = (
-    ConditioningSetProperties,
-    ConditioningSetPropertiesAndCombine,
-    PairConditioningSetProperties,
-    PairConditioningSetPropertiesAndCombine,
-    ConditioningSetDefaultCombine,
-    PairConditioningSetDefaultCombine,
-    PairConditioningCombine,
-    SetClipHooks,
-    ConditioningTimestepsRange,
-)
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.hook_conditioning import HOOK_CONDITIONING_NODES
 
 
 def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() -> None:
     expected = {
-        "dinkster.models.conditioning_set_properties": (
+        "ConditioningSetProperties": (
             ("cond_NEW", "strength", "set_cond_area", "mask", "hooks", "timesteps"),
             ("conditioning",),
         ),
-        "dinkster.models.conditioning_set_properties_and_combine": (
+        "ConditioningSetPropertiesAndCombine": (
             ("cond", "cond_NEW", "strength", "set_cond_area", "mask", "hooks", "timesteps"),
             ("conditioning",),
         ),
-        "dinkster.models.pair_conditioning_set_properties": (
+        "PairConditioningSetProperties": (
             (
                 "positive_NEW",
                 "negative_NEW",
@@ -68,7 +46,7 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
             ),
             ("positive", "negative"),
         ),
-        "dinkster.models.pair_conditioning_set_properties_and_combine": (
+        "PairConditioningSetPropertiesAndCombine": (
             (
                 "positive",
                 "negative",
@@ -82,23 +60,17 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
             ),
             ("positive", "negative"),
         ),
-        "dinkster.models.conditioning_set_default_combine": (
-            ("cond", "cond_DEFAULT", "hooks"),
-            ("conditioning",),
-        ),
-        "dinkster.models.pair_conditioning_set_default_combine": (
+        "ConditioningSetDefaultCombine": (("cond", "cond_DEFAULT", "hooks"), ("conditioning",)),
+        "PairConditioningSetDefaultCombine": (
             ("positive", "negative", "positive_DEFAULT", "negative_DEFAULT", "hooks"),
             ("positive", "negative"),
         ),
-        "dinkster.models.pair_conditioning_combine": (
+        "PairConditioningCombine": (
             ("positive_A", "negative_A", "positive_B", "negative_B"),
             ("positive", "negative"),
         ),
-        "dinkster.models.set_clip_hooks": (
-            ("clip", "apply_to_conds", "schedule_clip", "hooks"),
-            ("clip",),
-        ),
-        "dinkster.models.conditioning_timesteps_range": (
+        "SetClipHooks": (("clip", "apply_to_conds", "schedule_clip", "hooks"), ("clip",)),
+        "ConditioningTimestepsRange": (
             ("start_percent", "end_percent"),
             ("TIMESTEPS_RANGE", "BEFORE_RANGE", "AFTER_RANGE"),
         ),
@@ -121,8 +93,8 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
     combo = TypeExpr.concrete(CORE_COMBO)
 
     for node in HOOK_CONDITIONING_NODES:
-        assert node in NODES
-    properties = schemas["dinkster.models.conditioning_set_properties"]
+        assert node in COMFY_NODES
+    properties = schemas["ConditioningSetProperties"]
     assert [(item.type, item.required, item.default) for item in properties.inputs] == [
         (conditioning, True, None),
         (float_, True, 1.0),
@@ -132,10 +104,10 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         (timesteps, False, None),
     ]
     for name in (
-        "dinkster.models.conditioning_set_properties",
-        "dinkster.models.conditioning_set_properties_and_combine",
-        "dinkster.models.pair_conditioning_set_properties",
-        "dinkster.models.pair_conditioning_set_properties_and_combine",
+        "ConditioningSetProperties",
+        "ConditioningSetPropertiesAndCombine",
+        "PairConditioningSetProperties",
+        "PairConditioningSetPropertiesAndCombine",
     ):
         assert {item.id for item in schemas[name].inputs if not item.required} == {
             "mask",
@@ -144,7 +116,7 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         }
     assert properties.inputs[1].widget == NumberWidget(min=0.0, max=10.0, step=0.01)
     assert properties.inputs[2].widget == ComboWidget(("default", "mask bounds"))
-    clip = schemas["dinkster.models.set_clip_hooks"]
+    clip = schemas["SetClipHooks"]
     assert [(item.type, item.required, item.default, item.advanced) for item in clip.inputs] == [
         (TypeExpr.concrete(CLIP_TYPE), True, None, False),
         (boolean, True, True, True),
@@ -152,7 +124,7 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         (hooks, False, None, False),
     ]
     assert clip.occupies == ("gpu",)
-    range_ = schemas["dinkster.models.conditioning_timesteps_range"]
+    range_ = schemas["ConditioningTimestepsRange"]
     assert [(item.required, item.default, item.widget) for item in range_.inputs] == [
         (True, 0.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
         (True, 1.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
@@ -161,8 +133,8 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         [
             sys.executable,
             "-c",
-            "from dinkster_nodes_models import NODES; "
-            "[node.schema() for node in NODES]; "
+            "from dinkster_nodes_comfy.hook_conditioning import HOOK_CONDITIONING_NODES; "
+            "[node.schema() for node in HOOK_CONDITIONING_NODES]; "
             "import sys; assert 'torch' not in sys.modules",
         ],
         check=True,
@@ -173,10 +145,10 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
 def test_hook_conditioning_cold_discovery_avoids_torch_and_inference_imports() -> None:
     manifest = tomllib.loads(
         (
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-models/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
         ).read_text(encoding="ascii")
     )
-    assert manifest["pack"]["namespaces"] == ["dinkster.models", "devices"]
-    start = NODES.index(ConditioningSetProperties)
-    assert NODES[start : start + len(HOOK_CONDITIONING_NODES)] == HOOK_CONDITIONING_NODES
+    node_types = [node.schema().node_type for node in HOOK_CONDITIONING_NODES]
+    namespaces = manifest["pack"]["namespaces"]
+    start = namespaces.index(node_types[0])
+    assert namespaces[start : start + len(node_types)] == node_types

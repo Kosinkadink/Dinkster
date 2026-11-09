@@ -45,11 +45,14 @@ def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatc
 async def _default_pack_names() -> tuple[str, ...]:
     from dinkster_workers import load_manifest
 
-    from dinkster.compose import ServingComposer, default_pack_specs
+    from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster.compose import ServingComposer, default_pack_specs, model_pack_specs
 
     composer = ServingComposer()
     try:
-        specs = composer.order_pack_entries(default_pack_specs())
+        specs = composer.order_pack_entries(
+            (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+        )
         return tuple(load_manifest(Path(spec.manifest)).name for spec in specs)
     finally:
         await composer.close()
@@ -58,11 +61,6 @@ async def _default_pack_names() -> tuple[str, ...]:
 def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_path: Path) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
 
-    from dinkster.compose import default_pack_ids
-    from dinkster.packs import first_party_pack_metadata
-
-    metadata = first_party_pack_metadata(TESTS_DIR.parent)
-    packages = sorted({metadata[pack_id][1] for pack_id in default_pack_ids()})
     environment = tmp_path / "core-environment"
     sync_environment = {
         **os.environ,
@@ -76,7 +74,18 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
             "--no-dev",
             "--package",
             "dinkster",
-            *(argument for package in packages for argument in ("--package", package)),
+            "--package",
+            "dinkster-nodes-foundation",
+            "--package",
+            "dinkster-nodes-media-io",
+            "--package",
+            "dinkster-nodes-image",
+            "--package",
+            "dinkster-nodes-remote",
+            "--package",
+            "dinkster-nodes-vision",
+            "--package",
+            "dinkster-nodes-comfy",
             "--no-install-package",
             "dinkster-supervisor",
         ],
@@ -149,7 +158,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
                 isinstance(node_id, str) and isinstance(schema, dict)
                 for node_id, schema in nodes.items()
             )
-            assert "dinkster.utilities.primitive_int" in nodes
+            assert any(node_id.startswith("std.") for node_id in nodes)
             for method, path in (
                 ("GET", "/api/compat/comfy/schemas"),
                 ("POST", "/api/compat/comfy/prompt"),
@@ -157,23 +166,21 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
             ):
                 async with session.request(method, base + path) as response:
                     assert response.status == 404, await response.text()
-            graph = Graph(
-                nodes={"integer": GraphNode("dinkster.utilities.primitive_int", {"value": 7})}
-            )
+            graph = Graph(nodes={"sum": GraphNode("std.math.add_ints", {"a": 2, "b": 3})})
             async with session.post(
                 base + "/api/jobs",
                 json={
                     "clientId": "optional-package-proof",
-                    "jobId": "integer",
+                    "jobId": "sum",
                     "graph": graph_to_wire(graph),
-                    "targets": ["integer"],
+                    "targets": ["sum"],
                 },
             ) as response:
                 assert response.status == 202, await response.text()
             async with asyncio.timeout(30):
                 while True:
                     async with session.get(
-                        base + "/api/jobs/optional-package-proof/integer"
+                        base + "/api/jobs/optional-package-proof/sum"
                     ) as response:
                         job = await response.json()
                     if job["state"] in {"completed", "failed", "cancelled"}:
@@ -282,9 +289,7 @@ def test_native_runtime_versions_are_read_from_worker_interpreter(
     assert len(calls[0]) == 4
 
 
-@pytest.mark.parametrize(
-    "pack_name", ["dinkster-vision-depth-anything-3", "dinkster-vision-background-removal"]
-)
+@pytest.mark.parametrize("pack_name", ["dinkster-vision-hed", "dinkster-vision-birefnet"])
 def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pack_name: str
 ) -> None:
@@ -322,16 +327,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
     workspace_names = {path.name for path in workspace}
-    expected_workspace = {"dinkster-api"}
-    if pack_name == "dinkster-vision-depth-anything-3":
-        expected_workspace |= {
-            "dinkster-inference-wire",
-            "dinkster-assets",
-            "dinkster-memory",
-            "dinkster-schema",
-            "dinkster-values",
-        }
-    assert workspace_names == expected_workspace
+    assert workspace_names == {"dinkster-api"}
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")
@@ -340,8 +336,9 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         project = tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
-    assert "dinkster-inference==0.1.1" in manifest.requires
-    assert str(manifest.root / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
+    if pack_name == "dinkster-vision-birefnet":
+        assert "dinkster-inference==0.1.1" in manifest.requires
+    assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
 def test_configured_serving_python_skips_standard_pack_provisioning(
@@ -356,7 +353,7 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
     monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
     prepared = serve._prepare_default_pack(
-        default_pack_spec("dinkster-vision-depth-anything-3"),
+        default_pack_spec("dinkster-vision-hed"),
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cpu",
     )
@@ -368,7 +365,7 @@ def test_only_standard_vision_defaults_are_selected_for_runtime_provisioning() -
     from dinkster import serve
     from dinkster.compose import default_pack_spec
 
-    assert serve._is_standard_vision_pack(default_pack_spec("dinkster-vision-depth-anything-3"))
+    assert serve._is_standard_vision_pack(default_pack_spec("dinkster-vision-hed"))
     assert not serve._is_standard_vision_pack(default_pack_spec("dinkster-nodes-remote"))
 
 
@@ -726,21 +723,69 @@ def test_serve_official_bootstrap_requires_persistent_library(
     assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flag", ("--comfy-root", "--legacy-pack", "--comfy-python"))
-def test_serve_rejects_removed_compatibility_arguments(
+def test_comfy_compat_composition_failure_exits_with_one_message(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    flag: str,
 ) -> None:
     from dinkster import serve
 
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", flag, "/unused"])
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    message = (
+        "ComfyUI requirement module 'einops' is unavailable in interpreter "
+        "'/selected/python' selected by --execution-python"
+    )
+
+    def fail_specs(*_args: object, **_kwargs: object) -> None:
+        raise serve.CompositionError(message)
+
+    monkeypatch.setattr(serve, "comfy_compat_specs", fail_specs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            "",
+            "--no-default-packs",
+            "--comfy-root",
+            str(comfy_root),
+            "--execution-python",
+            "/selected/python",
+        ],
+    )
 
     with pytest.raises(SystemExit) as caught:
         serve.main()
 
-    assert caught.value.code == 2
-    assert f"unrecognized arguments: {flag}" in capsys.readouterr().err
+    assert str(caught.value) == message
+
+
+def test_retired_comfy_python_flag_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--comfy-python", "/x/python"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert "--comfy-python is retired; pass --execution-python instead" in capsys.readouterr().err
+
+
+def test_retired_comfy_python_env_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/x/python")
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+        in capsys.readouterr().err
+    )
 
 
 def test_settings_gate_unknown_is_startup_parser_error(
@@ -1636,59 +1681,63 @@ def test_ordinary_serve_passes_no_federated_routes(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.parametrize("devices", (None, "0,1"))
-def test_serve_without_comfy_configures_first_party_workers(
+def test_serve_without_comfy_mounts_native_provider(
     monkeypatch: pytest.MonkeyPatch,
     devices: str | None,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[PackSpec] = []
+    calls: list[tuple[object, dict[str, object]]] = []
+
+    def native_specs(root: object, **kwargs: object) -> list[object]:
+        calls.append((root, kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setattr(serve, "comfy_compat_specs", native_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     argv = ["dinkster-serve", "--library-root", ""]
     if devices:
         argv.extend(("--single-job-multi-gpu-devices", devices))
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.delenv("DINKSTER_COMFYUI_ROOT", raising=False)
-    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
-    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/unused/removed-python")
 
     serve.main()
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" in spec.packs:
-            assert not spec.single_job_cuda_indices
-        else:
-            assert spec.runtime_settings
-            assert spec.python == sys.executable
-            assert spec.single_job_cuda_indices == ((0, 1) if devices else ())
+    assert len(calls) == 1
+    root, options = calls[0]
+    assert root is None
+    if devices:
+        config = options["single_job_multi_gpu"]
+        assert isinstance(config, serve.SingleJobMultiGpuConfig)
+        assert config.cuda_indices == (0, 1)
+    else:
+        assert options["single_job_multi_gpu"] is None
 
 
-def test_serve_resolves_explicit_pack_from_launch_directory(
+def test_serve_resolves_legacy_pack_from_launch_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
 
     launch_directory = tmp_path / "launch"
-    manifest = write_iso_manifest(launch_directory / "packs" / "explicit")
+    legacy_pack = launch_directory / "packs" / "legacy"
+    legacy_pack.mkdir(parents=True)
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
     captured: list[Path] = []
 
+    def capture_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.extend(kwargs["legacy_packs"])  # type: ignore[arg-type]
+        return []
+
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
     monkeypatch.chdir(launch_directory)
+    monkeypatch.setattr(serve, "comfy_compat_specs", capture_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
@@ -1697,25 +1746,31 @@ def test_serve_resolves_explicit_pack_from_launch_directory(
             "dinkster-serve",
             "--library-root",
             "",
-            "--no-default-packs",
-            "--pack",
-            str(manifest.relative_to(launch_directory)),
+            "--comfy-root",
+            str(comfy_root),
+            "--legacy-pack",
+            str(legacy_pack.relative_to(launch_directory)),
         ],
     )
 
     serve.main()
 
-    assert captured == [manifest.resolve()]
+    assert captured == [legacy_pack.resolve()]
 
 
-def test_first_party_defaults_exclude_explicit_packs_from_default_ordering(
+def test_comfy_root_defaults_include_compat_specs_in_ordering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
+    from dinkster.compose import PackSpec
 
-    manifest = write_iso_manifest(tmp_path / "explicit")
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    compat = (
+        PackSpec(manifest=tmp_path / "generation"),
+        PackSpec(manifest=tmp_path / "compat"),
+    )
     captured: list[tuple[int, int]] = []
 
     def capture_ordering(
@@ -1731,6 +1786,9 @@ def test_first_party_defaults_exclude_explicit_packs_from_default_ordering(
         with pytest.raises(RuntimeError, match="captured ordering"):
             run_scenario(awaitable)  # type: ignore[arg-type]
 
+    monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
+    monkeypatch.setattr(serve, "model_pack_specs", lambda: ())
+    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: compat)
     monkeypatch.setattr(serve, "_order_default_pack_specs", capture_ordering)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
@@ -1740,76 +1798,86 @@ def test_first_party_defaults_exclude_explicit_packs_from_default_ordering(
             "dinkster-serve",
             "--library-root",
             "",
-            "--pack",
-            str(manifest),
+            "--comfy-root",
+            str(comfy_root),
         ],
     )
 
     serve.main()
 
-    count = len(default_pack_ids())
-    assert captured == [(count + 1, count)]
+    assert captured == [(2, 2)]
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
-def test_serve_aimdo_cli_defaults_and_reaches_first_party_workers(
+def test_serve_aimdo_cli_defaults_and_reaches_compat_specs(
     mode: str | None,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[PackSpec] = []
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    captured: list[dict[str, object]] = []
+
+    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.append(dict(kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
     argv = [
         "dinkster-serve",
+        "--comfy-root",
+        str(comfy_root),
         "--library-root",
         "",
     ]
     if mode is not None:
         argv.extend(("--aimdo", mode))
+    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(sys, "argv", argv)
 
     serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.aimdo == ("auto" if mode is None else mode)
-            assert spec.reserve_vram == 256 * 1024**2
-            assert spec.vram_budgets == {}
+    assert len(captured) == 1
+    assert captured[0]["aimdo"] == ("auto" if mode is None else mode)
+    assert captured[0]["reserve_vram"] == 256 * 1024**2
+    assert captured[0]["memory_budgets"] == {}
 
 
-def test_serve_multi_gpu_cli_reaches_first_party_workers(
+def test_serve_multi_gpu_cli_reaches_compat_worker(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[PackSpec] = []
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    captured: list[dict[str, object]] = []
     captured_running: list[int] = []
+
+    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.append(dict(kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         frame = awaitable.cr_frame  # type: ignore[attr-defined]
         assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         captured_running.append(frame.f_locals["max_running_jobs"])
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
+            "--comfy-root",
+            str(comfy_root),
             "--library-root",
             "",
             "--multi-gpu-devices",
@@ -1819,11 +1887,7 @@ def test_serve_multi_gpu_cli_reaches_first_party_workers(
 
     serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.replica_cuda_indices == (1, 0)
+    assert captured[0]["multi_device_cuda_indices"] == (1, 0)
     assert captured_running == [2]
 
 
@@ -1837,22 +1901,21 @@ def test_serve_multi_gpu_cli_reaches_first_party_workers(
     ),
 )
 def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     devices: str,
     mode: str,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[PackSpec] = []
+    captured: list[object] = []
 
-    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
-        awaitable.close()  # type: ignore[attr-defined]
+    def compat_specs(*args: object, **kwargs: object) -> list[object]:
+        del args
+        captured.append(kwargs["single_job_multi_gpu"])
+        raise RuntimeError("captured")
 
-    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
+    monkeypatch.setattr(serve, "comfy_compat_specs", compat_specs)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -1860,20 +1923,20 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
             "dinkster-serve",
             "--library-root",
             "",
+            "--comfy-root",
+            str(tmp_path),
             "--single-job-multi-gpu-devices",
             devices,
             "--single-job-multi-gpu-mode",
             mode,
         ],
     )
-    serve.main()
+    with pytest.raises(RuntimeError, match="captured"):
+        serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.single_job_cuda_indices == tuple(int(value) for value in devices.split(","))
-            assert spec.single_job_mode == mode
+    config = captured[0]
+    assert config.cuda_indices == tuple(int(value) for value in devices.split(","))  # type: ignore[attr-defined]
+    assert config.mode == mode  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize("mode", ("model", "window"))
@@ -1920,28 +1983,33 @@ def test_serve_single_job_and_replica_multi_gpu_are_mutually_exclusive(
     assert exc.value.code == 2
 
 
-def test_serve_headroom_cli_reaches_first_party_workers(
+def test_serve_headroom_cli_reaches_compat_specs(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[PackSpec] = []
-    budgets: list[dict[str, int]] = []
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    captured: list[dict[str, object]] = []
+
+    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.append(dict(kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
-        budgets.append(frame.f_locals["memory_budgets"])
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
+    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
+            "--comfy-root",
+            str(comfy_root),
             "--library-root",
             "",
             "--reserve-vram",
@@ -1955,13 +2023,11 @@ def test_serve_headroom_cli_reaches_first_party_workers(
 
     serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.reserve_vram == 128 * 1024**2
-            assert spec.vram_budgets == {"vram:cuda:0": 20 * 1024**3}
-    assert budgets == [{"vram:cuda:0": 20 * 1024**3, "ram": 8 * 1024**3}]
+    assert captured[0]["reserve_vram"] == 128 * 1024**2
+    assert captured[0]["memory_budgets"] == {
+        "vram:cuda:0": 20 * 1024**3,
+        "ram": 8 * 1024**3,
+    }
 
 
 def test_serve_comfy_arg_cli_beats_persisted_settings(
@@ -1969,27 +2035,33 @@ def test_serve_comfy_arg_cli_beats_persisted_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
     library_root = tmp_path / "library"
     library_root.mkdir()
     (library_root / "settings.json").write_text(
         '{"worker-comfy-args":["--preview-size","111"]}\n', "utf-8"
     )
-    captured: list[PackSpec] = []
+    captured: list[dict[str, object]] = []
+
+    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.append(dict(kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
+    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
+            "--comfy-root",
+            str(comfy_root),
             "--library-root",
             str(library_root),
             "--comfy-arg=--preview-size",
@@ -1999,11 +2071,7 @@ def test_serve_comfy_arg_cli_beats_persisted_settings(
 
     serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.comfy_args == ("--preview-size", "321")
+    assert captured[0]["comfy_args"] == ("--preview-size", "321")
 
 
 def test_serve_bare_comfy_arg_clears_persisted_settings(
@@ -2011,27 +2079,33 @@ def test_serve_bare_comfy_arg_clears_persisted_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
     library_root = tmp_path / "library"
     library_root.mkdir()
     (library_root / "settings.json").write_text(
         '{"worker-comfy-args":["--preview-size","111"]}\n', "utf-8"
     )
-    captured: list[PackSpec] = []
+    captured: list[dict[str, object]] = []
+
+    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.append(dict(kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
+    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
+            "--comfy-root",
+            str(comfy_root),
             "--library-root",
             str(library_root),
             "--comfy-arg",
@@ -2040,35 +2114,35 @@ def test_serve_bare_comfy_arg_clears_persisted_settings(
 
     serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.comfy_args == ()
+    assert captured[0]["comfy_args"] == ()
 
 
-def test_serve_component_dtype_flags_reach_first_party_workers(
+def test_serve_component_dtype_flags_reach_compat_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dinkster import serve
-    from dinkster.compose import PackSpec, default_pack_ids
 
-    captured: list[PackSpec] = []
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    captured: list[dict[str, object]] = []
+
+    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.append(dict(kwargs))
+        return []
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        frame = awaitable.cr_frame  # type: ignore[attr-defined]
-        assert frame is not None
-        captured.extend(frame.f_locals["specs"])
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
+    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--library-root",
-            str(tmp_path / "library"),
+            "--comfy-root",
+            str(comfy_root),
             "--diffusion-dtype",
             "bfloat16",
             "--text-encoder-dtype",
@@ -2080,15 +2154,11 @@ def test_serve_component_dtype_flags_reach_first_party_workers(
 
     serve.main()
 
-    assert len(captured) == len(default_pack_ids())
-    for spec in captured:
-        assert spec.packs is not None
-        if "dinkster-nodes-remote" not in spec.packs:
-            assert spec.comfy_args == (
-                "--bf16-unet",
-                "--fp16-text-enc",
-                "--fp32-vae",
-            )
+    assert captured[0]["comfy_args"] == (
+        "--bf16-unet",
+        "--fp16-text-enc",
+        "--fp32-vae",
+    )
 
 
 def test_serve_aimdo_cli_rejects_unknown_mode(
@@ -2268,6 +2338,7 @@ def test_unprepared_library_catalog_fails_before_api_binding(
             run_scenario(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
+    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve, "_resolve_pack_argument", lambda _path: pack)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
@@ -2348,27 +2419,14 @@ def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(
 def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) -> None:
     import hashlib
 
-    import av
-    import numpy as np
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 
     from tests.test_pack_surfaces import PROOF_EVENT, PROOF_PACK, PROOF_ROOT, PROOF_ROUTE
+    from tests.test_video_runtime import _source
 
     source = tmp_path / "source"
     source.mkdir()
-    with av.open(str(source / "clip.mp4"), "w") as output:
-        stream = output.add_stream("libx264", rate=10)
-        stream.width, stream.height = 64, 32
-        stream.pix_fmt = "yuv420p"
-        stream.codec_context.thread_count = 1
-        for index in range(20):
-            frame = av.VideoFrame.from_ndarray(
-                np.full((32, 64, 3), index * 10, np.uint8), format="rgb24"
-            )
-            for packet in stream.encode(frame):
-                output.mux(packet)
-        for packet in stream.encode():
-            output.mux(packet)
+    (source / "clip.mp4").write_bytes(_source())
     (source / "dinkster-pack.toml").write_text("""
 [pack]
 name = "preview-source"
@@ -2405,7 +2463,9 @@ NODES = [Source]
     bootstrap = """
 from dinkster import serve
 
-serve.default_pack_ids = lambda: ("dinkster-video",)
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
 serve.main()
 """
     process = subprocess.Popen(
@@ -2441,7 +2501,7 @@ serve.main()
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/composition") as response:
                 report = await response.json()
-            assert report["packs"]["dinkster-video"]["state"] == "announced"
+            assert report["packs"]["dinkster-nodes-media-io"]["state"] == "announced"
             async with session.get(base + PROOF_ROUTE) as response:
                 assert response.status == 200
                 assert await response.json() == {
@@ -3166,10 +3226,17 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-def test_degraded_default_ordering_composes_latent_before_conditioning(
+def test_degraded_default_ordering_composes_media_io_before_image(
     tmp_path: Path,
 ) -> None:
-    """A broken pack must not make healthy consumers compose before providers."""
+    """One pack with unresolvable contracts must not send the healthy defaults
+    back to load order: dinkster-nodes-image sorts before dinkster-nodes-media-io
+    alphabetically, so composing in load order validates the image pack's
+    media-io requirement before the media-io pack has announced.
+
+    Regression for Kosinkadink/comfy-vibe-station#242, where exactly this took
+    down every hosted pack depending on the media-io chain.
+    """
     import dinkster.serve as serve
     from dinkster.compose import (
         CompositionError,
@@ -3191,15 +3258,16 @@ def test_degraded_default_ordering_composes_latent_before_conditioning(
         encoding="utf-8",
     )
     specs: list[PackSpec] = [
-        default_pack_spec("dinkster-conditioning"),
-        default_pack_spec("dinkster-latent"),
+        default_pack_spec("dinkster-nodes-foundation"),
+        default_pack_spec("dinkster-nodes-image"),
+        default_pack_spec("dinkster-nodes-media-io"),
         PackSpec(manifest=broken / "dinkster-pack.toml"),
     ]
     # Load order is alphabetical, and it puts the consumer before its provider.
     from dinkster.compose import default_pack_ids
 
     load_order = list(default_pack_ids())
-    assert load_order.index("dinkster-conditioning") < load_order.index("dinkster-latent")
+    assert load_order.index("dinkster-nodes-image") < load_order.index("dinkster-nodes-media-io")
     composer = ServingComposer()
 
     async def scenario() -> None:
@@ -3218,25 +3286,23 @@ def test_degraded_default_ordering_composes_latent_before_conditioning(
                 deltas[pack] = set(delta.schemas)
         assert list(errors) == ["dinkster-ordering-probe"]
         assert "dinkster.ordering.probe" in errors["dinkster-ordering-probe"]
-        assert "dinkster-latent" in deltas
-        assert "dinkster.latent.empty_latent_image" in deltas["dinkster-latent"]
-        assert "dinkster-conditioning" in deltas, errors
-        assert "dinkster.conditioning.clip_text_encode" in deltas["dinkster-conditioning"]
+        assert "dinkster-nodes-media-io" in deltas
+        assert "dinkster.load_video" in deltas["dinkster-nodes-media-io"]
+        assert "dinkster-nodes-image" in deltas, errors
+        assert "dinkster.image.resize" in deltas["dinkster-nodes-image"]
 
-    async def compose_and_close() -> None:
-        try:
-            await scenario()
-        finally:
-            await composer.close()
-
-    run_scenario(compose_and_close())
+    try:
+        run_scenario(scenario())
+    finally:
+        run_scenario(composer.close())
 
 
-def test_degraded_default_ordering_retains_first_party_packs(tmp_path: Path) -> None:
+def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> None:
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
-    from dinkster.compose import PackSpec, ServingComposer, default_pack_ids, default_pack_specs
+    from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster.compose import PackSpec, ServingComposer, default_pack_specs, model_pack_specs
 
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
@@ -3248,7 +3314,7 @@ def test_degraded_default_ordering_retains_first_party_packs(tmp_path: Path) -> 
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
         encoding="utf-8",
     )
-    defaults = default_pack_specs()
+    defaults = (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
     specs = (*defaults, PackSpec(manifest=broken / "dinkster-pack.toml"))
     composer = ServingComposer()
     try:
@@ -3257,10 +3323,7 @@ def test_degraded_default_ordering_retains_first_party_packs(tmp_path: Path) -> 
         run_scenario(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
-    assert set(names) == {*default_pack_ids(), "dinkster-ordering-probe"}
-    assert len(names) == len(set(names))
-    assert {"dinkster-sampling", "dinkster-image", "dinkster-video"} <= set(names)
-    assert "dinkster-nodes-comfy" not in names
+    assert "dinkster-nodes-comfy" in names
     assert "dinkster-nodes-generation" not in names
 
 
@@ -3316,11 +3379,17 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             async with session.get(base + "/api/composition") as resp:
                 composition = await resp.json()
             assert data["epoch"] == final_epoch, composition
-            assert data["nodes"]["dinkster.utilities.primitive_int"]["pack"] == "dinkster-utilities"
-            assert data["nodes"]["dinkster.video.load_video"]["pack"] == "dinkster-video"
-            assert data["nodes"]["dinkster.image.image_scale"]["pack"] == "dinkster-image"
+            assert any(t.startswith("std.") for t in data["nodes"])
+            assert data["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
+            assert data["nodes"]["dinkster.load_video"]["pack"] == "dinkster-nodes-media-io"
+            assert data["nodes"]["dinkster.image.resize"]["pack"] == "dinkster-nodes-image"
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
-            assert "dinkster.route.switch_by_name" not in data["nodes"]
+            named_route = data["nodes"]["dinkster.route.switch_by_name"]
+            assert named_route["schemaVersion"] == 1
+            assert named_route["interface"][0]["widget"] == {
+                "type": "COMBO",
+                "optionSource": {"inputFamily": "values"},
+            }
             # Fully composed, positively: the last announcement and the
             # narration clear land atomically on the event loop, so a
             # table containing the final pack never claims "composing".
@@ -3346,8 +3415,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
                 for index, name in enumerate(default_packs)
             }
             expected_packs["isopack"] = {"state": "announced", "epoch": final_epoch}
-            assert data["nodes"]["dinkster.text.string_length"]["pack"] == "dinkster-text"
-            assert "StringLength" not in data["nodes"]
+            assert data["nodes"]["StringLength"]["pack"] == "dinkster-nodes-comfy"
             assert "dinkster.ksampler" not in data["nodes"]
             assert report["packs"] == expected_packs
 
@@ -3407,22 +3475,22 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
     ("failed_pack", "surviving_pack", "present_node", "missing_node"),
     [
         (
-            "dinkster-utilities",
-            "dinkster-video",
-            "dinkster.video.load_video",
-            "dinkster.utilities.primitive_int",
+            "dinkster-nodes-foundation",
+            "dinkster-nodes-media-io",
+            "dinkster.load_video",
+            "std.math.add_ints",
         ),
         (
-            "dinkster-video",
-            "dinkster-utilities",
-            "dinkster.utilities.primitive_int",
-            "dinkster.video.load_video",
+            "dinkster-nodes-media-io",
+            "dinkster-nodes-foundation",
+            "std.math.add_ints",
+            "dinkster.load_video",
         ),
         (
-            "dinkster-image",
-            "dinkster-utilities",
-            "dinkster.utilities.primitive_int",
-            "dinkster.image.image_scale",
+            "dinkster-nodes-image",
+            "dinkster-nodes-foundation",
+            "std.math.add_ints",
+            "dinkster.image.resize",
         ),
     ],
 )
@@ -3656,7 +3724,7 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
 def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None:
     """A pack that cannot compose (reserved name) does NOT take the process
     down by default: the failure is cached on /api/composition with its
-    error, the utilities pack keeps serving, and composition still completes -
+    error, the foundation pack keeps serving, and composition still completes -
     positively, with the failure on the record instead of a dead server
     (the anti-ComfyUI: broken extensions were just silently absent)."""
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
@@ -3664,7 +3732,9 @@ def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None
     bootstrap = """
 from dinkster import serve
 
-serve.default_pack_ids = lambda: ("dinkster-utilities",)
+serve.default_pack_ids = lambda: ("dinkster-nodes-foundation",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
 serve.main()
 """
     process = subprocess.Popen(
@@ -3697,8 +3767,7 @@ serve.main()
             # complete - the failure is on the record, not on the surface.
             async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
-            assert data["nodes"]["dinkster.utilities.make_list"]["pack"] == "dinkster-utilities"
-            assert report["packs"]["dinkster-utilities"]["state"] == "announced"
+            assert any(t.startswith("std.") for t in data["nodes"])
             assert "composing" not in data
             assert process.poll() is None, "pack failure must not kill serve"
 
@@ -4021,12 +4090,19 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
         "NODES = [Gradient, Save]\n"
     )
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process, log = start_logged_serve(
         [
             sys.executable,
-            "-m",
-            "dinkster.serve",
-            "--no-default-packs",
+            "-c",
+            bootstrap,
             "--host",
             "127.0.0.1",
             "--port",

@@ -4,12 +4,15 @@ import dataclasses
 from typing import Any, cast
 
 import pytest
+from dinkster_nodes_foundation.conversion import CurveEditor
+from dinkster_nodes_foundation.routing import RouteSwitchByName
 from dinkster_nodes_image.compositor import CreateLayeredImage
 from dinkster_nodes_image.glsl import GlslShader
 from dinkster_nodes_image.layer_document import EditLayers, FlattenLayers
 from dinkster_nodes_image.layer_io import LoadLayers
-from dinkster_nodes_utilities.curve_editor import CurveEditor
-from dinkster_nodes_video.video_edits import VideoCrop, VideoTrim
+from dinkster_nodes_media_io.audio_ops import ExtractAudioEnvelope
+from dinkster_nodes_media_io.image import LoadImage, PaintMask, SaveImage
+from dinkster_nodes_media_io.video_ops import CropVideo, TrimVideo
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -25,13 +28,18 @@ from dinkster_values import CustomWidgetDescriptor
     ("node", "role"),
     [
         (CurveEditor, "curve"),
+        (RouteSwitchByName, "named-route-switch"),
         (CreateLayeredImage, "compositor"),
         (GlslShader, "glsl"),
         (FlattenLayers, "layers-flatten"),
         (EditLayers, "layers-edit"),
         (LoadLayers, "layers-load"),
-        (VideoTrim, "video-trim"),
-        (VideoCrop, "video-crop"),
+        (ExtractAudioEnvelope, "audio-envelope"),
+        (LoadImage, "image-source"),
+        (PaintMask, "mask-paint"),
+        (SaveImage, "image-save"),
+        (TrimVideo, "video-trim"),
+        (CropVideo, "video-crop"),
     ],
 )
 def test_editor_capabilities_are_declared_by_schema(node: type[Node], role: str) -> None:
@@ -40,10 +48,10 @@ def test_editor_capabilities_are_declared_by_schema(node: type[Node], role: str)
 
 @pytest.mark.parametrize(
     ("node", "features"),
-    [(VideoTrim, ["trim"]), (VideoCrop, ["crop"])],
+    [(TrimVideo, ["trim"]), (CropVideo, ["crop"])],
 )
 def test_video_edit_features_are_declared_by_widget(node: type[Node], features: list[str]) -> None:
-    video_edit = next(item for item in node.schema().inputs if item.id == features[0])
+    video_edit = next(item for item in node.schema().inputs if item.id == "video_edit")
     assert video_edit.widget == CustomWidgetDescriptor(
         "VIDEO_EDIT", cast("dict[str, Any]", {"features": features})
     )
@@ -51,7 +59,7 @@ def test_video_edit_features_are_declared_by_widget(node: type[Node], features: 
 
 def test_editor_metadata_roundtrips_through_the_schema_wire() -> None:
     schema = dataclasses.replace(
-        VideoTrim.schema(),
+        TrimVideo.schema(),
         inputs=(
             InputSpec(
                 "custom",

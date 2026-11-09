@@ -13,8 +13,7 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_image.ported.image_crop import ImageCropToMask, ImageCropV2
-from dinkster_nodes_utilities.image_crop import PrimitiveBoundingBox
+from dinkster_nodes_comfy.image_crop import ImageCropToMask, ImageCropV2, PrimitiveBoundingBox
 
 
 def _entry(wire: dict[str, object], entry_id: str) -> dict[str, Any]:
@@ -44,7 +43,7 @@ def test_image_crop_v2_schema_uses_canonical_image_and_bounding_box_contracts() 
     schema = ImageCropV2.schema()
     wire = schema_to_wire(schema)
 
-    assert schema.node_type == "dinkster.image.image_crop_v2"
+    assert schema.node_type == "ImageCropV2"
     assert schema_from_wire(wire) == schema
     assert schema.outputs[0].preview is True
     assert schema.emits_previews is True
@@ -60,7 +59,7 @@ def test_bounding_box_schema_uses_canonical_type_and_reference_defaults() -> Non
     schema = PrimitiveBoundingBox.schema()
     wire = schema_to_wire(schema)
 
-    assert schema.node_type == "dinkster.utilities.primitive_bounding_box"
+    assert schema.node_type == "PrimitiveBoundingBox"
     assert schema_from_wire(wire) == schema
     for name, default, minimum in (("x", 0, 0), ("y", 0, 0), ("width", 512, 1), ("height", 512, 1)):
         entry = _entry(wire, name)

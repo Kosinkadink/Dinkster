@@ -43,14 +43,6 @@ Torch kind; NumPy scalars and scalar arrays remain distinct. Ordered frames,
 optional-key absence, camera/source-image fields, frozenset face topology and
 external `_skeleton_override` rig buffers are retained. Decode and validation
 remain NumPy/Torch/inference-free; they produce inspectable tensor records.
-
-`dinkster_api.v1.register_vision_packet_types(registry, type_ids=(...))`
-registers only the named structural packet codecs. Omitting `type_ids` registers
-all four; an empty tuple registers none. Unknown ids fail before registration,
-and existing specs retain their authority. Packs can use the shared canonical
-codecs without registering unrelated families. Type ownership is determined by
-the registry's declarations, not by this codec selection.
-
 `materialize_vision_packet`, exported through `dinkster_api.v1`, reconstructs
 NumPy arrays/scalars and Torch tensors only at the consumer. Live objects keep
 their storage, dtype and device. Unsupported objects and malformed structural

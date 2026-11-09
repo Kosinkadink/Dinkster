@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import os
 from pathlib import Path
 
+from dinkster_caches import MemoryLRUCache
+from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
-from dinkster_protocol import Invocation
 from dinkster_schema import (
     InputSpec,
     NodeSchema,
     OutputSpec,
     TypeExpr,
     plan_type_equivalence,
+    schema_to_wire,
 )
 from dinkster_values import (
     EncodedPayload,
@@ -26,7 +29,7 @@ from dinkster_values import (
     prepare_image_array_encoding,
     register_core_types,
 )
-from dinkster_workers import BoundaryDiagnostic, IsolatedWorker
+from dinkster_workers import BoundaryDiagnostic, IsolatedWorker, RoutingWorker
 
 from tests.async_scenarios import run_scenario
 
@@ -252,14 +255,17 @@ def test_graph_validation_uses_exact_image_and_mask_atoms() -> None:
     assert validate(stamped, schemas, ["sink"], known_types=registry) == []
 
 
-def _write_manifest(root: Path) -> Path:
+def _write_manifest(root: Path, *, compat: bool) -> Path:
     root.mkdir()
+    pack = "compat-equivalence-test" if compat else "native-equivalence-test"
+    namespace = "comfy" if compat else "dinkster"
+    module = "type_equivalence_compat_nodes" if compat else "type_equivalence_native_nodes"
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "native-equivalence-test"\npublisher = "dinkster"\n'
-        'type-namespaces = []\nnamespaces = ["dinkster"]\n\n'
-        '[pack.entry]\nnodes = "type_equivalence_native_nodes:NODES"\n'
-        'types = "type_equivalence_native_nodes:register_types"\n',
+        f'[pack]\nname = "{pack}"\npublisher = "dinkster"\n'
+        f'type-namespaces = []\nnamespaces = ["{namespace}"]\n\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\n'
+        f'types = "{module}:register_types"\n',
         encoding="utf-8",
     )
     return manifest
@@ -273,62 +279,130 @@ def test_exact_image_and_mask_atoms_cross_isolated_workers(
         register_core_types(registry)
         _register_image_type(registry, IMAGE)
         _register_image_type(registry, MASK)
-        diagnostics: list[BoundaryDiagnostic] = []
+        compat_diagnostics: list[BoundaryDiagnostic] = []
+        native_diagnostics: list[BoundaryDiagnostic] = []
         extra_env = {
             "PYTHONPATH": os.pathsep.join((str(TESTS_DIR), os.environ.get("PYTHONPATH", "")))
         }
-        first = IsolatedWorker(
-            _write_manifest(tmp_path / "first"),
+        compat = IsolatedWorker(
+            _write_manifest(tmp_path / "compat", compat=True),
             registry,
             extra_env=extra_env,
             shm_threshold=1,
-            on_diagnostic=diagnostics.append,
+            on_diagnostic=compat_diagnostics.append,
         )
-        second = IsolatedWorker(
-            _write_manifest(tmp_path / "second"),
+        native = IsolatedWorker(
+            _write_manifest(tmp_path / "native", compat=False),
             registry,
             extra_env=extra_env,
             shm_threshold=1,
-            on_diagnostic=diagnostics.append,
+            on_diagnostic=native_diagnostics.append,
         )
-        await asyncio.gather(first.start(), second.start())
+        await asyncio.gather(compat.start(), native.start())
         try:
-            for source, destination in ((first, second), (second, first)):
-                for port, type_id, shape in (
-                    ("image", IMAGE, "1x2x3x3"),
-                    ("mask", MASK, "1x2x3"),
-                ):
-                    producer = f"dinkster.test.{port}_producer"
-                    produced = await source.invoke(
-                        Invocation(
-                            invocation_id=f"produce-{port}",
-                            node_id=f"produce-{port}",
-                            node_type=producer,
-                            inputs={},
-                            effective_schema=source.schemas[producer],
-                        )
-                    )
-                    assert produced.error is None
-                    assert produced.outputs is not None
-                    value = produced.outputs[port]
-                    assert value.type_id == type_id
-                    consumer = f"dinkster.test.{port}_consumer"
-                    consumed = await destination.invoke(
-                        Invocation(
-                            invocation_id=f"consume-{port}",
-                            node_id=f"consume-{port}",
-                            node_type=consumer,
-                            inputs={port: value},
-                            effective_schema=destination.schemas[consumer],
-                        )
-                    )
-                    assert consumed.error is None
-                    assert consumed.outputs is not None
-                    assert consumed.outputs["shape"].resolve() == shape
-            crossings = [edge for diagnostic in diagnostics for edge in diagnostic.inputs]
-            assert [edge.type_id for edge in crossings] == [IMAGE, MASK, IMAGE, MASK]
-            assert all(edge.transport == "shm" and edge.reused for edge in crossings)
+            schemas = {**compat.schemas, **native.schemas}
+            resize_wire = json.dumps(
+                schema_to_wire(schemas["dinkster.image.resize"]), sort_keys=True
+            )
+            assert '"IMAGE"' in resize_wire
+            assert '"MASK"' in resize_wire
+            routes = {node_type: compat for node_type in compat.schemas}
+            routes.update({node_type: native for node_type in native.schemas})
+            engine = Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=RoutingWorker(routes),
+                cache=MemoryLRUCache(),
+            )
+            graph = Graph(
+                nodes={
+                    "compat_image": GraphNode("comfy.custom.ImageProducer", {}),
+                    "compat_mask": GraphNode("comfy.custom.MaskProducer", {}),
+                    "resize_image": GraphNode(
+                        "dinkster.image.resize",
+                        {
+                            "image": Link("compat_image", "image"),
+                            "target.width": 2,
+                            "target.height": 2,
+                            "interpolation": "nearest-exact",
+                        },
+                        slot_variants={
+                            "target": "dimensions",
+                            "mode": "stretch",
+                            "divisibility": "none",
+                        },
+                    ),
+                    "resize_mask": GraphNode(
+                        "dinkster.image.resize",
+                        {
+                            "image": Link("compat_mask", "mask"),
+                            "target.width": 2,
+                            "target.height": 2,
+                            "interpolation": "nearest-exact",
+                        },
+                        slot_variants={
+                            "target": "dimensions",
+                            "mode": "stretch",
+                            "divisibility": "none",
+                        },
+                    ),
+                    "native_image_sink": GraphNode(
+                        "dinkster.test.image_consumer",
+                        {"image": Link("resize_image", "image")},
+                    ),
+                    "native_mask_sink": GraphNode(
+                        "dinkster.test.mask_consumer",
+                        {"mask": Link("resize_mask", "image")},
+                    ),
+                    "native_image": GraphNode("dinkster.test.image_producer", {}),
+                    "native_mask": GraphNode("dinkster.test.mask_producer", {}),
+                    "compat_image_sink": GraphNode(
+                        "comfy.custom.ImageConsumer",
+                        {"image": Link("native_image", "image")},
+                    ),
+                    "compat_mask_sink": GraphNode(
+                        "comfy.custom.MaskConsumer",
+                        {"mask": Link("native_mask", "mask")},
+                    ),
+                }
+            )
+            targets = [
+                "resize_image",
+                "resize_mask",
+                "native_image_sink",
+                "native_mask_sink",
+                "compat_image_sink",
+                "compat_mask_sink",
+            ]
+            assert validate(graph, schemas, targets, known_types=registry) == []
+            result = await engine.run(graph, targets)
+
+            assert result.outputs["resize_image"]["image"].type_id == IMAGE
+            assert result.outputs["resize_mask"]["image"].type_id == MASK
+            assert result.outputs["native_image_sink"]["shape"].resolve() == "1x2x2x3"
+            assert result.outputs["native_mask_sink"]["shape"].resolve() == "1x2x2"
+            assert result.outputs["compat_image_sink"]["shape"].resolve() == "1x2x3x3"
+            assert result.outputs["compat_mask_sink"]["shape"].resolve() == "1x2x3"
+
+            native_by_node = {diagnostic.node_id: diagnostic for diagnostic in native_diagnostics}
+            compat_by_node = {diagnostic.node_id: diagnostic for diagnostic in compat_diagnostics}
+            for node_id, expected in (
+                ("resize_image", IMAGE),
+                ("resize_mask", MASK),
+                ("native_image_sink", IMAGE),
+                ("native_mask_sink", MASK),
+            ):
+                edge = native_by_node[node_id].inputs[0]
+                assert edge.type_id == expected
+                assert edge.transport == "shm"
+                assert edge.reused is True
+            assert compat_by_node["compat_image_sink"].inputs[0].type_id == IMAGE
+            assert compat_by_node["compat_mask_sink"].inputs[0].type_id == MASK
+            assert compat_by_node["compat_image_sink"].inputs[0].transport == "shm"
+            assert compat_by_node["compat_mask_sink"].inputs[0].transport == "shm"
+            assert compat_by_node["compat_image_sink"].inputs[0].reused is True
+            assert compat_by_node["compat_mask_sink"].inputs[0].reused is True
         finally:
-            await asyncio.gather(first.close(), second.close())
+            await asyncio.gather(compat.close(), native.close())
 
     run_scenario(scenario())

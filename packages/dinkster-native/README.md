@@ -5,8 +5,8 @@ integration surfaces. It does not contain a sampling engine or model-family
 runtime.
 
 The package depends on an exact `dinkster-inference` PyPI release and imports
-`dinkster_inference` for supported SD1.5 and MiniMax H3 inference. First-party
-node packs own node registration; this package supplies shared runtime helpers.
+`dinkster_inference` for supported SD1.5 and MiniMax H3 inference. ComfyUI-backed
+legacy nodes remain in `dinkster-compat-comfy`.
 
 To update inference, the sync owner first validates and releases a landed
 inference commit with a new version and matching `vX.Y.Z` tag. After the

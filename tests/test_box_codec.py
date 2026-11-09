@@ -22,7 +22,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_assets.value import value_asset_references
-from dinkster_nodes_image import register_types
+from dinkster_compat_comfy.translate import CompatTranslation, comfy_value_type_id
+from dinkster_nodes_image import register_image_types
 from dinkster_values import EncodedPayload, default_encode, register_core_types
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
@@ -209,7 +210,13 @@ class OpaqueBoxes:
         return _reconstruct, (str(self.marker),)
 
 
-@pytest.mark.parametrize("order", tuple(itertools.permutations(("native", "image"))))
+def _compat_register(registry: TypeRegistry) -> None:
+    translation = CompatTranslation()
+    translation.opaque_types.update((BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE))
+    translation.register_types(registry)
+
+
+@pytest.mark.parametrize("order", tuple(itertools.permutations(("native", "image", "compat"))))
 @pytest.mark.parametrize("type_id", (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE))
 def test_all_registration_orders_refuse_pickle_at_real_boundary_admission(
     tmp_path: Path, order: tuple[str, ...], type_id: str
@@ -217,7 +224,8 @@ def test_all_registration_orders_refuse_pickle_at_real_boundary_admission(
     registry = TypeRegistry()
     registrations = {
         "native": register_inference_types,
-        "image": register_types,
+        "image": register_image_types,
+        "compat": _compat_register,
     }
     first = None
     for name in order:
@@ -271,4 +279,4 @@ def test_global_array_and_preexisting_type_authority_are_unchanged() -> None:
     assert not foreign.asset_references_complete
     values: list[Any] = ["not a box", {"arbitrary": True}]
     assert generic.decode(generic.encode(values)) == values
-    assert COMFY_ARRAY_TYPE != ARRAY_TYPE
+    assert comfy_value_type_id("ARRAY") == COMFY_ARRAY_TYPE != ARRAY_TYPE

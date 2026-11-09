@@ -9,7 +9,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import register_media_types
 from dinkster_caches import DiskCAS, MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
@@ -47,6 +46,7 @@ from dinkster_values import (
 from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import BoundaryError, encode_invocation
 
+from dinkster.comfy_compose import register_comfy_host_types
 from tests.async_scenarios import run_scenario
 from tools.serverless_transport import (
     DiskObjectStore,
@@ -120,7 +120,7 @@ class Harness:
     def transport(self, name: str, *, limits: Limits | None = None) -> Transport:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
+        register_comfy_host_types(registry)
         return Transport(
             registry,
             self.store,

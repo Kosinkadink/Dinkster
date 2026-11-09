@@ -1,26 +1,15 @@
 """Public schemas for spatial model patch nodes."""
 
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_COMBO, CORE_FLOAT, CORE_INT, MODEL_TYPE, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.spatial_model_patches import (
-    HyperTile,
-    PatchModelAddDownscale,
-    TomePatchModel,
-)
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 
 
 def test_spatial_model_patches_use_native_model_types_without_torch() -> None:
-    nodes = (TomePatchModel, HyperTile, PatchModelAddDownscale)
     expected = {
-        "dinkster.models.tome_patch_model": ("model", "ratio"),
-        "dinkster.models.hyper_tile": (
-            "model",
-            "tile_size",
-            "swap_size",
-            "max_depth",
-            "scale_depth",
-        ),
-        "dinkster.models.patch_model_add_downscale": (
+        "TomePatchModel": ("model", "ratio"),
+        "HyperTile": ("model", "tile_size", "swap_size", "max_depth", "scale_depth"),
+        "PatchModelAddDownscale": (
             "model",
             "block_number",
             "downscale_factor",
@@ -31,15 +20,15 @@ def test_spatial_model_patches_use_native_model_types_without_torch() -> None:
             "upscale_method",
         ),
     }
-    assert {node.define_schema().node_type for node in nodes} == set(expected)
-    for node in nodes:
+    assert {node.define_schema().node_type for node in SPATIAL_MODEL_PATCH_NODES} == set(expected)
+    for node in SPATIAL_MODEL_PATCH_NODES:
         schema = node.define_schema()
-        assert node in NODES
+        assert node in COMFY_NODES
         assert tuple(input_spec.id for input_spec in schema.inputs) == expected[schema.node_type]
         assert schema.inputs[0].type == TypeExpr.concrete(MODEL_TYPE)
         assert schema.outputs[0].type == TypeExpr.concrete(MODEL_TYPE)
 
-    tome, hypertile, downscale = (node.define_schema() for node in nodes)
+    tome, hypertile, downscale = (node.define_schema() for node in SPATIAL_MODEL_PATCH_NODES)
     assert tome.inputs[1].type == TypeExpr.concrete(CORE_FLOAT)
     assert [input_spec.type for input_spec in hypertile.inputs[1:]] == [
         TypeExpr.concrete(CORE_INT),

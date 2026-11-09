@@ -12,7 +12,7 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
 )
-from dinkster_nodes_image.ported.image_file_tools import (
+from dinkster_nodes_comfy.image_file_tools import (
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
@@ -22,14 +22,14 @@ from dinkster_nodes_image.ported.image_file_tools import (
     SaveAnimatedWEBP,
     SaveImage,
 )
-from dinkster_nodes_image.ported.save_image_advanced import SaveImageAdvanced
+from dinkster_nodes_comfy.save_image_advanced import SaveImageAdvanced
 from dinkster_schema import schema_to_wire
 
 
 def test_save_image_preserves_fixed_inputs_and_appends_mount_widget() -> None:
     schema = SaveImage.schema()
 
-    assert schema.node_type == "dinkster.image.save_image"
+    assert schema.node_type == "SaveImage"
     assert schema.display_name == "Save Image"
     assert schema.category == "image"
     assert tuple(spec.id for spec in schema.inputs) == ("images", "filename_prefix", "mount")
@@ -52,7 +52,6 @@ def test_save_image_preserves_fixed_inputs_and_appends_mount_widget() -> None:
         "output image",
         "write image",
         "download",
-        "SaveImage",
     )
 
     wire = schema_to_wire(schema)
@@ -78,7 +77,6 @@ def test_preview_image_uses_the_public_image_preview_output() -> None:
         "view image",
         "display image",
         "image viewer",
-        "PreviewImage",
     )
 
 
@@ -98,12 +96,12 @@ def test_image_file_inputs_use_the_bound_asset_contract() -> None:
 
 
 def test_painter_retains_order_with_an_optional_granted_mask() -> None:
-    from dinkster_nodes_image import NODES
+    from dinkster_nodes_comfy import COMFY_NODES
     from dinkster_schema import schema_from_wire
 
     schema = Painter.schema()
-    assert Painter in NODES
-    assert schema.node_type == "dinkster.image.painter" and not schema.aliases
+    assert Painter in COMFY_NODES
+    assert schema.node_type == "Painter" and not schema.aliases
     assert tuple(spec.id for spec in schema.inputs) == (
         "image",
         "mask",
@@ -175,4 +173,4 @@ def test_advanced_image_save_retains_format_branches_and_adjacent_mount() -> Non
     formats = schema.combos[0]
     assert formats.id == "format"
     assert tuple(option.key for option in formats.options) == ("png", "exr", "avif")
-    assert schema_to_wire(schema)["nodeType"] == "dinkster.image.save_image_advanced"
+    assert schema_to_wire(schema)["nodeType"] == "SaveImageAdvanced"

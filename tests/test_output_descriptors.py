@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
+from dinkster_nodes_foundation import AddInts, EntryFanOut, MathExpressions
 from dinkster_protocol import Invocation
 from dinkster_schema import (
     ElaborationError,
@@ -27,7 +27,6 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
     elaborate,
-    output_descriptor_entries,
     schema_from_wire,
     schema_signature,
     schema_to_wire,
@@ -45,69 +44,6 @@ INT = TypeExpr.concrete("INT")
 STRING = TypeExpr.concrete("STRING")
 
 
-class DeclaredValues(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.declared_values",
-            inputs=(InputSpec("entries", STRING),),
-            output_descriptors=OutputDescriptorsSpec(
-                "entries",
-                (OutputSpec("int", INT), OutputSpec("boolean", TypeExpr.concrete("BOOLEAN"))),
-                32,
-            ),
-        )
-
-    @classmethod
-    def execute(cls, *, entries: str, output_spec: OutputInterface) -> Mapping[str, object]:
-        return {
-            output.id: entry["value"]
-            for output, entry in zip(
-                output_spec.outputs, output_descriptor_entries(entries), strict=True
-            )
-        }
-
-
-class EntryFanOut(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.entry_fan_out",
-            inputs=(
-                InputSpec("entries", STRING),
-                InputSpec("items", TypeExpr.list_of(TypeExpr.variable("T")), required=False),
-            ),
-            output_descriptors=OutputDescriptorsSpec(
-                "entries", (OutputSpec("int", INT), OutputSpec("string", STRING)), 512
-            ),
-        )
-
-    @classmethod
-    def execute(
-        cls, *, entries: str, output_spec: OutputInterface, items: Sequence[object] = ()
-    ) -> Mapping[str, object]:
-        return {
-            output.id: items[cast(int, entry["index"])] if "index" in entry else entry["value"]
-            for output, entry in zip(
-                output_spec.outputs, output_descriptor_entries(entries), strict=True
-            )
-        }
-
-
-class AddInts(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.add_ints",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("sum", INT),),
-        )
-
-    @classmethod
-    def execute(cls, *, a: int, b: int) -> Mapping[str, object]:
-        return {"sum": a + b}
-
-
 def document(*entries: Mapping[str, object]) -> str:
     return json.dumps({"entries": entries})
 
@@ -116,7 +52,7 @@ def document(*entries: Mapping[str, object]) -> str:
 def runtime() -> tuple[Engine, InProcessWorker, TypeRegistry]:
     registry = TypeRegistry()
     register_core_types(registry)
-    nodes = [DeclaredValues, EntryFanOut, AddInts]
+    nodes = [MathExpressions, EntryFanOut, AddInts]
     worker = InProcessWorker(build_node_types(nodes), registry)
     engine = Engine(
         schemas=build_schemas(nodes), registry=registry, worker=worker, cache=MemoryLRUCache()
@@ -125,11 +61,11 @@ def runtime() -> tuple[Engine, InProcessWorker, TypeRegistry]:
 
 
 def test_wire_and_effective_interface_roundtrip() -> None:
-    schema = DeclaredValues.schema()
+    schema = MathExpressions.schema()
     assert schema_from_wire(schema_to_wire(schema)) == schema
     value = document(
-        {"id": "stable", "name": "Answer", "type": "int", "value": 5},
-        {"id": "other", "name": "Ready", "type": "boolean", "value": True},
+        {"id": "stable", "name": "Answer", "type": "int", "expression": "2+3"},
+        {"id": "other", "name": "Ready", "type": "boolean", "expression": "1"},
     )
     effective = elaborate(schema, {"entries": value})
     assert [(out.id, out.display_name, out.type) for out in effective.outputs] == [
@@ -168,7 +104,7 @@ def test_wire_and_effective_interface_roundtrip() -> None:
 )
 def test_malformed_descriptors_fail_before_execution(value: object) -> None:
     with pytest.raises(ElaborationError):
-        elaborate(DeclaredValues.schema(), {"entries": value})
+        elaborate(MathExpressions.schema(), {"entries": value})
 
 
 def test_descriptor_bounds_collisions_and_fixed_semantics() -> None:
@@ -192,7 +128,7 @@ def test_descriptor_bounds_collisions_and_fixed_semantics() -> None:
 
 
 def test_descriptor_schema_constraints_and_presentation_identity() -> None:
-    schema = DeclaredValues.schema()
+    schema = MathExpressions.schema()
     spec = schema.output_descriptors
     assert spec is not None
     with pytest.raises(ValueError, match="concrete"):
@@ -219,19 +155,23 @@ def test_descriptor_schema_constraints_and_presentation_identity() -> None:
     assert schema_from_wire(schema_to_wire(presentation)) == presentation
 
 
-def test_declared_values_execute_links_and_cache_identity(
+def test_expression_executes_links_and_cache_identity(
     runtime: tuple[Engine, InProcessWorker, TypeRegistry],
 ) -> None:
     engine, _, _ = runtime
 
     async def scenario() -> None:
-        entry = {"id": "stable", "name": "Answer", "type": "int", "value": 5}
+        entry = {"id": "stable", "name": "Answer", "type": "int", "expression": "2+3"}
 
         def graph() -> Graph:
             return Graph(
                 nodes={
-                    "expression": GraphNode("test.declared_values", {"entries": document(entry)}),
-                    "sum": GraphNode("test.add_ints", {"a": Link("expression", "stable"), "b": 7}),
+                    "expression": GraphNode(
+                        "dinkster.math.expressions", {"entries": document(entry)}
+                    ),
+                    "sum": GraphNode(
+                        "std.math.add_ints", {"a": Link("expression", "stable"), "b": 7}
+                    ),
                 }
             )
 
@@ -244,7 +184,7 @@ def test_declared_values_execute_links_and_cache_identity(
         assert "expression" in renamed.executed
         assert renamed.outputs["sum"]["sum"].resolve() == 12
         entry["id"] = "new_identity"
-        diagnostics = validate(graph(), build_schemas([DeclaredValues, AddInts]), ["sum"])
+        diagnostics = validate(graph(), build_schemas([MathExpressions, AddInts]), ["sum"])
         assert any(item.severity == "error" for item in diagnostics)
 
     run_scenario(scenario())
@@ -257,7 +197,7 @@ def test_entry_list_fan_out(runtime: tuple[Engine, InProcessWorker, TypeRegistry
         graph = Graph(
             nodes={
                 "fan": GraphNode(
-                    "test.entry_fan_out",
+                    "dinkster.list.fan_out",
                     {
                         "entries": document(
                             {"id": "a", "name": "Count", "type": "int", "value": 3},
@@ -286,11 +226,11 @@ def test_entry_list_fan_out_interface_depends_only_on_stored_descriptors(
         return Graph(
             nodes={
                 "fan": GraphNode(
-                    "test.entry_fan_out",
+                    "dinkster.list.fan_out",
                     {"entries": entries, "items": TypedLiteral("list<INT>", items)},
                 ),
                 "sum": GraphNode(
-                    "test.add_ints",
+                    "std.math.add_ints",
                     {"a": Link("fan", "selected"), "b": 7},
                 ),
             }
@@ -353,7 +293,7 @@ def test_worker_reprojects_descriptors(
             Invocation(
                 invocation_id="test",
                 node_id="fan",
-                node_type="test.entry_fan_out",
+                node_type="dinkster.list.fan_out",
                 inputs={"entries": registry.wrap("STRING", value)},
                 effective_schema=replace(effective, outputs=tuple(outputs)),
             )
@@ -472,7 +412,7 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
     )
     graph = Graph(
         nodes={
-            "producer": GraphNode("test.add_ints", {"a": 1, "b": 2}),
+            "producer": GraphNode("std.math.add_ints", {"a": 1, "b": 2}),
             "lazy": GraphNode(
                 "test.lazy_descriptors",
                 {

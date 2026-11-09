@@ -6,20 +6,13 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ASSET_TYPE, CORE_FLOAT, HOOKS_TYPE, AssetWidget, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.hook_checkpoint import (
-    CreateHookModelAsLora,
-    CreateHookModelAsLoraModelOnly,
-)
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.hook_checkpoint import HOOK_CHECKPOINT_NODES
 
 
 def test_checkpoint_hook_schemas_preserve_file_slot_strengths_and_optional_hooks() -> None:
-    for node, node_type, names, display in zip(
-        (CreateHookModelAsLora, CreateHookModelAsLoraModelOnly),
-        (
-            "dinkster.models.create_hook_model_as_lora",
-            "dinkster.models.create_hook_model_as_lora_model_only",
-        ),
+    for node, names, display in zip(
+        HOOK_CHECKPOINT_NODES,
         (
             ("ckpt_name", "strength_model", "strength_clip", "prev_hooks"),
             ("ckpt_name", "strength_model", "prev_hooks"),
@@ -28,8 +21,8 @@ def test_checkpoint_hook_schemas_preserve_file_slot_strengths_and_optional_hooks
         strict=True,
     ):
         schema = node.schema()
-        assert schema.node_type == node_type
-        assert node in NODES
+        assert schema.node_type == node.__name__
+        assert node in COMFY_NODES
         assert schema.display_name == display
         assert schema.category == "advanced/hooks/create"
         assert tuple(item.id for item in schema.inputs) == names
@@ -51,11 +44,12 @@ def test_checkpoint_hook_schemas_preserve_file_slot_strengths_and_optional_hooks
         ]
 
 
-def test_checkpoint_hooks_match_pack_namespace_and_entry_order() -> None:
+def test_checkpoint_hooks_serialize_without_torch_and_match_manifest_order() -> None:
     root = Path(__file__).resolve().parents[1]
     manifest = tomllib.loads(
-        (root / "packages/dinkster-nodes-models/dinkster-pack.toml").read_text()
+        (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert manifest["pack"]["namespaces"] == ["dinkster.models", "devices"]
-    start = NODES.index(CreateHookModelAsLora)
-    assert NODES[start : start + 2] == (CreateHookModelAsLora, CreateHookModelAsLoraModelOnly)
+    assert tuple(manifest["pack"]["namespaces"]) == (
+        "devices",
+        *(node.schema().node_type for node in COMFY_NODES),
+    )

@@ -1,14 +1,14 @@
 """Cold schema for native SUPIR model patching."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_misc_models import NODES
-from dinkster_nodes_misc_models.supir import SUPIRApply
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.supir import SUPIRApply
 
 
 def test_supir_schema_preserves_guidance_controls_and_registration() -> None:
     schema = SUPIRApply.schema()
-    assert NODES.count(SUPIRApply) == 1
-    assert schema.node_type == "dinkster.misc.models.supir_apply"
+    assert SUPIRApply in COMFY_NODES
+    assert schema.node_type == "SUPIRApply"
     assert schema.display_name == "Apply SUPIR Patch"
     assert schema.category == "model/patch/supir"
     assert [item.id for item in schema.inputs] == [

@@ -13,14 +13,13 @@ def test_moge_panorama_cold_schema_and_registration() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_vision_moge import NODES
-from dinkster_nodes_vision_moge.moge_panorama import MoGePanoramaInference
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.moge_panorama import MoGePanoramaInference
 from dinkster_workers import load_manifest
 schema = MoGePanoramaInference.define_schema()
-manifest = load_manifest('packages/dinkster-nodes-vision-moge/dinkster-pack.toml')
-assert NODES.count(MoGePanoramaInference) == 1
-assert manifest.namespaces.count('dinkster.vision.moge') == 1
-assert schema.node_type == 'dinkster.vision.moge.mo_ge_panorama_inference'
+manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')
+assert COMFY_NODES.count(MoGePanoramaInference) == 1
+assert manifest.namespaces.count('MoGePanoramaInference') == 1
 assert [i.id for i in schema.inputs] == [
     'moge_model', 'image', 'resolution_level', 'split_resolution',
     'merge_resolution', 'batch_size', 'refine_steps'

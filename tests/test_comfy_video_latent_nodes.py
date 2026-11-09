@@ -3,30 +3,15 @@
 from typing import cast
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_cosmos import NODES as COSMOS_NODES
-from dinkster_nodes_cosmos.video_latent import EmptyCosmosLatentVideo
-from dinkster_nodes_hunyuan import NODES as HUNYUAN_NODES
-from dinkster_nodes_hunyuan.video_latent import EmptyHunyuanLatentVideo, EmptyHunyuanVideo15Latent
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.video_latent_ops import NormalizeVideoLatentStart, TrimVideoLatent
-from dinkster_nodes_ltx import NODES as LTX_NODES
-from dinkster_nodes_ltx.video_latent import EmptyLTXVLatentVideo
-from dinkster_nodes_ltx.video_latent_ops import LTXVFreezeLatent
-from dinkster_nodes_misc_models import NODES as MISC_NODES
-from dinkster_nodes_misc_models.video_latent import EmptyARVideoLatent
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.video_latent import VIDEO_LATENT_NODES
+from dinkster_nodes_comfy.video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 
 
 def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
-    nodes = (
-        (EmptyHunyuanLatentVideo, HUNYUAN_NODES),
-        (EmptyHunyuanVideo15Latent, HUNYUAN_NODES),
-        (EmptyLTXVLatentVideo, LTX_NODES),
-        (EmptyCosmosLatentVideo, COSMOS_NODES),
-        (EmptyARVideoLatent, MISC_NODES),
-    )
     expected = (
         (
-            "dinkster.hunyuan.empty_hunyuan_latent_video",
+            "EmptyHunyuanLatentVideo",
             "Empty Hunyuan Video 1.0 Latent",
             "model/latent/hunyuan video",
             (848, 480, 25, 1),
@@ -35,7 +20,7 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
             (16, 16, 4, None),
         ),
         (
-            "dinkster.hunyuan.empty_hunyuan_video15_latent",
+            "EmptyHunyuanVideo15Latent",
             "Empty Hunyuan Video 1.5 Latent",
             "model/latent/hunyuan video",
             (848, 480, 25, 1),
@@ -44,7 +29,7 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
             (16, 16, 4, None),
         ),
         (
-            "dinkster.ltx.empty_ltxv_latent_video",
+            "EmptyLTXVLatentVideo",
             "Empty LTXV Latent Video",
             "model/latent/ltxv",
             (768, 512, 97, 1),
@@ -53,7 +38,7 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
             (32, 32, 8, None),
         ),
         (
-            "dinkster.cosmos.empty_cosmos_latent_video",
+            "EmptyCosmosLatentVideo",
             "Empty Cosmos Latent Video",
             "model/latent/cosmos",
             (1280, 704, 121, 1),
@@ -62,7 +47,7 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
             (16, 16, 8, None),
         ),
         (
-            "dinkster.misc.models.empty_ar_video_latent",
+            "EmptyARVideoLatent",
             "",
             "model/latent/autoregressive",
             (832, 480, 81, 1),
@@ -83,17 +68,17 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
                 cast(NumberWidget, input_spec.widget).step for input_spec in node.schema().inputs
             ),
         )
-        for node, _ in nodes
+        for node in VIDEO_LATENT_NODES
     )
     assert actual == expected
-    for node, registered in nodes:
-        assert node in registered
+    for node in VIDEO_LATENT_NODES:
+        assert node in COMFY_NODES
         assert [output.id for output in node.schema().outputs] == ["LATENT"]
         assert schema_to_wire(node.schema())
 
 
 def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> None:
-    trim, freeze, normalize = TrimVideoLatent, LTXVFreezeLatent, NormalizeVideoLatentStart
+    trim, freeze, normalize = VIDEO_LATENT_OPERATION_NODES
     trim_schema, freeze_schema, normalize_schema = (
         trim.schema(),
         freeze.schema(),
@@ -101,7 +86,7 @@ def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> 
     )
 
     assert (trim_schema.node_type, trim_schema.display_name, trim_schema.category) == (
-        "dinkster.latent.trim_video_latent",
+        "TrimVideoLatent",
         "Trim Video Latent",
         "model/latent",
     )
@@ -116,7 +101,7 @@ def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> 
     assert [output.id for output in trim_schema.outputs] == ["LATENT"]
 
     assert (freeze_schema.node_type, freeze_schema.display_name, freeze_schema.category) == (
-        "dinkster.ltx.ltxv_freeze_latent",
+        "LTXVFreezeLatent",
         "LTXV Freeze Latent",
         "model/latent/ltxv",
     )
@@ -128,7 +113,7 @@ def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> 
         normalize_schema.display_name,
         normalize_schema.category,
     ) == (
-        "dinkster.latent.normalize_video_latent_start",
+        "NormalizeVideoLatentStart",
         "NormalizeVideoLatentStart",
         "model/conditioning",
     )
@@ -142,6 +127,6 @@ def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> 
         assert (input_spec.default, widget.min, widget.max, widget.step) == (default, 1, 16384, 1)
     assert [output.id for output in normalize_schema.outputs] == ["latent"]
 
-    for node, registered in ((trim, LATENT_NODES), (freeze, LTX_NODES), (normalize, LATENT_NODES)):
-        assert node in registered
+    for node in VIDEO_LATENT_OPERATION_NODES:
+        assert node in COMFY_NODES
         assert schema_to_wire(node.schema())

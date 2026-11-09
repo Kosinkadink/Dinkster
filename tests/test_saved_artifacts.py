@@ -1,4 +1,4 @@
-"""Host-authoritative capture of untrusted output reports and native save claims."""
+"""Host-authoritative capture of untrusted compatibility output reports."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import sys
 import time
 import zlib
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,15 +25,18 @@ from dinkster_assets import (
     digest_bytes,
     load_write_records,
 )
+from dinkster_compat_comfy.saved_results import capture_saved_results
 from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import SavedArtifactCandidate
 from dinkster_schema.reporting import capture_saved_artifacts
+from dinkster_workers import ExecutionContext
 from dinkster_workers.boundary import (
     BoundaryError,
     decode_result_artifact_candidates,
     decode_saved_artifact_claims,
 )
+from dinkster_workers.execution import use_execution_context
 from dinkster_workers.saved_artifacts import (
     MAX_ARTIFACT_FILENAME,
     MAX_SAVED_ARTIFACT_BYTES,
@@ -75,6 +79,25 @@ def _candidate(
     filename: str = "result.png", subfolder: str = "video", folder_type: str = "output"
 ) -> SavedArtifactCandidate:
     return SavedArtifactCandidate("save", filename, subfolder, folder_type)
+
+
+def test_worker_reports_only_raw_saved_result_candidates() -> None:
+    candidates: list[SavedArtifactCandidate] = []
+    context = ExecutionContext(arm=None, expected_execution_identity=None, node_id="save")
+    context = replace(
+        context,
+        artifact_sink=lambda *fields: candidates.append(SavedArtifactCandidate(*fields)),
+    )
+    ui = {
+        "videos": [
+            {"filename": "result.webm", "subfolder": "video", "type": "output"},
+            {"filename": "result.webm", "subfolder": "video", "type": "output"},
+        ],
+        "presentation": [object()],
+    }
+    with use_execution_context(context):
+        capture_saved_results(ui)
+    assert candidates == [SavedArtifactCandidate("save", "result.webm", "video", "output")]
 
 
 def test_forged_authoritative_descriptor_cannot_cross_boundary() -> None:
@@ -644,9 +667,7 @@ class Save(Node):
             return cls.outputs(unknown='bad')
         return cls.outputs(out=ref.name, asset=ref)
 NODES = (Save,)
-def register_types(registry):
-    if ASSET_TYPE not in registry:
-        register_asset_type(registry)
+def register_types(registry): register_asset_type(registry)
 """,
         "ascii",
     )

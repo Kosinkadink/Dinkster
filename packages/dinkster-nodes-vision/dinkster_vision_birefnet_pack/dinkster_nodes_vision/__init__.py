@@ -1,0 +1,1 @@
+"""Bundled BiRefNet provider runtime."""

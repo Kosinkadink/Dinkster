@@ -9,15 +9,16 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_audio import LTXVEmptyLatentAudio
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.ltx_audio import LTX_AUDIO_NODES, LTXVEmptyLatentAudio
 
 
 def test_ltx_empty_audio_schema_matches_comfy() -> None:
-    assert NODES.count(LTXVEmptyLatentAudio) == 1
+    assert LTX_AUDIO_NODES[-1] is LTXVEmptyLatentAudio
+    assert LTXVEmptyLatentAudio in COMFY_NODES
     schema = LTXVEmptyLatentAudio.schema()
     assert (schema.node_type, schema.display_name, schema.category) == (
-        "dinkster.ltx.ltxv_empty_latent_audio",
+        "LTXVEmptyLatentAudio",
         "Empty LTXV Latent Audio",
         "model/latent/ltxv",
     )

@@ -11,20 +11,14 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_video_conditioning import (
-    LTXVConditioning,
-    LTXVCropGuides,
-    LTXVImgToVideo,
-    LTXVImgToVideoInplace,
-)
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 
 
 def test_ltx_video_conditioning_schemas() -> None:
-    nodes = (LTXVImgToVideo, LTXVImgToVideoInplace, LTXVConditioning, LTXVCropGuides)
     expected = (
         (
-            "dinkster.ltx.ltxv_img_to_video",
+            "LTXVImgToVideo",
             (
                 ("positive", CONDITIONING_TYPE),
                 ("negative", CONDITIONING_TYPE),
@@ -43,7 +37,7 @@ def test_ltx_video_conditioning_schemas() -> None:
             ),
         ),
         (
-            "dinkster.ltx.ltxv_img_to_video_inplace",
+            "LTXVImgToVideoInplace",
             (
                 ("vae", VAE_TYPE),
                 ("image", IMAGE_TYPE),
@@ -54,7 +48,7 @@ def test_ltx_video_conditioning_schemas() -> None:
             (("latent", LATENT_TYPE),),
         ),
         (
-            "dinkster.ltx.ltxv_conditioning",
+            "LTXVConditioning",
             (
                 ("positive", CONDITIONING_TYPE),
                 ("negative", CONDITIONING_TYPE),
@@ -63,7 +57,7 @@ def test_ltx_video_conditioning_schemas() -> None:
             (("positive", CONDITIONING_TYPE), ("negative", CONDITIONING_TYPE)),
         ),
         (
-            "dinkster.ltx.ltxv_crop_guides",
+            "LTXVCropGuides",
             (
                 ("positive", CONDITIONING_TYPE),
                 ("negative", CONDITIONING_TYPE),
@@ -76,12 +70,12 @@ def test_ltx_video_conditioning_schemas() -> None:
             ),
         ),
     )
-    assert len(nodes) == len(expected)
-    for node, (name, inputs, outputs) in zip(nodes, expected, strict=True):
+    assert len(LTX_VIDEO_CONDITIONING_NODES) == len(expected)
+    for node, (name, inputs, outputs) in zip(LTX_VIDEO_CONDITIONING_NODES, expected, strict=True):
         schema = node.schema()
-        assert schema.node_type == name
+        assert node.__name__ == schema.node_type == name
         assert tuple((item.id, item.type.types[0]) for item in schema.inputs) == inputs
         assert tuple((item.id, item.type.types[0]) for item in schema.outputs) == outputs
         assert all(item.required for item in schema.inputs)
         assert schema_from_wire(schema_to_wire(schema)) == schema
-        assert NODES.count(node) == 1
+        assert node in COMFY_NODES

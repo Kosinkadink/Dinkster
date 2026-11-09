@@ -9,8 +9,9 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_latent import NODES
-from dinkster_nodes_latent.audio_vae import (
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.audio_vae import (
+    AUDIO_VAE_NODES,
     VAEDecodeAudio,
     VAEDecodeAudioTiled,
     VAEEncodeAudio,
@@ -18,24 +19,23 @@ from dinkster_nodes_latent.audio_vae import (
 
 
 def test_audio_vae_interfaces_match_comfy_schemas() -> None:
+    assert AUDIO_VAE_NODES == (VAEEncodeAudio, VAEDecodeAudio, VAEDecodeAudioTiled)
+    assert all(node in COMFY_NODES for node in AUDIO_VAE_NODES)
     expected = (
         (
             VAEEncodeAudio,
-            "dinkster.latent.vae_encode_audio",
             "VAE Encode Audio",
             (("audio", AUDIO_TYPE), ("vae", VAE_TYPE)),
             ("LATENT", LATENT_TYPE),
         ),
         (
             VAEDecodeAudio,
-            "dinkster.latent.vae_decode_audio",
             "VAE Decode Audio",
             (("samples", LATENT_TYPE), ("vae", VAE_TYPE)),
             ("AUDIO", AUDIO_TYPE),
         ),
         (
             VAEDecodeAudioTiled,
-            "dinkster.latent.vae_decode_audio_tiled",
             "VAE Decode Audio (Tiled)",
             (
                 ("samples", LATENT_TYPE),
@@ -46,11 +46,10 @@ def test_audio_vae_interfaces_match_comfy_schemas() -> None:
             ("AUDIO", AUDIO_TYPE),
         ),
     )
-    for node, node_type, display_name, inputs, output in expected:
-        assert node in NODES
+    for node, display_name, inputs, output in expected:
         schema = node.schema()
         assert (schema.node_type, schema.display_name, schema.category) == (
-            node_type,
+            node.__name__,
             display_name,
             "model/latent",
         )

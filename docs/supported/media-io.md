@@ -1,12 +1,5 @@
 ## Media I/O
 
-- Save Audio (Opus) uses its declared 128k quality when callers omit quality.
-- Audio saves reject malformed, empty or non-finite waveforms and invalid sample
-  rates before encoding. Encoded output supports mono and stereo channels.
-- First-party utility lists transport whole IMAGE values between isolated
-  workers without decoding their pixels in the utilities worker.
-- Get Video Components preserves silent video frames and reports an absent
-  optional audio output when the source has no audio stream.
 - Node packs can publish produced bytes through the public
   `dinkster_api.v1.produced_output_scratch` writer selector. It uses the existing
   worker scratch and active job authority without granting mounted-file access.
@@ -193,11 +186,6 @@
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
-- Ordinary file encoding defaults to H.264 CRF 18 with the encoder's medium
-  preset and no zerolatency tuning, or AV1 CRF 24 with SVT preset 8 and one
-  logical processor without forced low-delay settings. Explicit CRF and
-  microsecond/trimmed-source timestamp handling remain available; ordinary
-  H.264 encoding disables B-frames independently of its quality settings.
 - Opt-in unedited component-video encoding preserves source H.264/AV1
   quantization, color signaling, CRF defaults, optional H.264 preset, and
   thousandth-rounded encoded frame rates without changing component values.

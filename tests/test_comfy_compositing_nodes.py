@@ -1,44 +1,35 @@
 """Torch-free public interfaces for ComfyUI compositing nodes."""
 
 from dinkster_api.v1 import ComboOption, ComboWidget, schema_to_wire
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.ported.compositing import (
-    JoinImageWithAlpha,
+from dinkster_nodes_comfy.compositing import (
+    COMPOSITING_NODES,
     PorterDuffImageComposite,
     PorterDuffMode,
-    SplitImageWithAlpha,
 )
 
 
 def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
-    nodes = (PorterDuffImageComposite, SplitImageWithAlpha, JoinImageWithAlpha)
     expected = (
         (
-            "dinkster.image.porter_duff_image_composite",
+            "PorterDuffImageComposite",
             "Porter-Duff Image Composite",
             ("source", "source_alpha", "destination", "destination_alpha", "mode"),
             ("IMAGE", "MASK"),
-            (
-                "alpha composite",
-                "blend modes",
-                "layer blend",
-                "transparency blend",
-                "PorterDuffImageComposite",
-            ),
+            ("alpha composite", "blend modes", "layer blend", "transparency blend"),
         ),
         (
-            "dinkster.image.split_image_with_alpha",
+            "SplitImageWithAlpha",
             "Split Image with Alpha",
             ("image",),
             ("IMAGE", "MASK"),
-            ("extract alpha", "separate transparency", "remove alpha", "SplitImageWithAlpha"),
+            ("extract alpha", "separate transparency", "remove alpha"),
         ),
         (
-            "dinkster.image.join_image_with_alpha",
+            "JoinImageWithAlpha",
             "Join Image with Alpha",
             ("image", "alpha"),
             ("IMAGE",),
-            ("add transparency", "apply alpha", "composite alpha", "RGBA", "JoinImageWithAlpha"),
+            ("add transparency", "apply alpha", "composite alpha", "RGBA"),
         ),
     )
     actual = tuple(
@@ -49,7 +40,7 @@ def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
             tuple(output_spec.id for output_spec in node.schema().outputs),
             node.schema().search_terms,
         )
-        for node in nodes
+        for node in COMPOSITING_NODES
     )
     assert actual == expected
     schema = PorterDuffImageComposite.schema()
@@ -59,6 +50,5 @@ def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
         option.value if isinstance(option, ComboOption) else option
         for option in schema.inputs[-1].widget.options
     ) == tuple(mode.name for mode in PorterDuffMode)
-    for node in nodes:
-        assert node in NODES
+    for node in COMPOSITING_NODES:
         assert schema_to_wire(node.schema())

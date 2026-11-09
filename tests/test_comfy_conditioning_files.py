@@ -4,15 +4,13 @@ import subprocess
 import sys
 
 from dinkster_api.v1 import ASSET_TYPE, CONDITIONING_TYPE, AssetWidget, MountWidget
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.conditioning_files import ConditioningLoader, SaveConditioning
-from dinkster_schema import claim_covers
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.conditioning_files import ConditioningLoader, SaveConditioning
 from dinkster_workers import load_manifest
 
 
 def test_conditioning_file_schemas_and_registration() -> None:
     loader = ConditioningLoader.schema()
-    assert loader.node_type == "dinkster.conditioning.conditioning_loader"
     assert loader.display_name == "Load Conditioning"
     assert loader.category == "model/loaders"
     assert [(item.id, item.type.types) for item in loader.inputs] == [
@@ -25,7 +23,6 @@ def test_conditioning_file_schemas_and_registration() -> None:
         ("CONDITIONING", (CONDITIONING_TYPE,))
     ]
     saver = SaveConditioning.schema()
-    assert saver.node_type == "dinkster.conditioning.save_conditioning"
     assert [item.id for item in saver.inputs] == ["conditioning", "filename_prefix", "mount"]
     assert saver.inputs[0].type.types == (CONDITIONING_TYPE,)
     assert saver.inputs[1].default == "conditioning/ComfyUI"
@@ -36,12 +33,10 @@ def test_conditioning_file_schemas_and_registration() -> None:
         ("conditioning", (CONDITIONING_TYPE,))
     ]
     assert saver.output_node and not saver.idempotent
-    assert NODES.count(ConditioningLoader) == NODES.count(SaveConditioning) == 1
-    manifest = load_manifest("packages/dinkster-nodes-conditioning/dinkster-pack.toml")
-    assert all(
-        any(claim_covers(claim, node.schema().node_type) for claim in manifest.namespaces)
-        for node in NODES
-    )
+    assert COMFY_NODES.count(ConditioningLoader) == COMFY_NODES.count(SaveConditioning) == 1
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_conditioning_file_import_is_torch_free() -> None:
@@ -49,8 +44,8 @@ def test_conditioning_file_import_is_torch_free() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; import dinkster_nodes_conditioning; "
-            "from dinkster_nodes_conditioning.conditioning_files import "
+            "import sys; import dinkster_nodes_comfy; "
+            "from dinkster_nodes_comfy.conditioning_files import "
             "ConditioningLoader, SaveConditioning; "
             "ConditioningLoader.schema(); SaveConditioning.schema(); "
             "assert 'torch' not in sys.modules; "

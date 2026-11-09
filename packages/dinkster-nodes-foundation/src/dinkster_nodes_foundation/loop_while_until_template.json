@@ -1,0 +1,41 @@
+{
+  "format": "dinkster-workflow", "formatVersion": 1, "lineage": "loop-while-until", "root": "root",
+  "graphs": {
+    "root": {
+      "id": "root", "name": "Repeat until the count reaches four",
+      "nodes": {
+        "limit": { "id": "limit", "type": "dinkster.int", "values": { "value": 4 } },
+        "loop": { "id": "loop", "type": "#whileBody", "values": { "count": 0 }, "region": { "kind": "while", "statePorts": ["count"], "outputRoles": { "result": { "kind": "state", "statePort": "count" }, "steps": { "kind": "gather" } }, "continueOutput": "continue", "maxIterations": 10 } },
+        "output": { "id": "output", "type": "dinkster.preview_any", "values": {} }
+      },
+      "links": {
+        "limit_loop": { "id": "limit_loop", "from": { "node": "limit", "port": "value" }, "to": { "node": "loop", "port": "limit" } },
+        "loop_output": { "id": "loop_output", "from": { "node": "loop", "port": "result" }, "to": { "node": "output", "port": "source" } }
+      },
+      "nets": {}, "reroutes": {}, "nextOrdinal": 3
+    },
+    "whileBody": {
+      "id": "whileBody", "name": "Increment and continue below limit",
+      "nodes": {
+        "add": { "id": "add", "type": "std.math.add_ints", "values": { "b": 1 } },
+        "compare": { "id": "compare", "type": "dinkster.value.compare", "values": { "operation": "lt", "epsilon": 0 } }
+      },
+      "links": { "next_compare": { "id": "next_compare", "from": { "node": "add", "port": "sum" }, "to": { "node": "compare", "port": "a" } } },
+      "nets": {}, "reroutes": {},
+      "boundary": {
+        "inputs": [
+          { "id": "count", "binds": { "kind": "port", "node": "add", "port": "a" } },
+          { "id": "limit", "binds": { "kind": "port", "node": "compare", "port": "b" } }
+        ],
+        "outputs": [
+          { "id": "result", "binds": { "kind": "port", "node": "add", "port": "sum" } },
+          { "id": "steps", "binds": { "kind": "port", "node": "add", "port": "sum" } },
+          { "id": "continue", "binds": { "kind": "port", "node": "compare", "port": "result" } }
+        ]
+      },
+      "nextOrdinal": 2
+    }
+  },
+  "view": { "graphs": { "root": { "nodes": { "loop": { "position": { "x": 160, "y": 120 } } } }, "whileBody": { "nodes": { "add": { "position": { "x": 100, "y": 120 } }, "compare": { "position": { "x": 400, "y": 120 } } } } } },
+  "meta": { "title": "Loop: While / Until" }
+}

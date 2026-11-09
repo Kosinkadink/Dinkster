@@ -140,7 +140,6 @@ from .builtin_types import (
     VIDEO_TYPE,
     VOXEL_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
-    WEBCAM_TYPE,
 )
 from .curve import MAX_CURVE_POINTS, Curve, register_curve_type
 from .detection_codec import (
@@ -506,7 +505,6 @@ __all__ = [
     "BOUNDING_BOX_TYPE",
     "BOUNDING_BOXES_TYPE",
     "IMAGECOMPARE_TYPE",
-    "WEBCAM_TYPE",
     "COMFY_ARRAY_TYPE",
     "CONTEXT_WINDOWS_TYPE",
     "INPAINT_CONDITIONING_TYPE",

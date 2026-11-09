@@ -9,23 +9,20 @@ from typing import Any
 
 import pytest
 from dinkster_api.v1 import Node, inference_nodes, initialize_inference_process
-from dinkster_nodes_latent import NODES
-from dinkster_nodes_latent.vae import VAEDecode, VAEDecodeTiled, VAEEncode, VAEEncodeTiled
+from dinkster_nodes_comfy.vae import VAE_NODES, VAEDecode, VAEDecodeTiled
 
 
 def test_vae_core_interfaces() -> None:
-    nodes = (VAEDecode, VAEEncode, VAEDecodeTiled, VAEEncodeTiled)
-    assert [node.schema().node_type for node in nodes] == [
-        "dinkster.latent.vae_decode",
-        "dinkster.latent.vae_encode",
-        "dinkster.latent.vae_decode_tiled",
-        "dinkster.latent.vae_encode_tiled",
+    assert [node.schema().node_type for node in VAE_NODES] == [
+        "VAEDecode",
+        "VAEEncode",
+        "VAEDecodeTiled",
+        "VAEEncodeTiled",
     ]
-    for node in nodes:
-        assert node in NODES
+    for node in VAE_NODES:
         schema = node.schema()
-        encode = "_encode" in schema.node_type
-        tiled = schema.node_type.endswith("_tiled")
+        encode = "Encode" in schema.node_type
+        tiled = schema.node_type.endswith("Tiled")
         assert [field.id for field in schema.inputs] == [
             "pixels" if encode else "samples",
             "vae",

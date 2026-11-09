@@ -4,20 +4,19 @@ import io
 import json
 import tempfile
 import unittest
-from dataclasses import replace
 from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
 from dinkster_graph import graph_from_wire, validate
-from dinkster_nodes_conditioning.clip import CLIPTextEncode
-from dinkster_nodes_image.ported.image_file_tools import SaveImage
-from dinkster_nodes_latent.latent import EmptyLatentImage
-from dinkster_nodes_latent.vae import VAEDecode
-from dinkster_nodes_models.model_file_loaders import CheckpointLoaderSimple
-from dinkster_nodes_sampling.standard_sampling import KSampler
-from dinkster_schema import schema_to_wire
+from dinkster_nodes_comfy.clip import CLIPTextEncode
+from dinkster_nodes_comfy.image_file_tools import SaveImage
+from dinkster_nodes_comfy.latent import EmptyLatentImage
+from dinkster_nodes_comfy.model_file_loaders import CheckpointLoaderSimple
+from dinkster_nodes_comfy.standard_sampling import KSampler
+from dinkster_nodes_comfy.vae import VAEDecode
+from dinkster_schema import build_schemas, schema_to_wire
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("receipt", ROOT / "tools/macos_workflow_receipt.py")
@@ -27,18 +26,9 @@ SPEC.loader.exec_module(receipt)
 STARTER_COMMIT = "1ec923c7e9ba9c4c01189f1fc01be9b4554ce8ec"
 STARTER_SHA256 = "53efb255c2dd8743c57d25f0ad82d1ecb3a29784d95176719507637325dca768"
 STARTER_BYTES = (ROOT / "tests/fixtures/macos-sd15.json").read_bytes()
-# This harness validates pinned historical receipts, not current catalog IDs.
-SCHEMAS = {
-    node.__name__: replace(node.schema(), node_type=node.__name__)
-    for node in (
-        CheckpointLoaderSimple,
-        CLIPTextEncode,
-        EmptyLatentImage,
-        KSampler,
-        VAEDecode,
-        SaveImage,
-    )
-}
+SCHEMAS = build_schemas(
+    (CheckpointLoaderSimple, CLIPTextEncode, EmptyLatentImage, KSampler, VAEDecode, SaveImage)
+)
 CATALOG = {"nodes": {name: schema_to_wire(schema) for name, schema in SCHEMAS.items()}}
 
 

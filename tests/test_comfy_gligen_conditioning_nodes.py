@@ -14,16 +14,14 @@ from dinkster_api.v1 import (
     NumberWidget,
     StringWidget,
     TypeExpr,
-    schema_to_wire,
 )
-from dinkster_nodes_sd import NODES
-from dinkster_nodes_sd.gligen_conditioning import GLIGENTextBoxApply
-from dinkster_schema import claim_covers
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.gligen_conditioning import GLIGENTextBoxApply
 
 
 def test_gligen_textbox_schema_preserves_ports_defaults_and_widgets() -> None:
     schema = GLIGENTextBoxApply.schema()
-    assert schema.node_type == "dinkster.sd.gligen_text_box_apply"
+    assert schema.node_type == "GLIGENTextBoxApply"
     assert schema.display_name == "Apply GLIGEN Text Box"
     assert schema.category == "model/conditioning/gligen"
     assert tuple(item.id for item in schema.inputs) == (
@@ -52,12 +50,10 @@ def test_gligen_textbox_schema_preserves_ports_defaults_and_widgets() -> None:
 
 def test_gligen_textbox_is_registered_in_manifest_and_cold_serializes() -> None:
     root = Path(__file__).resolve().parents[1]
-    manifest = tomllib.loads((root / "packages/dinkster-nodes-sd/dinkster-pack.toml").read_text())
-    assert all(
-        any(
-            claim_covers(claim, node.schema().node_type) for claim in manifest["pack"]["namespaces"]
-        )
-        for node in NODES
+    manifest = tomllib.loads(
+        (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
     )
-    assert GLIGENTextBoxApply in NODES
-    assert schema_to_wire(GLIGENTextBoxApply.schema())
+    assert ["devices", *(node.schema().node_type for node in COMFY_NODES)] == manifest["pack"][
+        "namespaces"
+    ]
+    assert GLIGENTextBoxApply in COMFY_NODES

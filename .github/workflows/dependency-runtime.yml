@@ -10,8 +10,8 @@ on:
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
-      - tests/first_party_runtime/test_model_advanced_torch.py
-      - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
+      - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
+      - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
       - packages/dinkster-video/pyproject.toml
@@ -185,5 +185,5 @@ jobs:
         shell: bash
         run: |
           uv run --no-sync python -m pytest -q \
-            packages/dinkster-nodes-void/tests/test_void_sampler_torch.py \
-            tests/first_party_runtime/test_model_advanced_torch.py
+            packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
+            packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py

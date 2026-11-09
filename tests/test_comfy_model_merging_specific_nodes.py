@@ -3,43 +3,11 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.model_merging_specific import (
-    ModelMergeAuraflow,
-    ModelMergeCosmos7B,
-    ModelMergeCosmos14B,
-    ModelMergeCosmosPredict2_2B,
-    ModelMergeCosmosPredict2_14B,
-    ModelMergeFlux1,
-    ModelMergeKrea2,
-    ModelMergeLTXV,
-    ModelMergeMochiPreview,
-    ModelMergeQwenImage,
-    ModelMergeSD1,
-    ModelMergeSD2,
-    ModelMergeSD3_2B,
-    ModelMergeSD35_Large,
-    ModelMergeSDXL,
-    ModelMergeWAN2_1,
-)
-
-MODEL_SPECIFIC_MERGE_NODES = (
+from dinkster_nodes_comfy.model_merging_specific import (
+    MODEL_SPECIFIC_MERGE_NODES,
     ModelMergeSD1,
     ModelMergeSD2,
     ModelMergeSDXL,
-    ModelMergeSD3_2B,
-    ModelMergeAuraflow,
-    ModelMergeFlux1,
-    ModelMergeSD35_Large,
-    ModelMergeMochiPreview,
-    ModelMergeLTXV,
-    ModelMergeCosmos7B,
-    ModelMergeCosmos14B,
-    ModelMergeWAN2_1,
-    ModelMergeCosmosPredict2_2B,
-    ModelMergeCosmosPredict2_14B,
-    ModelMergeQwenImage,
-    ModelMergeKrea2,
 )
 
 
@@ -83,28 +51,9 @@ def test_specific_model_merge_schemas_have_stable_public_contracts() -> None:
         tuple((node.__name__, len(node.schema().inputs) - 2) for node in MODEL_SPECIFIC_MERGE_NODES)
         == expected
     )
-    expected_ids = (
-        "dinkster.models.model_merge_sd1",
-        "dinkster.models.model_merge_sd2",
-        "dinkster.models.model_merge_sdxl",
-        "dinkster.models.model_merge_sd3_2_b",
-        "dinkster.models.model_merge_auraflow",
-        "dinkster.models.model_merge_flux1",
-        "dinkster.models.model_merge_sd35_large",
-        "dinkster.models.model_merge_mochi_preview",
-        "dinkster.models.model_merge_ltxv",
-        "dinkster.models.model_merge_cosmos7_b",
-        "dinkster.models.model_merge_cosmos14_b",
-        "dinkster.models.model_merge_wan2_1",
-        "dinkster.models.model_merge_cosmos_predict2_2_b",
-        "dinkster.models.model_merge_cosmos_predict2_14_b",
-        "dinkster.models.model_merge_qwen_image",
-        "dinkster.models.model_merge_krea2",
-    )
-    for node, node_type in zip(MODEL_SPECIFIC_MERGE_NODES, expected_ids, strict=True):
+    for node in MODEL_SPECIFIC_MERGE_NODES:
         schema = node.schema()
-        assert schema.node_type == node_type
-        assert NODES.count(node) == 1
+        assert schema.node_type == node.__name__
         assert schema.category == "model/merging/model specific"
         assert tuple(input_spec.id for input_spec in schema.inputs[:2]) == ("model1", "model2")
 
@@ -116,7 +65,7 @@ def test_specific_model_merge_schemas_have_stable_public_contracts() -> None:
 
 def test_sd2_has_its_own_node_identity_with_sd1_coefficients() -> None:
     assert ModelMergeSD2 is not ModelMergeSD1
-    assert ModelMergeSD2.schema().node_type == "dinkster.models.model_merge_sd2"
+    assert ModelMergeSD2.schema().node_type == "ModelMergeSD2"
     assert ModelMergeSD2.schema().inputs == ModelMergeSD1.schema().inputs
 
 

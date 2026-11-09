@@ -1,21 +1,23 @@
 """Torch-free interfaces for native video CFG guidance nodes."""
 
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr, schema_to_wire
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.video_guidance import VideoLinearCFGGuidance, VideoTriangleCFGGuidance
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.video_guidance import VIDEO_GUIDANCE_NODES
 
 
 def test_video_cfg_guidance_schemas_are_registered_with_canonical_types() -> None:
-    nodes = (VideoLinearCFGGuidance, VideoTriangleCFGGuidance)
     expected = (
-        ("dinkster.sampling.video_linear_cfg_guidance", "Video Linear CFG Guidance"),
-        ("dinkster.sampling.video_triangle_cfg_guidance", "Video Triangle CFG Guidance"),
+        ("VideoLinearCFGGuidance", "Video Linear CFG Guidance"),
+        ("VideoTriangleCFGGuidance", "Video Triangle CFG Guidance"),
     )
     assert (
-        tuple((node.schema().node_type, node.schema().display_name) for node in nodes) == expected
+        tuple(
+            (node.schema().node_type, node.schema().display_name) for node in VIDEO_GUIDANCE_NODES
+        )
+        == expected
     )
-    for node in nodes:
-        assert NODES.count(node) == 1
+    for node in VIDEO_GUIDANCE_NODES:
+        assert node in COMFY_NODES
         schema = node.schema()
         assert schema.category == "model/sampling/guiders"
         assert [(item.id, item.type) for item in schema.inputs] == [

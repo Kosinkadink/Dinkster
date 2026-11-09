@@ -5,6 +5,9 @@ from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import VIDEO_TYPE
+from dinkster_assets import AssetRef, digest_bytes
+from dinkster_compat_comfy import CompatError, CompatTranslation
+from dinkster_compat_comfy.translate import translate_node
 from dinkster_schema import (
     AssetWidget,
     InputSpec,
@@ -17,6 +20,8 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
+from dinkster_workers import ExecutionContext
+from dinkster_workers.execution import use_execution_context
 
 
 def _schema(*, listed: bool = False) -> NodeSchema:
@@ -228,3 +233,161 @@ def test_source_filename_golden_is_encoder_authored() -> None:
             }
         ],
     }
+
+
+def _source_node(config: dict[str, object], *, input_is_list: bool = False) -> type:
+    class SourceNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+        seen: list[object] = []
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"source": (["existing"], config)}}
+
+        def execute(self, source):  # noqa: ANN001, ANN201
+            type(self).seen.append(source)
+            return ()
+
+    if input_is_list:
+        SourceNode.INPUT_IS_LIST = True  # type: ignore[attr-defined]
+    return SourceNode
+
+
+def _ref(name: str) -> AssetRef:
+    return AssetRef(digest_bytes(name.encode()), name, len(name))
+
+
+def test_v1_source_filename_translation_and_execution_use_only_materializer() -> None:
+    translation = CompatTranslation()
+    source = _source_node({"video_upload": True, "image_folder": "temp", "forceInput": True})
+    node = translate_node("SourceVideo", source, translation)
+    (spec,) = node.schema().inputs
+    assert spec.type == TypeExpr.concrete("ASSET")
+    assert spec.source_filename == SourceFilenameSpec("media/video", "temp")
+    assert spec.force_input is True
+    assert spec.widget == AssetWidget(
+        accept=("video/mp4", "video/webm"),
+        kind="media/video",
+        allow_upload=True,
+    )
+
+    asset = _ref("clip.webm")
+    calls: list[tuple[AssetRef, str, str]] = []
+
+    def materialize(asset: AssetRef, kind: str, category: str) -> str:
+        calls.append((asset, kind, category))
+        return "staged/clip.webm [temp]"
+
+    with use_execution_context(ExecutionContext(None, None, materialize_source=materialize)):
+        assert node.execute(source=asset) == {}
+    assert calls == [(asset, "media/video", "temp")]
+    assert source.seen == ["staged/clip.webm [temp]"]
+
+    with pytest.raises(CompatError, match="requires an AssetRef"):
+        with use_execution_context(ExecutionContext(None, None, materialize_source=materialize)):
+            node.execute(source="ambient/path.webm")
+    with pytest.raises(CompatError, match="invocation-scoped source staging"):
+        node.execute(source=asset)
+
+
+def test_v1_declared_source_list_preserves_order_and_duplicates() -> None:
+    source = _source_node({"audio_upload": True, "multiselect": True})
+    node = translate_node("SourceAudioList", source, CompatTranslation())
+    (spec,) = node.schema().inputs
+    assert spec.type == TypeExpr.list_of(TypeExpr.concrete("ASSET"))
+    first = _ref("one.wav")
+    second = _ref("two.wav")
+    calls: list[AssetRef] = []
+
+    def materialize(asset: AssetRef, kind: str, category: str) -> str:
+        assert (kind, category) == ("media/audio", "input")
+        calls.append(asset)
+        return asset.name
+
+    with use_execution_context(ExecutionContext(None, None, materialize_source=materialize)):
+        assert node.execute(source=[first, second, first]) == {}
+    assert calls == [first, second, first]
+    assert source.seen == [["one.wav", "two.wav", "one.wav"]]
+    with pytest.raises(CompatError, match="declared asset list"):
+        with use_execution_context(ExecutionContext(None, None, materialize_source=materialize)):
+            node.execute(source=(first, second))
+    calls.clear()
+    with pytest.raises(CompatError, match="only AssetRef"):
+        with use_execution_context(ExecutionContext(None, None, materialize_source=materialize)):
+            node.execute(source=[first, "ambient/two.wav"])
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("config", "input_is_list", "message"),
+    (
+        ({"image_upload": "yes"}, False, "must be a Boolean"),
+        ({"image_upload": True, "audio_upload": True}, False, "contradictory"),
+        ({"file_upload": True}, False, "file_upload/model"),
+        ({"animated_upload": True}, False, "animated_upload"),
+        ({"mesh_upload": True}, False, "mesh_upload"),
+        ({"image_upload": True, "animated": True}, False, "animated"),
+        ({"image_upload": True, "multiple": True}, False, "multiple"),
+        ({"image_upload": True, "other_upload": False}, False, "unsupported source upload"),
+        ({"image_folder": "output"}, False, "no source upload"),
+        ({"image_upload": True, "image_folder": "preview"}, False, "image_folder"),
+        ({"image_upload": True, "default": "ambient.png"}, False, "ambient default"),
+        ({"image_upload": True, "lazy": True}, False, "lazy"),
+        ({"image_upload": True, "rawLink": True}, False, "rawLink"),
+        ({"image_upload": True, "remote": {}}, False, "remote route"),
+        (
+            {"image_upload": True, "remote": {"route": "relative"}},
+            False,
+            "remote route",
+        ),
+        (
+            {"image_upload": True, "remote": {"route": "/files", "other": True}},
+            False,
+            "unsupported fields",
+        ),
+        (
+            {"image_upload": True, "control_after_generate": "increment"},
+            False,
+            "control_after_generate",
+        ),
+        ({"image_upload": True}, True, "INPUT_IS_LIST"),
+    ),
+)
+def test_v1_source_filename_refuses_malformed_unsupported_and_batch_mismatch(
+    config: dict[str, object],
+    input_is_list: bool,
+    message: str,
+) -> None:
+    with pytest.raises(CompatError, match=message):
+        translate_node(
+            "RefusedSource",
+            _source_node(config, input_is_list=input_is_list),
+            CompatTranslation(),
+        )
+
+
+def test_v1_source_filename_accepts_bounded_remote_refresh_metadata() -> None:
+    source = _source_node(
+        {
+            "image_upload": True,
+            "image_folder": "output",
+            "remote": {
+                "route": "/internal/files/output",
+                "refresh_button": True,
+                "control_after_refresh": "first",
+            },
+        }
+    )
+    (spec,) = translate_node("RemoteImage", source, CompatTranslation()).schema().inputs
+    assert spec.source_filename == SourceFilenameSpec("media/image", "output")
+
+
+def test_legacy_combo_without_source_declaration_stays_dormant() -> None:
+    source = _source_node({})
+    node = translate_node("LegacyCombo", source, CompatTranslation())
+    (spec,) = node.schema().inputs
+    assert spec.type == TypeExpr.concrete("COMBO")
+    assert spec.source_filename is None
+    assert node.execute(source="existing") == {}
+    assert source.seen == ["existing"]

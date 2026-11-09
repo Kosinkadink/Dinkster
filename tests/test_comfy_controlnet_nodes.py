@@ -6,40 +6,30 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ComboOption, ComboWidget
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.controlnet import (
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.controlnet import (
+    CONTROLNET_NODES,
     ControlNetApply,
     ControlNetApplyAdvanced,
+    ControlNetApplySD3,
     SetUnionControlNetType,
 )
-from dinkster_nodes_sd import NODES as SD_NODES
-from dinkster_nodes_sd.controlnet import ControlNetApplySD3
 
 
-def test_controlnet_schemas_register_the_first_party_ids() -> None:
-    assert SetUnionControlNetType in NODES
+def test_controlnet_schemas_register_the_exact_core_ids() -> None:
+    assert SetUnionControlNetType in COMFY_NODES
     manifest = tomllib.loads(
         (
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-conditioning/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
         ).read_text()
     )
-    assert manifest["pack"]["namespaces"] == ["dinkster.conditioning"]
-    expected_ids = {
-        ControlNetApply: "dinkster.conditioning.control_net_apply",
-        ControlNetApplyAdvanced: "dinkster.conditioning.control_net_apply_advanced",
-        SetUnionControlNetType: "dinkster.conditioning.set_union_control_net_type",
-    }
-    for node, node_type in expected_ids.items():
-        assert node in NODES
+    for node in CONTROLNET_NODES:
+        assert node in COMFY_NODES
         schema = node.define_schema()
-        assert schema.node_type == node_type
+        assert schema.node_type == node.__name__
+        assert schema.node_type in manifest["pack"]["namespaces"]
         assert schema.category == "model/conditioning/controlnet"
-    assert ControlNetApplySD3 in SD_NODES
-    assert ControlNetApplySD3 not in NODES
     legacy_sd3 = ControlNetApplySD3.define_schema()
-    assert legacy_sd3.node_type == "dinkster.sd.control_net_apply_sd3"
-    assert legacy_sd3.category == "model/conditioning/controlnet"
     assert legacy_sd3.deprecation is not None
     assert legacy_sd3.search_visibility == "deprecated"
     schema = ControlNetApplyAdvanced.define_schema()

@@ -6,74 +6,37 @@ from types import SimpleNamespace
 
 import pytest
 from dinkster_api.v1 import MODEL_TYPE, ComboOption, ComboWidget, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES, device_routing, model_advanced
-
-MODEL_ADVANCED_NODES = (
-    model_advanced.ModelSamplingDiscrete,
-    model_advanced.ModelSamplingContinuousEDM,
-    model_advanced.ModelSamplingContinuousV,
-    model_advanced.ModelSamplingStableCascade,
-    model_advanced.ModelSamplingSD3,
-    model_advanced.ModelSamplingAuraFlow,
-    model_advanced.ModelSamplingFlux,
-    model_advanced.ModelNoiseScale,
-    model_advanced.RescaleCFG,
-    model_advanced.ModelComputeDtype,
-    model_advanced.ModelAttentionBackend,
-)
-DEVICE_ROUTING_NODES = (
-    device_routing.MultiGPUWorkUnits,
-    device_routing.SelectModelDevice,
-    device_routing.SelectCLIPDevice,
-    device_routing.SelectVAEDevice,
-)
+from dinkster_nodes_comfy import COMFY_NODES, device_routing, model_advanced
+from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
+from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
 
 
 def test_advanced_model_patch_interfaces() -> None:
     # Named classes below, F bc5f880d, define_schema() without inputs.
     # MODEL uses the canonical native public identity.
     expected = {
-        "dinkster.models.model_sampling_discrete": ("model", "sampling", "zsnr"),
-        "dinkster.models.model_sampling_continuous_edm": (
-            "model",
-            "sampling",
-            "sigma_max",
-            "sigma_min",
-        ),
-        "dinkster.models.model_sampling_continuous_v": (
-            "model",
-            "sampling",
-            "sigma_max",
-            "sigma_min",
-        ),
-        "dinkster.models.model_sampling_stable_cascade": ("model", "shift"),
-        "dinkster.models.model_sampling_sd3": ("model", "shift"),
-        "dinkster.models.model_sampling_aura_flow": ("model", "shift", "sampling"),
-        "dinkster.models.model_sampling_flux": (
-            "model",
-            "max_shift",
-            "base_shift",
-            "width",
-            "height",
-        ),
-        "dinkster.models.model_noise_scale": ("model", "noise_scale"),
-        "dinkster.models.rescale_cfg": ("model", "multiplier"),
-        "dinkster.models.model_compute_dtype": ("model", "dtype"),
-        "dinkster.models.model_attention_backend": ("model", "attention"),
+        "ModelSamplingDiscrete": ("model", "sampling", "zsnr"),
+        "ModelSamplingContinuousEDM": ("model", "sampling", "sigma_max", "sigma_min"),
+        "ModelSamplingContinuousV": ("model", "sampling", "sigma_max", "sigma_min"),
+        "ModelSamplingStableCascade": ("model", "shift"),
+        "ModelSamplingSD3": ("model", "shift"),
+        "ModelSamplingAuraFlow": ("model", "shift", "sampling"),
+        "ModelSamplingFlux": ("model", "max_shift", "base_shift", "width", "height"),
+        "ModelNoiseScale": ("model", "noise_scale"),
+        "RescaleCFG": ("model", "multiplier"),
+        "ModelComputeDtype": ("model", "dtype"),
+        "ModelAttentionBackend": ("model", "attention"),
     }
     assert {node.define_schema().node_type for node in MODEL_ADVANCED_NODES} == set(expected)
     for node in MODEL_ADVANCED_NODES:
-        assert node in NODES
+        assert node in COMFY_NODES
         schema = node.define_schema()
         assert tuple(item.id for item in schema.inputs) == expected[schema.node_type]
         assert schema.inputs[0].type == TypeExpr.concrete(MODEL_TYPE)
         assert [(item.id, item.type) for item in schema.outputs] == [
             ("MODEL", TypeExpr.concrete(MODEL_TYPE))
         ]
-        if schema.node_type in (
-            "dinkster.models.model_sampling_continuous_edm",
-            "dinkster.models.model_sampling_continuous_v",
-        ):
+        if schema.node_type in ("ModelSamplingContinuousEDM", "ModelSamplingContinuousV"):
             for item in schema.inputs[2:]:
                 assert item.widget == NumberWidget(min=0.0, max=1000.0, step=0.001, round=False)
     aura = next(node for node in MODEL_ADVANCED_NODES if node.__name__ == "ModelSamplingAuraFlow")
@@ -85,14 +48,14 @@ def test_advanced_model_patch_interfaces() -> None:
 def test_device_routing_required_inputs_and_cold_discovery() -> None:
     # Named device-routing classes below, F bc5f880d, define_schema() without inputs.
     expected = {
-        "dinkster.models.multi_gpu_work_units": ("model", "max_gpus"),
-        "dinkster.models.select_model_device": ("model", "device"),
-        "dinkster.models.select_clip_device": ("clip", "device"),
-        "dinkster.models.select_vae_device": ("vae", "device"),
+        "MultiGPU_WorkUnits": ("model", "max_gpus"),
+        "SelectModelDevice": ("model", "device"),
+        "SelectCLIPDevice": ("clip", "device"),
+        "SelectVAEDevice": ("vae", "device"),
     }
     assert {node.schema().node_type for node in DEVICE_ROUTING_NODES} == set(expected)
     for node in DEVICE_ROUTING_NODES:
-        assert node in NODES
+        assert node in COMFY_NODES
         schema = node.schema()
         assert tuple(item.id for item in schema.inputs) == expected[schema.node_type]
         assert all(item.required for item in schema.inputs)
@@ -192,17 +155,13 @@ def test_device_selector_options_follow_available_devices(
         ]
         expected = (
             options
-            if schema.node_type != "dinkster.models.select_vae_device"
+            if schema.node_type != "SelectVAEDevice"
             else [option for option in options if option != "cpu"]
         )
         assert list(provider()) == expected
         assert [
             option.value if isinstance(option, ComboOption) else option for option in widget.options
-        ] == (
-            ["default"]
-            if schema.node_type == "dinkster.models.select_vae_device"
-            else ["default", "cpu"]
-        )
+        ] == (["default"] if schema.node_type == "SelectVAEDevice" else ["default", "cpu"])
 
 
 _COLD_ATTENTION = """
@@ -215,13 +174,11 @@ class NoTensorRuntime(importlib.abc.MetaPathFinder):
             raise AssertionError('cold discovery requested ' + fullname)
 
 sys.meta_path.insert(0, NoTensorRuntime())
-from dinkster_nodes_models.model_advanced import ModelAttentionBackend
-from dinkster_nodes_models.device_routing import (
-    MultiGPUWorkUnits, SelectModelDevice, SelectCLIPDevice, SelectVAEDevice, device_choices,
-)
+from dinkster_nodes_comfy.model_advanced import ModelAttentionBackend
+from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES, device_choices
 from dinkster_schema import schema_to_wire
 
-for node in (MultiGPUWorkUnits, SelectModelDevice, SelectCLIPDevice, SelectVAEDevice):
+for node in DEVICE_ROUTING_NODES:
     assert node.define_schema()
 assert all(callable(provider) for provider in device_choices().values())
 schema = schema_to_wire(ModelAttentionBackend.schema())

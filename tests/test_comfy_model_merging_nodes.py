@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.model_merging import (
+from dinkster_nodes_comfy.model_merging import (
     CLIPMergeAdd,
     CLIPMergeSimple,
     CLIPMergeSubtract,
@@ -171,33 +171,31 @@ def test_manifest_registers_model_types_for_graph_execution(
         try:
             manifest = (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-models/dinkster-pack.toml"
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
             )
             (tmp_path / "merging_fixture_sources.py").write_text(
                 "from test_comfy_model_merging_nodes import PATCHER_NODES\n"
-                "from dinkster_nodes_models.types import register_types\n"
-                "NODES = PATCHER_NODES\n",
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
+                "NODES = (*COMFY_NODES, *PATCHER_NODES)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                '[pack]\nname="merge-fixture"\npublisher="dinkster"\n'
-                'namespaces=["merge-fixture"]\n'
-                '[pack.entry]\nnodes="merging_fixture_sources:NODES"\n'
-                'types="merging_fixture_sources:register_types"\n',
+                manifest.read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["merge-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "merging_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "merging_fixture_sources:device_choices",
+                )
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "merging_fixture_sources:register_inference_types",
+                ),
                 encoding="ascii",
             )
-            manifests = (manifest, source_manifest)
-            for selected in manifests:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=selected,
-                        trust_reserved=True,
-                        in_process=in_process,
-                        worker_group=None if in_process else "merge-fixture",
-                        group_manifests=() if in_process else manifests,
-                    )
-                )
+            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
@@ -208,7 +206,7 @@ def test_manifest_registers_model_types_for_graph_execution(
                             "merge-fixture.model", {"weights": {"diffusion_model.weight": -4.0}}
                         ),
                         "merge": GraphNode(
-                            "dinkster.models.model_merge_simple",
+                            "ModelMergeSimple",
                             {
                                 "model1": Link("first", "MODEL"),
                                 "model2": Link("second", "MODEL"),

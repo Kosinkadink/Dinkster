@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_utilities.math import ComfyMathExpression
+from dinkster_nodes_comfy.math import ComfyMathExpression
 from simpleeval import FeatureNotAvailable
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -96,17 +96,17 @@ def test_isolated_manifest_evaluates_ordered_numeric_union_family() -> None:
         try:
             manifest = (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
             )
-            await composer.add_pack(PackSpec(manifest=manifest, trust_reserved=True))
+            await composer.add_pack(PackSpec(manifest=manifest))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
-                        "int": GraphNode("dinkster.utilities.primitive_int", {"value": 9}),
-                        "float": GraphNode("dinkster.utilities.primitive_float", {"value": -2.5}),
-                        "bool": GraphNode("dinkster.utilities.primitive_boolean", {"value": True}),
+                        "int": GraphNode("PrimitiveInt", {"value": 9}),
+                        "float": GraphNode("PrimitiveFloat", {"value": -2.5}),
+                        "bool": GraphNode("PrimitiveBoolean", {"value": True}),
                         "math": GraphNode(
-                            "dinkster.utilities.comfy_math_expression",
+                            "ComfyMathExpression",
                             {
                                 "expression": "a - b * c",
                                 "values.a": Link("int", "INT"),

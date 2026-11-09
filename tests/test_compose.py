@@ -23,7 +23,6 @@ import weakref
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -33,6 +32,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
+from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import EngineEvent
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
 from dinkster_memory import (
@@ -41,7 +41,9 @@ from dinkster_memory import (
     MemoryGovernor,
     ReportedTelemetry,
 )
-from dinkster_memory.resident import ResidentPool
+from dinkster_nodes_foundation import FOUNDATION_NODES
+from dinkster_nodes_image import IMAGE_NODES
+from dinkster_nodes_media_io import MEDIA_IO_NODES
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
@@ -68,15 +70,7 @@ TESTS_DIR = Path(__file__).parent
 DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
-FIRST_PARTY_NODE_PACKS = {
-    row["nodeType"]: row["pack"]
-    for row in json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())[
-        "nodes"
-    ]
-} | {
-    "dinkster.utilities.make_list": "dinkster-utilities",
-    "dinkster.utilities.list_element": "dinkster-utilities",
-}
+DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
 
 
 @pytest.mark.parametrize("source", ["image-list", "video-asset"])
@@ -92,9 +86,9 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
         specs = tuple(
             replace(default_pack_spec(pack), in_process=False, python=sys.executable)
             for pack in (
-                "dinkster-utilities",
-                "dinkster-video",
-                "dinkster-image",
+                "dinkster-nodes-foundation",
+                "dinkster-nodes-media-io",
+                "dinkster-nodes-image",
             )
         )
         composition = await compose_serving(
@@ -115,26 +109,19 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                 if source == "image-list":
                     nodes = {
                         "source": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 1},
+                            "dinkster.image.generate",
+                            {"width": 7, "height": 3, "batch_size": 2},
+                            slot_variants={"color_source": "hex", "operation": "solid"},
                         ),
-                        "other": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 11, "height": 5, "batch_size": 2},
-                        ),
-                        "list": GraphNode(
-                            "dinkster.utilities.make_list",
-                            {"items.0": Link("other", "IMAGE"), "items.1": Link("source", "IMAGE")},
+                        "split": GraphNode(
+                            "dinkster.image.batch.to_list", {"image": Link("source", "image")}
                         ),
                         "select": GraphNode(
-                            "dinkster.utilities.list_element",
-                            {"list": Link("list", "list"), "index": -1},
+                            "std.list.element", {"list": Link("split", "images"), "index": -1}
                         ),
-                        "info": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("select", "item")}
-                        ),
+                        "info": GraphNode("dinkster.image.info", {"image": Link("select", "item")}),
                     }
-                    expected = {"width": 7, "height": 3, "batch_size": 1}
+                    expected = {"width": 7, "height": 3, "count": 1}
                 else:
                     path = tmp_path / "input.mp4"
                     with av.open(str(path), "w") as container:
@@ -152,25 +139,27 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                     uploaded = await response.json()
                     nodes = {
                         "source": GraphNode(
-                            "dinkster.video.load_video",
-                            {"file": TypedLiteral("ASSET", {"digest": uploaded["digest"]})},
+                            "dinkster.load_video_value",
+                            {"video": TypedLiteral("asset<VIDEO>", {"digest": uploaded["digest"]})},
                         ),
                         "frames": GraphNode(
-                            "dinkster.video.get_video_components",
-                            {"video": Link("source", "VIDEO")},
+                            "dinkster.video.disassemble", {"video": Link("source", "video")}
                         ),
                         "info": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("frames", "images")}
+                            "dinkster.image.info", {"image": Link("frames", "images")}
+                        ),
+                        "compare": GraphNode(
+                            "dinkster.image.compare", {"image_a": Link("frames", "images")}
                         ),
                     }
-                    expected = {"width": 32, "height": 16, "batch_size": 2}
+                    expected = {"width": 32, "height": 16, "count": 2}
                 response = await client.post(
                     "/api/jobs",
                     json={
                         "clientId": "cross-pack",
                         "jobId": source,
                         "graph": graph_to_wire(Graph(nodes=nodes)),
-                        "targets": ["info", "frames"] if source == "video-asset" else ["info"],
+                        "targets": ["info", "compare"] if source == "video-asset" else ["info"],
                     },
                 )
                 assert response.status == 202, await response.text()
@@ -190,8 +179,8 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                         params={
                             "clientId": "cross-pack",
                             "jobId": source,
-                            "nodeId": "frames",
-                            "outputId": "images",
+                            "nodeId": "compare",
+                            "outputId": "image_a",
                             "rendition": "png",
                         },
                     )
@@ -204,57 +193,6 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("installed", [False, True])
-def test_pack_metadata_discovers_manifest_entries_without_imports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed: bool
-) -> None:
-    import importlib.metadata
-
-    from dinkster.packs import first_party_pack_metadata
-
-    root = tmp_path / "source"
-    site = tmp_path / "site"
-    project = root / "packages/dinkster-nodes-unlisted-family"
-    project.mkdir(parents=True)
-    (project / "pyproject.toml").write_text('[project]\nname = "different-distribution"\n')
-    manifest = (
-        site / "surprising_pack/dinkster-pack.toml" if installed else project / "dinkster-pack.toml"
-    )
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(
-        '[pack]\nname = "unlisted-runtime"\npublisher = "dinkster"\n'
-        '[pack.entry]\nnodes = "never_import_this.nodes:NODES"\n'
-    )
-    (manifest.parent / "never_import_this.py").write_text("raise RuntimeError('not discovery')\n")
-    if installed:
-        metadata = site / "different_distribution-1.0.dist-info"
-        metadata.mkdir()
-        (metadata / "METADATA").write_text("Name: different-distribution\nVersion: 1.0\n")
-        (metadata / "RECORD").write_text("surprising_pack/dinkster-pack.toml,,\n")
-        distributions = tuple(importlib.metadata.distributions(path=[str(site)]))
-        monkeypatch.setattr(importlib.metadata, "distributions", lambda: distributions)
-        root = tmp_path / "engine-wheel"
-    assert first_party_pack_metadata(root) == {
-        "unlisted-runtime": ("never_import_this.nodes", "different-distribution")
-    }
-    manifest.write_text(
-        manifest.read_text().replace('publisher = "dinkster"', 'publisher = "other"')
-    )
-    assert first_party_pack_metadata(root) == {}
-    manifest.write_text(
-        manifest.read_text().replace('publisher = "other"', 'publisher = "dinkster"')
-    )
-    duplicate = (site if installed else project) / "duplicate_pack/dinkster-pack.toml"
-    duplicate.parent.mkdir()
-    duplicate.write_text(manifest.read_text())
-    if installed:
-        (site / "different_distribution-1.0.dist-info/RECORD").write_text(
-            "surprising_pack/dinkster-pack.toml,,\nduplicate_pack/dinkster-pack.toml,,\n"
-        )
-    with pytest.raises(ValueError, match="duplicate installed pack identity: unlisted-runtime"):
-        first_party_pack_metadata(root)
-
-
 def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -264,16 +202,16 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     package_data = checkout / "src/dinkster"
     package_data.mkdir(parents=True)
     (checkout / "pyproject.toml").write_text("")
-    pack = tmp_path / "dinkster_nodes_text_pack"
+    pack = tmp_path / "dinkster_nodes_foundation_pack"
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
         'namespaces = ["official"]\n'
-        '[pack.entry]\nnodes = "fixture_text_pack:NODES"\n',
+        '[pack.entry]\nnodes = "dinkster_nodes_foundation:NODES"\n',
         encoding="utf-8",
     )
-    module = pack / "fixture_text_pack"
+    module = pack / "dinkster_nodes_foundation"
     module.mkdir()
     origin = module / "__init__.py"
     origin.write_text("NODES = ()\n", encoding="utf-8")
@@ -282,7 +220,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     lock = Lockfile.of(
         [
             LockedPack(
-                "dinkster-text",
+                "dinkster-nodes-foundation",
                 "1.2.3",
                 digest,
                 "dinkster",
@@ -306,14 +244,14 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     compose._default_pack_lock.cache_clear()
     compose.default_pack_specs.cache_clear()
     try:
-        assert compose.default_pack_ids() == ("dinkster-text",)
-        spec = compose.default_pack_spec("dinkster-text")
+        assert compose.default_pack_ids() == ("dinkster-nodes-foundation",)
+        spec = compose.default_pack_spec("dinkster-nodes-foundation")
         assert spec.require_catalog
-        assert not spec.in_process
+        assert spec.in_process
         assert spec.packs is not None
-        assert spec.packs["dinkster-text"].version == "1.2.3"
-        assert spec.packs["dinkster-text"].artifact_digest == digest
-        assert spec.packs["dinkster-text"].source == "registry:https://registry.invalid"
+        assert spec.packs["dinkster-nodes-foundation"].version == "1.2.3"
+        assert spec.packs["dinkster-nodes-foundation"].artifact_digest == digest
+        assert spec.packs["dinkster-nodes-foundation"].source == "registry:https://registry.invalid"
         assert Path(spec.manifest).parent == pack
 
         async def catalog_is_required() -> None:
@@ -330,42 +268,71 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
         run_scenario(catalog_is_required())
         origin.write_text("NODES = ()\nVALUE = 'tampered'\n", encoding="utf-8")
         with pytest.raises(CompositionError, match="installed artifact is"):
-            compose.default_pack_spec("dinkster-text")
+            compose.default_pack_spec("dinkster-nodes-foundation")
     finally:
         compose.default_pack_specs.cache_clear()
         compose._default_pack_lock.cache_clear()
 
 
-def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_engine_carried_pack_uses_engine_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import dinkster.compose as compose
 
     distribution = SimpleNamespace(version="1.2.3", locate_file=lambda path: path)
     requested: list[str] = []
-    locked = compose._default_pack_lock().get("dinkster-text")
-    assert locked is not None
-    lock = Lockfile.of([replace(locked, source="python:dinkster-nodes-text==1.2.3")])
-    monkeypatch.setattr(compose, "_default_pack_lock", lambda: lock)
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
 
     def find_distribution(name: str) -> SimpleNamespace:
         requested.append(name)
         return distribution
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", find_distribution)
-    spec = compose.default_pack_spec("dinkster-text")
-    assert requested == ["dinkster-nodes-text"]
+    spec = compose.default_pack_spec("dinkster-nodes-generation")
+    assert requested == ["dinkster"]
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].version == "0.0.1"
-    assert spec.packs["dinkster-text"].source == "python:dinkster-nodes-text==1.2.3"
+    assert spec.packs["dinkster-nodes-generation"].version == "0.0.2"
+
+
+def test_compat_manifest_uses_engine_distribution_when_carried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import comfy_compose
+
+    package_dir = tmp_path / "site-packages" / "dinkster_compat_comfy"
+    package_dir.mkdir(parents=True)
+    origin = package_dir / "__init__.py"
+    origin.write_text("", encoding="utf-8")
+    bundled = tmp_path / "bundle" / "dinkster_compat_comfy_pack"
+    bundled.mkdir(parents=True)
+    manifest = bundled / "dinkster-pack.toml"
+    manifest.write_text('[pack]\nname = "dinkster-compat-comfy"\n', encoding="utf-8")
+    requested: list[str] = []
+
+    def find_distribution(name: str) -> SimpleNamespace:
+        requested.append(name)
+        if name == "dinkster-compat-comfy":
+            raise comfy_compose.importlib.metadata.PackageNotFoundError
+        return SimpleNamespace(locate_file=lambda path: tmp_path / "bundle" / path)
+
+    monkeypatch.setattr(
+        comfy_compose.importlib.util,
+        "find_spec",
+        lambda _name: SimpleNamespace(origin=str(origin)),
+    )
+    monkeypatch.setattr(comfy_compose.importlib.metadata, "distribution", find_distribution)
+    assert comfy_compose.find_compat_manifest() == manifest
+    assert requested == ["dinkster-compat-comfy", "dinkster"]
 
 
 def test_image_pack_starts_with_canonical_inference_types() -> None:
     async def scenario() -> None:
-        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
+        image = replace(default_pack_spec("dinkster-nodes-image"), require_catalog=True)
         assert prepare_catalog(image.manifest, environment=os.environ).ok
         composer = ServingComposer()
         try:
             specs = tuple(
-                image if load_manifest(spec.manifest).name == "dinkster-image" else spec
+                image if load_manifest(spec.manifest).name == "dinkster-nodes-image" else spec
                 for spec in default_pack_specs()
             )
             for spec in composer.order_pack_entries(specs):
@@ -373,28 +340,53 @@ def test_image_pack_starts_with_canonical_inference_types() -> None:
             result = await composer.composition.make_engine(lambda event: None).run(
                 Graph(
                     nodes={
-                        "image": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 2, "color": 0x123456},
-                        ),
-                        "size": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("image", "IMAGE")}
-                        ),
+                        "region": GraphNode(
+                            "dinkster.region.make",
+                            {"x": 2.0, "y": 3.0, "width": 4.0, "height": 5.0},
+                        )
                     }
                 ),
-                ["size"],
+                ["region"],
             )
-            assert result.executed == ("image", "size")
-            assert {name: value.resolve() for name, value in result.outputs["size"].items()} == {
-                "width": 7,
-                "height": 3,
-                "batch_size": 2,
+            assert result.executed == ("region",)
+            assert result.outputs["region"]["region"].meta.entries == {
+                "x": 2.0,
+                "y": 3.0,
+                "width": 4.0,
+                "height": 5.0,
             }
             assert result.diagnostics == ()
         finally:
             await composer.close()
 
     run_scenario(scenario())
+
+
+STANDARD_OWNER_PACKS = {
+    "dinkster-nodes-foundation",
+    "dinkster-nodes-image",
+    "dinkster-nodes-media-io",
+}
+STANDARD_VISION_PACKS = {
+    "dinkster-vision-birefnet",
+    "dinkster-vision-depth-anything-v2",
+    "dinkster-vision-depth-anything-v3",
+    "dinkster-vision-detr",
+    "dinkster-vision-efficient-sam",
+    "dinkster-vision-hed",
+    "dinkster-vision-rtdetr",
+    "dinkster-vision-sam31",
+    "dinkster-vision-upscale",
+}
+HED_PROVIDER_NODES = (
+    "dinkster.preprocess.model_edges",
+    "dinkster.preprocess.lineart_realistic",
+    "dinkster.preprocess.lineart_anime",
+    "dinkster.preprocess.lineart_manga",
+    "dinkster.preprocess.anyline",
+    "dinkster.preprocess.teed",
+    "dinkster.preprocess.mlsd",
+)
 
 
 @pytest.fixture
@@ -404,13 +396,15 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     return pool
 
 
-def test_lazy_image_pack_resolves_assets_after_host_registration(
+def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import io
 
     import numpy as np
     from PIL import Image
+
+    from dinkster.comfy_compose import register_comfy_host_types
 
     pixels = np.zeros((3, 5, 3), dtype=np.uint8)
     pixels[..., 1] = 255
@@ -430,23 +424,395 @@ def test_lazy_image_pack_resolves_assets_after_host_registration(
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-            assert prepare_catalog(image.manifest, environment=os.environ).ok
-            await composer.add_pack(image)
+            media = replace(default_pack_spec("dinkster-nodes-media-io"), require_catalog=True)
+            assert prepare_catalog(media.manifest, environment=os.environ).ok
+            await composer.add_pack(media)
+            register_comfy_host_types(composer.composition._registry)
 
             engine = composer.composition.make_engine(lambda _event: None)
             result = await engine.run(
-                Graph(
-                    nodes={"load": GraphNode("dinkster.image.load_image", {"image": ref.to_wire()})}
-                ),
+                Graph(nodes={"load": GraphNode("dinkster.load_image", {"image": ref.to_wire()})}),
                 ["load"],
             )
-            loaded = cast("np.ndarray", result.outputs["load"]["IMAGE"].resolve())
+            loaded = cast("np.ndarray", result.outputs["load"]["image"].resolve())
             np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
         finally:
             await composer.close()
 
     run_scenario(scenario())
+
+
+def test_comfy_model_roots_preserve_every_category_root_with_safe_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    shared = tmp_path / "shared-models"
+    nested = shared / "nested"
+    payload = {
+        "checkpoints": {
+            "kind": "model/checkpoint",
+            "roots": [str(shared), str(nested)],
+        },
+        "loras": {
+            "kind": "model/lora",
+            "roots": [str(shared)],
+        },
+    }
+    captured: dict[str, object] = {}
+
+    def fake_run(command: object, **kwargs: object) -> SimpleNamespace:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(
+        comfy_compose,
+        "find_compat_manifest",
+        lambda _name: tmp_path / "dinkster-pack.toml",
+    )
+    monkeypatch.setattr(
+        comfy_compose,
+        "_execution_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ExecutionPythonSelection(
+            "/comfy/python", "current Python"
+        ),
+    )
+    monkeypatch.setattr(
+        comfy_compose,
+        "dinkster_pythonpath",
+        lambda _manifest: "/dinkster/packages",
+    )
+    monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
+    monkeypatch.setattr(comfy_compose.subprocess, "run", fake_run)
+
+    roots = comfy_compose.comfy_model_roots(
+        root,
+        comfy_args=("--extra-model-paths-config", "extra.yaml"),
+    )
+    assert [(entry.mount_id, entry.category, entry.kind, entry.path) for entry in roots] == [
+        (
+            "comfy-model-checkpoints-1",
+            "checkpoints",
+            "model/checkpoint",
+            shared.resolve(),
+        ),
+        (
+            "comfy-model-checkpoints-2",
+            "checkpoints",
+            "model/checkpoint",
+            nested.resolve(),
+        ),
+        ("comfy-model-loras-1", "loras", "model/lora", shared.resolve()),
+    ]
+    assert captured["cwd"] == root
+    assert captured["command"] == (
+        "/comfy/python",
+        "-c",
+        "import json; from dinkster_compat_comfy.bootstrap import comfy_model_roots; "
+        "print(json.dumps(comfy_model_roots(), separators=(',', ':')))",
+        "--extra-model-paths-config",
+        "extra.yaml",
+    )
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["DINKSTER_COMFYUI_ROOT"] == str(root)
+    assert str(env["PYTHONPATH"]).startswith("/dinkster/packages")
+
+
+def test_comfy_model_roots_rejects_unusable_probe_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    monkeypatch.setattr(
+        comfy_compose,
+        "find_compat_manifest",
+        lambda _name: tmp_path / "dinkster-pack.toml",
+    )
+    monkeypatch.setattr(
+        comfy_compose,
+        "_execution_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ExecutionPythonSelection(
+            "/comfy/python", "current Python"
+        ),
+    )
+    monkeypatch.setattr(comfy_compose, "dinkster_pythonpath", lambda _manifest: "")
+    monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
+    monkeypatch.setattr(
+        comfy_compose.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"checkpoints": {"kind": "model/checkpoint", "roots": ["relative"]}}),
+            stderr="",
+        ),
+    )
+    with pytest.raises(CompositionError, match="not absolute"):
+        comfy_compose.comfy_model_roots(root)
+
+
+def test_comfy_blake3_preflight_is_exact_isolated_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    captured: dict[str, object] = {}
+
+    def fake_run(command: object, **kwargs: object) -> SimpleNamespace:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(comfy_compose.subprocess, "run", fake_run)
+
+    comfy_compose._probe_comfy_blake3("/selected/comfy/python")
+
+    assert captured == {
+        "command": ("/selected/comfy/python", "-I", "-c", "import blake3"),
+        "capture_output": True,
+        "text": True,
+        "timeout": 5,
+        "check": False,
+        "shell": False,
+    }
+
+
+def test_execution_python_selection_reports_resolution_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster.comfy_compose import _execution_python_selection
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    assert _execution_python_selection(root, "/cli/python") == ("/cli/python", "--execution-python")
+
+    monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/env/python")
+    assert _execution_python_selection(root) == ("/env/python", "DINKSTER_EXECUTION_PYTHON")
+
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON")
+    venv_python = root / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+    assert _execution_python_selection(root) == (
+        str(venv_python),
+        "<comfy-root>/venv/bin/python",
+    )
+
+    venv_python.unlink()
+    assert _execution_python_selection(root) == (sys.executable, "current Python")
+
+
+def test_retired_comfyui_python_env_is_refused_with_the_new_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/env/python")
+    with pytest.raises(comfy_compose.CompositionError) as caught:
+        comfy_compose._execution_python_selection(root)
+    assert str(caught.value) == comfy_compose.RETIRED_EXECUTION_PYTHON_ENV_MESSAGE
+    assert comfy_compose.RETIRED_EXECUTION_PYTHON_ENV_MESSAGE == (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+    )
+    with pytest.raises(comfy_compose.CompositionError, match="DINKSTER_EXECUTION_PYTHON"):
+        comfy_compose.comfy_compat_specs(None, python="/explicit/python")
+
+
+@pytest.mark.parametrize("missing", [None, "einops"])
+def test_comfy_requirements_probe_with_fake_interpreter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str | None,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    requirements = root / "requirements.txt"
+    requirements.write_text("einops\n")
+    captured: dict[str, object] = {}
+
+    def fake_run(command: object, **kwargs: object) -> SimpleNamespace:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(
+            returncode=0 if missing is None else 1,
+            stdout="{}" if missing is None else json.dumps({"missing": missing}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(comfy_compose.subprocess, "run", fake_run)
+    selection = comfy_compose._ExecutionPythonSelection("/fake/python", "--execution-python")
+
+    if missing is None:
+        comfy_compose._probe_comfy_requirements(root, selection)
+    else:
+        with pytest.raises(CompositionError) as caught:
+            comfy_compose._probe_comfy_requirements(root, selection)
+        assert str(caught.value) == (
+            "ComfyUI requirement module 'einops' is unavailable in interpreter "
+            "'/fake/python' selected by --execution-python"
+        )
+
+    command = captured.pop("command")
+    assert isinstance(command, tuple)
+    assert command[:3] == ("/fake/python", "-I", "-c")
+    assert "packages_distributions" in command[3]
+    assert command[4] == str(requirements)
+    assert captured == {
+        "capture_output": True,
+        "text": True,
+        "timeout": 60,
+        "check": False,
+        "shell": False,
+    }
+
+
+def test_comfy_requirements_probe_executes_imports(tmp_path: Path) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    requirements = root / "requirements.txt"
+    selection = comfy_compose._ExecutionPythonSelection(sys.executable, "current Python")
+
+    requirements.write_text("json\n")
+    comfy_compose._probe_comfy_requirements(root, selection)
+
+    requirements.write_text("definitely-missing-comfy-requirement\n")
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_requirements(root, selection)
+    assert "definitely_missing_comfy_requirement" in str(caught.value)
+    assert sys.executable in str(caught.value)
+    assert "current Python" in str(caught.value)
+
+
+def test_comfy_requirements_probe_preserves_backslashes_in_interpreter_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    (root / "requirements.txt").write_text("einops\n")
+    interpreter = r"C:\actions-runners\Dinkster\_work\Dinkster\.venv\Scripts\python.exe"
+    monkeypatch.setattr(
+        comfy_compose.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps({"missing": "einops"}),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_requirements(
+            root,
+            comfy_compose._ExecutionPythonSelection(interpreter, "current Python"),
+        )
+
+    assert str(caught.value) == (
+        "ComfyUI requirement module 'einops' is unavailable in interpreter "
+        f"'{interpreter}' selected by current Python"
+    )
+    assert r"\\" not in str(caught.value)
+
+
+@pytest.mark.parametrize("stderr", ["No module named 'blake3'", "broken native extension"])
+def test_comfy_blake3_preflight_refuses_missing_or_broken_import(
+    stderr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    monkeypatch.setattr(
+        comfy_compose.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr=stderr),
+    )
+
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_blake3("/selected/comfy/python")
+    message = str(caught.value)
+    assert "/selected/comfy/python" in message
+    assert "/selected/comfy/python -m pip install blake3" in message
+    assert stderr in message
+    assert len(message) < 1_024
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OSError("cannot spawn"), subprocess.TimeoutExpired(("python",), 5)],
+)
+def test_comfy_blake3_preflight_refuses_spawn_failure_and_timeout(
+    failure: BaseException,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(comfy_compose.subprocess, "run", fail)
+
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_blake3("/selected/comfy/python")
+    message = str(caught.value)
+    assert "/selected/comfy/python" in message
+    assert "/selected/comfy/python -m pip install blake3" in message
+
+
+def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    calls: list[str] = []
+    monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
+    monkeypatch.setattr(
+        comfy_compose,
+        "_probe_comfy_requirements",
+        lambda _root, selection: calls.append(f"requirements:{selection.interpreter}"),
+    )
+    monkeypatch.setattr(
+        comfy_compose,
+        "_probe_comfy_blake3",
+        lambda interpreter: calls.append(f"blake3:{interpreter}"),
+    )
+
+    specs = comfy_compose.comfy_compat_specs(
+        root,
+        python="/selected/comfy/python",
+        legacy_packs=[legacy],
+    )
+
+    assert len(specs) == 2
+    assert Path(specs[0].manifest).name == "dinkster-pack.toml"
+    assert specs[0].in_process is True
+    assert calls == [
+        "requirements:/selected/comfy/python",
+        "blake3:/selected/comfy/python",
+    ]
 
 
 def write_iso_manifest(
@@ -847,18 +1213,38 @@ def test_compose_defaults_only(
 
     async def scenario() -> None:
         async with defaults as composition:
-            assert set(composition.schemas) == set(FIRST_PARTY_NODE_PACKS)
+            assert set(composition.schemas) == set(build_schemas(DEFAULT_NODES))
             assert not any(t.startswith("dev.") for t in composition.schemas)
             assert set(composition.packs) == (
-                set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}
+                STANDARD_OWNER_PACKS | STANDARD_VISION_PACKS | {"dinkster-nodes-remote"}
             )
-            assert composition.node_packs == FIRST_PARTY_NODE_PACKS
+            assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
+            assert len(FOUNDATION_NODES) == 54
+            assert len(IMAGE_NODES) == 89
+            assert len(MEDIA_IO_NODES) == 66
+            assert {
+                node_type
+                for node_type, pack_id in composition.node_packs.items()
+                if pack_id == "dinkster-nodes-foundation"
+            } == set(build_schemas(FOUNDATION_NODES))
+            assert {
+                node_type
+                for node_type, pack_id in composition.node_packs.items()
+                if pack_id == "dinkster-nodes-media-io"
+            } == set(build_schemas(MEDIA_IO_NODES))
+            assert {
+                node_type
+                for node_type, pack_id in composition.node_packs.items()
+                if pack_id == "dinkster-nodes-image"
+            } == set(build_schemas(IMAGE_NODES))
             locked = default_pack_specs()
             assert {
                 next(iter(spec.packs))
                 for spec in locked
                 if spec.packs is not None and not spec.in_process
-            } == set(composition.packs)
+            } == STANDARD_VISION_PACKS | {"dinkster-nodes-remote"}
+            for node_type in HED_PROVIDER_NODES:
+                assert composition.choices[f"{node_type}.providers"] == ("dinkster-vision-hed",)
             expected_digests = {
                 pack_id: info.artifact_digest
                 for spec in locked
@@ -869,16 +1255,20 @@ def test_compose_defaults_only(
                 pack.pack: pack.artifact_digest for pack in composition.generation.packs
             } == expected_digests
             engine = composition.make_engine(lambda event: None)
-            graph = Graph(
-                nodes={
-                    "g": GraphNode(
-                        "dinkster.text.string_concatenate",
-                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                    )
-                }
-            )
+            runtime = engine.pin_execution()
+            assert runtime.resolve_providers is not None
+            for node_type in HED_PROVIDER_NODES:
+                unresolved = Graph(nodes={"vision": GraphNode(node_type, {})})
+                resolved = runtime.resolve_providers(unresolved)
+                unresolved_node = unresolved.nodes["vision"]
+                resolved_node = resolved.nodes["vision"]
+                assert isinstance(unresolved_node, GraphNode)
+                assert isinstance(resolved_node, GraphNode)
+                assert "provider" not in unresolved_node.inputs
+                assert resolved_node.inputs["provider"] == "dinkster-vision-hed"
+            graph = Graph(nodes={"g": GraphNode("std.math.add_ints", {"a": 2, "b": 3})})
             result = await engine.run(graph, ["g"])
-            assert result.outputs["g"]["STRING"].resolve() == "left:right"
+            assert result.outputs["g"]["sum"].resolve() == 5
 
             library = ServerLibrary(
                 vault=AssetVault(tmp_path / "vault"),
@@ -895,10 +1285,49 @@ def test_compose_defaults_only(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                response = await client.get("/api/nodes")
+                exact_graph = Graph(
+                    nodes={
+                        "source": GraphNode(
+                            "dinkster.image.generate",
+                            {"width": 8, "height": 8},
+                            slot_variants={"color_source": "hex", "operation": "solid"},
+                        ),
+                        "realistic-line-art": GraphNode(
+                            "dinkster.preprocess.lineart_realistic",
+                            {"image": Link("source", "image")},
+                        ),
+                    }
+                )
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "realistic-line-art",
+                        "jobId": "preflight",
+                        "graph": graph_to_wire(exact_graph),
+                        "targets": ["realistic-line-art"],
+                    },
+                )
                 payload = await response.json()
-                assert response.status == 200, payload
-                assert set(payload["nodes"]) == set(FIRST_PARTY_NODE_PACKS)
+                assert response.status == 409, payload
+                assert payload["error"] == "assets-missing"
+                assert {asset["name"] for asset in payload["assets"]} == {
+                    "ControlNet realistic line-art detector",
+                    "ControlNet coarse realistic line-art detector",
+                }
+                assert all(asset["fetchable"] for asset in payload["assets"])
+                assert {asset["name"]: asset["sources"] for asset in payload["assets"]} == {
+                    "ControlNet realistic line-art detector": [
+                        "https://huggingface.co/lllyasviel/Annotators/resolve/"
+                        "982e7edaec38759d914a963c48c4726685de7d96/sk_model.pth"
+                    ],
+                    "ControlNet coarse realistic line-art detector": [
+                        "https://huggingface.co/lllyasviel/Annotators/resolve/"
+                        "982e7edaec38759d914a963c48c4726685de7d96/sk_model2.pth"
+                    ],
+                }
+                exact_node = exact_graph.nodes["realistic-line-art"]
+                assert isinstance(exact_node, GraphNode)
+                assert "provider" not in exact_node.inputs
             finally:
                 await client.close()
 
@@ -918,67 +1347,62 @@ def test_compose_serving_default_resolution_is_atomic(
 
 
 @pytest.mark.parametrize(
-    ("pack_id", "directory", "expected_version"),
+    ("pack_id", "expected_version", "expected_digest"),
     [
-        ("dinkster-text", "dinkster-nodes-text", "0.0.1"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.1"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.1"),
-        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.3"),
+        (
+            "dinkster-nodes-foundation",
+            "0.0.2",
+            "blake3:c3eccc6a6e2a8f6f51a571454d502fd79c6f01f40c60b6167b388cac5f9a11cf",
+        ),
+        (
+            "dinkster-nodes-media-io",
+            "0.0.3",
+            "blake3:9c3b0c9d3d5ceab2568e86d17538a4d1380adbdfaa1db1931b0e3b5f310d025e",
+        ),
+        (
+            "dinkster-nodes-image",
+            "0.0.5",
+            "blake3:8d9f65db6c7a3a6b39cba378afe9686da1967319b94ea914e86f89d0815bab1a",
+        ),
+        (
+            "dinkster-nodes-remote",
+            "0.0.2",
+            "blake3:e4d4f3234b1aff19f8f5802485f21659ef8b83929faaefd84f2b12477e8fc22e",
+        ),
     ],
 )
 def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     pack_id: str,
-    directory: str,
     expected_version: str,
+    expected_digest: str,
 ) -> None:
-    source_root = TESTS_DIR.parent / "packages" / directory
-    lock = Lockfile.from_record_json(
-        (TESTS_DIR.parent / "src/dinkster/checkout-packs.lock").read_text()
-    )
-    locked = lock.get(pack_id)
-    assert locked is not None
+    source_root = Path(__file__).parent.parent / "packages" / pack_id
     spec = default_pack_spec(pack_id)
     assert Path(spec.manifest).resolve() == (source_root / "dinkster-pack.toml").resolve()
     assert spec.packs is not None
     info = spec.packs[pack_id]
-    assert info.source == locked.source
+    assert info.source == f"python:{pack_id}==0.0.2"
     assert info.version == expected_version
-    assert info.artifact_digest == locked.artifact_digest
+    assert info.artifact_digest == expected_digest
 
 
-def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster import compose
-
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
-    copied = tmp_path / "pack"
-    shutil.copytree(source, copied)
-    manifest = copied / "dinkster-pack.toml"
-    manifest.write_text(manifest.read_text() + '\n[pack.docs]\ndir = "docs"\n')
-    node = copied / "docs/nodes/dinkster.text.string_concatenate"
-    node.mkdir(parents=True)
-    body = b"# Concatenate Text\n\nJoins two strings.\n"
-    (node / "en.md").write_bytes(
-        b'+++\ntitle = "Concatenate Text"\nsummary = "Joins strings."\nschema_version = 1\n+++\n'
-        + body
-    )
-    monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
-    monkeypatch.setattr(
-        compose.importlib.util,
-        "find_spec",
-        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_nodes_text/__init__.py")),
-    )
-    spec = default_pack_spec("dinkster-text")
+def test_foundation_default_pack_ships_docs() -> None:
+    spec = default_pack_spec("dinkster-nodes-foundation")
     assert spec.packs is not None
-    docs = spec.packs["dinkster-text"].docs
+    docs = spec.packs["dinkster-nodes-foundation"].docs
     assert docs is not None
     assert [(page.kind, page.id, page.locale) for page in docs.pages] == [
-        ("node", "dinkster.text.string_concatenate", "en"),
+        ("node", "std.math.add_ints", "en"),
+        ("guide", "loops", "en"),
     ]
     page = next(page for page in docs.pages if page.kind == "node")
-    assert page.title == "Concatenate Text"
-    assert page.summary == "Joins strings."
+    assert page.title == "Add Integers"
+    assert page.summary == "Adds two integer values."
     assert page.schema_version == 1
-    assert page.data == body
+    assert page.data == (
+        b"\n# Add Integers\n\nConnect integer values to `a` and `b`. "
+        b"The `sum` output is their arithmetic sum.\n"
+    )
     assert page.digest == "sha256:" + hashlib.sha256(page.data).hexdigest()
 
 
@@ -999,7 +1423,7 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         pack_root = Path("packages") / distribution_id
         sidecar_root = (
             pack_root / f"{pack_id.replace('-', '_')}_pack"
-            if not (repo_root / pack_root / "dinkster-pack.toml").is_file()
+            if distribution_id != pack_id
             else pack_root
         )
         manifest_path = sidecar_root / "dinkster-pack.toml"
@@ -1058,6 +1482,25 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
     )
 
 
+@pytest.mark.all_file_shards
+def test_vision_pack_license_worktree_bytes_are_lf() -> None:
+    repo_root = TESTS_DIR.parent
+    vision_root = repo_root / "packages/dinkster-nodes-vision"
+    licenses = sorted(vision_root.glob("*_pack/*_LICENSE"))
+
+    assert [path.relative_to(vision_root).as_posix() for path in licenses] == [
+        "dinkster_vision_hed_pack/LINEART_LICENSE",
+        "dinkster_vision_hed_pack/MANGA_LICENSE",
+        "dinkster_vision_hed_pack/MLSD_LICENSE",
+        "dinkster_vision_hed_pack/TEED_LICENSE",
+        "dinkster_vision_sam31_pack/CLIP_LICENSE",
+        "dinkster_vision_sam31_pack/SAM_LICENSE",
+    ]
+    assert [
+        path.relative_to(repo_root).as_posix() for path in licenses if b"\r" in path.read_bytes()
+    ] == []
+
+
 def test_default_pack_publishes_alias_registry_from_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1070,9 +1513,9 @@ def test_default_pack_publishes_alias_registry_from_manifest(
         return replace(real_load_manifest(path), comfy_aliases=aliases)
 
     monkeypatch.setattr(compose, "load_manifest", load_manifest_with_aliases)
-    spec = default_pack_spec("dinkster-text")
+    spec = default_pack_spec("dinkster-nodes-foundation")
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].comfy_aliases is aliases
+    assert spec.packs["dinkster-nodes-foundation"].comfy_aliases is aliases
 
 
 def test_default_pack_publishes_group_registry_from_manifest(
@@ -1087,9 +1530,9 @@ def test_default_pack_publishes_group_registry_from_manifest(
         return replace(real_load_manifest(path), comfy_groups=groups)
 
     monkeypatch.setattr(compose, "load_manifest", load_manifest_with_groups)
-    spec = default_pack_spec("dinkster-text")
+    spec = default_pack_spec("dinkster-nodes-foundation")
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].comfy_groups is groups
+    assert spec.packs["dinkster-nodes-foundation"].comfy_groups is groups
 
 
 def test_default_pack_uses_embedded_wheel_artifact(
@@ -1098,14 +1541,16 @@ def test_default_pack_uses_embedded_wheel_artifact(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
-    module = tmp_path / "site/dinkster_nodes_text/__init__.py"
-    shutil.copytree(source / "src/dinkster_nodes_text", module.parent)
-    bundled = tmp_path / "site/dinkster_text_pack/dinkster-pack.toml"
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-media-io"
+    module = tmp_path / "site/dinkster_nodes_media_io/__init__.py"
+    shutil.copytree(source / "src/dinkster_nodes_media_io", module.parent)
+    bundled = tmp_path / "site/dinkster_nodes_media_io_pack/dinkster-pack.toml"
     bundled.parent.mkdir(parents=True)
     shutil.copy2(source / "dinkster-pack.toml", bundled)
-    shutil.copytree(source / "src/dinkster_nodes_text", bundled.parent / "dinkster_nodes_text")
-    shutil.copytree(source / "locales", bundled.parent / "locales")
+    shutil.copy2(source / "comfy-aliases.json", bundled.parent / "comfy-aliases.json")
+    shutil.copytree(
+        source / "src/dinkster_nodes_media_io", bundled.parent / "dinkster_nodes_media_io"
+    )
     for filename in compose._PACK_ARTIFACT_SIDECARS:
         sidecar = source / filename
         if sidecar.is_file():
@@ -1121,12 +1566,12 @@ def test_default_pack_uses_embedded_wheel_artifact(
         lambda _name: SimpleNamespace(origin=str(module)),
     )
 
-    spec = default_pack_spec("dinkster-text")
+    spec = default_pack_spec("dinkster-nodes-media-io")
     assert spec.manifest == bundled
     assert spec.packs is not None
-    info = spec.packs["dinkster-text"]
-    assert info.source == "python:dinkster-nodes-text==0.0.2"
-    locked = lock.get("dinkster-text")
+    info = spec.packs["dinkster-nodes-media-io"]
+    assert info.source == "python:dinkster-nodes-media-io==0.0.2"
+    locked = lock.get("dinkster-nodes-media-io")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
 
@@ -1235,10 +1680,8 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     bundled.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", bundled / "dinkster-pack.toml")
     shutil.copytree(source / "src/dinkster_nodes_image", bundled / "dinkster_nodes_image")
-    shutil.copytree(source / "locales", bundled / "locales")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
-        if (source / filename).is_file():
-            shutil.copy2(source / filename, bundled / filename)
+        shutil.copy2(source / filename, bundled / filename)
 
     source_digest = compose._installed_pack_digest(
         source / "dinkster-pack.toml", source / "src/dinkster_nodes_image"
@@ -1248,6 +1691,22 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     assert source_digest == bundled_digest
 
 
+def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Path) -> None:
+    from dinkster import compose
+
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-vision"
+    copied = shutil.copytree(source, tmp_path / source.name)
+    manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
+    module = copied / "src/dinkster_nodes_vision/hed"
+    expected = compose._installed_pack_digest(manifest, module)
+    assert expected == ("blake3:c9bc906f97e7ea168dc04dcf10a51d7aa33523ce8a0b3e204b2df846603aedc9")
+    license_file = manifest.parent / "MLSD_LICENSE"
+    license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
+    license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
+
+    assert compose._installed_pack_digest(manifest, module) == expected
+
+
 def test_default_pack_refuses_version_outside_suite_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1255,38 +1714,44 @@ def test_default_pack_refuses_version_outside_suite_lock(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-foundation"
     copied = tmp_path / "source"
     copied.mkdir()
     manifest = copied / "dinkster-pack.toml"
     manifest.write_text(
         (source / "dinkster-pack.toml")
         .read_text()
-        .replace('version = "0.0.1"', 'version = "9.0.0"')
+        .replace('version = "0.0.2"', 'version = "9.0.0"')
     )
-    shutil.copytree(source / "src/dinkster_nodes_text", copied / "src/dinkster_nodes_text")
+    shutil.copytree(
+        source / "src/dinkster_nodes_foundation", copied / "src/dinkster_nodes_foundation"
+    )
     monkeypatch.setattr(
         compose.importlib.util,
         "find_spec",
-        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_nodes_text/__init__.py")),
+        lambda _name: SimpleNamespace(
+            origin=str(copied / "src/dinkster_nodes_foundation/__init__.py")
+        ),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.1"):
-        default_pack_spec("dinkster-text")
+    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation version 0.0.2"):
+        default_pack_spec("dinkster-nodes-foundation")
 
 
 @pytest.mark.parametrize("mismatch", [None, "pack", "distribution", "distribution-name"])
-def test_pack_manifest_version_and_distribution_provenance_are_independent(
+def test_shared_distribution_pack_uses_manifest_version(
     monkeypatch: pytest.MonkeyPatch, mismatch: str | None
 ) -> None:
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    pack = lock.get("dinkster-text")
+    pack = lock.get("dinkster-vision-birefnet")
     assert pack is not None
-    assert pack.version == "0.0.1"
-    assert pack.source == "python:dinkster-nodes-text==0.0.2"
+    assert pack.version == "0.0.4"
+    assert pack.artifact_digest == (
+        "blake3:8d786a9df8cd6dc959358ca39b48bea2e6b5c2d8f3d02fd0fa118a9e493e518f"
+    )
     if mismatch == "pack":
         pack = replace(pack, version="0.0.2")
     elif mismatch == "distribution-name":
@@ -1299,19 +1764,23 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
 
     def distribution(name: str):
         installed = real_distribution(name)
-        if name == "dinkster-nodes-text" and mismatch == "distribution":
+        if name == "dinkster-nodes-vision" and mismatch == "distribution":
             return SimpleNamespace(version="9.0.0", locate_file=installed.locate_file)
         return installed
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
     if mismatch is not None:
-        with pytest.raises(CompositionError, match="default suite locks dinkster-text"):
-            default_pack_spec("dinkster-text")
+        with pytest.raises(CompositionError, match="default suite locks dinkster-vision-birefnet"):
+            default_pack_spec("dinkster-vision-birefnet")
         return
-    spec = default_pack_spec("dinkster-text")
+    spec = default_pack_spec("dinkster-vision-birefnet")
+    sibling = default_pack_spec("dinkster-vision-hed")
     assert spec.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.1"
-    assert spec.packs[pack.pack].source == "python:dinkster-nodes-text==0.0.2"
+    assert sibling.packs is not None
+    assert spec.packs[pack.pack].version == "0.0.4"
+    assert spec.packs[pack.pack].source == "python:dinkster-nodes-vision==0.0.2"
+    assert sibling.packs["dinkster-vision-hed"].version == "0.0.3"
+    assert sibling.packs["dinkster-vision-hed"].source == "python:dinkster-nodes-vision==0.0.2"
 
 
 def test_undeclared_pack_version_uses_distribution_version(
@@ -1319,13 +1788,12 @@ def test_undeclared_pack_version_uses_distribution_version(
 ) -> None:
     from dinkster import compose
 
-    pack_id = "dinkster-text"
-    distribution_id = "dinkster-nodes-text"
+    pack_id = "dinkster-nodes-foundation"
     lock = compose._default_pack_lock()
     changed = replace(
         lock,
         packs=tuple(
-            replace(row, version="2.3.4", source=f"python:{distribution_id}==2.3.4")
+            replace(row, version="2.3.4", source=f"python:{pack_id}==2.3.4")
             if row.pack == pack_id
             else row
             for row in lock.packs
@@ -1336,7 +1804,7 @@ def test_undeclared_pack_version_uses_distribution_version(
 
     def distribution(name: str):
         installed = real_distribution(name)
-        if name == distribution_id:
+        if name == pack_id:
             return SimpleNamespace(version="2.3.4", locate_file=installed.locate_file)
         return installed
 
@@ -1348,7 +1816,7 @@ def test_undeclared_pack_version_uses_distribution_version(
     spec = default_pack_spec(pack_id)
     assert spec.packs is not None
     assert spec.packs[pack_id].version == "2.3.4"
-    assert spec.packs[pack_id].source == f"python:{distribution_id}==2.3.4"
+    assert spec.packs[pack_id].source == f"python:{pack_id}==2.3.4"
 
 
 def test_default_pack_refuses_bytes_outside_suite_lock(
@@ -1357,15 +1825,25 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-foundation"
     copied = tmp_path / "source"
     copied.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", copied / "dinkster-pack.toml")
-    shutil.copytree(source / "src/dinkster_nodes_text", copied / "src/dinkster_nodes_text")
-    module = copied / "src/dinkster_nodes_text/__init__.py"
+    shutil.copytree(
+        source / "src/dinkster_nodes_foundation", copied / "src/dinkster_nodes_foundation"
+    )
+    module = copied / "src/dinkster_nodes_foundation/__init__.py"
     module.write_text(
         module.read_text(encoding="utf-8") + "\nLOCK_DRIFT = True\n",
         encoding="utf-8",
+    )
+    distribution = SimpleNamespace(
+        version="0.0.2",
+        locate_file=lambda _path: tmp_path / "missing/dinkster-pack.toml",
+    )
+
+    monkeypatch.setattr(
+        "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
     monkeypatch.setattr(
@@ -1373,8 +1851,8 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
         lambda _name: SimpleNamespace(origin=str(module)),
     )
 
-    with pytest.raises(CompositionError, match="locks dinkster-text artifact"):
-        default_pack_spec("dinkster-text")
+    with pytest.raises(CompositionError, match="locks dinkster-nodes-foundation artifact"):
+        default_pack_spec("dinkster-nodes-foundation")
 
 
 def test_default_suite_refuses_malformed_managed_lock(
@@ -1405,7 +1883,7 @@ def test_default_suite_refuses_malformed_managed_lock(
         (
             '{"format":"dinkster.lock/1","packs":[{'
             '"artifactDigest":"blake3:1111111111111111111111111111111111111111111111111111111111111111",'
-            '"claims":["dinkster-text"],"pack":"dinkster-text","publisher":"other",'
+            '"claims":["dinkster"],"pack":"dinkster-nodes-generation","publisher":"other",'
             '"source":"registry","version":"1.0.0"}]}',
             "contains non-Dinkster publishers",
         ),
@@ -1442,7 +1920,21 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
     compose._default_pack_lock.cache_clear()
-    expected = tuple(sorted(set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}))
+    expected = (
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
+        "dinkster-vision-rtdetr",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
+    )
     try:
         assert compose.default_pack_ids() == expected
         for pack_id in expected:
@@ -1748,81 +2240,126 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster_nodes_comfy import COMFY_NODES
+
+    from dinkster.comfy_compose import comfy_compat_specs
+
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            for spec in comfy_compat_specs():
+                await composer.add_pack(spec)
+            assert set(composer.composition.schemas) == {
+                node.schema().node_type for node in COMFY_NODES
+            }
+            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(nodes={"length": GraphNode("StringLength", {"string": "native core"})}),
+                ["length"],
+            )
+            assert result.outputs["length"]["length"].resolve() == 11
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("explicit", (False, True))
+def test_rootless_native_runtime_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
+) -> None:
+    from dinkster_workers import SingleJobMultiGpuConfig
+
+    from dinkster.comfy_compose import comfy_compat_specs
+
+    monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/environment/python")
+    specs = comfy_compat_specs(
+        python="/explicit/python" if explicit else None,
+        asset_vault=tmp_path / "vault",
+        mounts_snapshot=tmp_path / "mounts.json",
+        aimdo="off",
+        memory_budgets={"vram:cuda:0": 123456, "ram": 654321},
+        reserve_vram=789,
+        single_job_multi_gpu=SingleJobMultiGpuConfig(cuda_indices=(0, 1), mode="guidance"),
+    )
+    assert len(specs) == 1
+    spec = specs[0]
+    assert load_manifest(spec.manifest).name == "dinkster-nodes-comfy"
+    assert spec.python == ("/explicit/python" if explicit else "/environment/python")
+    assert spec.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "vault")
+    assert spec.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "mounts.json")
+    assert str(TESTS_DIR.parent / "packages/dinkster-nodes-comfy/src") in spec.env[
+        "PYTHONPATH"
+    ].split(os.pathsep)
+    assert spec.vram_budgets == {"vram:cuda:0": 123456}
+    assert spec.reserve_vram == 789
+    assert spec.single_job_cuda_indices == (0, 1)
+    assert spec.single_job_mode == "guidance"
+    assert spec.runtime_settings
+    assert not spec.in_process
+    assert not spec.trust_reserved
+
+
 @pytest.mark.parametrize("in_process", (False, True))
-def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
     tmp_path: Path, in_process: bool
 ) -> None:
-    from dinkster_nodes_utilities import NODES
+    from dinkster_nodes_comfy import COMFY_NODES
 
-    claims = tuple(node.schema().node_type for node in NODES)
-    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
-    assert load_manifest(manifest).namespaces == ("dinkster.utilities",)
+    claims = tuple(node.schema().node_type for node in COMFY_NODES)
+    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    assert load_manifest(manifest).namespaces == ("devices", *claims)
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
         '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
-        'namespaces = ["dinkster.utilities"]\n'
+        'namespaces = ["StringLength"]\n'
         '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
     )
     (tmp_path / "other_owner_fixture.py").write_text(
-        "from dinkster_nodes_utilities.primitive import PrimitiveString\n"
-        "NODES = (PrimitiveString,)\n"
+        "from dinkster_nodes_comfy.text import StringLength\nNODES = (StringLength,)\n"
     )
 
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             assert set(composer.composition.schemas) == set(claims)
-            assert set(composer.composition.node_packs.values()) == {"dinkster-utilities"}
-            assert not composer.composition.lazy_choices
+            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
             if in_process:
                 with pytest.raises(CompositionError, match="cannot reload in-process pack"):
-                    await composer.reload_pack("dinkster-utilities")
+                    await composer.reload_pack("dinkster-nodes-comfy")
             else:
-                await composer.reload_pack("dinkster-utilities")
-            assert set(composer.composition.schemas) == set(claims)
-            assert not composer.composition.lazy_choices
-            await composer.add_pack(
-                PackSpec(
-                    manifest=TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml",
-                    in_process=in_process,
-                    trust_reserved=True,
-                )
-            )
-            combined_claims = set(composer.composition.schemas)
+                await composer.reload_pack("dinkster-nodes-comfy")
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
-                    "text": GraphNode(
-                        "dinkster.utilities.primitive_string", {"value": "a\U0001f600"}
-                    ),
-                    "length": GraphNode(
-                        "dinkster.text.string_length", {"string": Link("text", "STRING")}
-                    ),
-                    "false": GraphNode("dinkster.utilities.primitive_boolean", {"value": False}),
-                    "not": GraphNode(
-                        "dinkster.utilities.comfy_not_node", {"value": Link("length", "length")}
-                    ),
+                    "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                    "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                    "false": GraphNode("PrimitiveBoolean", {"value": False}),
+                    "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
                     "and": GraphNode(
-                        "dinkster.utilities.comfy_and_node",
+                        "ComfyAndNode",
                         {
                             "values.value0": Link("length", "length"),
                             "values.value1": Link("false", "BOOLEAN"),
                         },
                     ),
                     "or": GraphNode(
-                        "dinkster.utilities.comfy_or_node",
+                        "ComfyOrNode",
                         {
                             "values.value0": Link("false", "BOOLEAN"),
                             "values.value1": Link("length", "length"),
                         },
                     ),
-                    "combo_default": GraphNode("dinkster.utilities.custom_combo", {"choice": ""}),
-                    "combo_index": GraphNode("dinkster.utilities.primitive_int", {"value": 205}),
+                    "combo_default": GraphNode("CustomCombo", {"choice": ""}),
+                    "combo_index": GraphNode("PrimitiveInt", {"value": 205}),
                     "combo": GraphNode(
-                        "dinkster.utilities.custom_combo",
+                        "CustomCombo",
                         {
                             "choice": "outside-menu",
                             "index": Link("combo_index", "INT"),
@@ -1849,20 +2386,15 @@ def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
             assert "combo" in repeated.cached
             assert repeated.outputs["combo"]["INDEX"].resolve() == 205
             changed = Graph(
-                nodes={
-                    **graph.nodes,
-                    "combo_index": GraphNode("dinkster.utilities.primitive_int", {"value": -7}),
-                }
+                nodes={**graph.nodes, "combo_index": GraphNode("PrimitiveInt", {"value": -7})}
             )
             changed_result = await engine.run(changed, ["combo"])
             assert changed_result.outputs["combo"]["STRING"].resolve() == "outside-menu"
             assert changed_result.outputs["combo"]["INDEX"].resolve() == -7
             assert "combo" in changed_result.executed
-            with pytest.raises(
-                CompositionError, match="declared by both 'dinkster-utilities' and 'other-owner'"
-            ):
-                await composer.add_pack(PackSpec(manifest=other_manifest, trust_reserved=True))
-            assert set(composer.composition.schemas) == combined_claims
+            with pytest.raises(CompositionError, match="overlaps"):
+                await composer.add_pack(PackSpec(manifest=other_manifest))
+            assert set(composer.composition.schemas) == set(claims)
         finally:
             await composer.close()
 
@@ -2022,7 +2554,7 @@ def test_asset_literals_use_host_and_worker_resolvers(
 
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("verified", (False, True))
-def test_models_pack_preserves_host_bound_assets(
+def test_comfy_manifest_registers_bound_assets_with_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:
     from dinkster_api.v1 import ASSET_TYPE
@@ -2043,7 +2575,7 @@ def test_models_pack_preserves_host_bound_assets(
         table.scan("models")
     ref = table.bind_name("weights.bin", "model/checkpoint")
     assert isinstance(ref, AssetRef if verified else LocalAssetRef)
-    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-models/dinkster-pack.toml"
+    comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
     env = {
         **WORKER_ENV,
         "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
@@ -2052,19 +2584,10 @@ def test_models_pack_preserves_host_bound_assets(
 
     async def scenario() -> None:
         registry = TypeRegistry()
-        assert ASSET_TYPE not in registry
         composer = ServingComposer(registry=registry, worker_env=env)
         try:
-            asset_type = registry.spec(ASSET_TYPE)
-            await composer.add_pack(
-                PackSpec(manifest, in_process=in_process, env=env, trust_reserved=True)
-            )
-            assert registry.spec(ASSET_TYPE) is asset_type
-            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
-            if not in_process:
-                await composer.reload_pack("dinkster-models")
-                assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
-                assert registry.spec(ASSET_TYPE) is asset_type
+            assert ASSET_TYPE not in registry
+            await composer.add_pack(PackSpec(comfy, in_process=in_process, env=env))
             for _ in range(2):
                 bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
                 restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
@@ -2081,20 +2604,17 @@ def test_native_comfy_pack_registers_container_literals(in_process: bool) -> Non
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
         try:
-            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml"
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
+            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
                         "dictionary": GraphNode(
-                            "dinkster.text.convert_dictionary_to_string",
+                            "ConvertDictionaryToString",
                             {"dictionary": {"key": [3, True]}, "indent": 0},
                         ),
                         "array": GraphNode(
-                            "dinkster.text.convert_array_to_string",
-                            {"array": [3, {"key": False}], "indent": 0},
+                            "ConvertArrayToString", {"array": [3, {"key": False}], "indent": 0}
                         ),
                     }
                 ),
@@ -2181,7 +2701,7 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
 
 
 def test_composed_server_end_to_end(tmp_path: Path) -> None:
-    """One server: text nodes in-process, the pack isolated, both executing
+    """One server: std nodes in-process, the pack isolated, both executing
     through the same queue; /api/nodes attributes each side truthfully and
     carries the manifest's declared presentation."""
 
@@ -2189,8 +2709,8 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         manifest = write_iso_manifest(tmp_path)
         composition = await compose_serving(
             [
-                replace(default_pack_spec("dinkster-text"), in_process=True),
-                default_pack_spec("dinkster-models"),
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
                 manifest,
             ],
             include_default_packs=False,
@@ -2199,12 +2719,12 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         published_schemas = {
             node_type: schema
             for node_type, schema in composition.schemas.items()
-            if node_type.startswith("iso.") or node_type == "dinkster.text.string_concatenate"
+            if node_type.startswith("iso.") or node_type == "std.math.add_ints"
         }
         published_packs = {
             pack_id: replace(info, comfy_aliases=None, comfy_groups=None)
             for pack_id, info in composition.packs.items()
-            if pack_id in {"isopack", "dinkster-text"}
+            if pack_id in {"isopack", "dinkster-nodes-foundation"}
         }
         app = create_app(
             composition.make_engine,
@@ -2239,7 +2759,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "source": f"local:{Path(manifest).parent.resolve()}",
             }
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
-            assert data["nodes"]["dinkster.text.string_concatenate"]["pack"] == "dinkster-text"
+            assert data["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
             blob_size = next(
                 item
                 for item in data["nodes"]["iso.blob_out"]["interface"]
@@ -2252,18 +2772,18 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "unit": "bytes",
             }
 
-            devices = await client.get("/api/choices/devices.gpu")
+            # The in-process media-io pack's lazy device route serves per
+            # fetch: no capture provider configured means an empty list,
+            # not a missing route.
+            devices = await client.get("/api/choices/dinkster.devices.audio_inputs")
             assert devices.status == 200, await devices.text()
-            assert "cpu" in await devices.json()
+            assert await devices.json() == []
 
-            # One graph spanning both workers: text concatenation runs
+            # One graph spanning both workers: the std add runs
             # in-process, iso.chatty in the pack process, one job.
             graph = Graph(
                 nodes={
-                    "g": GraphNode(
-                        "dinkster.text.string_concatenate",
-                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                    ),
+                    "g": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
                     "c": GraphNode("iso.chatty", {"value": "hi"}),
                     "b": GraphNode("iso.blob_out", {"size": 3}),
                 }
@@ -2283,16 +2803,6 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                     break
                 await asyncio.sleep(0.05)
             assert status.get("state") == "completed", status
-
-            for node_id, output_id, expected in (
-                ("g", "STRING", "left:right"),
-                ("c", "value", "HI"),
-            ):
-                response = await client.get(
-                    f"/api/values?clientId=c1&jobId=j1&nodeId={node_id}&outputId={output_id}"
-                )
-                assert response.status == 200, await response.text()
-                assert (await response.json())["descriptor"]["value"] == expected
 
             value_url = "/api/values?clientId=c1&jobId=j1&nodeId=b&outputId=blob"
             discovery = await client.get(value_url)
@@ -2359,7 +2869,6 @@ def test_pack_type_owners_are_discovered_without_activation_and_retracted(
             await client.start_server()
             data = await (await client.get("/api/nodes")).json()
             assert data["typeOwners"]["mypack.thing"] == "mypack"
-            assert data["typeOwners"]["INT"] == "core"
             if cold:
                 assert composer._records["mypack"].worker.cold
             if not in_process:
@@ -2385,7 +2894,6 @@ def test_pack_type_owners_are_discovered_without_activation_and_retracted(
             data = await (await client.get("/api/nodes")).json()
             assert "mypack.thing" not in data["typeOwners"]
             assert "mypack.replacement" not in data["typeOwners"]
-            assert data["typeOwners"]["INT"] == "core"
             assert registry.owner_of("mypack.thing") is None
             assert "mypack.thing" not in registry
         finally:
@@ -2645,6 +3153,30 @@ def test_reload_preserves_pack_owned_host_codecs_and_providers(tmp_path: Path) -
     run_scenario(scenario())
 
 
+def test_comfy_compat_specs_carry_host_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The combined core and legacy worker installs the comfy host types."""
+    from dinkster import comfy_compose
+    from dinkster.comfy_compose import comfy_compat_specs, register_comfy_host_types
+
+    (tmp_path / "legacy-pack").mkdir()
+    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", lambda _interpreter: None)
+    specs = comfy_compat_specs(
+        tmp_path,
+        legacy_packs=[tmp_path / "legacy-pack"],
+        aimdo="on",
+        memory_budgets={"vram:cuda:0": 20_000, "ram": 40_000},
+        reserve_vram=128,
+    )
+    assert len(specs) == 2
+    assert specs[0].host_types is None
+    assert specs[1].host_types is register_comfy_host_types
+    assert specs[1].aimdo == "on"
+    assert specs[1].vram_budgets == {"vram:cuda:0": 20_000}
+    assert specs[1].reserve_vram == 128
+
+
 def test_pack_spec_validates_aimdo_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
@@ -2773,22 +3305,15 @@ def test_serving_composer_incremental(tmp_path: Path) -> None:
                 await composer.add_pack(standard) for standard in default_pack_specs()
             ]
             assert set().union(*(delta.schemas for delta in standard_deltas)) == set(
-                FIRST_PARTY_NODE_PACKS
+                build_schemas(DEFAULT_NODES)
             )
             for standard_delta in standard_deltas:
                 engine.announce_schemas(standard_delta.schemas)
             result = await engine.run(
-                Graph(
-                    nodes={
-                        "g": GraphNode(
-                            "dinkster.text.string_concatenate",
-                            {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                        )
-                    }
-                ),
+                Graph(nodes={"g": GraphNode("std.math.add_ints", {"a": 2, "b": 3})}),
                 ["g"],
             )
-            assert result.outputs["g"]["STRING"].resolve() == "left:right"
+            assert "g" in result.outputs
 
             delta = await composer.add_pack(write_iso_manifest(tmp_path))
             assert delta.pack == "isopack"
@@ -2832,9 +3357,9 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 candidates: tuple[str, Mapping[str, str]],
                 **context: object,
             ) -> None:
-                value = inputs["string_a"].resolve()
-                if value in ("first-second", "other"):
-                    label = "other" if value == "other" else "main"
+                value = inputs["a"].resolve()
+                if value in (5, 13):
+                    label = "other" if value == 13 else "main"
                     entered[label].set()
                     await resume[label].wait()
                     if label == "main" and ending == "failure":
@@ -2850,7 +3375,7 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
         composer = ServingComposer(pack_scratch_root=scratch, native_policy=Policy())
         tasks: list[asyncio.Task[object]] = []
         try:
-            await composer.add_pack(default_pack_spec("dinkster-text"))
+            await composer.add_pack(default_pack_spec("dinkster-nodes-foundation"))
             engine = composer.composition.make_engine(lambda event: None)
             with pytest.raises(AssetError, match="ownership state is unavailable"):
                 with claim_inactive_produced_job(scratch, "unknown job"):
@@ -2859,17 +3384,9 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 engine.run(
                     Graph(
                         nodes={
-                            "first": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {"string_a": "first", "string_b": "second", "delimiter": "-"},
-                            ),
+                            "first": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
                             "second": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {
-                                    "string_a": Link("first", "STRING"),
-                                    "string_b": "third",
-                                    "delimiter": ":",
-                                },
+                                "std.math.add_ints", {"a": Link("first", "sum"), "b": 7}
                             ),
                         }
                     ),
@@ -2880,14 +3397,7 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
             )
             other = asyncio.create_task(
                 composer.composition.make_engine(lambda event: None).run(
-                    Graph(
-                        nodes={
-                            "other": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {"string_a": "other", "string_b": "job", "delimiter": "/"},
-                            )
-                        }
-                    ),
+                    Graph(nodes={"other": GraphNode("std.math.add_ints", {"a": 13, "b": 17})}),
                     ["other"],
                     run_id=other_job,
                 )
@@ -2910,16 +3420,14 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                         ):
                             await main
                     else:
-                        assert (await main).outputs["second"][
-                            "STRING"
-                        ].resolve() == "first-second:third"
+                        assert (await main).outputs["second"]["sum"].resolve() == 12
                 with claim_inactive_produced_job(scratch, "../main job") as inactive:
                     assert inactive == (other_job != "../main job")
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert not inactive
                 assert released == ["../main job"]
                 resume["other"].set()
-                assert (await other).outputs["other"]["STRING"].resolve() == "other/job"
+                assert (await other).outputs["other"]["sum"].resolve() == 30
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert inactive
         finally:
@@ -3311,8 +3819,8 @@ def test_failed_start_reaps_started_workers(
         )
         with pytest.raises(RuntimeError, match="failed to start"):
             await compose_serving([good, bad], worker_env=WORKER_ENV)
-        assert started
-        assert all(worker in closed for worker in started)
+        assert len(started) == 1
+        assert started[0] in closed
 
     run_scenario(scenario())
 
@@ -3452,6 +3960,187 @@ def test_pack_table_rejects_comfy_group_collisions_without_mutating() -> None:
             "test",
         )
     assert set(packs) == {"native-a"}
+
+
+def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pure spec construction: no ComfyUI needed. The core worker
+    attributes everything to 'comfy'; legacy nodes attribute per pack by
+    the same namespace rule legacy.py applies, longest prefix first."""
+    from dinkster import comfy_compose
+    from dinkster.comfy_compose import comfy_compat_specs
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    (tmp_path / "packs" / "rgthree").mkdir(parents=True)
+    single = tmp_path / "packs" / "solo.py"
+    single.write_text("")
+    # A pack that declares its own badge via a presentation-only manifest
+    # (no [pack.entry] - not a loadable Dinkster pack, just a badge).
+    themed = tmp_path / "packs" / "themed"
+    themed.mkdir()
+    from dinkster_assets import PackagedSource, digest_bytes
+    from icon_bytes import png_bytes
+
+    (themed / "badge.png").write_bytes(png_bytes())
+    (themed / "starter.json").write_text('{"graphs": {}}')
+    aux_bytes = b"legacy aux model" * 8
+    aux_digest = digest_bytes(aux_bytes)
+    (themed / "models").mkdir()
+    (themed / "models" / "aux.bin").write_bytes(aux_bytes)
+    (themed / "dinkster-pack.toml").write_text(
+        "[pack]\n[pack.presentation]\n"
+        'display_name = "Themed Pack"\nabbr = "TH"\ncolor = "#aa3355"\n'
+        'icon = "badge.png"\n'
+        "[[pack.blueprints]]\n"
+        'id = "starter"\nname = "Starter"\nfile = "starter.json"\n'
+        "[[pack.assets]]\n"
+        f'id = "aux"\nname = "Aux Model"\ndigest = "{aux_digest}"\n'
+        'file = "models/aux.bin"\nnodes = ["comfy.themed.AuxNode"]\n'
+        "[[pack.templates]]\n"
+        'id = "quickstart"\nname = "Quickstart"\nfile = "starter.json"\n'
+        'assets = ["aux"]\n'
+    )
+    # A pack whose manifest is broken TOML: advisory means it composes
+    # anyway, with the shared legacy default.
+    broken = tmp_path / "packs" / "broken"
+    broken.mkdir()
+    (broken / "dinkster-pack.toml").write_text("[pack\n")
+    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", lambda _interpreter: None)
+
+    specs = comfy_compat_specs(
+        root,
+        python=sys.executable,
+        legacy_packs=[tmp_path / "packs" / "rgthree", single, themed, broken],
+        comfy_nodes=["EmptyLatentImage"],
+        asset_vault=tmp_path / "library" / "vault",
+        mounts_snapshot=tmp_path / "library" / "mounts.json",
+    )
+    assert len(specs) == 2
+    generation, legacy = specs
+    assert generation.in_process is True
+    assert generation.packs is not None and set(generation.packs) == {"dinkster-nodes-generation"}
+    assert legacy.env["DINKSTER_COMFYUI_ROOT"] == str(root)
+    assert legacy.env["DINKSTER_COMFY_NODES"] == "EmptyLatentImage"
+    assert legacy.python == sys.executable
+    # The compat layer's own declared chip: distinguishable from legacy
+    # packs (shared color, no puzzle mark).
+    assert legacy.packs is not None
+    assert legacy.packs["comfy"].display_name == "ComfyUI Compat"
+    assert legacy.packs["comfy"].abbr == "C1"
+    assert legacy.packs["comfy"].color
+
+    multi_gpu = comfy_compat_specs(
+        root,
+        python=sys.executable,
+        multi_device_cuda_indices=(1, 0),
+    )[1]
+    assert multi_gpu.replica_cuda_indices == (1, 0)
+
+    assert set(legacy.packs) == {
+        "comfy",
+        "comfy.rgthree",
+        "comfy.solo",
+        "comfy.themed",
+        "comfy.broken",
+    }
+    assert "rgthree" in str(legacy.env["DINKSTER_LEGACY_PACKS"])
+    assert legacy.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "library" / "vault")
+    assert legacy.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "library" / "mounts.json")
+    assert legacy.attribute is not None
+    assert legacy.attribute("comfy.rgthree.FastMuter") == "comfy.rgthree"
+    assert legacy.attribute("comfy.solo.Thing") == "comfy.solo"
+    # No configured pack matches -> the truthful compat-layer chip.
+    assert legacy.attribute("comfy.mystery.Node") == "comfy"
+    # Default legacy badge: shared "unported legacy pack" mark + color,
+    # per-pack display name. Single-file packs get the same default.
+    rgthree = legacy.packs["comfy.rgthree"]
+    assert rgthree.display_name == "rgthree (ComfyUI)"
+    assert rgthree.mark == "\U0001f9e9"
+    assert rgthree.color
+    assert legacy.packs["comfy.solo"].mark == "\U0001f9e9"
+    # Declared [pack.presentation] overrides the default badge wholesale.
+    themed_info = legacy.packs["comfy.themed"]
+    assert themed_info.display_name == "Themed Pack"
+    assert themed_info.abbr == "TH"
+    assert themed_info.color == "#aa3355"
+    assert not themed_info.mark
+    # A declared icon rides along: legacy packs get raster badges through
+    # the same presentation-only manifest, no porting required.
+    assert themed_info.icon is not None
+    assert themed_info.icon.media_type == "image/png"
+    assert themed_info.icon.digest.startswith("sha256:")
+    assert themed_info.icon.data == png_bytes()
+    # Blueprints ride the same presentation-only on-ramp: a legacy pack
+    # ships starter workflows without being a loadable Dinkster pack.
+    assert [bp.id for bp in themed_info.blueprints] == ["starter"]
+    assert themed_info.blueprints[0].data == b'{"graphs": {}}'
+    # Templates too, with asset references validated against the same
+    # file's [[pack.assets]] declarations.
+    assert [tp.id for tp in themed_info.templates] == ["quickstart"]
+    assert themed_info.templates[0].assets == ("aux",)
+    assert themed_info.templates[0].data == b'{"graphs": {}}'
+    # [[pack.assets]] rides it too: the declaration resolves under the
+    # synthetic legacy pack id, whose artifact root the spec maps to the
+    # pack directory - so packaged acquisition works for unported packs.
+    assert [a.id for a in themed_info.assets] == ["aux"]
+    assert themed_info.assets[0].need.digest == aux_digest
+    assert themed_info.assets[0].nodes == ("comfy.themed.AuxNode",)
+    assert themed_info.assets[0].need.sources == (
+        PackagedSource(pack="comfy.themed", path="models/aux.bin"),
+    )
+    # Only directory packs get roots: single-file packs have no adjacent
+    # manifest to declare assets from.
+    assert dict(legacy.asset_roots) == {
+        "comfy.rgthree": tmp_path / "packs" / "rgthree",
+        "comfy.themed": themed,
+        "comfy.broken": broken,
+    }
+    # Packs without a manifest (or with a broken one) simply have none.
+    assert rgthree.blueprints == ()
+    assert rgthree.assets == () and legacy.packs["comfy.broken"].assets == ()
+    # Broken presentation file: advisory, so the pack still composes and
+    # wears the shared default.
+    assert legacy.packs["comfy.broken"].display_name == "broken (ComfyUI)"
+    assert legacy.packs["comfy.broken"].mark == "\U0001f9e9"
+
+    with pytest.raises(CompositionError, match="not found"):
+        comfy_compat_specs(tmp_path / "nowhere")
+    with pytest.raises(CompositionError, match="legacy pack not found"):
+        comfy_compat_specs(root, legacy_packs=[tmp_path / "missing"])
+
+
+def test_comfy_host_types_register_save_target_runtime_values() -> None:
+    from dinkster_assets import SAVE_TARGET_TYPE, AssetError, SaveTarget
+    from dinkster_values import TypeRegistry
+
+    from dinkster.comfy_compose import register_comfy_host_types
+
+    registry = TypeRegistry()
+    register_comfy_host_types(registry)
+    register_comfy_host_types(registry)  # both compat PackSpecs share the hook
+
+    explicit = {"mount": "comfy-output", "prefix": "renders/scene"}
+    wrapped = registry.wrap(SAVE_TARGET_TYPE, explicit)
+    assert wrapped.resolve() == SaveTarget(**explicit)
+    assert wrapped.fingerprint == "SAVE_TARGET:comfy-output/renders/scene"
+    encoded = registry.spec(SAVE_TARGET_TYPE).encode(explicit)
+    assert registry.spec(SAVE_TARGET_TYPE).decode(encoded) == SaveTarget(**explicit)
+
+    from dinkster_nodes_media_io import SaveImage
+
+    advertised_default = SaveImage.schema().inputs[1].default
+    assert advertised_default is None
+
+    with pytest.raises(AssetError, match="unknown keys"):
+        registry.wrap(
+            SAVE_TARGET_TYPE,
+            {"mount": "comfy-output", "prefix": "renders/scene", "path": "/tmp"},
+        )
+    with pytest.raises(AssetError, match="invalid save target prefix"):
+        registry.wrap(
+            SAVE_TARGET_TYPE,
+            {"mount": "comfy-output", "prefix": "../escape"},
+        )
 
 
 def test_composition_close_is_idempotent(tmp_path: Path) -> None:

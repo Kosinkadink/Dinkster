@@ -18,8 +18,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_sd.clip_sdxl import CLIPTextEncodeSDXL, CLIPTextEncodeSDXLRefiner
-from dinkster_server import PackInfo
+from dinkster_nodes_comfy.clip_sdxl import CLIPTextEncodeSDXL, CLIPTextEncodeSDXLRefiner
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -124,40 +123,36 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
         try:
             manifest = (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-sd/dinkster-pack.toml"
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
             )
             (tmp_path / "sdxl_fixture.py").write_text(
                 "from test_comfy_clip_sdxl_nodes import SDXL_FIXTURES\n"
-                "from dinkster_nodes_sd import NODES as SD_NODES, register_types\n"
-                "NODES = (*SD_NODES, *SDXL_FIXTURES)\n",
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
+                "NODES = (*COMFY_NODES, *SDXL_FIXTURES)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
-                .replace("\nnamespaces = [", '\nnamespaces = ["sdxl-fixture",')
-                .replace("dinkster_nodes_sd:NODES", "sdxl_fixture:NODES")
-                .replace("dinkster_nodes_sd:register_types", "sdxl_fixture:register_types"),
+                .replace("namespaces = [", 'namespaces = ["sdxl-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "sdxl_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "sdxl_fixture:device_choices",
+                )
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "sdxl_fixture:register_inference_types",
+                ),
                 encoding="ascii",
             )
-            for dependency in ("latent", "conditioning", "sampling"):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest.parent.parent
-                        / f"dinkster-nodes-{dependency}/dinkster-pack.toml",
-                        in_process=in_process,
-                        trust_reserved=True,
-                        packs={f"dinkster-{dependency}": PackInfo(dependency, version="0.0.1")},
-                    )
-                )
-            await composer.add_pack(
-                PackSpec(manifest=source_manifest, in_process=in_process, trust_reserved=True)
-            )
+            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("sdxl-fixture.source"),
                     "base": GraphNode(
-                        "dinkster.sd.clip_text_encode_sdxl",
+                        "CLIPTextEncodeSDXL",
                         {
                             "clip": Link("source", "CLIP"),
                             "text_g": "red",
@@ -166,7 +161,7 @@ def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
                         },
                     ),
                     "refiner": GraphNode(
-                        "dinkster.sd.clip_text_encode_sdxl_refiner",
+                        "CLIPTextEncodeSDXLRefiner",
                         {
                             "clip": Link("source", "CLIP"),
                             "text": "gold",

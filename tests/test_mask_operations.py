@@ -8,6 +8,7 @@ from typing import cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import ComboWidget, InputSpec
+from dinkster_nodes_image import IMAGE_NODES
 from dinkster_nodes_image.drawing import MakeImage
 from dinkster_nodes_image.mask import (
     MASK_NODES,
@@ -566,9 +567,9 @@ def test_remove_small_components_rejects_invalid_controls(
         )
 
 
-def test_mask_cleanup_support_schema_round_trips_through_schema_wire() -> None:
-    assert MaskMorphology in MASK_NODES
-    schema = build_schemas(MASK_NODES)["dinkster.mask.morphology"]
+def test_mask_cleanup_is_registered_and_round_trips_through_schema_wire() -> None:
+    assert MaskMorphology in IMAGE_NODES
+    schema = build_schemas(IMAGE_NODES)["dinkster.mask.morphology"]
     operation = schema.combos[0]
     cleanup = operation.option("remove_small_components")
     assert cleanup is not None

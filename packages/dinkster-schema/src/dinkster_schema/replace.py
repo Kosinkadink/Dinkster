@@ -1498,8 +1498,7 @@ def validate_replacement_references(
                                     family.member_names[:member_count]
                                     if family.member_names is not None
                                     else tuple(
-                                        f"{family.member_prefix or ''}{member_index}"
-                                        for member_index in range(member_count)
+                                        str(member_index) for member_index in range(member_count)
                                     )
                                 )
                         evidence_by_local.setdefault(local_id, []).extend(

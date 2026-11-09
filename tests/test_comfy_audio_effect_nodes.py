@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_audio import NODES
-from dinkster_nodes_audio.audio_effects import (
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.audio_effects import (
     AUDIO_EFFECT_NODES,
     AudioEqualizer3Band,
     TrimAudioDuration,
@@ -24,7 +24,7 @@ def test_audio_effect_schemas_match_comfyui_without_torch() -> None:
         [
             sys.executable,
             "-c",
-            "from dinkster_nodes_audio.audio_effects import AUDIO_EFFECT_NODES; "
+            "from dinkster_nodes_comfy.audio_effects import AUDIO_EFFECT_NODES; "
             "[node.schema() for node in AUDIO_EFFECT_NODES]; "
             "import sys; assert 'torch' not in sys.modules",
         ],
@@ -33,9 +33,9 @@ def test_audio_effect_schemas_match_comfyui_without_torch() -> None:
     )
     assert AUDIO_EFFECT_NODES == (TrimAudioDuration, AudioEqualizer3Band)
     trim, equalizer = (node.schema() for node in AUDIO_EFFECT_NODES)
-    assert all(node in NODES for node in AUDIO_EFFECT_NODES)
+    assert all(node in COMFY_NODES for node in AUDIO_EFFECT_NODES)
     assert (trim.node_type, trim.display_name, trim.description, trim.category) == (
-        "dinkster.audio.trim_audio_duration",
+        "TrimAudioDuration",
         "Trim Audio Duration",
         "Trim audio tensor into chosen time range.",
         "audio",
@@ -57,7 +57,7 @@ def test_audio_effect_schemas_match_comfyui_without_torch() -> None:
         equalizer.description,
         equalizer.category,
     ) == (
-        "dinkster.audio.audio_equalizer3_band",
+        "AudioEqualizer3Band",
         "Audio Equalizer (3-Band)",
         "",
         "audio",

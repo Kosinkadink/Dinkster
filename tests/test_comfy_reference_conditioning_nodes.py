@@ -5,9 +5,6 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-import dinkster_nodes_conditioning
-import dinkster_nodes_hunyuan
-import dinkster_nodes_misc_models
 import pytest
 from dinkster_api.v1 import (
     CLIP_TYPE,
@@ -25,53 +22,33 @@ from dinkster_api.v1 import (
 )
 from dinkster_engine import ParentGraphBudget, admit_parent_graph
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
-from dinkster_nodes_conditioning.reference_conditioning import (
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.bernini_conditioning import BerniniConditioning
+from dinkster_nodes_comfy.boogu_encoders import TextEncodeBooguEdit
+from dinkster_nodes_comfy.fibo2_encoders import TextEncodeFibo2
+from dinkster_nodes_comfy.hidream_patches import HiDreamO1ReferenceImages
+from dinkster_nodes_comfy.joyimage_encoders import TextEncodeJoyImageEdit
+from dinkster_nodes_comfy.mage_image_encoders import TextEncodeMageFlowEdit
+from dinkster_nodes_comfy.ming_image_encoders import TextEncodeMingImageEdit
+from dinkster_nodes_comfy.moss_image import TextEncodeMOSSImageEdit
+from dinkster_nodes_comfy.qwen_image_encoders import TextEncodeQwenImage21
+from dinkster_nodes_comfy.reference_conditioning import (
+    InstructPixToPixConditioning,
     ReferenceLatent,
     ReferenceMultiLatent,
 )
-from dinkster_nodes_hidream.hidream_patches import HiDreamO1ReferenceImages
-from dinkster_nodes_misc_models.bernini_conditioning import BerniniConditioning
-from dinkster_nodes_misc_models.boogu_encoders import TextEncodeBooguEdit
-from dinkster_nodes_misc_models.fibo2_encoders import TextEncodeFibo2
-from dinkster_nodes_misc_models.joyimage_encoders import TextEncodeJoyImageEdit
-from dinkster_nodes_misc_models.mage_image_encoders import TextEncodeMageFlowEdit
-from dinkster_nodes_misc_models.ming_image_encoders import TextEncodeMingImageEdit
-from dinkster_nodes_misc_models.moss_image import TextEncodeMOSSImageEdit
-from dinkster_nodes_misc_models.reference_conditioning import InstructPixToPixConditioning
-from dinkster_nodes_qwen.qwen_image_encoders import TextEncodeQwenImage21
 from dinkster_schema import ElaborationError, elaborate
 
 
 def test_reference_conditioning_interfaces_and_manifest() -> None:
-    for node, provider, package, node_id in (
+    manifest = tomllib.loads(
         (
-            InstructPixToPixConditioning,
-            dinkster_nodes_misc_models,
-            "misc-models",
-            "dinkster.misc.models.instruct_pix_to_pix_conditioning",
-        ),
-        (
-            ReferenceLatent,
-            dinkster_nodes_conditioning,
-            "conditioning",
-            "dinkster.conditioning.reference_latent",
-        ),
-        (
-            ReferenceMultiLatent,
-            dinkster_nodes_conditioning,
-            "conditioning",
-            "dinkster.conditioning.reference_multi_latent",
-        ),
-    ):
-        manifest = tomllib.loads(
-            (
-                Path(__file__).resolve().parents[1]
-                / f"packages/dinkster-nodes-{package}/dinkster-pack.toml"
-            ).read_text()
-        )
-        assert node in provider.NODES
-        assert node.schema().node_type == node_id
-        assert node_id.rsplit(".", 1)[0] in manifest["pack"]["namespaces"]
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        ).read_text()
+    )
+    for node in (InstructPixToPixConditioning, ReferenceLatent, ReferenceMultiLatent):
+        assert node in COMFY_NODES
+        assert node.__name__ in manifest["pack"]["namespaces"]
     image_edit = InstructPixToPixConditioning.define_schema()
     assert [(port.id, port.type) for port in image_edit.inputs] == [
         ("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
@@ -92,13 +69,10 @@ def test_reference_conditioning_interfaces_and_manifest() -> None:
 
 def test_hunyuan_vision_interfaces_are_native() -> None:
     from dinkster_api.v1 import CLIP_VISION_OUTPUT_TYPE
-    from dinkster_nodes_hunyuan.hunyuan3d import (
-        Hunyuan3Dv2Conditioning,
-        Hunyuan3Dv2ConditioningMultiView,
-    )
+    from dinkster_nodes_comfy.hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 
-    for node in (Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView):
-        assert node in dinkster_nodes_hunyuan.NODES
+    for node in HUNYUAN3D_CONDITIONING_NODES:
+        assert node in COMFY_NODES
         schema = node.schema()
         assert schema.category == "model/conditioning/hunyuan 3d"
         assert [(port.id, port.type) for port in schema.outputs] == [
@@ -108,7 +82,7 @@ def test_hunyuan_vision_interfaces_are_native() -> None:
         assert all(
             port.type == TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE) for port in schema.inputs
         )
-    single, multi = Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView
+    single, multi = HUNYUAN3D_CONDITIONING_NODES
     assert [(port.id, port.required) for port in single.schema().inputs] == [
         ("clip_vision_output", True)
     ]
@@ -211,7 +185,7 @@ def test_reference_image_families_keep_required_initial_positions(
     graph = Graph(
         {
             "source": GraphNode(source.node_type),
-            "encode": GraphNode(schema.node_type, stored),
+            "encode": GraphNode(node_type, stored),
             "sink": GraphNode(
                 sink.node_type,
                 {
@@ -244,9 +218,7 @@ def test_reference_image_families_keep_required_initial_positions(
         incomplete = Graph(
             {
                 **graph.nodes,
-                "encode": GraphNode(
-                    schema.node_type, {k: v for k, v in stored.items() if k != missing}
-                ),
+                "encode": GraphNode(node_type, {k: v for k, v in stored.items() if k != missing}),
             }
         )
         assert [
@@ -452,7 +424,7 @@ def test_vision_reference_image_members_are_optional_in_native_graphs(
     graph = Graph(
         {
             "source": GraphNode(source.node_type),
-            "encode": GraphNode(schema.node_type, inputs),
+            "encode": GraphNode(node_type, inputs),
             "sink": GraphNode(
                 sink.node_type,
                 {"positive": Link("encode", "positive"), "negative": Link("encode", "negative")},
@@ -481,8 +453,7 @@ def test_vision_reference_image_members_are_optional_in_native_graphs(
             {
                 **graph.nodes,
                 "encode": GraphNode(
-                    schema.node_type,
-                    {key: value for key, value in inputs.items() if key != missing},
+                    node_type, {key: value for key, value in inputs.items() if key != missing}
                 ),
             }
         )
@@ -547,7 +518,7 @@ def test_model_encoder_authored_images_are_optional_in_native_graphs(
     graph = Graph(
         {
             "source": GraphNode(source.node_type),
-            "encode": GraphNode(schema.node_type, inputs),
+            "encode": GraphNode(node_type, inputs),
             "sink": GraphNode(
                 sink.node_type,
                 {
@@ -575,8 +546,7 @@ def test_model_encoder_authored_images_are_optional_in_native_graphs(
             {
                 **graph.nodes,
                 "encode": GraphNode(
-                    schema.node_type,
-                    {key: value for key, value in inputs.items() if key != missing},
+                    node_type, {key: value for key, value in inputs.items() if key != missing}
                 ),
             }
         )

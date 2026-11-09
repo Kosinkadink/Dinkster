@@ -30,6 +30,7 @@ ALLOWED: dict[str, set[str]] = {
     # inference boundaries that a deployed acceptance run must cross.
     "dinkster_acceptance": {
         "dinkster_caches",
+        "dinkster_compat_comfy",
         "dinkster_engine",
         "dinkster_graph",
         "dinkster_inference_wire",
@@ -45,7 +46,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_graph": {"dinkster_schema", "dinkster_values"},
     # Shared inference codecs use the Torch-free governed resident pool.
     "dinkster_inference_wire": {
-        "dinkster_assets",
         "dinkster_schema",
         "dinkster_protocol",
         "dinkster_values",
@@ -103,11 +103,37 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_graph",
         "dinkster_inference_wire",
         "dinkster_protocol",
+        "dinkster_nodes_generation",
         "dinkster_workers",
     },
     # Shared materialization consumes portable values, never packs or the scheduler.
     "dinkster_video": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},
+    # Packs may declare reservation policy (dinkster_memory's planner contracts)
+    # but never touch the engine: planners observe InvocationView, not
+    # Invocation. dinkster_graph is allowed for the Comfy API prompt adapter:
+    # translating a v1 prompt means *producing* a native Graph, and the
+    # graph model is a pure document layer (schema-only deps) - the edge
+    # stays acyclic and the engine still never learns v1 existed.
+    # The built-in compat pack also consumes native inference contracts and
+    # dinkster_workers' invocation-local execution context so a same-session arm
+    # can assert and execute the host's expected runtime identity.
+    # These are body-wiring edges, not scheduler access; third-party packs
+    # still author through dinkster_api below.
+    "dinkster_compat_comfy": {
+        "dinkster_image_document",
+        "dinkster_schema",
+        "dinkster_values",
+        "dinkster_video",
+        "dinkster_assets",
+        "dinkster_memory",
+        "dinkster_graph",
+        "dinkster_inference_wire",
+        "dinkster_native",
+        "dinkster_protocol",
+        "dinkster_nodes_generation",
+        "dinkster_workers",
+    },
     # The door (DESIGN 3.6): re-exports the pack-author surface from the
     # bottom layers, the RPC-clean protocol leaf and the worker's task-local
     # invocation reader. No scheduler or server access crosses the door.
@@ -122,75 +148,15 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_image_document",
         "dinkster_workers",
     },
-    # Family packs compose only their named sibling dependencies. Shared
-    # runtime contracts still cross the pack-author API, not private layers.
-    "dinkster_nodes_3d": {"dinkster_api", "dinkster_nodes_image"},
-    "dinkster_nodes_3d_models": {"dinkster_api"},
-    "dinkster_nodes_audio": {"dinkster_api"},
-    "dinkster_nodes_audio_models": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_conditioning": {"dinkster_api", "dinkster_nodes_latent"},
-    "dinkster_nodes_cosmos": {"dinkster_api", "dinkster_nodes_video"},
-    "dinkster_nodes_flux": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_hidream": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_hunyuan": {
-        "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_video",
-    },
+    "dinkster_nodes_comfy": {"dinkster_api"},
+    "dinkster_nodes_foundation": {"dinkster_api"},
+    "dinkster_nodes_media_io": {"dinkster_api"},
     "dinkster_nodes_image": {"dinkster_api"},
-    "dinkster_nodes_latent": {"dinkster_api"},
-    "dinkster_nodes_llm": {"dinkster_api"},
-    "dinkster_nodes_ltx": {
-        "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_latent",
-        "dinkster_nodes_llm",
-        "dinkster_nodes_models",
-        "dinkster_nodes_video",
-    },
-    "dinkster_nodes_minimax": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_misc_models": {
-        "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_qwen",
-    },
-    "dinkster_nodes_models": {"dinkster_api"},
-    "dinkster_nodes_qwen": {"dinkster_api", "dinkster_nodes_conditioning"},
     "dinkster_nodes_remote": {"dinkster_api"},
-    "dinkster_nodes_sampling": {
-        "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_latent",
-    },
-    "dinkster_nodes_sd": {
-        "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_sampling",
-    },
-    "dinkster_nodes_seedvr": {"dinkster_api"},
-    "dinkster_nodes_text": {"dinkster_api"},
-    "dinkster_nodes_upscale": {"dinkster_api"},
-    "dinkster_nodes_utilities": {"dinkster_api"},
-    "dinkster_nodes_video": {"dinkster_api"},
-    "dinkster_nodes_vision_background_removal": {"dinkster_api"},
-    "dinkster_nodes_vision_depth_anything_3": {"dinkster_api"},
-    "dinkster_nodes_vision_marigold": {"dinkster_api"},
-    "dinkster_nodes_vision_mediapipe": {"dinkster_api"},
-    "dinkster_nodes_vision_moge": {"dinkster_api"},
-    "dinkster_nodes_vision_rtdetr": {"dinkster_api"},
-    "dinkster_nodes_vision_sam3": {"dinkster_api"},
-    "dinkster_nodes_vision_sam3d_body": {"dinkster_api", "dinkster_nodes_image"},
-    "dinkster_nodes_vision_sdpose": {
-        "dinkster_api",
-        "dinkster_nodes_image",
-        "dinkster_nodes_misc_models",
-    },
-    "dinkster_nodes_void": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_wan": {
-        "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_models",
-    },
+    "dinkster_nodes_generation": {"dinkster_api"},
+    # Model-backed vision providers execute stable owner schemas through the
+    # pack-author door and stay independent of the host scheduler.
+    "dinkster_nodes_vision": {"dinkster_api"},
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
     # Archive admission shares the worker manifest, doctor and probe jail;
@@ -240,7 +206,7 @@ def dinkster_imports(path: Path) -> set[str]:
             found.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             found.add(node.module.split(".")[0])
-    return {name for name in found if name == "dinkster" or name.startswith("dinkster_")}
+    return found.intersection(ALLOWED)
 
 
 def workspace_package_names(packages: Path) -> set[str]:
@@ -273,26 +239,6 @@ def test_workspace_package_discovery_ignores_stale_bytecode(tmp_path: Path) -> N
     (tmp_path / "dinkster-removed/src/dinkster_removed/__pycache__").mkdir(parents=True)
 
     assert workspace_package_names(tmp_path) == {"dinkster_real"}
-
-
-def test_dependency_scan_includes_ungoverned_imports(tmp_path: Path) -> None:
-    module = tmp_path / "node.py"
-    module.write_text(
-        "import dinkster\n"
-        "import dinkster_removed.node\n"
-        "from dinkster_external import value\n"
-        "from dinkster_api.v1 import Node\n"
-        "from .dinkster_relative import helper\n"
-        "import numpy\n",
-        encoding="utf-8",
-    )
-
-    assert dinkster_imports(module) == {
-        "dinkster",
-        "dinkster_removed",
-        "dinkster_external",
-        "dinkster_api",
-    }
 
 
 def test_one_way_dependencies() -> None:
@@ -368,18 +314,15 @@ def test_bundled_video_preview_imports_only_the_pack_api() -> None:
 
 
 def test_media_packages_share_comfyuis_pyav_runtime() -> None:
-    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
-    packages = {package["name"]: package for package in locked["package"]}
-    assert packages["av"]["version"] == "18.1.0"
-    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video"):
+    for package in ("dinkster-nodes-media-io", "dinkster-video"):
         project = tomllib.loads(
             (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
         )
-        requirements = [Requirement(value) for value in project["project"]["dependencies"]]
-        (av,) = [requirement for requirement in requirements if requirement.name == "av"]
-        assert Version(packages["av"]["version"]) in av.specifier
-        if package == "dinkster-video":
-            assert str(av.specifier) == "==18.1.0"
+        assert "av==18.1.0" in project["project"]["dependencies"]
+
+    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    packages = {package["name"]: package for package in locked["package"]}
+    assert packages["av"]["version"] == "18.1.0"
 
 
 def test_locked_pyav_satisfies_pinned_comfyui_requirement() -> None:

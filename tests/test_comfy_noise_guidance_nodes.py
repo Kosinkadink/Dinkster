@@ -1,20 +1,18 @@
 """Public native schemas for noise and frequency guidance."""
 
 from dinkster_api.v1 import CORE_FLOAT, CORE_INT, MODEL_TYPE, TypeExpr
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.noise_guidance import EpsilonScaling, FreSca, TemporalScoreRescaling
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.noise_guidance import NOISE_GUIDANCE_NODES
 
 
 def test_noise_guidance_schemas_preserve_core_sockets_and_controls() -> None:
     expected = (
-        ("dinkster.sampling.epsilon_scaling", ["scaling_factor"], [1.005]),
-        ("dinkster.sampling.temporal_score_rescaling", ["tsr_k", "tsr_sigma"], [0.95, 1.0]),
-        ("dinkster.sampling.fre_sca", ["scale_low", "scale_high", "freq_cutoff"], [1.0, 1.25, 20]),
+        ("Epsilon Scaling", ["scaling_factor"], [1.005]),
+        ("TemporalScoreRescaling", ["tsr_k", "tsr_sigma"], [0.95, 1.0]),
+        ("FreSca", ["scale_low", "scale_high", "freq_cutoff"], [1.0, 1.25, 20]),
     )
-    for node, (node_type, names, defaults) in zip(
-        (EpsilonScaling, TemporalScoreRescaling, FreSca), expected, strict=True
-    ):
-        assert NODES.count(node) == 1
+    for node, (node_type, names, defaults) in zip(NOISE_GUIDANCE_NODES, expected, strict=True):
+        assert node in COMFY_NODES
         schema = node.define_schema()
         assert schema.node_type == node_type
         assert [item.id for item in schema.inputs] == ["model", *names]

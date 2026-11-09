@@ -263,7 +263,7 @@ def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document()
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
-                "dinkster.utilities.start_loop",
+                "StartLoop",
                 outputs=(OutputSpec("value", INT),),
                 execution_context=True,
                 may_expand_graph=True,
@@ -286,7 +286,7 @@ def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document()
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
-                "dinkster.utilities.end_loop",
+                "EndLoop",
                 inputs=(InputSpec("value", INT, required=False),),
                 outputs=(OutputSpec("value", INT),),
             )
@@ -307,9 +307,9 @@ def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document()
         )
         graph = Graph(
             {
-                "start": GraphNode("dinkster.utilities.start_loop"),
+                "start": GraphNode("StartLoop"),
                 "body": GraphNode("control.pass", {"value": Link("start", "value")}),
-                "end": GraphNode("dinkster.utilities.end_loop", {"value": Link("body", "value")}),
+                "end": GraphNode("EndLoop", {"value": Link("body", "value")}),
             }
         )
         for _ in range(2):

@@ -83,17 +83,13 @@ def validate_loops(
     starts = {
         key
         for key, node in graph.nodes.items()
-        if isinstance(node, GraphNode)
-        and node.node_type == "dinkster.utilities.start_loop"
-        and key not in known
+        if isinstance(node, GraphNode) and node.node_type == "StartLoop" and key not in known
     }
     known_ends = {pair.end_id for pair in known.values()}
     ends = {
         key
         for key, node in graph.nodes.items()
-        if isinstance(node, GraphNode)
-        and node.node_type == "dinkster.utilities.end_loop"
-        and key not in known_ends
+        if isinstance(node, GraphNode) and node.node_type == "EndLoop" and key not in known_ends
     }
     if not starts and not ends:
         return {}, []

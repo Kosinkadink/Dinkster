@@ -3,7 +3,7 @@
 The engine's lanes bound *execution*; these tests prove the second gate -
 *allocation* - holds everywhere it must: the request contracts, the
 governor-backed service, the GovernedWorker wrapper, the isolated lease
-protocol over the wire, and the native checkpoint policy. The
+protocol over the wire, and the compat pack's checkpoint policy. The
 invariant throughout: a reservation is held across execution and released
 on every exit path - success, node error, denial, cancellation, and worker
 death.
@@ -20,6 +20,13 @@ from pathlib import Path
 
 import pytest
 from dinkster_assets import ASSET_TYPE, AssetError, AssetRef, AssetResolver, register_asset_type
+from dinkster_compat_comfy.memory import (
+    CHECKPOINT_RAM_FACTOR,
+    NATIVE_CHECKPOINT_RAM_FACTOR,
+    ReservationPlanError,
+    plan_reservations,
+)
+from dinkster_compat_comfy.pool import ResidentPool
 from dinkster_engine import Invocation, InvocationResult, OnInvocationEvent
 from dinkster_memory import (
     BudgetExceeded,
@@ -29,13 +36,6 @@ from dinkster_memory import (
     PressureSignal,
     ReservationRequest,
 )
-from dinkster_native.memory import (
-    CHECKPOINT_RAM_FACTOR,
-    NATIVE_CHECKPOINT_RAM_FACTOR,
-    ReservationPlanError,
-    plan_reservations,
-)
-from dinkster_native.pool import ResidentPool
 from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import (
     CORE_FLOAT,
@@ -668,7 +668,7 @@ def test_isolated_close_unwinds_held_leases(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-# -- checkpoint policy -----------------------------------------------------
+# -- compat checkpoint policy ----------------------------------------------
 
 
 def asset_invocation(size: int, *, arm: str | None = None) -> Invocation:
@@ -704,12 +704,12 @@ def test_native_arm_checkpoint_planner_uses_1_5_ram_and_zero_vram() -> None:
     assert plan == (ReservationRequest("ram", math.ceil(1_001 * NATIVE_CHECKPOINT_RAM_FACTOR)),)
 
 
-def test_checkpoint_planner_refuses_sizeless_assets() -> None:
+def test_compat_planner_refuses_sizeless_assets() -> None:
     with pytest.raises(ReservationPlanError, match="byte size"):
         plan_reservations(asset_invocation(0))
 
 
-def test_checkpoint_planner_ignores_other_node_types() -> None:
+def test_compat_planner_ignores_other_node_types() -> None:
     invocation = asset_invocation(1_000)
     other = Invocation(
         invocation_id=invocation.invocation_id,
@@ -754,13 +754,13 @@ def invocation_with_inputs(**inputs: Value) -> Invocation:
     )
 
 
-def test_checkpoint_planner_reserves_unloaded_and_unknown_residents(
+def test_compat_planner_reserves_unloaded_and_unknown_residents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"vram:cuda:0": 100, "ram": 50}})
     rid = pool.rid_for(object())
     run_scenario(pool.shed(PressureSignal(device="vram:cuda:0", bytes_needed=100)))
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: pool)
+    monkeypatch.setattr("dinkster_compat_comfy.memory.default_pool", lambda: pool)
     invocation = invocation_with_inputs(
         known=resident_input(f"resident:{rid}", {"vram:cuda:0": 100, "ram": 50}),
         unknown=resident_input("resident:old-worker", {"vram:cuda:1": 200}),
@@ -771,22 +771,22 @@ def test_checkpoint_planner_reserves_unloaded_and_unknown_residents(
     )
 
 
-def test_checkpoint_planner_skips_loaded_residents(
+def test_compat_planner_skips_loaded_residents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"vram:cuda:0": 100}})
     rid = pool.rid_for(object())
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: pool)
+    monkeypatch.setattr("dinkster_compat_comfy.memory.default_pool", lambda: pool)
     invocation = invocation_with_inputs(
         model=resident_input(f"resident:{rid}", {"vram:cuda:0": 100})
     )
     assert plan_reservations(invocation) == ()
 
 
-def test_checkpoint_planner_deduplicates_resident_ids_and_walks_nested_lists(
+def test_compat_planner_deduplicates_resident_ids_and_walks_nested_lists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: ResidentPool())
+    monkeypatch.setattr("dinkster_compat_comfy.memory.default_pool", lambda: ResidentPool())
     child = resident_input("resident:shared", {"vram:cuda:0": 100})
     inner = make_list_value("test.resident", (child, child))
     outer = make_list_value("list<test.resident>", (inner,))
@@ -794,10 +794,10 @@ def test_checkpoint_planner_deduplicates_resident_ids_and_walks_nested_lists(
     assert plan_reservations(invocation) == (ReservationRequest("vram:cuda:0", 100),)
 
 
-def test_checkpoint_planner_reserves_anonymous_vram_costs_without_deduplication(
+def test_compat_planner_reserves_anonymous_vram_costs_without_deduplication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: ResidentPool())
+    monkeypatch.setattr("dinkster_compat_comfy.memory.default_pool", lambda: ResidentPool())
     invocation = invocation_with_inputs(
         first=resident_input(None, {"vram:cuda:0": 75}),
         second=resident_input(None, {"vram:cuda:0": 75}),
@@ -811,7 +811,7 @@ def test_checkpoint_planner_reserves_anonymous_vram_costs_without_deduplication(
 def test_checkpoint_ram_policy_composes_with_input_vram(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: ResidentPool())
+    monkeypatch.setattr("dinkster_compat_comfy.memory.default_pool", lambda: ResidentPool())
     base = asset_invocation(1_000)
     invocation = Invocation(
         invocation_id=base.invocation_id,

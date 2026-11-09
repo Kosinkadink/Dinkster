@@ -1,32 +1,31 @@
 """Torch-free schemas for native LTXV audio VAE nodes."""
 
 from dinkster_api.v1 import AUDIO_TYPE, LATENT_TYPE, VAE_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_ltx import NODES
-from dinkster_nodes_ltx.ltx_audio import LTXVAudioVAEDecode, LTXVAudioVAEEncode
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.ltx_audio import LTX_AUDIO_NODES, LTXVAudioVAEDecode, LTXVAudioVAEEncode
 
 
 def test_ltx_audio_interfaces_match_comfy_schemas() -> None:
-    assert all(NODES.count(node) == 1 for node in (LTXVAudioVAEEncode, LTXVAudioVAEDecode))
+    assert LTX_AUDIO_NODES[:2] == (LTXVAudioVAEEncode, LTXVAudioVAEDecode)
+    assert all(node in COMFY_NODES for node in (LTXVAudioVAEEncode, LTXVAudioVAEDecode))
     expected = (
         (
             LTXVAudioVAEEncode,
-            "dinkster.ltx.ltxv_audio_vae_encode",
             "LTXV Audio VAE Encode",
             (("audio", AUDIO_TYPE), ("audio_vae", VAE_TYPE)),
             ("LATENT", LATENT_TYPE),
         ),
         (
             LTXVAudioVAEDecode,
-            "dinkster.ltx.ltxv_audio_vae_decode",
             "LTXV Audio VAE Decode",
             (("samples", LATENT_TYPE), ("audio_vae", VAE_TYPE)),
             ("AUDIO", AUDIO_TYPE),
         ),
     )
-    for node, node_type, display_name, inputs, output in expected:
+    for node, display_name, inputs, output in expected:
         schema = node.schema()
         assert (schema.node_type, schema.display_name, schema.category) == (
-            node_type,
+            node.__name__,
             display_name,
             "model/latent/ltxv",
         )

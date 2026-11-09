@@ -16,7 +16,7 @@ from av.error import FFmpegError, InvalidDataError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_assets.value import value_asset_references
-from dinkster_nodes_video.video_edits import VideoCrop, VideoTrim
+from dinkster_nodes_media_io.video_ops import CropVideo, TrimVideo, VideoInfo
 from dinkster_values import (
     EncodedPayload,
     TypeRegistry,
@@ -178,53 +178,14 @@ def test_default_component_writer_remains_separate_from_source_component_encodin
     save_video_stream(value, source_style, codec="h264", source_components=True)
     assert cast(dict[str, object], value["probe"])["fps"] == fps
     assert _packets(implicit.getvalue()) == _packets(explicit.getvalue())
-    options = _x264_options(implicit.getvalue())
-    assert b"crf=18.0" in options
-    assert b"bframes=0" in options
-    assert b"rc_lookahead=40" in options and b"mbtree=1" in options
+    assert b"crf=23.0" in _x264_options(implicit.getvalue())
+    assert b"bframes=0" in _x264_options(implicit.getvalue())
     with av.open(io.BytesIO(implicit.getvalue())) as container:
         # Four frames span 133467 ticks under the default microsecond timestamp policy.
         assert container.streams.video[0].average_rate == Fraction(4_000_000, 133_467)
     assert _x264_options(source_style.getvalue()) == _x264_options(
         _source_style_video(images, fps=fps, depth=8, color="sRGB")
     )
-
-
-def test_saved_source_file_retains_timestamps_without_streaming_encoder_options() -> None:
-    source = _source(b_frames=2)
-    selected = edit_video(
-        video_from_source(source), {"trim": {"start_time": 0.25, "duration": 0.5}}
-    )
-    output = io.BytesIO()
-    save_video_stream(selected, output, codec="h264", crf=18)
-    options = _x264_options(output.getvalue())
-    assert b"bframes=0" in options
-    assert b"rc_lookahead=40" in options and b"mbtree=1" in options
-    with av.open(io.BytesIO(output.getvalue()), mode="r") as container:
-        frames = list(container.decode(video=0))
-        assert len(frames) == 5
-        for i, frame in enumerate(frames):
-            assert frame.pts is not None and frame.time_base is not None
-            assert frame.pts * frame.time_base == Fraction(i, 10) + Fraction(1, 20)
-
-
-def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
-    value = assemble_video(
-        np.random.default_rng(97).integers(0, 256, (4, 64, 64, 3), dtype=np.uint8), fps=30
-    )
-    defaults, explicit_default, explicit = io.BytesIO(), io.BytesIO(), io.BytesIO()
-    save_video_stream(value, defaults, container="mkv", codec="av1")
-    save_video_stream(value, explicit_default, container="mkv", codec="av1", crf=24)
-    save_video_stream(value, explicit, container="mkv", codec="av1", crf=18)
-    assert _packets(defaults.getvalue()) == _packets(explicit_default.getvalue())
-    assert _packets(defaults.getvalue()) != _packets(explicit.getvalue())
-    for encoded in (defaults, explicit_default, explicit):
-        with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
-            frames = list(container.decode(video=0))
-            assert len(frames) == 4
-            for i, frame in enumerate(frames):
-                assert frame.pts is not None and frame.time_base is not None
-                assert frame.pts * frame.time_base == Fraction(round(i * 1000 / 30), 1000)
 
 
 @pytest.mark.parametrize("shape", [(2, 16, 25, 3), (2, 16, 24, 4)])
@@ -576,10 +537,10 @@ def test_video_edit_is_read_only_and_sections_are_independent(
     value = video_from_source(_source())
     snapshot = json.dumps(widget, sort_keys=True)
     monkeypatch.setattr(av, "open", lambda *a, **kw: pytest.fail("edits/info must not probe"))
-    trimmed = VideoTrim.execute(video=value, trim=widget)["video"]
-    cropped = VideoCrop.execute(video=trimmed, crop=widget)["video"]
+    trimmed = TrimVideo.execute(video=value, video_edit=widget)["video"]
+    cropped = CropVideo.execute(video=trimmed, video_edit=widget)["video"]
     assert json.dumps(widget, sort_keys=True) == snapshot
-    info = effective_video_facts(cast(dict[str, object], cropped))
+    info = VideoInfo.execute(video=cropped)
     assert (info["width"], info["height"]) == (64, 32)
     assert info["duration"] == (0.5 if widget.get("trim") else 2)
 
@@ -866,8 +827,24 @@ def test_alpha_encoding_cannot_silently_reduce_ten_bit_components() -> None:
     assert diagnostics
 
 
+def test_compat_path_save_publishes_atomically(tmp_path: Path) -> None:
+    from dinkster_compat_comfy.video import _VideoValue
+
+    source = _source()
+    value = _VideoValue(video_from_source(source))
+    path = tmp_path / "video.mp4"
+    path.write_bytes(b"existing file")
+    with pytest.raises(ValueError, match="custom FFmpeg"):
+        value.save_to(str(path), format="webm", codec='{"command":"unsafe"}')
+    assert path.read_bytes() == b"existing file"
+    assert list(tmp_path.iterdir()) == [path]
+    value.save_to(str(path))
+    assert path.read_bytes() == source
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def test_native_video_chain_matches_across_worker_shared_memory() -> None:
-    from dinkster_nodes_video import NODES, register_types
+    from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
     from dinkster_protocol import Invocation
     from dinkster_schema import build_node_types
     from dinkster_values import register_core_types
@@ -878,20 +855,20 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_types(registry)
+        register_media_types(registry)
 
         async def run(worker: InProcessWorker | IsolatedWorker) -> tuple[bytes, np.ndarray]:
             trimmed = await worker.invoke(
                 Invocation(
                     invocation_id="trim",
                     node_id="trim",
-                    node_type="dinkster.video.video_slice",
+                    node_type="dinkster.video.trim",
                     inputs={
                         "video": registry.wrap(VIDEO_TYPE, source),
                         "start_time": registry.wrap("FLOAT", 0.5),
                         "duration": registry.wrap("FLOAT", 1.0),
                     },
-                    effective_schema=worker.schemas["dinkster.video.video_slice"],
+                    effective_schema=worker.schemas["dinkster.video.trim"],
                 )
             )
             assert trimmed.error is None
@@ -900,9 +877,9 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
                 Invocation(
                     invocation_id="frames",
                     node_id="frames",
-                    node_type="dinkster.video.get_video_components",
+                    node_type="dinkster.video.disassemble",
                     inputs={"video": trimmed.outputs["video"]},
-                    effective_schema=worker.schemas["dinkster.video.get_video_components"],
+                    effective_schema=worker.schemas["dinkster.video.disassemble"],
                 )
             )
             assert frames.error is None
@@ -913,10 +890,11 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
                 cast(np.ndarray, frames.outputs["images"].resolve()),
             )
 
-        expected = await run(InProcessWorker(build_node_types(NODES), registry))
+        expected = await run(InProcessWorker(build_node_types(MEDIA_IO_NODES), registry))
         diagnostics: list[BoundaryDiagnostic] = []
         manifest = (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-video/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1]
+            / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
         )
         worker = IsolatedWorker(
             manifest, registry, shm_threshold=64, on_diagnostic=diagnostics.append
@@ -943,7 +921,7 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     tmp_path: Path, in_process: bool
 ) -> None:
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_nodes_video import register_types
+    from dinkster_nodes_comfy import register_inference_types
     from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
 
     from dinkster.compose import PackSpec, ServingComposer
@@ -956,10 +934,10 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     expected_fingerprint = video_fingerprint(VIDEO_TYPE)(expected)
 
     registry = TypeRegistry()
-    register_types(registry)
+    register_inference_types(registry)
     video_spec = registry.spec(VIDEO_TYPE)
     edit_spec = registry.spec(VIDEO_EDIT_TYPE)
-    register_types(registry)
+    register_inference_types(registry)
     assert registry.spec(VIDEO_TYPE) is video_spec
     assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
     encoded_edit = edit_spec.encode(edit)
@@ -971,7 +949,7 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
 
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
-        native_manifest = root / "packages/dinkster-nodes-video/dinkster-pack.toml"
+        native_manifest = root / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
         fixture_manifest = Path(__file__).with_name("video-native-value-fixture.toml")
         manifests = (native_manifest, fixture_manifest)
         composer = ServingComposer(
@@ -988,8 +966,9 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
-                        host_types=register_types if manifest == native_manifest else None,
-                        trust_reserved=manifest == native_manifest,
+                        host_types=register_inference_types
+                        if manifest == native_manifest
+                        else None,
                         in_process=in_process,
                         worker_group=None if in_process else "video-native-value-fixture",
                         group_manifests=() if in_process else manifests,
@@ -1278,6 +1257,46 @@ def test_invalid_inline_video_cannot_be_admitted_or_exported() -> None:
     assert output.getvalue() == b""
 
 
+def test_compat_trim_getter_overrides_pinned_file_getter(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    from types import ModuleType
+
+    from dinkster_compat_comfy.video import _upstream_video
+
+    class VideoFromFile:
+        __start_time: float
+        __duration: float
+
+        def _get_raw_duration(self) -> float:
+            raise AssertionError("upstream private state must not be used")
+
+        # ComfyUI 15eb748b3ec5 public getter, without the ComfyUI runtime bootstrap.
+        def get_active_trim_window(self) -> tuple[float, float]:
+            start_time = self.__start_time
+            if start_time < 0:
+                start_time = max(self._get_raw_duration() + start_time, 0.0)
+            return float(start_time), float(self.__duration)
+
+    module = ModuleType("comfy_api.input_impl")
+    cast(Any, module).VideoFromFile = VideoFromFile
+    monkeypatch.setitem(sys.modules, "comfy_api.input_impl", module)
+    source = video_from_source(_source())
+    value = cast(Any, _upstream_video(source))
+    assert value.get_active_trim_window() == (0.0, 2.0)
+    trimmed = value.as_trimmed(0.5, 1).as_cropped(0, 0, 32, 16).as_trimmed(-0.5, 0)
+    assert trimmed.get_active_trim_window() == (1.0, 0.5)
+    assert trimmed.get_dimensions() == (32, 16)
+    assert trimmed.get_stream_source().getvalue() == source["source"]
+    joined = edit_video(source, {"concat": [source]})
+    with pytest.raises(ValueError, match="one original-source trim window"):
+        cast(Any, _upstream_video(joined)).get_active_trim_window()
+    selected = edit_video(joined, {"trim": {"start_time": 0, "duration": 1}})
+    assert cast(Any, _upstream_video(selected)).get_active_trim_window() == (0.0, 1.0)
+    components = assemble_video(np.zeros((1, 32, 64, 3), np.float32))
+    with pytest.raises(ValueError, match="one original-source trim window"):
+        cast(Any, _upstream_video(components)).get_active_trim_window()
+
+
 @pytest.mark.parametrize(
     "invalid", ["unknown", "nested", "duplicate", "probe", "array", "dtype", "total"]
 )
@@ -1341,6 +1360,20 @@ def test_nested_large_sources_publish_without_reprobe(
     assert len(cast(list[object], value.meta.get("asset_refs"))) == 1
     assert value.meta.get("cost") == {"ram": 0}
     assert AssetVault(tmp_path / "vault").resolve(digest_bytes(data)) is not None
+
+
+def test_compat_migrates_large_legacy_sources_without_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_compat_comfy.video import _VideoValue
+
+    data = _source() + struct.pack(">I4s", 300_008, b"free") + bytes(300_000)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    value = _VideoValue(decode_video(data))
+    assert len(encode_video(value.value)) < 2000
+    output = io.BytesIO()
+    value.save_to(output)
+    assert output.getvalue() == data
 
 
 def test_alpha_source_codec_and_samples_survive_crop() -> None:
@@ -1442,7 +1475,7 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
     from dinkster_caches import MemoryLRUCache
     from dinkster_engine import Engine
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_nodes_video import register_types
+    from dinkster_nodes_media_io import register_media_types
     from dinkster_values import register_core_types
     from dinkster_workers import RemoteWorker
     from test_remote import TLS_ARGS, TLS_CERT, TOKEN, start_service, stop_service
@@ -1454,17 +1487,17 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
     wire = AssetRef(digest, "source.mp4", len(data)).to_wire()
     graph = Graph(
         nodes={
-            "load": GraphNode("dinkster.video.load_video", {"file": wire}),
+            "load": GraphNode("dinkster.load_video_value", {"video": wire}),
             "trim": GraphNode(
-                "dinkster.video.video_slice",
-                {"video": Link("load", "VIDEO"), "start_time": 0.5, "duration": 0.5},
+                "dinkster.video.trim",
+                {"video": Link("load", "video"), "start_time": 0.5, "duration": 0.5},
             ),
         }
     )
     loaded = {**video_from_source(data), "source": wire}
     expected = edit_video(
         loaded,
-        {"trim": {"start_time": 0.5, "duration": 0.5}, "strict_duration": False},
+        {"trim": {"start_time": 0.5, "duration": 0.5}},
     )
     encoded_sizes = {
         "load": len(encode_video(loaded)),
@@ -1479,7 +1512,7 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
             return web.Response(body=data)
 
     async def scenario() -> None:
-        manifest = Path(__file__).parents[1] / "packages/dinkster-nodes-video/dinkster-pack.toml"
+        manifest = Path(__file__).parents[1] / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
         proc, host, port = await start_service(
             manifest, tmp_path, *TLS_ARGS, "--asset-vault", str(tmp_path / "daemon-vault")
         )
@@ -1487,7 +1520,7 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
             async with VideoHost() as endpoint:
                 registry = TypeRegistry()
                 register_core_types(registry)
-                register_types(registry)
+                register_media_types(registry)
                 worker = RemoteWorker(
                     host,
                     port,
@@ -1513,8 +1546,8 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
                         assert result.executed == ("load", "trim")
                         assert result.cached == ()
                         assert result.skipped == ()
-                        for node, output in (("load", "VIDEO"), ("trim", "video")):
-                            assert result.outputs[node][output].meta.get("cost") == {
+                        for node in ("load", "trim"):
+                            assert result.outputs[node]["video"].meta.get("cost") == {
                                 "ram@remote-video": encoded_sizes[node]
                             }
                         payload = result.outputs["trim"]["video"].payload

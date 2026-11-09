@@ -9,52 +9,39 @@ from typing import Any
 import numpy as np
 import pytest
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.ported.image_filters import (
-    Canny,
+from dinkster_nodes_comfy.image_filters import (
+    IMAGE_FILTER_NODES,
     ImageBlend,
     ImageBlur,
     ImageQuantize,
-    ImageScaleToTotalPixels,
     ImageSharpen,
 )
 
 
 def test_image_filter_schemas_match_the_fixed_reference_contract() -> None:
-    nodes = (ImageBlend, ImageBlur, ImageQuantize, ImageSharpen, ImageScaleToTotalPixels, Canny)
     expected = (
         (
-            "dinkster.image.image_blend",
+            "ImageBlend",
             "Blend Images",
             "image/filters",
             ("image1", "image2", "blend_factor", "blend_mode"),
         ),
+        ("ImageBlur", "Blur Image", "image/filters", ("image", "blur_radius", "sigma")),
+        ("ImageQuantize", "Quantize Image", "image/filters", ("image", "colors", "dither")),
         (
-            "dinkster.image.image_blur",
-            "Blur Image",
-            "image/filters",
-            ("image", "blur_radius", "sigma"),
-        ),
-        (
-            "dinkster.image.image_quantize",
-            "Quantize Image",
-            "image/filters",
-            ("image", "colors", "dither"),
-        ),
-        (
-            "dinkster.image.image_sharpen",
+            "ImageSharpen",
             "Sharpen Image",
             "image/filters",
             ("image", "sharpen_radius", "sigma", "alpha"),
         ),
         (
-            "dinkster.image.image_scale_to_total_pixels",
+            "ImageScaleToTotalPixels",
             "Scale Image to Total Pixels",
             "image/upscaling",
             ("image", "upscale_method", "megapixels", "resolution_steps"),
         ),
         (
-            "dinkster.image.canny",
+            "Canny",
             "Detect Edges (Canny)",
             "image/filters",
             ("image", "low_threshold", "high_threshold"),
@@ -67,15 +54,14 @@ def test_image_filter_schemas_match_the_fixed_reference_contract() -> None:
             node.schema().category,
             tuple(port.id for port in node.schema().inputs),
         )
-        for node in nodes
+        for node in IMAGE_FILTER_NODES
     )
     assert actual == expected
-    assert all(node in NODES for node in nodes)
-    schemas = {node.schema().node_type: node.schema() for node in nodes}
-    assert ImageBlend.schema().inputs[2].default == 0.5
-    assert ImageSharpen.schema().inputs[1].advanced is True
-    assert ImageScaleToTotalPixels.schema().inputs[3].advanced is True
-    assert [item.default for item in Canny.schema().inputs[1:]] == [0.4, 0.8]
+    schemas = {node.schema().node_type: node.schema() for node in IMAGE_FILTER_NODES}
+    assert schemas["ImageBlend"].inputs[2].default == 0.5
+    assert schemas["ImageSharpen"].inputs[1].advanced is True
+    assert schemas["ImageScaleToTotalPixels"].inputs[3].advanced is True
+    assert [item.default for item in schemas["Canny"].inputs[1:]] == [0.4, 0.8]
     for schema in schemas.values():
         assert schema_to_wire(schema)
 

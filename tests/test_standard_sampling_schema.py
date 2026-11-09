@@ -1,21 +1,19 @@
 """Torch-free schema contracts for native standard sampler nodes."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.standard_sampling import (
+from dinkster_nodes_comfy.standard_sampling import (
+    STANDARD_SAMPLING_NODES,
     KSampler,
     KSamplerAdvanced,
 )
 
-STANDARD_SAMPLING_NODES = (KSampler, KSamplerAdvanced)
-
 
 def test_standard_sampling_schemas_match_comfyui() -> None:
     standard, advanced = STANDARD_SAMPLING_NODES
-    assert standard in NODES
-    assert advanced in NODES
-    assert standard.schema().node_type == "dinkster.sampling.k_sampler"
-    assert advanced.schema().node_type == "dinkster.sampling.k_sampler_advanced"
+    assert standard is KSampler
+    assert advanced is KSamplerAdvanced
+    assert standard.schema().node_type == "KSampler"
+    assert advanced.schema().node_type == "KSamplerAdvanced"
     assert advanced.schema().display_name == "KSampler (Advanced)"
     assert standard.schema().category == advanced.schema().category == "model/sampling"
     assert tuple(input.id for input in standard.schema().inputs) == (

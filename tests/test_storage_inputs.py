@@ -334,21 +334,20 @@ def test_invocation_storage_contract_crosses_worker_boundary(
     [
         ("dinkster_nodes_dev.image", "register_dev_types"),
         ("dinkster_nodes_image.types", "register_image_types"),
-        ("dinkster_nodes_audio", "register_types"),
-        ("dinkster_nodes_video", "register_types"),
-        ("dinkster_api.v1", "register_media_types"),
+        ("dinkster_nodes_media_io", "register_media_types"),
+        ("dinkster.comfy_compose", "register_comfy_host_types"),
         *[
-            (f"dinkster_nodes_vision_{name}", "register_types")
+            (f"dinkster_nodes_vision.{name}.nodes", "register_types")
             for name in (
-                "background_removal",
-                "depth_anything_3",
-                "marigold",
-                "mediapipe",
-                "moge",
+                "birefnet",
+                "depth_anything_v2",
+                "depth_anything_v3",
+                "detr",
+                "efficient_sam",
+                "hed",
                 "rtdetr",
-                "sam3",
-                "sam3d_body",
-                "sdpose",
+                "sam31",
+                "upscale",
             )
         ],
     ],

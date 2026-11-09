@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import digest_bytes
 from dinkster_graph import Graph, GraphNode, TypedLiteral
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models import model_selections as loaders
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy import model_selections as loaders
 from dinkster_server.preflight import bind_model_names
 from dinkster_workers import load_manifest
 
@@ -85,17 +85,17 @@ def granted_loaders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_native_selection_schema_roundtrip_and_registration():
-    for node in (loaders.VAELoader, loaders.DiffusersLoader):
+    for node in loaders.MODEL_SELECTION_NODES:
         schema = node.schema()
         assert schema_from_wire(schema_to_wire(schema)) == schema
         assert len(schema.inputs) == 1
         widget = schema.inputs[0].widget
         assert isinstance(widget, AssetWidget) and widget.selection
         assert not schema.idempotent
-        assert node in NODES
-    manifest = load_manifest("packages/dinkster-nodes-models/dinkster-pack.toml")
-    assert manifest.namespaces == ("dinkster.models", "devices")
-    assert all(node.schema().node_type.startswith("dinkster.models.") for node in NODES)
+        assert node in COMFY_NODES
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_preflight_keeps_source_selection_names_and_reports_missing_options(granted_loaders):
@@ -105,17 +105,12 @@ def test_preflight_keeps_source_selection_names_and_reports_missing_options(gran
     (path / "model_index.json").write_text("{}")
     graph = Graph(
         {
-            "literal": GraphNode("dinkster.models.vae_loader", {"vae_name": "pixel_space"}),
-            "tree": GraphNode("dinkster.models.diffusers_loader", {"model_path": "vendor/model"}),
-            "missing": GraphNode(
-                "dinkster.models.vae_loader", {"vae_name": "not-granted.safetensors"}
-            ),
+            "literal": GraphNode("VAELoader", {"vae_name": "pixel_space"}),
+            "tree": GraphNode("DiffusersLoader", {"model_path": "vendor/model"}),
+            "missing": GraphNode("VAELoader", {"vae_name": "not-granted.safetensors"}),
         }
     )
-    schemas = {
-        node.schema().node_type: node.schema()
-        for node in (loaders.VAELoader, loaders.DiffusersLoader)
-    }
+    schemas = {node.schema().node_type: node.schema() for node in loaders.MODEL_SELECTION_NODES}
     bound, missing = bind_model_names(graph, schemas, None)
     assert bound.nodes["literal"].inputs["vae_name"] == TypedLiteral("COMBO", "pixel_space")
     assert bound.nodes["tree"] == graph.nodes["tree"]

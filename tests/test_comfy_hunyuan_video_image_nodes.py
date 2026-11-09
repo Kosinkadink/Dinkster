@@ -17,25 +17,19 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_hunyuan import NODES
-from dinkster_nodes_hunyuan.hunyuan_video_image import (
-    HunyuanImageToVideo,
-    HunyuanVideo15ImageToVideo,
-    HunyuanVideo15SuperResolution,
-)
-from dinkster_schema import claim_covers
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
 
 
 def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
     manifest = tomllib.loads(
         (
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-hunyuan/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
         ).read_text(encoding="ascii")
     )
     expected = (
         (
-            "dinkster.hunyuan.hunyuan_image_to_video",
+            "HunyuanImageToVideo",
             (
                 ("positive", CONDITIONING_TYPE),
                 ("vae", VAE_TYPE),
@@ -51,7 +45,7 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
             (True, True, True, True, True, True, True, False),
         ),
         (
-            "dinkster.hunyuan.hunyuan_video15_image_to_video",
+            "HunyuanVideo15ImageToVideo",
             (
                 ("positive", CONDITIONING_TYPE),
                 ("negative", CONDITIONING_TYPE),
@@ -72,7 +66,7 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
             (True, True, True, True, True, True, True, False, False),
         ),
         (
-            "dinkster.hunyuan.hunyuan_video15_super_resolution",
+            "HunyuanVideo15SuperResolution",
             (
                 ("positive", CONDITIONING_TYPE),
                 ("negative", CONDITIONING_TYPE),
@@ -92,17 +86,13 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
         ),
     )
     for node, (node_type, inputs, outputs, defaults, required) in zip(
-        (HunyuanImageToVideo, HunyuanVideo15ImageToVideo, HunyuanVideo15SuperResolution),
-        expected,
-        strict=True,
+        HUNYUAN_VIDEO_IMAGE_NODES, expected, strict=True
     ):
         schema = node.schema()
-        assert node in NODES
+        assert node in COMFY_NODES
         assert schema.node_type == node_type
         assert schema.category == "model/conditioning/hunyuan video"
-        assert any(
-            claim_covers(namespace, node_type) for namespace in manifest["pack"]["namespaces"]
-        )
+        assert schema.node_type in manifest["pack"]["namespaces"]
         assert tuple((item.id, item.type.types[0]) for item in schema.inputs) == inputs
         assert tuple((item.id, item.type.types[0]) for item in schema.outputs) == outputs
         assert tuple(item.default for item in schema.inputs) == defaults
@@ -110,12 +100,14 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
         assert schema_from_wire(schema_to_wire(schema)) == schema
         for item, minimum, step in (
             zip(
-                schema.inputs[3:7] if node is HunyuanVideo15ImageToVideo else schema.inputs[2:6],
+                schema.inputs[3:7]
+                if node_type == "HunyuanVideo15ImageToVideo"
+                else schema.inputs[2:6],
                 (16, 16, 1, 1),
                 (16, 16, 4, None),
                 strict=True,
             )
-            if node is not HunyuanVideo15SuperResolution
+            if node_type != "HunyuanVideo15SuperResolution"
             else ()
         ):
             assert isinstance(item.widget, NumberWidget)
@@ -124,6 +116,6 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
                 4096 if item.id == "batch_size" else 16384,
                 step,
             )
-    guidance = HunyuanImageToVideo.schema().inputs[6]
+    guidance = HUNYUAN_VIDEO_IMAGE_NODES[0].schema().inputs[6]
     assert guidance.advanced and isinstance(guidance.widget, ComboWidget)
     assert guidance.widget.options == ("v1 (concat)", "v2 (replace)", "custom")

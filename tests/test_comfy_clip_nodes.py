@@ -18,26 +18,26 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_conditioning.clip import (
+from dinkster_nodes_comfy.clip import (
     CLIPSetLastLayer,
     CLIPTextEncode,
     CLIPVisionEncode,
+    unCLIPConditioning,
 )
-from dinkster_nodes_conditioning.clip_model_specific import T5TokenizerOptions
-from dinkster_nodes_flux.flux_conditioning import (
+from dinkster_nodes_comfy.clip_model_specific import (
+    CLIPTextEncodeHiDream,
+    CLIPTextEncodeLumina2,
+    CLIPTextEncodePixArtAlpha,
+    T5TokenizerOptions,
+)
+from dinkster_nodes_comfy.flux_conditioning import (
     CLIPTextEncodeFlux,
     FluxDisableGuidance,
     FluxGuidance,
     FluxKontextMultiReferenceLatentMethod,
 )
-from dinkster_nodes_hidream.clip_model_specific import CLIPTextEncodeHiDream
-from dinkster_nodes_misc_models.clip_model_specific import (
-    CLIPTextEncodeLumina2,
-    CLIPTextEncodePixArtAlpha,
-)
-from dinkster_nodes_sd.clip import unCLIPConditioning
 
-from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
+from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 
@@ -83,7 +83,7 @@ def test_missing_clip_reports_checkpoint_encoder_error() -> None:
 def test_clip_vision_encode_schema_uses_portable_vision_types() -> None:
     schema = CLIPVisionEncode.define_schema()
 
-    assert schema.node_type == "dinkster.conditioning.clip_vision_encode"
+    assert schema.node_type == "CLIPVisionEncode"
     assert [input.id for input in schema.inputs] == ["clip_vision", "image", "crop"]
     assert schema.inputs[0].type == TypeExpr.concrete("CLIP_VISION")
     assert schema.inputs[1].type == TypeExpr.concrete("IMAGE")
@@ -95,7 +95,7 @@ def test_clip_vision_encode_schema_uses_portable_vision_types() -> None:
 def test_unclip_conditioning_schema_uses_portable_vision_output() -> None:
     schema = unCLIPConditioning.define_schema()
 
-    assert schema.node_type == "dinkster.sd.un_clip_conditioning"
+    assert schema.node_type == "unCLIPConditioning"
     assert schema.category == "model/conditioning"
     assert [input.id for input in schema.inputs] == [
         "conditioning",
@@ -287,53 +287,45 @@ def test_ordinary_pack_encodes_original_and_selected_layers(
     async def scenario() -> None:
         composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
+            manifest = (
+                Path(__file__).resolve().parents[1]
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            )
             (tmp_path / "clip_fixture.py").write_text(
                 "from test_comfy_clip_nodes import CLIP_FIXTURES\n"
-                "from dinkster_api.v1 import register_inference_types\n",
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
+                "NODES = (*COMFY_NODES, *CLIP_FIXTURES)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                '[pack]\nname="clip-fixture"\npublisher="dinkster"\n'
-                'namespaces=["clip-fixture"]\n[pack.entry]\n'
-                'nodes="clip_fixture:CLIP_FIXTURES"\n'
-                'types="clip_fixture:register_inference_types"\n',
+                manifest.read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["clip-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "clip_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "clip_fixture:device_choices",
+                )
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "clip_fixture:register_inference_types",
+                ),
                 encoding="ascii",
             )
-            specs = [
-                _installed_pack_spec(identity, module, in_process=in_process)
-                for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                )
-            ]
-            specs.append(PackSpec(source_manifest, in_process=in_process))
-            manifests = tuple(Path(spec.manifest) for spec in specs)
-            for spec in specs:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=spec.manifest,
-                        packs=spec.packs,
-                        trust_reserved=True,
-                        in_process=in_process,
-                        worker_group=None if in_process else "clip-fixture",
-                        group_manifests=() if in_process else manifests,
-                    )
-                )
+            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("clip-fixture.source"),
                     "select": GraphNode(
-                        "dinkster.conditioning.clip_set_last_layer",
+                        "CLIPSetLastLayer",
                         {"clip": Link("source", "CLIP"), "stop_at_clip_layer": -7},
                     ),
                     "original": GraphNode(
-                        "dinkster.conditioning.clip_text_encode",
-                        {"clip": Link("source", "CLIP"), "text": "original"},
+                        "CLIPTextEncode", {"clip": Link("source", "CLIP"), "text": "original"}
                     ),
                     "selected": GraphNode(
-                        "dinkster.conditioning.clip_text_encode",
-                        {"clip": Link("select", "CLIP"), "text": "selected"},
+                        "CLIPTextEncode", {"clip": Link("select", "CLIP"), "text": "selected"}
                     ),
                     "original-text": GraphNode(
                         "clip-fixture.text", {"conditioning": Link("original", "CONDITIONING")}

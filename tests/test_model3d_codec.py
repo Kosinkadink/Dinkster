@@ -6,9 +6,9 @@ import io
 import struct
 
 import pytest
+from dinkster_nodes_media_io import MODEL3D_TYPE, register_media_types
 from dinkster_values import (
     MODEL3D_FILE_DECODER_ID,
-    MODEL3D_TYPE,
     TypeRegistry,
     decode_model3d,
     decode_model3d_file,
@@ -121,7 +121,7 @@ def test_model3d_file_decoder_reads_assets_and_names_failures() -> None:
 
 def test_model3d_registration_wires_codec_rendition_and_asset_decoder() -> None:
     registry = TypeRegistry()
-    register_model3d_type(registry, MODEL3D_TYPE)
+    register_media_types(registry)
     spec = registry.spec(MODEL3D_TYPE)
     assert spec.declared_codec
     assert spec.validate_encoded_buffer is validate_model3d_encoded
@@ -142,7 +142,7 @@ def test_model3d_registration_wires_codec_rendition_and_asset_decoder() -> None:
     assert decoder.provider_id == MODEL3D_FILE_DECODER_ID
     assert decoder.decode(FakeAsset(data)) == {"format": "glb", "bytes": data}
     # Idempotent: a second registration pass must not conflict.
-    register_model3d_type(registry, MODEL3D_TYPE)
+    register_media_types(registry)
 
 
 def test_model3d_registration_helper_is_self_contained_and_idempotent() -> None:

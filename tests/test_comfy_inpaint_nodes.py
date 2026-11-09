@@ -1,24 +1,20 @@
 """Torch-free public interfaces for native ComfyUI inpainting nodes."""
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_conditioning import NODES as CONDITIONING_NODES
-from dinkster_nodes_conditioning.inpaint import InpaintModelConditioning
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.inpaint import VAEEncodeForInpaint
+from dinkster_nodes_comfy.inpaint import INPAINT_NODES
 
 
 def test_inpaint_schemas_match_core_interfaces() -> None:
-    nodes = (VAEEncodeForInpaint, InpaintModelConditioning)
     expected = (
         (
-            "dinkster.latent.vae_encode_for_inpaint",
+            "VAEEncodeForInpaint",
             "VAE Encode (for Inpainting)",
             "model/latent",
             ("pixels", "vae", "mask", "grow_mask_by"),
             ("LATENT",),
         ),
         (
-            "dinkster.conditioning.inpaint_model_conditioning",
+            "InpaintModelConditioning",
             "InpaintModelConditioning",
             "model/conditioning",
             ("positive", "negative", "vae", "pixels", "mask", "noise_mask"),
@@ -33,12 +29,10 @@ def test_inpaint_schemas_match_core_interfaces() -> None:
             tuple(input_spec.id for input_spec in node.schema().inputs),
             tuple(output_spec.id for output_spec in node.schema().outputs),
         )
-        for node in nodes
+        for node in INPAINT_NODES
     )
     assert actual == expected
-    assert VAEEncodeForInpaint in LATENT_NODES
-    assert InpaintModelConditioning in CONDITIONING_NODES
-    assert VAEEncodeForInpaint.schema().inputs[-1].default == 6
-    assert InpaintModelConditioning.schema().inputs[-1].default is True
-    for node in nodes:
+    assert INPAINT_NODES[0].schema().inputs[-1].default == 6
+    assert INPAINT_NODES[1].schema().inputs[-1].default is True
+    for node in INPAINT_NODES:
         assert schema_to_wire(node.schema())

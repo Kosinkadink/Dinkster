@@ -12,9 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dinkster_inference_wire import load_safetensors_header
-from dinkster_native import legacy_sources
-from dinkster_native.legacy_sources import (
+from dinkster_compat_comfy import legacy_sources
+from dinkster_compat_comfy.legacy_sources import (
     LegacyCheckpointError,
     classify_conversion_error,
     classify_weight_source,
@@ -22,6 +21,7 @@ from dinkster_native.legacy_sources import (
     discover_converted_sidecar,
     resolve_weight_source,
 )
+from dinkster_inference_wire import load_safetensors_header
 
 
 @pytest.fixture

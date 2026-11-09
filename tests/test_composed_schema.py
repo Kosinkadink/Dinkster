@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any, cast
 
 import pytest
+from dinkster_nodes_foundation import MathExpressions
 from dinkster_schema import (
     DynamicComboOption,
     DynamicComboSpec,
@@ -119,6 +120,7 @@ def test_composed_roundtrip(schema: NodeSchema, storage: bool, descriptors: bool
 
 def test_legacy_signatures_are_byte_identical(schema: NodeSchema) -> None:
     assert schema_signature(schema) == "ac61e209d6037807b8a049bfa08c17b4572f0c79"
+    assert schema_signature(MathExpressions.schema()) == "c96778236596417a0754e682785f4bf584debd97"
     explicit_default = replace(schema, inputs=(replace(schema.inputs[0], accepts_storage=False),))
     assert schema_signature(explicit_default) == schema_signature(schema)
     assert schema_signature(

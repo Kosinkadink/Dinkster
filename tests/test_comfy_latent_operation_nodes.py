@@ -12,12 +12,11 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_latent.latent_operations import (
+from dinkster_nodes_comfy.latent_operations import (
+    LATENT_OPERATION_NODES,
     LatentApplyOperation,
     LatentApplyOperationCFG,
     LatentOperationBlend,
-    LatentOperationSharpen,
-    LatentOperationTonemapReinhard,
     ReplaceVideoLatentFrames,
 )
 from test_comfy_latent_nodes import ArrayTensor
@@ -88,19 +87,30 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
+        manifest = (
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        )
         (tmp_path / "resident_fixture_nodes.py").write_text(
             "from test_comfy_latent_operation_nodes import (\n"
             "ResidentSource, ResidentInspect, ResidentStorage)\n"
-            "from dinkster_nodes_latent.types import register_types\n"
-            "NODES = (ResidentSource, ResidentInspect, ResidentStorage)\n",
+            "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+            "from dinkster_nodes_comfy.device_routing import device_choices\n"
+            "NODES = (*COMFY_NODES, ResidentSource, ResidentInspect, ResidentStorage)\n",
             encoding="ascii",
         )
         source_manifest = tmp_path / "dinkster-pack.toml"
         source_manifest.write_text(
-            '[pack]\nname="resident-fixture"\npublisher="dinkster"\n'
-            'namespaces=["resident-fixture"]\n[pack.entry]\n'
-            'nodes="resident_fixture_nodes:NODES"\n'
-            'types="resident_fixture_nodes:register_types"\n',
+            manifest.read_text(encoding="ascii")
+            .replace("namespaces = [", 'namespaces = ["resident-fixture",')
+            .replace("dinkster_nodes_comfy:COMFY_NODES", "resident_fixture_nodes:NODES")
+            .replace(
+                "dinkster_nodes_comfy.device_routing:device_choices",
+                "resident_fixture_nodes:device_choices",
+            )
+            .replace(
+                "dinkster_nodes_comfy:register_inference_types",
+                "resident_fixture_nodes:register_inference_types",
+            ),
             encoding="ascii",
         )
         composer = ServingComposer(
@@ -146,28 +156,16 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
 
 def test_latent_operation_interfaces_keep_exact_input_order_and_optional_groups() -> None:
     expected = {
-        "dinkster.latent.latent_apply_operation": ("samples", "operation"),
-        "dinkster.latent.latent_apply_operation_cfg": (
-            "model",
-            "operation",
-            "start_percent",
-            "end_percent",
-        ),
-        "dinkster.latent.latent_operation_blend": ("reference", "strength"),
-        "dinkster.latent.latent_operation_tonemap_reinhard": ("multiplier",),
-        "dinkster.latent.latent_operation_sharpen": ("sharpen_radius", "sigma", "alpha"),
-        "dinkster.latent.replace_video_latent_frames": ("destination", "source", "index"),
+        "LatentApplyOperation": ("samples", "operation"),
+        "LatentApplyOperationCFG": ("model", "operation", "start_percent", "end_percent"),
+        "LatentOperationBlend": ("reference", "strength"),
+        "LatentOperationTonemapReinhard": ("multiplier",),
+        "LatentOperationSharpen": ("sharpen_radius", "sigma", "alpha"),
+        "ReplaceVideoLatentFrames": ("destination", "source", "index"),
     }
     assert {
         node.schema().node_type: tuple(port.id for port in node.schema().inputs)
-        for node in (
-            LatentApplyOperation,
-            LatentApplyOperationCFG,
-            LatentOperationBlend,
-            LatentOperationTonemapReinhard,
-            LatentOperationSharpen,
-            ReplaceVideoLatentFrames,
-        )
+        for node in LATENT_OPERATION_NODES
     } == expected
     assert not ReplaceVideoLatentFrames.schema().inputs[1].required
     assert ReplaceVideoLatentFrames.schema().inputs[2].required

@@ -1,4 +1,4 @@
-"""Retained VIDEO codecs, edit transport, assembly and disassembly contracts."""
+"""Value-level video operation contracts: window, rate, assemble, disassemble."""
 
 from __future__ import annotations
 
@@ -23,6 +23,14 @@ from dinkster_api.v1 import (
     edit_video,
 )
 from dinkster_graph import Graph, GraphNode
+from dinkster_nodes_media_io import (
+    AssembleVideo,
+    DisassembleVideo,
+    TrimVideo,
+    VideoFrameRate,
+    VideoFrameWindow,
+)
+from dinkster_nodes_media_io.video import decode_video_frames
 from dinkster_values import video_from_source
 from dinkster_video import save_video_stream
 
@@ -39,26 +47,25 @@ def test_native_video_registration_is_torch_free_and_preserves_first_authority()
             sys.executable,
             "-c",
             "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_TYPE, VIDEO_EDIT_TYPE; "
-            "from dinkster_nodes_video import register_types; "
-            "r=TypeRegistry(); register_types(r); "
+            "from dinkster_nodes_comfy import register_inference_types; "
+            "r=TypeRegistry(); register_inference_types(r); "
             "assert VIDEO_TYPE in r and VIDEO_EDIT_TYPE in r; assert 'torch' not in sys.modules",
         ],
         check=True,
     )
     from dinkster_api.v1 import TypeRegistry, register_video_edit_type
-    from dinkster_inference_wire.types import register_inference_types
-    from dinkster_nodes_video import register_types
+    from dinkster_nodes_comfy import register_inference_types
+    from dinkster_nodes_media_io import register_media_types
 
     for first, second in (
-        (register_inference_types, register_types),
-        (register_types, register_inference_types),
+        (register_inference_types, register_media_types),
+        (register_media_types, register_inference_types),
     ):
         registry = TypeRegistry()
         first(registry)
+        video_spec = registry.spec(VIDEO_TYPE)
         edit_spec = registry.spec(VIDEO_EDIT_TYPE)
         second(registry)
-        video_spec = registry.spec(VIDEO_TYPE)
-        register_types(registry)
         register_video_edit_type(registry)
         assert registry.spec(VIDEO_TYPE) is video_spec
         assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
@@ -68,7 +75,7 @@ def test_native_video_registration_is_torch_free_and_preserves_first_authority()
     registry.register(VIDEO_EDIT_TYPE, encode=lambda _: b"edit", decode=lambda _: "edit")
     video_spec = registry.spec(VIDEO_TYPE)
     edit_spec = registry.spec(VIDEO_EDIT_TYPE)
-    register_types(registry)
+    register_inference_types(registry)
     assert registry.spec(VIDEO_TYPE) is video_spec
     assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
 
@@ -151,6 +158,8 @@ class VideoEditLiteralFixture(Node):
 def test_video_edit_literal_crosses_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         checkout = Path(__file__).resolve().parents[1]
+        native = checkout / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        native_bytes = native.read_bytes()
         module = "video_edit_public_fixture"
         (tmp_path / f"{module}.py").write_text(
             "from test_video_ops import VideoEditLiteralFixture\n"
@@ -165,7 +174,7 @@ def test_video_edit_literal_crosses_ordinary_hosts(tmp_path: Path, in_process: b
             f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
             encoding="ascii",
         )
-        manifests = (fixture,)
+        manifests = (native, fixture)
         paths = (
             tmp_path,
             checkout / "tests",
@@ -204,6 +213,7 @@ def test_video_edit_literal_crosses_ordinary_hosts(tmp_path: Path, in_process: b
                 assert set(result.cached) == (set() if attempt == 0 else {"apply"})
         finally:
             await composer.close()
+        assert native.read_bytes() == native_bytes
 
     run_scenario(scenario())
 
@@ -226,16 +236,171 @@ def _audio(samples: int = 16_000, sample_rate: int = 16_000) -> dict[str, object
     return {"waveform": waveform, "sample_rate": sample_rate}
 
 
+def _frame_ids(images: object, count: int = 10) -> list[int]:
+    batch = cast("np.ndarray", images)
+    return [int(round(float(frame[0, 0, 0]) * (count - 1))) for frame in batch]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, list(range(10))),
+        ({"skip_first_frames": 3}, [3, 4, 5, 6, 7, 8, 9]),
+        ({"select_every_nth": 4}, [0, 4, 8]),
+        ({"frame_load_cap": 2}, [0, 1]),
+        ({"skip_first_frames": 2, "select_every_nth": 3}, [2, 5, 8]),
+        ({"skip_first_frames": 2, "select_every_nth": 3, "frame_load_cap": 2}, [2, 5]),
+        ({"skip_first_frames": 9, "frame_load_cap": 5}, [9]),
+    ],
+)
+def test_window_applies_skip_then_stride_then_cap(
+    kwargs: dict[str, Any], expected: list[int]
+) -> None:
+    result = VideoFrameWindow.execute(images=_frames(), **kwargs)
+    assert _frame_ids(result["images"]) == expected
+    assert result["frame_count"] == len(expected)
+    assert cast("np.ndarray", result["images"]).flags["C_CONTIGUOUS"]
+
+
+def test_window_empty_selection_is_an_error() -> None:
+    with pytest.raises(ValueError, match="contains no frames"):
+        VideoFrameWindow.execute(images=_frames(4), skip_first_frames=4)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"skip_first_frames": -1}, "skip_first_frames"),
+        ({"skip_first_frames": 1.0}, "skip_first_frames"),
+        ({"skip_first_frames": True}, "skip_first_frames"),
+        ({"select_every_nth": 0}, "select_every_nth"),
+        ({"select_every_nth": "2"}, "select_every_nth"),
+        ({"select_every_nth": True}, "select_every_nth"),
+        ({"frame_load_cap": -1}, "frame_load_cap"),
+        ({"frame_load_cap": 2.5}, "frame_load_cap"),
+        ({"frame_load_cap": False}, "frame_load_cap"),
+    ],
+)
+def test_window_rejects_non_integer_frame_controls(kwargs: dict[str, Any], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        VideoFrameWindow.execute(images=_frames(), **kwargs)
+
+
+@pytest.mark.parametrize(
+    "images",
+    [
+        np.zeros((0, 8, 8, 3), dtype=np.float32),
+        np.zeros((2, 8, 8, 2), dtype=np.float32),
+        np.zeros((8, 8, 3), dtype=np.float32),
+        "frames",
+    ],
+)
+def test_window_refuses_invalid_frame_batches(images: object) -> None:
+    with pytest.raises(ValueError, match="frame batch"):
+        VideoFrameWindow.execute(images=images)
+
+
+@pytest.mark.parametrize(
+    ("count", "fps", "target", "expected"),
+    [
+        # Downsample: 10 frames at 10 fps -> 5 fps keeps every other frame.
+        (10, 10.0, 5.0, [0, 2, 4, 6, 8]),
+        # Upsample: 5 frames at 5 fps -> 10 fps duplicates each frame.
+        (5, 5.0, 10.0, [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]),
+        # Tie at tick 0.5 s between frames 1 and 2 rounds to the earlier frame.
+        (3, 3.0, 2.0, [0, 1]),
+        # Non-integer tick count rounds up: ticks strictly before 5/4 s.
+        (5, 4.0, 3.0, [0, 1, 3, 4]),
+    ],
+)
+def test_rate_resamples_by_nearest_tick_with_earlier_frame_ties(
+    count: int, fps: float, target: float, expected: list[int]
+) -> None:
+    result = VideoFrameRate.execute(images=_frames(count), fps=fps, target_fps=target)
+    assert _frame_ids(result["images"], count) == expected
+    assert result["frame_count"] == len(expected)
+    assert result["fps"] == target
+    assert result["duration"] == len(expected) / target
+    assert cast("np.ndarray", result["images"]).flags["C_CONTIGUOUS"]
+
+
+def test_rate_zero_target_passes_frames_through() -> None:
+    frames = _frames(6)
+    result = VideoFrameRate.execute(images=frames, fps=12.0, target_fps=0.0)
+    assert np.array_equal(cast("np.ndarray", result["images"]), frames)
+    assert result["frame_count"] == 6
+    assert result["fps"] == 12.0
+    assert result["duration"] == 0.5
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"fps": 0.0},
+        {"fps": -24.0},
+        {"fps": float("inf")},
+        {"fps": 24.0, "target_fps": -1.0},
+        {"fps": 24.0, "target_fps": 2000.0},
+        {"fps": 24.0, "target_fps": float("nan")},
+    ],
+)
+def test_rate_rejects_out_of_domain_rates(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        VideoFrameRate.execute(images=_frames(4), **kwargs)
+
+
+def test_rate_matches_load_video_force_rate_decode() -> None:
+    # The rate node promises the exact frame selection dinkster.load_video
+    # performs at decode time with force_rate: same nearest-tick rule, same
+    # tie direction, same trailing fill before the source end.
+    frames = _frames(12)
+    components = AssembleVideo.execute(images=frames, fps=6.0)["video"]
+    encoded = io.BytesIO()
+    save_video_stream(components, encoded)
+
+    class Source:
+        def open(self) -> io.BytesIO:
+            return io.BytesIO(encoded.getvalue())
+
+    source = Source()
+    forced, forced_fps, forced_duration = decode_video_frames(
+        source,
+        force_rate=2.5,
+        custom_width=0,
+        custom_height=0,
+        frame_load_cap=0,
+        start_time=0.0,
+        select_every_nth=1,
+    )
+    decoded, source_fps, _ = decode_video_frames(
+        source,
+        force_rate=0,
+        custom_width=0,
+        custom_height=0,
+        frame_load_cap=0,
+        start_time=0.0,
+        select_every_nth=1,
+    )
+    resampled = VideoFrameRate.execute(
+        images=decoded,
+        fps=source_fps,
+        target_fps=2.5,
+    )
+    assert np.array_equal(forced, cast("np.ndarray", resampled["images"]))
+    assert resampled["fps"] == forced_fps
+    assert resampled["duration"] == forced_duration
+
+
 def test_assemble_disassemble_round_trip_preserves_frames_fps_and_audio() -> None:
     frames = _frames(10)
     audio = _audio()
     video = cast(
         "dict[str, Any]",
-        assemble_video(frames, fps=24.0, audio=audio),
+        AssembleVideo.execute(images=frames, fps=24.0, audio=audio)["video"],
     )
     assert video["probe"]["container"] is None
     assert video["components"]["images"] is frames
-    result = disassemble_video(video)
+    result = DisassembleVideo.execute(video=video)
     images = cast("np.ndarray", result["images"])
     assert images.shape == frames.shape
     assert result["frame_count"] == 10
@@ -252,22 +417,22 @@ def test_assemble_disassemble_round_trip_preserves_frames_fps_and_audio() -> Non
 def test_round_trip_preserves_fractional_frame_rates_exactly() -> None:
     video = cast(
         "dict[str, Any]",
-        assemble_video(_frames(12), fps=29.97),
+        AssembleVideo.execute(images=_frames(12), fps=29.97)["video"],
     )
-    result = disassemble_video(video)
+    result = DisassembleVideo.execute(video=video)
     assert result["fps"] == 29.97
     assert result["duration"] == 12 / 29.97
 
 
 def test_disassemble_reports_absent_audio_for_silent_video() -> None:
-    video = assemble_video(_frames(4), fps=8.0)
-    result = disassemble_video(video)
-    assert result["audio"] is None
+    video = AssembleVideo.execute(images=_frames(4), fps=8.0)["video"]
+    result = DisassembleVideo.execute(video=video)
+    assert not isinstance(result["audio"], dict)
 
 
 def test_trim_zero_window_preserves_components_without_encoding() -> None:
-    video = cast("dict[str, Any]", assemble_video(_frames(4), fps=8.0))
-    result = cast("dict[str, Any]", edit_video(video, {"trim": {"start_time": 0, "duration": 0}}))
+    video = cast("dict[str, Any]", AssembleVideo.execute(images=_frames(4), fps=8.0)["video"])
+    result = cast("dict[str, Any]", TrimVideo.execute(video=video)["video"])
     assert result["probe"] == video["probe"]
     assert result["components"]["images"] is video["components"]["images"]
     assert video["edits"] == []
@@ -275,29 +440,27 @@ def test_trim_zero_window_preserves_components_without_encoding() -> None:
 
 def test_trim_zero_window_preserves_container_bytes() -> None:
     encoded = io.BytesIO()
-    save_video_stream(assemble_video(_frames(4), fps=8.0), encoded)
+    save_video_stream(AssembleVideo.execute(images=_frames(4), fps=8.0)["video"], encoded)
     value = video_from_source(encoded.getvalue())
-    trimmed = edit_video(value, {"trim": {"start_time": 0, "duration": 0}})
+    trimmed = TrimVideo.execute(video=value)["video"]
     saved = io.BytesIO()
     save_video_stream(trimmed, saved)
     assert saved.getvalue() == encoded.getvalue()
 
 
 def test_trim_selects_requested_frame_window() -> None:
-    frames = _frames(10)
-    video = assemble_video(frames, fps=10.0)
-    trimmed = edit_video(video, {"trim": {"start_time": 0.2, "duration": 0.3}})
-    result = disassemble_video(trimmed)
-    np.testing.assert_array_equal(result["images"], frames[2:5])
+    video = AssembleVideo.execute(images=_frames(10), fps=10.0)["video"]
+    trimmed = TrimVideo.execute(video=video, start_time=0.2, duration=0.3)["video"]
+    result = DisassembleVideo.execute(video=trimmed)
     assert result["frame_count"] == 3
     assert result["fps"] == 10.0
     assert result["duration"] == pytest.approx(0.3)
 
 
 def test_trim_strict_duration_refuses_short_source() -> None:
-    video = assemble_video(_frames(4), fps=8.0)
+    video = AssembleVideo.execute(images=_frames(4), fps=8.0)["video"]
     with pytest.raises(ValueError, match="requested duration"):
-        edit_video(video, {"trim": {"start_time": 0.25, "duration": 1.0}, "strict_duration": True})
+        TrimVideo.execute(video=video, start_time=0.25, duration=1.0, strict_duration=True)
 
 
 @pytest.mark.parametrize(
@@ -311,26 +474,55 @@ def test_trim_strict_duration_refuses_short_source() -> None:
 def test_assemble_rejects_out_of_domain_controls(kwargs: dict[str, Any], match: str) -> None:
     arguments: dict[str, Any] = {"images": _frames(4), **kwargs}
     with pytest.raises(ValueError, match=match):
-        assemble_video(**arguments)
+        AssembleVideo.execute(**arguments)
 
 
 @pytest.mark.parametrize(
-    "video,match",
+    "video",
     [
-        (None, "VIDEO must be an object"),
-        (b"raw bytes", "VIDEO must be an object"),
-        ({"container": "mp4"}, "VIDEO requires exactly one of source and components"),
-        ({"container": "avi", "bytes": b"x"}, "Invalid data found when processing input"),
-        (
-            {"container": "webm", "bytes": b"\x00\x00\x00\x18ftypisom"},
-            "Invalid data found when processing input",
-        ),
-        (
-            {"container": "mp4", "bytes": b"not a container"},
-            "Invalid data found when processing input",
-        ),
+        None,
+        b"raw bytes",
+        {"container": "mp4"},
+        {"container": "avi", "bytes": b"x"},
+        {"container": "webm", "bytes": b"\x00\x00\x00\x18ftypisom"},
+        {"container": "mp4", "bytes": b"not a container"},
     ],
 )
-def test_disassemble_rejects_malformed_video_values(video: object, match: str) -> None:
-    with pytest.raises(ValueError, match=match):
-        disassemble_video(video)
+def test_disassemble_rejects_malformed_video_values(video: object) -> None:
+    with pytest.raises(ValueError, match="not a valid VIDEO value"):
+        DisassembleVideo.execute(video=video)
+
+
+def test_video_ops_schemas_preserve_value_and_preview_contracts() -> None:
+    window = VideoFrameWindow.schema()
+    rate = VideoFrameRate.schema()
+    assemble = AssembleVideo.schema()
+    disassemble = DisassembleVideo.schema()
+    trim = TrimVideo.schema()
+    assert window.node_type == "dinkster.video.window"
+    assert rate.node_type == "dinkster.video.rate"
+    assert assemble.node_type == "dinkster.video.assemble"
+    assert disassemble.node_type == "dinkster.video.disassemble"
+    assert trim.node_type == "dinkster.video.trim"
+    for schema in (window, rate, assemble, disassemble, trim):
+        assert schema.category == "video"
+        assert schema.output_node is False
+        assert schema.outputs[0].preview is True
+    assert assemble.aliases == ("CreateVideo",)
+    for schema in (window, rate, disassemble, trim):
+        assert schema.aliases == ()
+    # Assemble and disassemble exchange plain VIDEO values, not assets.
+    assert assemble.outputs[0].type.kind == "concrete"
+    assert assemble.outputs[0].type.types == (VIDEO_TYPE,)
+    assert disassemble.inputs[0].type.kind == "concrete"
+    assert disassemble.inputs[0].type.types == (VIDEO_TYPE,)
+    assert trim.inputs[1].type.types == (VIDEO_EDIT_TYPE,)
+    assert [(output.id, output.preview, output.optional) for output in disassemble.outputs] == [
+        ("images", True, False),
+        ("frame_count", False, False),
+        ("audio", True, True),
+        ("fps", False, False),
+        ("duration", False, False),
+        ("bit_depth", False, False),
+        ("color_space", False, False),
+    ]

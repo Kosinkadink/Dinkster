@@ -18,8 +18,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.camera_angle import CameraAngle
-from dinkster_server import PackInfo
+from dinkster_nodes_comfy.camera_angle import CameraAngle
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -92,10 +91,9 @@ class CameraAngleInspect(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 def test_camera_angle_native_manifest_executes_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        manifest = (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-3d/dinkster-pack.toml"
+        native = (
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
         )
-        image_manifest = manifest.parent.parent / "dinkster-nodes-image/dinkster-pack.toml"
         (tmp_path / "camera_angle_fixture.py").write_text(
             "from test_camera_angle import CameraAngleInspect\n"
             "from dinkster_api.v1 import register_inference_types\n"
@@ -118,20 +116,15 @@ def test_camera_angle_native_manifest_executes_twice(tmp_path: Path, in_process:
             }
         )
         try:
-            await composer.add_pack(
-                PackSpec(
-                    manifest=image_manifest,
-                    in_process=in_process,
-                    trust_reserved=True,
-                    packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")},
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "camera-angle-fixture",
+                        group_manifests=() if in_process else (native, fixture),
+                    )
                 )
-            )
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
-            await composer.add_pack(
-                PackSpec(manifest=fixture, in_process=in_process, trust_reserved=True)
-            )
             graph = Graph(
                 nodes={
                     "camera": GraphNode(

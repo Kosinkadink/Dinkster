@@ -256,57 +256,52 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
     assert b"\r\n" not in second[-1].read_bytes()
     lock = Lockfile.from_record_json(first[-1].read_text())
     expected = {
-        "dinkster-audio",
-        "dinkster-audio-models",
-        "dinkster-conditioning",
-        "dinkster-cosmos",
-        "dinkster-flux",
-        "dinkster-hidream",
-        "dinkster-hunyuan",
-        "dinkster-latent",
-        "dinkster-llm",
-        "dinkster-ltx",
-        "dinkster-minimax",
-        "dinkster-misc-models",
-        "dinkster-models",
-        "dinkster-3d",
-        "dinkster-3d-models",
-        "dinkster-image",
-        "dinkster-utilities",
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
-        "dinkster-qwen",
-        "dinkster-sampling",
-        "dinkster-sd",
-        "dinkster-seedvr",
-        "dinkster-text",
-        "dinkster-upscale",
-        "dinkster-video",
-        "dinkster-vision-background-removal",
-        "dinkster-vision-depth-anything-3",
-        "dinkster-vision-marigold",
-        "dinkster-vision-mediapipe",
-        "dinkster-vision-moge",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
         "dinkster-vision-rtdetr",
-        "dinkster-vision-sam3",
-        "dinkster-vision-sam3d-body",
-        "dinkster-vision-sdpose",
-        "dinkster-void",
-        "dinkster-wan",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
     }
     assert {pack.pack for pack in lock.packs} == expected
     core_requirements = {
-        "dinkster-image": (
+        "dinkster-nodes-comfy": (
+            "simpleeval==1.0.8",
+            "numpy",
+            "pillow",
+            "torch",
+            "torchvision",
+            "dinkster-inference==0.1.1",
+            "av",
+            "scipy",
+            "einops",
+            "kornia",
+            "safetensors",
+            "tqdm",
+            "spandrel",
+            "comfy-kitchen",
+        ),
+        "dinkster-nodes-foundation": (),
+        "dinkster-nodes-image": (
             "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
             "numpy>=1.26",
             "opencv-contrib-python-headless>=5.0,<5.1",
             "pillow>=10",
             "PyOpenGL>=3.1.8,<4",
+        ),
+        "dinkster-nodes-media-io": (
             "av==18.1.0",
-            "torch",
-            "torchvision",
-            "scipy",
-            "kornia",
-            "dinkster-inference==0.1.1",
+            "numpy>=1.26",
+            "pillow>=10",
+            "scipy>=1.11",
         ),
         "dinkster-nodes-remote": ("httpx>=0.28,<1",),
     }
@@ -328,13 +323,8 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
             assert manifest.requires == core_requirements[pack.pack]
         module = manifest.nodes_entry.partition(":")[0]
         relative = Path(*module.split(".")) / "__init__.py"
-        if not pack.pack.startswith("dinkster-nodes-"):
-            original = (
-                Path("packages")
-                / pack.pack.replace("dinkster-", "dinkster-nodes-", 1)
-                / "src"
-                / relative
-            )
+        if pack.pack.startswith("dinkster-vision-"):
+            original = Path("packages/dinkster-nodes-vision/src") / relative
         else:
             original = Path("packages") / pack.pack / "src" / relative
         expected_source = subprocess.check_output(
@@ -350,7 +340,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
 
 
 @pytest.mark.parametrize(
-    "pack", ["dinkster-image", "dinkster-nodes-remote", "dinkster-vision-sam3"]
+    "pack", ["dinkster-nodes-comfy", "dinkster-nodes-remote", "dinkster-vision-upscale"]
 )
 def test_official_artifacts_reject_static_errors_in_built_zip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pack: str
@@ -394,9 +384,6 @@ def test_official_publication_uses_selected_manifest_versions(
         "dinkster-nodes-image": "0.8.0",
         "dinkster-nodes-media-io": "3.0.0rc1",
         "dinkster-nodes-remote": "1.2.4",
-        "dinkster-text": "0.1.0",
-        "dinkster-upscale": "0.2.1",
-        "dinkster-nodes-unlisted-family": "4.2.1",
     }
     tracked = io.BytesIO()
     with tarfile.open(fileobj=tracked, mode="w") as archive:
@@ -417,12 +404,7 @@ def test_official_publication_uses_selected_manifest_versions(
             }
             for name, text in files.items():
                 data = text.encode()
-                directory = (
-                    pack.replace("dinkster-", "dinkster-nodes-", 1)
-                    if pack in {"dinkster-text", "dinkster-upscale"}
-                    else pack
-                )
-                entry = tarfile.TarInfo(f"packages/{directory}/{name}")
+                entry = tarfile.TarInfo(f"packages/{pack}/{name}")
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
 
@@ -471,7 +453,6 @@ def test_official_publication_uses_selected_manifest_versions(
         (("src/dinkster/serve.py", "pyproject.toml"), ()),
         (("packages/dinkster-nodes-foundation/src/nodes.py",), ("foundation",)),
         (("packages/dinkster-nodes-image/deleted.py",), ("image",)),
-        (("packages/dinkster-nodes-unlisted-family/src/nodes.py",), ("unlisted",)),
         (("packages/dinkster-nodes-dev/src/nodes.py",), ()),
         (("packages/dinkster-nodes-generation/dinkster-pack.toml",), ()),
         (("packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",), ("first",)),
@@ -498,7 +479,6 @@ def test_official_publication_selects_only_changed_committed_packs(
         "image": "packages/dinkster-nodes-image/dinkster-pack.toml",
         "first": "packages/dinkster-nodes-vision/first_pack/dinkster-pack.toml",
         "second": "packages/dinkster-nodes-vision/second_pack/dinkster-pack.toml",
-        "unlisted": "packages/dinkster-nodes-unlisted-family/dinkster-pack.toml",
     }
     committed = {
         path: (
@@ -507,7 +487,7 @@ def test_official_publication_selects_only_changed_committed_packs(
             f'[pack.entry]\nnodes = "vision.{name}:NODES"\n'
         ).encode()
         for (name, path), version in zip(
-            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5", "4.2.1"), strict=True
+            paths.items(), ("1.0", "7.2", "3.4rc1", "0.5"), strict=True
         )
     }
 
@@ -515,19 +495,11 @@ def test_official_publication_selects_only_changed_committed_packs(
         if "rev-parse" in command:
             return "a" * 40 + "\n"
         if "ls-tree" in command:
-            manifests = [
-                path for path in committed if "b" * 40 not in command or path != paths["first"]
-            ]
             return "\0".join(
-                [*manifests, "packages/dinkster-nodes-dev/dinkster-pack.toml", ""]
+                [*committed, "packages/dinkster-nodes-dev/dinkster-pack.toml", ""]
             ).encode()
         if "show" in command:
-            data = committed[command[-1].split(":", 1)[1]]
-            return (
-                data.replace(b'version = "1.0"', b'version = "0.9"')
-                if command[-1].startswith("b" * 40)
-                else data
-            )
+            return committed[command[-1].split(":", 1)[1]]
         if "diff" in command:
             return ("\0".join(changed) + "\0").encode()
         raise AssertionError(command)
@@ -535,17 +507,7 @@ def test_official_publication_selects_only_changed_committed_packs(
     monkeypatch.setattr("scripts.select_official_packs.subprocess.check_output", git)
     (tmp_path / "dinkster-pack.toml").write_text("invalid uncommitted data")
     assert select_packs(tmp_path, before="b" * 40) == expected
-    assert select_packs(tmp_path, before="b" * 40, version_changes_only=True) == tuple(
-        pack for pack in expected if pack in {"foundation", "first"}
-    )
-    assert select_packs(tmp_path, before="0" * 40) == (
-        "first",
-        "foundation",
-        "image",
-        "second",
-        "unlisted",
-    )
-    assert select_packs(tmp_path, tag="pack/unlisted/v4.2.1") == ("unlisted",)
+    assert select_packs(tmp_path, before="0" * 40) == ("first", "foundation", "image", "second")
     assert select_packs(tmp_path, tag="pack/first/v3.4rc1") == ("first",)
     for tag in ("v3.4rc1", "pack/first/v3.4", "pack/unknown/v3.4rc1", "pack/first/v3.4rc1/extra"):
         with pytest.raises(ValueError, match="pack tag"):
@@ -564,157 +526,6 @@ def test_official_publication_selects_only_changed_committed_packs(
     committed[first] = committed[first].replace(b'engine = ">=0.2,<1"', b'engine = ""')
     with pytest.raises(ManifestError, match="engine"):
         select_packs(tmp_path, tag="pack/first/v2.0")
-
-
-@pytest.mark.parametrize(
-    ("mode", "problem"),
-    [
-        ("candidate", None),
-        ("candidate", "manifest"),
-        ("candidate", "security"),
-        ("published", None),
-        ("published", "promotion"),
-        ("published", "timeout"),
-        ("published", "digest"),
-        ("published", "head"),
-    ],
-)
-def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, problem: str | None
-) -> None:
-    from dataclasses import replace
-
-    from dinkster_registry import LockedPack, Lockfile, build_artifact
-    from dinkster_registry.archive_admission import StageResult
-
-    from scripts import check_default_pack_admission as admission
-
-    archives = {}
-    entries = {}
-    for name, version in (("candidate", "7.2"), ("unchanged", "1.3")):
-        source = tmp_path / name
-        source.mkdir()
-        (source / "dinkster-pack.toml").write_text(
-            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-            f'version = "{version}"\nengine = ">=0.2,<1"\n'
-            '[pack.entry]\nnodes = "nodes:NODES"\n'
-            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
-        )
-        if name == "candidate" and problem == "manifest":
-            manifest = source / "dinkster-pack.toml"
-            manifest.write_text(manifest.read_text().replace('version = "7.2"', 'version = "7.1"'))
-        (source / "nodes.py").write_text("NODES = []\n")
-        if name == "candidate" and problem == "security":
-            (source / "bad.txt").write_text("dinkster-known-bad-test-payload")
-        archive = tmp_path / f"{name}.zip"
-        digest = build_artifact(source, archive)
-        archives[name] = archive.read_bytes()
-        entries[name] = LockedPack(
-            pack=name,
-            version=version,
-            artifact_digest=digest,
-            publisher="dinkster",
-            claims=(),
-            source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
-        )
-
-    def build_candidate(root, output, *, packs):
-        assert packs == ("candidate",)
-        output.mkdir()
-        (output / "candidate-7.2.zip").write_bytes(archives["candidate"])
-        (output / "official-packs.lock").write_text(
-            Lockfile.of([entries["candidate"]]).record_json()
-        )
-
-    def registry_defaults(registry, minimums, artifacts, *, engine_version):
-        # The candidate has no registry release: requesting it would fail here.
-        assert minimums == {"unchanged": "1.0"}
-        entry = entries["unchanged"]
-        (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
-            archives["unchanged"]
-        )
-        return Lockfile.of([entry]), {}
-
-    observed = []
-
-    def engine_tests(root, catalog, artifacts):
-        assert root == Path(admission.__file__).resolve().parents[1]
-        observed.extend((pack.pack, pack.version) for pack in catalog.packs)
-
-    monkeypatch.setattr(
-        admission, "default_pack_minimums", lambda: {"candidate": "1.0", "unchanged": "1.0"}
-    )
-    monkeypatch.setattr(admission, "select_packs", lambda *args, **kwargs: ("candidate",))
-    monkeypatch.setattr(admission, "build", build_candidate)
-    monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
-    monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
-    monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
-    publication = None
-    if mode == "published":
-        publication = tmp_path / "official-packs.lock"
-        publication.write_text(Lockfile.of([entries["candidate"]]).record_json())
-        monkeypatch.setattr(
-            admission.subprocess,
-            "check_output",
-            lambda *args, **kwargs: "c" * 40 if problem == "head" else "a" * 40,
-        )
-        attempts = []
-
-        def release(registry, pack, version, *, engine_version):
-            assert (pack, version, engine_version) == ("candidate", "7.2", "0.2")
-            attempts.append(pack)
-            if problem == "timeout" or problem == "promotion" and len(attempts) == 1:
-                raise admission.InstallError("not active yet")
-            return replace(
-                entries["candidate"],
-                source="registry",
-                artifact_digest=entries["unchanged"].artifact_digest
-                if problem == "digest"
-                else entries["candidate"].artifact_digest,
-            )
-
-        monkeypatch.setattr(admission, "resolve_release", release)
-        monkeypatch.setattr(
-            admission, "http_registry_fetcher", lambda endpoint: lambda entry: archives[entry.pack]
-        )
-        ticks = iter((0, 601)) if problem == "timeout" else iter(range(100))
-        monkeypatch.setattr(admission.time, "monotonic", lambda: next(ticks))
-        monkeypatch.setattr(admission.time, "sleep", lambda seconds: None)
-    expected_error = {
-        "manifest": "candidate@7.2 admission refused",
-        "security": "candidate@7.2 admission refused",
-        "digest": "digest mismatch",
-        "head": "do not match the engine checkout",
-        "timeout": "not active yet",
-    }.get(problem or "")
-    if expected_error:
-        with pytest.raises((ValueError, admission.InstallError), match=expected_error):
-            admission.check_defaults(
-                admission.NamedRegistry("", "https://registry.example"),
-                engine_version="0.2",
-                candidate_base="b" * 40 if mode == "candidate" else None,
-                published_sources=publication,
-            )
-        assert not observed
-    else:
-        result = admission.check_defaults(
-            admission.NamedRegistry("", "https://registry.example"),
-            engine_version="0.2",
-            candidate_base="b" * 40 if mode == "candidate" else None,
-            published_sources=publication,
-        )
-        assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
-        assert result == {
-            "engineVersion": "0.2",
-            "packs": [
-                {
-                    "pack": name,
-                    "version": entries[name].version,
-                    "artifactDigest": entries[name].artifact_digest,
-                }
-                for name in ("candidate", "unchanged")
-            ],
-        }
 
 
 @pytest.mark.parametrize(
@@ -1103,7 +914,7 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         path.name: path.read_bytes() for path in second
     }
     catalog = Lockfile.from_record_json(first[-1].read_text())
-    assert len(catalog.packs) == 36
+    assert len(catalog.packs) == 14
     for pack in catalog.packs:
         archive = first[-1].parent / f"{pack.pack}-{pack.version}.zip"
         data = archive.read_bytes()
@@ -1136,12 +947,9 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
 
     saved = tmp_path / "workflow.json"
     original = (
-        b'{"nodes":{"length":{"nodeType":"dinkster.text.string_length",'
-        b'"inputs":{"string":"source packs"}},'
-        b'"image":{"nodeType":"dinkster.image.empty_image",'
-        b'"inputs":{"width":4,"height":5,"batch_size":2}},'
-        b'"size":{"nodeType":"dinkster.image.get_image_size",'
-        b'"inputs":{"image":{"$link":{"node":"image","output":"IMAGE"}}}}}}'
+        b'{"nodes":{"length":{"nodeType":"StringLength","inputs":{"string":"source packs"}},'
+        b'"region":{"nodeType":"dinkster.region.make",'
+        b'"inputs":{"x":2.0,"y":3.0,"width":4.0,"height":5.0}}}}'
     )
     saved.write_bytes(original)
     payloads = build_official_packs(
@@ -1191,20 +999,23 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
             for spec in ordered:
                 await composer.add_pack(spec)
             composition = composer.composition
-            assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
-            assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
-            assert composition.packs["dinkster-text"].version == "0.1.2"
-            assert composition.packs["dinkster-image"].version == "0.1.2"
+            assert composition.node_packs["StringLength"] == "dinkster-nodes-comfy"
+            assert composition.node_packs["dinkster.region.make"] == "dinkster-nodes-image"
+            assert composition.packs["dinkster-nodes-comfy"].version == "0.1.2"
+            assert composition.packs["dinkster-nodes-image"].version == "0.1.2"
             result = await composition.make_engine(lambda _event: None).run(
-                graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
+                graph_from_wire(json.loads(saved.read_bytes())), ["length", "region"]
             )
             assert result.diagnostics == ()
             assert result.outputs["length"]["length"].resolve() == 12
-            assert result.outputs["size"]["width"].resolve() == 4
-            assert result.outputs["size"]["height"].resolve() == 5
-            assert result.outputs["size"]["batch_size"].resolve() == 2
+            assert result.outputs["region"]["region"].meta.entries == {
+                "x": 2.0,
+                "y": 3.0,
+                "width": 4.0,
+                "height": 5.0,
+            }
             assert saved.read_bytes() == original
-            source = tmp_path / "sources" / "dinkster-text"
+            source = tmp_path / "sources" / "dinkster-nodes-comfy"
             (source / "changed.txt").write_text("source drift")
             with pytest.raises(CompositionError, match="missing or stale"):
                 composer.validate_catalogs(ordered)
@@ -1430,7 +1241,6 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "inherited-device")
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cuda")
-    monkeypatch.setenv("DINKSTER_TEST_HISTORY_ROOT", str(tmp_path / "wrong-history"))
     engine = tmp_path / "engine"
     tests = engine / "tests"
     tests.mkdir(parents=True)
@@ -1466,16 +1276,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + "    assert VALUE == 47\n"
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
         "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
-        "    history = Path(os.environ['DINKSTER_TEST_HISTORY_ROOT'])\n"
-        "    assert not (Path.cwd() / '.git').exists()\n"
-        "    assert str(history) not in sys.path\n"
-        "    assert subprocess.check_output(['git', 'show', ':pyproject.toml'], "
-        "cwd=history) == b''\n"
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
         "    assert tomllib.loads((pack_root / 'pyproject.toml').read_text()) "
         "== {'project': {'name': 'selected-image'}}\n"
         "    from dinkster.compose import default_pack_spec\n"
-        "    info = default_pack_spec('dinkster-image').packs['dinkster-image']\n"
+        "    info = default_pack_spec('dinkster-nodes-image').packs['dinkster-nodes-image']\n"
         "    assert info.version == '1.2.3'\n"
         "    assert info.source == f'local:{pack_root}'\n"
         "    assert Path(dinkster_nodes_image.__file__).resolve()"
@@ -1570,34 +1375,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         + ("COLLECTION_VALUE = Unpublished.execute()\n" if problem == "collection" else "")
         + ("def teardown_function():\n    Unpublished.execute()\n" if problem == "teardown" else "")
     )
-    if problem is None:
-        package_tests = engine / "packages/dinkster-nodes-image/tests"
-        package_tests.mkdir(parents=True)
-        (tests / "selected_root_helper.py").write_text("VALUE = 17\n")
-        (package_tests / "selected_package_helper.py").write_text("VALUE = 29\n")
-        (package_tests / "test_image_nodes.py").write_text(
-            "from dinkster_nodes_image import VALUE\n"
-            "from selected_root_helper import VALUE as ROOT_VALUE\n"
-            "from selected_package_helper import VALUE as PACKAGE_VALUE\n"
-            "def test_package_selected_value():\n"
-            "    assert (VALUE, ROOT_VALUE, PACKAGE_VALUE) == (47, 17, 29)\n"
-        )
-        monkeypatch.setattr(
-            "scripts.run_selected_pack_tests._SUITES",
-            {
-                "dinkster-image": (
-                    "tests/test_image_nodes.py",
-                    "packages/dinkster-nodes-image/tests/test_image_nodes.py",
-                )
-            },
-        )
     subprocess.run(["git", "init", "-q", str(engine)], check=True)
     subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
     source = tmp_path / "selected"
     source.mkdir()
     (source / "pyproject.toml").write_text('[project]\nname = "selected-image"\n')
     (source / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-image"\npublisher = "dinkster"\n'
+        '[pack]\nname = "dinkster-nodes-image"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
         'namespaces = ["image-fixture"]\n'
         '[pack.entry]\nnodes = "dinkster_nodes_image:NODES"\n'
@@ -1619,13 +1403,15 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     else:
         from dinkster_store import pack_archive_path
 
-        selected = pack_archive_path(artifacts, digest, label="dinkster-image/2026-11-03-1.2.3")
+        selected = pack_archive_path(
+            artifacts, digest, label="dinkster-nodes-image/2026-11-03-1.2.3"
+        )
         selected.parent.mkdir(parents=True)
         archive.rename(selected)
     catalog = Lockfile.of(
         [
             LockedPack(
-                pack="dinkster-image",
+                pack="dinkster-nodes-image",
                 version="1.2.3",
                 artifact_digest=digest,
                 publisher="dinkster",
@@ -1637,7 +1423,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem is None:
         run_selected_tests(engine, catalog, artifacts)
         output = capfd.readouterr().out
-        assert "3 passed" in output
+        assert "2 passed" in output
         assert "2 skipped" in output
         assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
         assert (
@@ -1647,73 +1433,6 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     elif problem == "missing":
         with pytest.raises(ValueError, match="archive is missing declared module"):
             run_selected_tests(engine, catalog, artifacts)
-    else:
-        with pytest.raises(subprocess.CalledProcessError):
-            run_selected_tests(engine, catalog, artifacts)
-
-
-@pytest.mark.parametrize("selected_value", [17, 29])
-@pytest.mark.parametrize("vision", [False, True])
-def test_selected_pack_runtime_id_uses_distribution_layout(
-    tmp_path: Path, selected_value: int, vision: bool
-) -> None:
-    from dinkster_registry import LockedPack, Lockfile, build_artifact
-
-    from scripts.run_selected_pack_tests import run_selected_tests
-
-    engine = tmp_path / "engine"
-    distribution = "dinkster-nodes-vision-sam3" if vision else "dinkster-nodes-text"
-    pack_id = "dinkster-vision-sam3" if vision else "dinkster-text"
-    entry = "dinkster_nodes_vision_sam3" if vision else "dinkster_nodes_text"
-    tests = engine / "tests"
-    tests.mkdir(parents=True)
-    (engine / "pyproject.toml").write_text("")
-    shutil.copytree(
-        Path(__file__).resolve().parents[1] / "src/dinkster",
-        engine / "src/dinkster",
-        ignore=shutil.ignore_patterns("__pycache__", "official_packs"),
-    )
-    checkout_module = engine / "packages" / distribution / "src" / entry.replace(".", "/")
-    checkout_module.mkdir(parents=True)
-    (checkout_module / "__init__.py").write_text("VALUE = 17\n")
-    if vision:
-        tests = engine / "packages" / distribution / "tests"
-        tests.mkdir()
-    (tests / ("test_sam3_torch.py" if vision else "test_comfy_text_nodes.py")).write_text(
-        f"from pathlib import Path\nimport {entry} as pack\n"
-        "def test_selected_archive():\n"
-        "    assert pack.VALUE == 17\n"
-        + (
-            "    root = Path(__file__).parents[1]\n"
-            if vision
-            else "    root = Path(__file__).parents[1] / 'packages/dinkster-nodes-text'\n"
-        )
-        + "    assert Path(pack.__file__).resolve().is_relative_to(root / 'src')\n"
-        "    from dinkster.compose import default_pack_spec\n"
-        f"    info = default_pack_spec('{pack_id}').packs['{pack_id}']\n"
-        "    assert info.source == f'local:{root}'\n"
-    )
-    subprocess.run(["git", "init", "-q", str(engine)], check=True)
-    subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
-    source = tmp_path / "selected"
-    module = source / entry.replace(".", "/")
-    module.mkdir(parents=True)
-    (module / "__init__.py").write_text(f"VALUE = {selected_value}\nNODES = []\n")
-    (source / "pyproject.toml").write_text(f'[project]\nname = "{distribution}"\n')
-    (source / "dinkster-pack.toml").write_text(
-        f'[pack]\nname = "{pack_id}"\npublisher = "dinkster"\n'
-        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
-        f'namespaces = ["{pack_id}"]\n'
-        f'[pack.entry]\nnodes = "{entry}:NODES"\n'
-    )
-    artifacts = tmp_path / "artifacts"
-    artifacts.mkdir()
-    archive = artifacts / "pack.zip"
-    digest = build_artifact(source, archive)
-    archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
-    catalog = Lockfile.of([LockedPack(pack_id, "1.2.3", digest, "dinkster", (pack_id,))])
-    if selected_value == 17:
-        run_selected_tests(engine, catalog, artifacts)
     else:
         with pytest.raises(subprocess.CalledProcessError):
             run_selected_tests(engine, catalog, artifacts)

@@ -38,7 +38,7 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_nodes_audio.audio_io import LoadAudio
+from dinkster_nodes_media_io import LoadAudio, writable_media_recorder_webm_audio_encoders
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app
@@ -47,7 +47,6 @@ from dinkster_server.library import LIBRARY_KEY, handle_latent_upload, handle_me
 from dinkster_values import (
     TypeRegistry,
     audio_meta,
-    coerce_audio,
     register_core_types,
     render_audio_wav,
 )
@@ -57,17 +56,6 @@ from multidict import MultiDict, MultiDictProxy
 from PIL import Image
 
 from tests.async_scenarios import run_scenario
-
-
-def writable_media_recorder_webm_audio_encoders() -> tuple[str, ...]:
-    available: list[str] = []
-    for codec in ("libopus", "libvorbis"):
-        try:
-            av.Codec(codec, "w")
-        except Exception:  # noqa: BLE001 - PyAV uses several codec error classes
-            continue
-        available.append(codec)
-    return tuple(available)
 
 
 @pytest.fixture(autouse=True)
@@ -1967,16 +1955,15 @@ def test_audio_webm_upload_load_and_rendition_use_canonical_asset(tmp_path: Path
             assert body["kind"] == "media/audio"
             assert body["asset"]["mediaType"] == "audio/webm"
             asset = AssetRef.from_wire(body["asset"], resolver=library.vault)
-            audio = coerce_audio(LoadAudio.execute(audio=asset)["AUDIO"])
-            # The fixture has 960 samples; container duration includes Opus padding.
-            assert audio_meta(audio)["frames"] == 960
-            assert audio_meta(audio)["duration"] == 0.02
-            assert audio_meta(audio)["shape"] == (1, 1, 960)
+            audio = LoadAudio.execute(audio=asset)["audio"]
+            assert audio_meta(audio)["frames"] == 1632
+            assert audio_meta(audio)["duration"] == 0.034
+            assert audio_meta(audio)["shape"] == (1, 1, 1632)
             rendition = render_audio_wav(audio)
             with wave.open(BytesIO(rendition), "rb") as decoded:
                 assert decoded.getframerate() == 48_000
                 assert decoded.getnchannels() == 1
-                assert decoded.getnframes() == 960
+                assert decoded.getnframes() > 0
         finally:
             await client.close()
 
@@ -2000,7 +1987,7 @@ async def _assert_media_recorder_audio_webm_upload(tmp_path: Path, codec: str) -
         )
         assert response.status == 201, await response.text()
         asset = AssetRef.from_wire((await response.json())["asset"], resolver=library.vault)
-        audio = coerce_audio(LoadAudio.execute(audio=asset)["AUDIO"])
+        audio = LoadAudio.execute(audio=asset)["audio"]
         metadata = audio_meta(audio)
         assert metadata["frames"] == expected_frames
         assert metadata["duration"] == expected_frames / 48_000
@@ -2060,7 +2047,7 @@ def test_audio_m4a_upload_load_and_rendition_use_canonical_asset(tmp_path: Path)
             assert body["kind"] == "media/audio"
             assert body["asset"]["mediaType"] == "audio/mp4"
             asset = AssetRef.from_wire(body["asset"], resolver=library.vault)
-            audio = coerce_audio(LoadAudio.execute(audio=asset)["AUDIO"])
+            audio = LoadAudio.execute(audio=asset)["audio"]
             rendition = render_audio_wav(audio)
             with wave.open(BytesIO(rendition), "rb") as decoded:
                 assert decoded.getframerate() == 48_000

@@ -4,8 +4,8 @@ import subprocess
 import sys
 
 from dinkster_api.v1 import ASSET_TYPE, AUDIO_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio import NODES
-from dinkster_nodes_audio.audio_io import LoadAudio, PreviewAudio
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.audio_io import LoadAudio, PreviewAudio
 from dinkster_workers import load_manifest
 
 
@@ -19,10 +19,9 @@ def test_native_audio_io_schemas_and_manifest() -> None:
     assert PreviewAudio.schema().output_node
     for node in (LoadAudio, PreviewAudio):
         assert schema_from_wire(schema_to_wire(node.schema())) == node.schema()
-        assert node in NODES
-    manifest = load_manifest("packages/dinkster-nodes-audio/dinkster-pack.toml")
-    assert manifest.namespaces == ("dinkster.audio",)
-    assert all(node.schema().node_type.startswith("dinkster.audio.") for node in NODES)
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_native_audio_io_cold_discovery() -> None:
@@ -31,9 +30,8 @@ def test_native_audio_io_cold_discovery() -> None:
             sys.executable,
             "-c",
             "import sys; sys.modules['torch']=None; sys.modules['dinkster_inference']=None; "
-            "from dinkster_nodes_audio import NODES; "
-            "assert {'dinkster.audio.load_audio','dinkster.audio.preview_audio'} "
-            "<= {n.schema().node_type for n in NODES}; "
+            "from dinkster_nodes_comfy import COMFY_NODES; "
+            "assert {'LoadAudio','PreviewAudio'} <= {n.schema().node_type for n in COMFY_NODES}; "
             "assert not any(n.startswith('dinkster_inference.') for n in sys.modules)",
         ],
         capture_output=True,

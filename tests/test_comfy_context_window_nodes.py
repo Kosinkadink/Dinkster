@@ -1,20 +1,14 @@
 """Torch-free schema contracts for native context-window nodes."""
 
 from dinkster_api.v1 import CORE_STRING, NumberWidget, TypeExpr, schema_from_wire, schema_to_wire
-from dinkster_nodes_ltx import NODES as LTX_NODES
-from dinkster_nodes_ltx.context_windows import LTXVContextWindows
-from dinkster_nodes_models import NODES as MODEL_NODES
-from dinkster_nodes_models.context_windows import ContextWindowsManual
-from dinkster_nodes_wan import NODES as WAN_NODES
-from dinkster_nodes_wan.context_windows import WanContextWindowsManual
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.context_windows import CONTEXT_WINDOW_NODES
 
 
 def test_context_window_nodes_are_native_pack_schemas() -> None:
     expected = (
         (
-            ContextWindowsManual,
-            MODEL_NODES,
-            "dinkster.models.context_windows_manual",
+            "ContextWindowsManual",
             (
                 "model",
                 "context_length",
@@ -32,9 +26,7 @@ def test_context_window_nodes_are_native_pack_schemas() -> None:
             ),
         ),
         (
-            WanContextWindowsManual,
-            WAN_NODES,
-            "dinkster.wan.wan_context_windows_manual",
+            "WanContextWindowsManual",
             (
                 "model",
                 "context_length",
@@ -49,9 +41,7 @@ def test_context_window_nodes_are_native_pack_schemas() -> None:
             ),
         ),
         (
-            LTXVContextWindows,
-            LTX_NODES,
-            "dinkster.ltx.ltxv_context_windows",
+            "LTXVContextWindows",
             (
                 "model",
                 "context_length",
@@ -66,29 +56,28 @@ def test_context_window_nodes_are_native_pack_schemas() -> None:
             ),
         ),
     )
-    for node, registered, node_type, inputs in expected:
+    for node, (node_type, inputs) in zip(CONTEXT_WINDOW_NODES, expected, strict=True):
         schema = node.schema()
         assert schema.node_type == node_type
         assert tuple(input.id for input in schema.inputs) == inputs
         assert schema.outputs[0].id == "MODEL"
         assert schema_from_wire(schema_to_wire(schema)) == schema
-        assert node in registered
-    assert tuple(
-        node.schema().category
-        for node in (ContextWindowsManual, WanContextWindowsManual, LTXVContextWindows)
-    ) == (
+        assert node in COMFY_NODES
+    assert tuple(node.schema().category for node in CONTEXT_WINDOW_NODES) == (
         "model/patch",
         "model/patch/wan",
         "model/patch/ltxv",
     )
-    assert WanContextWindowsManual.schema().inputs[1].widget == NumberWidget(
+    assert CONTEXT_WINDOW_NODES[1].schema().inputs[1].widget == NumberWidget(
         min=1, max=16384, step=4
     )
-    assert LTXVContextWindows.schema().inputs[1].widget == NumberWidget(min=1, max=16384, step=8)
+    assert CONTEXT_WINDOW_NODES[2].schema().inputs[1].widget == NumberWidget(
+        min=1, max=16384, step=8
+    )
 
 
 def test_context_window_manual_preserves_retain_index_strings() -> None:
-    schema = ContextWindowsManual.schema()
+    schema = CONTEXT_WINDOW_NODES[0].schema()
     retain_inputs = schema.inputs[9], schema.inputs[11]
     assert all(
         item.type == TypeExpr.concrete(CORE_STRING) and item.default == "" for item in retain_inputs

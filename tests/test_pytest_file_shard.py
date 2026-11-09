@@ -161,25 +161,6 @@ def test_pytest_plugin_selects_whole_files_and_explicit_shared_tests(tmp_path: P
     assert "file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, or 8" in malformed.stderr
 
 
-def test_empty_shard_succeeds_without_hiding_empty_collection_or_failures(tmp_path: Path) -> None:
-    empty = _run_pytest(tmp_path, "--file-shard", "2/2")
-    assert empty.returncode == pytest.ExitCode.NO_TESTS_COLLECTED
-
-    source = tmp_path / "test_alpha.py"
-    source.write_text("def test_alpha(): assert False\n", encoding="ascii")
-    other_shard = _run_pytest(tmp_path, "--file-shard", "2/2")
-    assert other_shard.returncode == 0, other_shard.stdout + other_shard.stderr
-    assert "1 deselected" in other_shard.stdout
-    owning_shard = _run_pytest(tmp_path, "--file-shard", "1/2")
-    assert owning_shard.returncode == pytest.ExitCode.TESTS_FAILED
-    filtered = _run_pytest(tmp_path, "--file-shard", "2/2", "-k", "missing")
-    assert filtered.returncode == pytest.ExitCode.NO_TESTS_COLLECTED
-
-    source.write_text("import nonexistent_shard_dependency\n", encoding="ascii")
-    broken = _run_pytest(tmp_path, "--file-shard", "2/2")
-    assert broken.returncode == pytest.ExitCode.INTERRUPTED
-
-
 def test_case_sharding_sorts_node_ids_and_keeps_other_files_whole(tmp_path: Path) -> None:
     (tmp_path / "test_cases.py").write_text(
         "import pytest\n"

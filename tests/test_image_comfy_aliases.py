@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import subprocess
 import tomllib
 from collections import defaultdict
 from dataclasses import replace
@@ -11,14 +9,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from dinkster_api.v1 import BOUNDING_BOX_TYPE
-from dinkster_nodes_image._draft_initialization import IMAGE_NODES, MakeRegion, Region
+from dinkster_nodes_image import IMAGE_NODES, MakeRegion, Region
 from dinkster_schema import schema_from_wire, schema_to_wire, validate_replacement_references
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
 
 ROOT = Path(__file__).parent.parent
-ALIAS_PATH = ROOT / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
+ALIAS_PATH = ROOT / "packages" / "dinkster-nodes-image" / "comfy-aliases.json"
 MODEL_TEST_REFERENCE_COMMIT = "e1c0e72eab86e9fd7ee794f623ebf0b8984ab7b6"
-DRAFT_TEST_REFERENCE_COMMIT = "728f58b22ccf6bb64c7e2b8ee38f35c69fbf4a75"
 DYNAMIC_ALIAS_IDS = frozenset(
     {
         "comfy_alias:comfy-core/AdjustBrightness",
@@ -767,29 +764,15 @@ def test_image_comfy_alias_confidence_has_pinned_evidence() -> None:
         assert confidence["evidence"]
         for selector in confidence["evidence"]:
             historical = selector.startswith("git:")
-            revision = ""
             if historical:
                 revision, separator, selector = selector.removeprefix("git:").partition(":")
-                assert separator and revision in {
-                    MODEL_TEST_REFERENCE_COMMIT,
-                    DRAFT_TEST_REFERENCE_COMMIT,
-                }
+                assert separator and revision == MODEL_TEST_REFERENCE_COMMIT
             path_text, _, test_name = selector.partition("::")
             assert path_text and test_name
             path = ROOT / path_text
-            if historical:
-                evidence = subprocess.check_output(
-                    ["git", "show", f"{revision}:{path_text}"],
-                    cwd=os.environ.get("DINKSTER_TEST_HISTORY_ROOT", ROOT),
-                    text=True,
-                    encoding="utf-8",
-                )
-                assert not path.is_file() or f"def {test_name}(" not in path.read_text(
-                    encoding="utf-8"
-                )
-            else:
-                evidence = path.read_text(encoding="utf-8")
-            assert f"def {test_name}(" in evidence
+            assert path.is_file()
+            present = f"def {test_name}(" in path.read_text(encoding="utf-8")
+            assert present is not historical
         tolerances = confidence.get("tolerances")
         if confidence["tier"] == "equivalent":
             assert tolerances
@@ -800,7 +783,7 @@ def test_image_comfy_alias_confidence_has_pinned_evidence() -> None:
             assert math.isfinite(tolerance["value"])
 
 
-def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() -> None:
+def test_image_pack_bundles_alias_registry_and_required_helpers() -> None:
     configuration = cast(
         "dict[str, Any]",
         tomllib.loads(
@@ -810,24 +793,19 @@ def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() ->
         ),
     )
     force_include = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert "comfy-aliases.json" not in force_include
-    assert "draft-comfy-aliases.json" not in force_include
+    assert force_include["comfy-aliases.json"] == ("dinkster_nodes_image_pack/comfy-aliases.json")
     manifest = tomllib.loads(
         (ROOT / "packages" / "dinkster-nodes-image" / "dinkster-pack.toml").read_text(
             encoding="utf-8"
         )
     )
-    assert "dinkster-nodes-foundation" not in manifest["pack"].get("dependencies", {})
+    assert manifest["pack"]["dependencies"]["dinkster-nodes-foundation"] == ">=0.0.1,<1"
 
 
 def test_new_image_aliases_execute() -> None:
     import numpy as np
     from dinkster_api.v1 import ABSENT, annotate_image, media_semantics
-    from dinkster_nodes_image._draft_initialization import (
-        ImageBatchCombine,
-        ImageCompare,
-        ImageResize,
-    )
+    from dinkster_nodes_image import ImageBatchCombine, ImageCompare, ImageResize
 
     records = {record["source"]["nodeClass"]: record for record in _registry()["records"]}
     rgb = np.full((1, 3, 5, 3), 0.25, np.float32)
@@ -914,20 +892,21 @@ def test_exact_image_compare_has_no_outputs_and_previews_each_nonempty_side() ->
             np.testing.assert_array_equal(np.array(decoded), (pixels * 255).astype(np.uint8))
 
 
-def test_draft_image_alias_records_keep_the_current_wire_contract() -> None:
+def test_media_alias_records_keep_the_current_wire_contract() -> None:
     from dinkster_schema import comfy_alias_registry_from_wire, comfy_alias_registry_to_wire
 
     fields = {"id", "mappingKind", "carrier", "source", "replacement", "confidence", "family"}
-    registry = _registry()
-    decoded = comfy_alias_registry_from_wire(registry)
-    assert comfy_alias_registry_to_wire(decoded) == registry
-    records = cast("list[dict[str, object]]", registry["records"])
-    assert all(set(record) <= fields for record in records)
+    for pack in ("dinkster-nodes-image", "dinkster-nodes-media-io"):
+        registry = json.loads((ROOT / "packages" / pack / "comfy-aliases.json").read_text())
+        decoded = comfy_alias_registry_from_wire(registry)
+        assert comfy_alias_registry_to_wire(decoded) == registry
+        records = cast("list[dict[str, object]]", registry["records"])
+        assert all(set(record) <= fields for record in records)
 
 
 def test_new_image_aliases_match_pinned_goldens() -> None:
     import numpy as np
-    from dinkster_nodes_image._draft_initialization import ImageBatchCombine, ImageResize
+    from dinkster_nodes_image import ImageBatchCombine, ImageResize
 
     fixture = json.loads((ROOT / "tests/goldens/image_aliases_b78cec87.json").read_text())
     assert fixture["baseline"] == "b78cec879b9460d5cb25228a83a942fb78d2cd24"

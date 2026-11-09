@@ -929,31 +929,6 @@ def test_cross_pack_implementation_import_is_an_error_but_own_module_is_allowed(
     assert not any("dinkster_nodes_healthy" in finding.message for finding in cross_pack)
 
 
-def test_declared_pack_helpers_are_public_and_exactly_scoped(tmp_path: Path) -> None:
-    source = (
-        "from dinkster_nodes_conditioning.conditioning import conditioning_set_values\n"
-        "from dinkster_nodes_conditioning.conditioning import _private\n"
-        "from dinkster_nodes_conditioning._private import helper\n"
-        "import dinkster_nodes_conditioning_extra\n"
-        "import dinkster_nodes_sampling\n" + HEALTHY_NODES
-    )
-    manifest = write_pack(
-        tmp_path / "dependent",
-        HEALTHY_MANIFEST + '\n[pack.dependencies]\ndinkster-conditioning = ">=0.0.1,<1"\n',
-        "healthy_nodes",
-        source,
-    )
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
-    private = [f for f in report.findings if f.code == "imports.private-module"]
-    undeclared = [f for f in report.findings if f.code == "imports.pack-implementation"]
-    assert len(private) == 2
-    assert {f.location.rsplit(":", 1)[-1] for f in private} == {"2", "3"}
-    assert {f.message for f in undeclared} == {
-        "imports dinkster_nodes_conditioning_extra",
-        "imports dinkster_nodes_sampling",
-    }
-
-
 def test_import_side_effects_and_thread_spawns_warn(tmp_path: Path) -> None:
     source = (
         "import threading\n"

@@ -15,16 +15,14 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_minimax import NODES
-from dinkster_nodes_minimax.minimax_h3_latent import MiniMaxH3AddGuide
-from dinkster_nodes_minimax.minimax_h3_reference import MiniMaxH3ReferenceToVideo
+from dinkster_nodes_comfy.minimax_h3_latent import MiniMaxH3AddGuide
+from dinkster_nodes_comfy.minimax_h3_reference import MiniMaxH3ReferenceToVideo
 
 
 def test_minimax_h3_add_guide_schema_and_cold_discovery() -> None:
     schema = MiniMaxH3AddGuide.schema()
-    assert NODES.count(MiniMaxH3AddGuide) == 1
     assert (schema.node_type, schema.display_name, schema.category) == (
-        "dinkster.minimax.mini_max_h3_add_guide",
+        "MiniMaxH3AddGuide",
         "Add Guide for MiniMax H3",
         "model/conditioning/minimax",
     )
@@ -79,8 +77,6 @@ def test_minimax_h3_add_guide_schema_and_cold_discovery() -> None:
 
 def test_minimax_h3_reference_members_are_optional_and_roundtrip() -> None:
     schema = MiniMaxH3ReferenceToVideo.schema()
-    assert NODES.count(MiniMaxH3ReferenceToVideo) == 1
-    assert schema.node_type == "dinkster.minimax.mini_max_h3_reference_to_video"
     assert schema.inputs[0] == InputSpec("clip", TypeExpr.concrete(CLIP_TYPE))
     assert schema.inputs[0].required
 

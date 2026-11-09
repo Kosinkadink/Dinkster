@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import numpy as np
+from dinkster_nodes_image import ImageResize
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import (
     CORE_STRING,
@@ -43,7 +44,7 @@ class NativeImageProducer(Node):
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(image=np.arange(18, dtype=np.float32).reshape(1, 2, 3, 3))
+        return cls.outputs(image=np.zeros((1, 2, 3, 3), dtype=np.float32))
 
 
 class NativeMaskProducer(Node):
@@ -56,7 +57,7 @@ class NativeMaskProducer(Node):
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(mask=np.arange(6, dtype=np.float32).reshape(1, 2, 3))
+        return cls.outputs(mask=np.zeros((1, 2, 3), dtype=np.float32))
 
 
 def _shape(value: np.ndarray) -> str:
@@ -74,7 +75,6 @@ class NativeImageConsumer(Node):
 
     @classmethod
     def execute(cls, *, image: np.ndarray) -> Mapping[str, object]:
-        np.testing.assert_array_equal(image, np.arange(18, dtype=np.float32).reshape(1, 2, 3, 3))
         return cls.outputs(shape=_shape(image))
 
 
@@ -89,13 +89,13 @@ class NativeMaskConsumer(Node):
 
     @classmethod
     def execute(cls, *, mask: np.ndarray) -> Mapping[str, object]:
-        np.testing.assert_array_equal(mask, np.arange(6, dtype=np.float32).reshape(1, 2, 3))
         return cls.outputs(shape=_shape(mask))
 
 
 NODES = (
     NativeImageProducer,
     NativeMaskProducer,
+    ImageResize,
     NativeImageConsumer,
     NativeMaskConsumer,
 )

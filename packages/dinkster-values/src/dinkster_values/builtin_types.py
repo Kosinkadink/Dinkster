@@ -17,7 +17,6 @@ CAMERA_INFO_STATE_TYPE = "CAMERA_INFO_STATE"
 
 IMAGE_TYPE = "IMAGE"
 IMAGECOMPARE_TYPE = "IMAGECOMPARE"
-WEBCAM_TYPE = "WEBCAM"
 MASK_TYPE = "MASK"
 LATENT_TYPE = "LATENT"
 MODEL_TYPE = "MODEL"
@@ -216,24 +215,9 @@ __all__ = [
     "VIDEO_TYPE",
     "VOXEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
-    "WEBCAM_TYPE",
 ]
 
-# Canonical spellings are shared; producer packs own their private value types.
+# Image documents remain owned by the image pack, not foundation.
 BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__) - {
-    DA3_GEOMETRY_TYPE,
-    DA3_MODEL_TYPE,
-    FACE_DETECTION_MODEL_TYPE,
-    FACE_LANDMARKS_TYPE,
-    IC_LORA_PARAMETERS_TYPE,
     IMAGE_DOCUMENT_TYPE,
-    INTERP_MODEL_TYPE,
-    MHR_POSE_DATA_TYPE,
-    OPTICAL_FLOW_TYPE,
-    PHOTOMAKER_TYPE,
-    SAM3_TRACK_DATA_TYPE,
-    SAM3D_BODY_MODEL_TYPE,
-    TRACKS_TYPE,
-    UPSCALE_MODEL_TYPE,
-    WAN_CAMERA_EMBEDDING_TYPE,
 }

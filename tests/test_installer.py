@@ -3290,42 +3290,20 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
     declared = default_pack_minimums()
     assert tomllib.loads(DEFAULT_PACKS_PATH.read_text()) == {"packs": declared}
     assert set(declared) == {
-        "dinkster-3d",
-        "dinkster-3d-models",
-        "dinkster-audio",
-        "dinkster-audio-models",
-        "dinkster-conditioning",
-        "dinkster-cosmos",
-        "dinkster-flux",
-        "dinkster-hidream",
-        "dinkster-hunyuan",
-        "dinkster-image",
-        "dinkster-latent",
-        "dinkster-llm",
-        "dinkster-ltx",
-        "dinkster-minimax",
-        "dinkster-misc-models",
-        "dinkster-models",
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
-        "dinkster-qwen",
-        "dinkster-sampling",
-        "dinkster-sd",
-        "dinkster-seedvr",
-        "dinkster-text",
-        "dinkster-upscale",
-        "dinkster-utilities",
-        "dinkster-video",
-        "dinkster-vision-background-removal",
-        "dinkster-vision-depth-anything-3",
-        "dinkster-vision-marigold",
-        "dinkster-vision-mediapipe",
-        "dinkster-vision-moge",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
         "dinkster-vision-rtdetr",
-        "dinkster-vision-sam3",
-        "dinkster-vision-sam3d-body",
-        "dinkster-vision-sdpose",
-        "dinkster-void",
-        "dinkster-wan",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
     }
     root = Path(__file__).resolve().parents[1]
     manifests = {
@@ -3508,11 +3486,11 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
     from dinkster import __version__
     from dinkster.registries import default_pack_minimums
 
-    pack_name = "dinkster-text"
+    pack_name = "dinkster-nodes-foundation"
     source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
     (source / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
-        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["dinkster.text"]\n'
+        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["std"]\n'
         '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
     )
     archive = tmp_path / "published.zip"
@@ -3586,7 +3564,7 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
                     replace(
                         release,
                         publisher="dinkster",
-                        claims=("dinkster-text",),
+                        claims=("std",),
                         source=f"registry:http://127.0.0.1:{server.server_port}",
                     ),
                 )

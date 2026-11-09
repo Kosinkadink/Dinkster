@@ -7,35 +7,29 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import (
-    BOUNDING_BOX_TYPE,
-    COMFY_ARRAY_TYPE,
-    CompositorWidget,
-    Detection,
-    Region,
-    TypeRegistry,
-)
+from dinkster_api.v1 import BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE, CompositorWidget, TypeRegistry
 from dinkster_image_document.document import ImageDocument
-from dinkster_nodes_image.compositor import (
-    COMPOSITOR_NODES,
-    AddLayer,
-    CreateLayeredImage,
-    LayersFromBoundingBoxes,
-)
-from dinkster_nodes_image.compositor_blend import blend, linear_to_srgb
-from dinkster_nodes_image.compositor_types import (
-    BLEND_MODES as COMPOSITOR_BLEND_MODES,
-)
-from dinkster_nodes_image.compositor_types import (
+from dinkster_nodes_image import (
+    COMPOSITOR_BLEND_MODES,
     COMPOSITOR_TYPE,
+    IMAGE_NODES,
     LAYERS_TYPE,
-    MAX_COMPOSITOR_DIMENSION,
-    MAX_COMPOSITOR_LAYERS,
+    AddLayer,
     CompositorLayer,
     CompositorRecipe,
     CompositorSourceLayer,
     CompositorTransform,
+    CreateLayeredImage,
+    Detection,
+    LayersFromBoundingBoxes,
     LayerStack,
+    Region,
+    register_image_types,
+)
+from dinkster_nodes_image.compositor_blend import blend, linear_to_srgb
+from dinkster_nodes_image.compositor_types import (
+    MAX_COMPOSITOR_DIMENSION,
+    MAX_COMPOSITOR_LAYERS,
     coerce_compositor_recipe,
     compositor_recipe_meta,
     decode_compositor_recipe,
@@ -45,7 +39,6 @@ from dinkster_nodes_image.compositor_types import (
     layer_stack_meta,
     source_layer_fingerprint,
 )
-from dinkster_nodes_image.types import register_image_types
 from dinkster_schema import use_reporter
 
 Captured = tuple[str, Mapping[str, object], bytes | None]
@@ -186,8 +179,8 @@ def _layers_header(encoded: bytes) -> dict[str, object]:
     return cast("dict[str, object]", json.loads(encoded[prefix : prefix + size]))
 
 
-def test_compositor_support_schemas_and_runtime_types() -> None:
-    schemas = {node.schema().node_type: node.schema() for node in COMPOSITOR_NODES}
+def test_compositor_nodes_and_runtime_types_are_registered() -> None:
+    schemas = {node.schema().node_type: node.schema() for node in IMAGE_NODES}
     assert {
         "dinkster.layers.add",
         "dinkster.layers.from_bounding_boxes",

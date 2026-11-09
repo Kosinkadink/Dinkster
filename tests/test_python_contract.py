@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from dinkster_workers import boundary
 
+from dinkster import port
 from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
 
 validate_evidence_revision()
@@ -17,14 +18,13 @@ def _toml(path: Path) -> dict[str, object]:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def test_workspace_and_pack_template_share_python_floor() -> None:
-    package_manifests = sorted((ROOT / "packages").glob("*/pyproject.toml"))
-    assert package_manifests
+def test_workspace_and_generated_metadata_share_python_floor() -> None:
     manifests = [
         ROOT / "pyproject.toml",
-        *package_manifests,
+        *sorted((ROOT / "packages").glob("*/pyproject.toml")),
         EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
     ]
+    assert len(manifests) == 29
     for manifest in manifests:
         project = _toml(manifest)["project"]
         assert isinstance(project, dict)
@@ -43,6 +43,11 @@ def test_workspace_and_pack_template_share_python_floor() -> None:
     assert template_project["requires-python"] == ">=3.12"
     assert template_tool["ruff"]["target-version"] == "py312"  # type: ignore[index]
     assert template_tool["pyright"]["pythonVersion"] == "3.12"  # type: ignore[index]
+
+    generated = tomllib.loads(port._emit_pyproject("sample-pack", "source"))
+    assert generated["project"]["requires-python"] == ">=3.12"
+    assert generated["tool"]["ruff"]["target-version"] == "py312"
+    assert generated["tool"]["pyright"]["pythonVersion"] == "3.12"
 
 
 def test_ci_exercises_python_312_without_narrowing_package_support() -> None:

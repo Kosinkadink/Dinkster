@@ -1,18 +1,15 @@
 """Public schemas for native sampling cache nodes remain Torch-free."""
 
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_flux import NODES as FLUX_NODES
-from dinkster_nodes_flux.cache import FluxKVCache
-from dinkster_nodes_models import NODES as MODEL_NODES
-from dinkster_nodes_models.cache import EasyCache, LazyCache
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.cache import CACHE_NODES, EasyCache, FluxKVCache, LazyCache
 
 
 def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
-    assert EasyCache in MODEL_NODES
-    assert LazyCache in MODEL_NODES
-    assert FluxKVCache in FLUX_NODES
+    assert CACHE_NODES == (EasyCache, LazyCache, FluxKVCache)
+    assert set(CACHE_NODES).issubset(COMFY_NODES)
     flux = FluxKVCache.define_schema()
-    assert flux.node_type == "dinkster.flux.flux_kv_cache"
+    assert flux.node_type == "FluxKVCache"
     assert flux.category == "experimental"
     assert [(item.id, item.type) for item in flux.inputs] == [
         ("model", TypeExpr.concrete(MODEL_TYPE))
@@ -20,12 +17,9 @@ def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
     assert [(item.id, item.type) for item in flux.outputs] == [
         ("MODEL", TypeExpr.concrete(MODEL_TYPE))
     ]
-    for node, node_type in (
-        (EasyCache, "dinkster.models.easy_cache"),
-        (LazyCache, "dinkster.models.lazy_cache"),
-    ):
+    for node in (EasyCache, LazyCache):
         schema = node.define_schema()
-        assert schema.node_type == node_type
+        assert schema.node_type == node.__name__
         assert schema.category == "advanced/debug"
         assert [item.id for item in schema.inputs] == [
             "model",

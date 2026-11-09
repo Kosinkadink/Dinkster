@@ -173,7 +173,7 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
 ) -> None:
     async def scenario() -> None:
         source_root = (
-            Path(__file__).resolve().parents[1] / "packages" / "dinkster-nodes-audio" / "src"
+            Path(__file__).resolve().parents[1] / "packages" / "dinkster-nodes-media-io" / "src"
         )
         composer = ServingComposer(
             worker_env={
@@ -186,23 +186,31 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
             manifest = (
                 Path(__file__).resolve().parents[1]
                 / "packages"
-                / "dinkster-nodes-audio"
+                / "dinkster-nodes-media-io"
                 / "dinkster-pack.toml"
             )
             (tmp_path / "audio_materializer_fixture.py").write_text(
                 "from test_audio_materializer import AudioConsumer, AudioSource\n"
-                "from dinkster_nodes_audio import NODES as AUDIO_NODES, register_types\n"
-                "NODES = (*AUDIO_NODES, AudioSource, AudioConsumer)\n",
+                "from dinkster_nodes_media_io import (\n"
+                "    MEDIA_IO_NODES, capture_device_choices, register_media_types,\n"
+                ")\n"
+                "NODES = (*MEDIA_IO_NODES, AudioSource, AudioConsumer)\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-materializer-fixture",')
-                .replace("dinkster_nodes_audio:NODES", "audio_materializer_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_audio:register_types",
-                    "audio_materializer_fixture:register_types",
+                    "dinkster_nodes_media_io:MEDIA_IO_NODES", "audio_materializer_fixture:NODES"
+                )
+                .replace(
+                    "dinkster_nodes_media_io:register_media_types",
+                    "audio_materializer_fixture:register_media_types",
+                )
+                .replace(
+                    "dinkster_nodes_media_io:capture_device_choices",
+                    "audio_materializer_fixture:capture_device_choices",
                 ),
                 encoding="ascii",
             )

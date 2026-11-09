@@ -1,4 +1,9 @@
-"""List and tuple values through schemas, engines, worker boundaries and caches."""
+"""list<T> values, schema, engine, boundary, and cache behavior (DESIGN 3.13).
+
+Slice 1-2 of collections: lists as ordinary typed data. Envelope children
+stay full Values (resource visibility through trees), cardinality is
+structural at validation time, and node authors see plain Python lists.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +16,8 @@ import pytest
 from dinkster_caches import MemoryLRUCache, encode_entry, entry_from_wire, entry_to_wire
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
+from dinkster_nodes_foundation import IntPrimitive, StringPrimitive
 from dinkster_schema import (
-    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -304,87 +309,6 @@ def test_resource_ids_visible_through_lists() -> None:
 # -- engine end to end ------------------------------------------------------
 
 
-class IntPrimitive(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        integer = TypeExpr.concrete("INT")
-        return NodeSchema(
-            "dinkster.int",
-            inputs=(InputSpec("value", integer),),
-            outputs=(OutputSpec("value", integer),),
-        )
-
-    @classmethod
-    def execute(cls, *, value: int) -> Mapping[str, object]:
-        return cls.outputs(value=value)
-
-
-class StringPrimitive(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        string = TypeExpr.concrete("STRING")
-        return NodeSchema(
-            "dinkster.string",
-            inputs=(InputSpec("value", string),),
-            outputs=(OutputSpec("value", string),),
-        )
-
-    @classmethod
-    def execute(cls, *, value: str) -> Mapping[str, object]:
-        return cls.outputs(value=value)
-
-
-class MakeTuple(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "std.tuple.make",
-            input_families=(
-                InputFamilySpec("items", TypeExpr.variable("T"), independent_types=True),
-            ),
-            outputs=(OutputSpec("tuple", TypeExpr.tuple_from_family("items")),),
-        )
-
-    @classmethod
-    def execute(cls, *, items: Mapping[str, object]) -> Mapping[str, object]:
-        return cls.outputs(tuple=tuple(items.values()))
-
-
-class GetTupleItem(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "std.tuple.get",
-            inputs=(
-                InputSpec("tuple", TypeExpr.variable("Tuple")),
-                InputSpec("index", TypeExpr.concrete("INT"), default=0),
-            ),
-            outputs=(OutputSpec("item", TypeExpr.tuple_element("tuple", "index")),),
-        )
-
-    @classmethod
-    def execute(cls, *, tuple: tuple[object, ...], index: int) -> Mapping[str, object]:
-        return cls.outputs(item=tuple[index])
-
-
-class AddInts(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        integer = TypeExpr.concrete("INT")
-        return NodeSchema(
-            "std.math.add_ints",
-            inputs=(InputSpec("a", integer), InputSpec("b", integer)),
-            outputs=(OutputSpec("sum", integer),),
-        )
-
-    @classmethod
-    def execute(cls, *, a: int, b: int) -> Mapping[str, object]:
-        return cls.outputs(sum=a + b)
-
-
-TUPLE_NODES = (MakeTuple, GetTupleItem, IntPrimitive, StringPrimitive, AddInts)
-
-
 class MakeRange(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -581,8 +505,16 @@ def test_engine_wraps_list_literals() -> None:
 
 
 def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
+    from dinkster_nodes_foundation import (
+        AddInts,
+        GetTupleItem,
+        IntPrimitive,
+        MakeTuple,
+        StringPrimitive,
+    )
+
     async def scenario() -> None:
-        nodes = TUPLE_NODES
+        nodes = (MakeTuple, GetTupleItem, IntPrimitive, StringPrimitive, AddInts)
         registry = make_registry()
         engine = Engine(
             schemas=build_schemas(nodes),
@@ -838,13 +770,9 @@ def test_tuple_nodes_preserve_position_types_through_production_hosts(
     from dinkster.compose import PackSpec, compose_serving
 
     async def scenario() -> None:
-        manifest = tmp_path / "dinkster-pack.toml"
-        module = f"tuple_fixture_{in_process}_{cache_mode}"
-        (tmp_path / f"{module}.py").write_text("from tests.test_lists import TUPLE_NODES\n")
-        manifest.write_text(
-            '[pack]\nname="tuple-test"\npublisher="dinkster"\n'
-            'namespaces=["std","dinkster"]\n[pack.entry]\n'
-            f'nodes="{module}:TUPLE_NODES"\n'
+        manifest = (
+            Path(__file__).resolve().parents[1]
+            / "packages/dinkster-nodes-foundation/dinkster-pack.toml"
         )
         composition = await compose_serving(
             [PackSpec(manifest, in_process=in_process, trust_reserved=True)],

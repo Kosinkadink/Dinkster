@@ -12,9 +12,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from dinkster_caches import MemoryLRUCache
+from dinkster_compat_comfy import (
+    ResidentPool,
+    register_resident_type,
+    resident_resource_id,
+)
 from dinkster_engine import Engine, EngineEvent, EventListener
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_memory.resident import ResidentPool
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -31,8 +35,6 @@ from dinkster_values import (
     ResourcePins,
     TypeRegistry,
     register_core_types,
-    register_resident_type,
-    resident_resource_id,
 )
 from dinkster_workers import InProcessWorker
 

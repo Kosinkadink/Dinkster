@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from functools import partial
 
-from dinkster_assets import register_asset_type, register_audio_value_type, resolver_from_env
 from dinkster_memory.resident import default_pool
 from dinkster_values import (
-    ASSET_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
-    AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOXES_TYPE,
     CAMERA_INFO_STATE_TYPE,
@@ -21,14 +18,17 @@ from dinkster_values import (
     COLORS_TYPE,
     COMPOSITOR_TYPE,
     CONTROL_NET_TYPE,
+    DA3_MODEL_TYPE,
+    FACE_DETECTION_MODEL_TYPE,
     FLOATS_TYPE,
     GLIGEN_TYPE,
     GUIDER_TYPE,
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
+    IC_LORA_PARAMETERS_TYPE,
     IMAGECOMPARE_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
-    KIMODO_POSE_DATA_TYPE,
+    INTERP_MODEL_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     LAYERS_TYPE,
     LOAD3D_CAMERA_TYPE,
@@ -38,14 +38,21 @@ from dinkster_values import (
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    OPTICAL_FLOW_TYPE,
+    PHOTOMAKER_TYPE,
     POSE_KEYPOINT_TYPE,
     RESOLUTION_PREVIEW_TYPE,
+    SAM3_TRACK_DATA_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
+    TRACKS_TYPE,
+    UPSCALE_MODEL_TYPE,
     VAE_TYPE,
     VIDEO_EDIT_TYPE,
+    WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
     TypeSpec,
     decode_latent,
@@ -67,6 +74,7 @@ from .hook_values import (
     normalize_hook_owners,
     register_hook_structural_type,
 )
+from .ic_lora_parameters import register_ic_lora_parameters_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -74,6 +82,7 @@ from .media_wire import (
     register_media_types,
 )
 from .pose_keypoint import register_pose_keypoint_type
+from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
 from .shape_subdivides_wire import materialize_shape_subdivides, register_shape_subdivides_type
 from .splat_wire import materialize_splat
@@ -102,7 +111,12 @@ _RESIDENT_TYPE_IDS = (
     BACKGROUND_REMOVAL_TYPE,
     MODEL_TYPE_ID,
     MOGE_MODEL_TYPE,
+    DA3_MODEL_TYPE,
+    FACE_DETECTION_MODEL_TYPE,
+    SAM3D_BODY_MODEL_TYPE,
     MODEL_PATCH_TYPE,
+    OPTICAL_FLOW_TYPE,
+    INTERP_MODEL_TYPE,
     CLIP_TYPE_ID,
     CLIP_VISION_TYPE_ID,
     VAE_TYPE_ID,
@@ -110,8 +124,10 @@ _RESIDENT_TYPE_IDS = (
     CONTROL_NET_TYPE,
     STYLE_MODEL_TYPE,
     GLIGEN_TYPE,
+    PHOTOMAKER_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
+    UPSCALE_MODEL_TYPE,
     HOOKS_TYPE,
     HOOK_KEYFRAMES_TYPE,
 )
@@ -120,11 +136,7 @@ _STRUCTURAL_TYPE_IDS = (TIMESTEPS_RANGE_TYPE, FLOATS_TYPE)
 
 
 def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
-    """Register shared codecs; family-specific codecs belong to producer packs."""
-    if ASSET_TYPE not in registry:
-        register_asset_type(registry, resolver_from_env())
-    if AUDIO_TYPE not in registry:
-        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    """Idempotently register shared wire and resident value types."""
     table = default_pool()
     registered = [
         registry.spec(CONDITIONING_TYPE_ID)
@@ -156,7 +168,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             else register_sampling_type(registry, type_id)
         )
     registered.extend(register_box_types(registry))
-    registered.extend(register_vision_packet_types(registry, type_ids=(KIMODO_POSE_DATA_TYPE,)))
+    registered.extend(register_vision_packet_types(registry))
     for type_id in (
         BOUNDING_BOXES_TYPE,
         CAMERA_INFO_STATE_TYPE,
@@ -175,6 +187,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_hook_structural_type(registry, type_id)
         )
+    registered.append(
+        registry.spec(IC_LORA_PARAMETERS_TYPE)
+        if IC_LORA_PARAMETERS_TYPE in registry
+        else register_ic_lora_parameters_type(registry)
+    )
     if CLIP_VISION_OUTPUT_TYPE not in registry:
         registry.register(
             CLIP_VISION_OUTPUT_TYPE,
@@ -184,6 +201,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             validate_encoded=validate_clip_vision_output,
         )
     registered.append(registry.spec(CLIP_VISION_OUTPUT_TYPE))
+    registered.append(
+        registry.spec(SAM3_TRACK_DATA_TYPE)
+        if SAM3_TRACK_DATA_TYPE in registry
+        else register_sam3_track_type(registry)
+    )
     registered.append(
         registry.spec(LOAD3D_CAMERA_TYPE)
         if LOAD3D_CAMERA_TYPE in registry
@@ -217,11 +239,10 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             validate_encoded=partial(validate_latent_encoded, require_samples=False),
         )
     registered.append(registry.spec(LAYERS_TYPE))
-    registered.append(
-        registry.spec(AUDIO_ENCODER_OUTPUT_TYPE)
-        if AUDIO_ENCODER_OUTPUT_TYPE in registry
-        else register_wan_type(registry, AUDIO_ENCODER_OUTPUT_TYPE)
-    )
+    for type_id in (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE):
+        registered.append(
+            registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
+        )
     registered.extend(register_media_types(registry))
     registered.append(register_mesh_type(registry))
     registered.append(register_splat_type(registry))
@@ -251,6 +272,4 @@ __all__ = [
     "materialize_vision_packet",
     "materialize_voxel",
     "register_inference_types",
-    "register_media_types",
-    "register_vision_packet_types",
 ]

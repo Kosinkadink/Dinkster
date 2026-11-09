@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from dinkster_native.legacy_sources import convert_legacy_checkpoint
+from dinkster_compat_comfy.legacy_sources import convert_legacy_checkpoint
 
 
 def _parser() -> argparse.ArgumentParser:

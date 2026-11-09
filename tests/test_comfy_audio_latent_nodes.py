@@ -1,35 +1,20 @@
 """Torch-free native audio latent interfaces."""
 
 from dinkster_api.v1 import CORE_FLOAT, CORE_INT, LATENT_TYPE, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio_models import NODES as AUDIO_MODEL_NODES
-from dinkster_nodes_audio_models.audio_latent import (
-    EmptyAceStep15LatentAudio,
-    EmptyAceStepLatentAudio,
-    EmptyYuE2LatentAudio,
-)
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.audio_latent import EmptyLatentAudio, GetAudioLatentSize
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 
 
 def test_audio_latent_interfaces_roundtrip() -> None:
-    cases = (
-        (EmptyLatentAudio, LATENT_NODES, "dinkster.latent.empty_latent_audio"),
-        (
-            EmptyAceStepLatentAudio,
-            AUDIO_MODEL_NODES,
-            "dinkster.audio.models.empty_ace_step_latent_audio",
-        ),
-        (
-            EmptyAceStep15LatentAudio,
-            AUDIO_MODEL_NODES,
-            "dinkster.audio.models.empty_ace_step1_5_latent_audio",
-        ),
-        (EmptyYuE2LatentAudio, AUDIO_MODEL_NODES, "dinkster.audio.models.empty_yu_e2_latent_audio"),
+    assert tuple(node.schema().node_type for node in AUDIO_LATENT_NODES) == (
+        "EmptyLatentAudio",
+        "EmptyAceStepLatentAudio",
+        "EmptyAceStep1.5LatentAudio",
+        "EmptyYuE2LatentAudio",
     )
-    for node, registered, node_type in cases:
+    for node in AUDIO_LATENT_NODES:
         schema = node.schema()
-        assert node in registered
-        assert schema.node_type == node_type
+        assert node in COMFY_NODES
         assert tuple((item.id, item.type.types) for item in schema.inputs) == (
             ("seconds", (CORE_FLOAT,)),
             ("batch_size", (CORE_INT,)),
@@ -42,9 +27,9 @@ def test_audio_latent_interfaces_roundtrip() -> None:
 
 def test_audio_latent_size_schema_and_cold_discovery() -> None:
     schema = GetAudioLatentSize.schema()
-    assert GetAudioLatentSize in LATENT_NODES
+    assert GetAudioLatentSize in COMFY_NODES
     assert (schema.node_type, schema.display_name, schema.category) == (
-        "dinkster.latent.get_audio_latent_size",
+        "GetAudioLatentSize",
         "Get Audio Latent Size",
         "model/latent",
     )

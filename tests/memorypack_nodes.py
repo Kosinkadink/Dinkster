@@ -16,16 +16,10 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from dinkster_compat_comfy import ResidentPool, register_resident_type
 from dinkster_memory import FullReleaseResult, MeasuredMemory, PressureSignal
-from dinkster_memory.resident import ResidentPool
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import (
-    CORE_INT,
-    CORE_STRING,
-    COST_META_KEY,
-    TypeRegistry,
-    register_resident_type,
-)
+from dinkster_values import CORE_INT, CORE_STRING, COST_META_KEY, TypeRegistry
 
 MODEL = TypeExpr.concrete("mem.model")
 INT = TypeExpr.concrete(CORE_INT)

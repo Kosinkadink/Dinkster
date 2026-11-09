@@ -16,27 +16,26 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_wan import NODES
-from dinkster_schema import claim_covers
+from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_workers import load_manifest
 
 
 def test_wan_image_schemas_and_cold_native_discovery() -> None:
     optional_names = {
-        "dinkster.wan.wan_image_to_video": ["clip_vision_output", "start_image", "ref_pad_image"],
-        "dinkster.wan.wan_first_last_frame_to_video": [
+        "WanImageToVideo": ["clip_vision_output", "start_image", "ref_pad_image"],
+        "WanFirstLastFrameToVideo": [
             "clip_vision_start_image",
             "clip_vision_end_image",
             "start_image",
             "end_image",
         ],
-        "dinkster.wan.wan_fun_inpaint_to_video": ["clip_vision_output", "start_image", "end_image"],
+        "WanFunInpaintToVideo": ["clip_vision_output", "start_image", "end_image"],
     }
     for name, optional in optional_names.items():
-        schema = next(n.schema() for n in NODES if n.schema().node_type == name)
+        schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == name)
         assert schema.category == (
             "model/conditioning/wan/fun inpaint"
-            if name == "dinkster.wan.wan_fun_inpaint_to_video"
+            if name == "WanFunInpaintToVideo"
             else "model/conditioning/wan"
         )
         assert [i.id for i in schema.inputs] == [
@@ -79,38 +78,35 @@ def test_wan_image_schemas_and_cold_native_discovery() -> None:
             TypeExpr.concrete(t) for t in (CONDITIONING_TYPE, CONDITIONING_TYPE, LATENT_TYPE)
         ]
         assert schema_from_wire(schema_to_wire(schema)) == schema
-    manifest = load_manifest("packages/dinkster-nodes-wan/dinkster-pack.toml")
-    assert all(
-        any(claim_covers(claim, n.schema().node_type) for claim in manifest.namespaces)
-        for n in NODES
-    )
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == manifest.namespaces
 
 
 def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
     cases = {
-        "dinkster.wan.wan_fun_control_to_video": (
+        "WanFunControlToVideo": (
             "fun control",
             ["clip_vision_output", "start_image", "control_video"],
             ["positive", "negative", "latent"],
         ),
-        "dinkster.wan.wan22_fun_control_to_video": (
+        "Wan22FunControlToVideo": (
             "fun control",
             ["ref_image", "control_video"],
             ["positive", "negative", "latent"],
         ),
-        "dinkster.wan.wan_vace_to_video": (
+        "WanVaceToVideo": (
             "vace",
             ["strength", "control_video", "control_masks", "reference_image"],
             ["positive", "negative", "latent", "trim_latent"],
         ),
-        "dinkster.wan.wan_phantom_subject_to_video": (
+        "WanPhantomSubjectToVideo": (
             "phantom subject",
             ["images"],
             ["positive", "negative_text", "negative_img_text", "latent"],
         ),
     }
     for name, (category, extra, outputs) in cases.items():
-        schema = next(n.schema() for n in NODES if n.schema().node_type == name)
+        schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == name)
         assert schema.category == f"model/conditioning/wan/{category}"
         assert [i.id for i in schema.inputs] == [
             "positive",
@@ -129,17 +125,12 @@ def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
                 assert input_.type == TypeExpr.concrete(MASK_TYPE)
         assert [o.id for o in schema.outputs] == outputs
         assert schema_from_wire(schema_to_wire(schema)) == schema
-    manifest = load_manifest("packages/dinkster-nodes-wan/dinkster-pack.toml")
-    assert all(
-        any(claim_covers(claim, n.schema().node_type) for claim in manifest.namespaces)
-        for n in NODES
-    )
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == manifest.namespaces
 
 
 def test_scail_schema_preserves_interleaved_optional_inputs() -> None:
-    schema = next(
-        n.schema() for n in NODES if n.schema().node_type == "dinkster.wan.wan_scail_to_video"
-    )
+    schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == "WanSCAILToVideo")
     assert schema.category == "model/conditioning/wan/scail"
     assert [i.id for i in schema.inputs] == [
         "positive",
@@ -182,9 +173,7 @@ def test_scail_schema_preserves_interleaved_optional_inputs() -> None:
 
 
 def test_track_schema_preserves_required_image_and_string_tracks() -> None:
-    schema = next(
-        n.schema() for n in NODES if n.schema().node_type == "dinkster.wan.wan_track_to_video"
-    )
+    schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == "WanTrackToVideo")
     assert schema.category == "model/conditioning/wan/move"
     assert [i.id for i in schema.inputs] == [
         "positive",
@@ -209,7 +198,7 @@ def test_track_schema_preserves_required_image_and_string_tracks() -> None:
 
 def test_animation_schemas_preserve_interleaved_inputs_and_cache_options() -> None:
     suffixes = {
-        "dinkster.wan.wan_animate_to_video": [
+        "WanAnimateToVideo": [
             "clip_vision_output",
             "reference_image",
             "face_video",
@@ -220,7 +209,7 @@ def test_animation_schemas_preserve_interleaved_inputs_and_cache_options() -> No
             "continue_motion",
             "video_frame_offset",
         ],
-        "dinkster.wan.wan_animate2_to_video": [
+        "WanAnimate2ToVideo": [
             "reference_image",
             "pose_video",
             "clip_vision_output",
@@ -235,7 +224,7 @@ def test_animation_schemas_preserve_interleaved_inputs_and_cache_options() -> No
         ],
     }
     for name, suffix in suffixes.items():
-        schema = next(n.schema() for n in NODES if n.schema().node_type == name)
+        schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == name)
         assert [i.id for i in schema.inputs] == [
             "positive",
             "negative",
@@ -256,9 +245,7 @@ def test_animation_schemas_preserve_interleaved_inputs_and_cache_options() -> No
             "video_frame_offset",
         ]
         assert schema_from_wire(schema_to_wire(schema)) == schema
-    cache = next(
-        n.schema() for n in NODES if n.schema().node_type == "dinkster.wan.wan_animate2_cache"
-    )
+    cache = next(n.schema() for n in COMFY_NODES if n.schema().node_type == "WanAnimate2Cache")
     assert [i.id for i in cache.inputs] == ["model", "device", "dtype"]
     assert [i.default for i in cache.inputs[1:]] == ["cpu", "default"]
     assert schema_from_wire(schema_to_wire(cache)) == cache
@@ -271,35 +258,28 @@ def test_advanced_wan_native_outputs_use_canonical_portable_types() -> None:
         ("latent", LATENT_TYPE),
     )
     cases = {
-        "dinkster.wan.wan_camera_embedding": (
+        "WanCameraEmbedding": (
             ("camera_embedding", WAN_CAMERA_EMBEDDING_TYPE),
             ("width", CORE_INT),
             ("height", CORE_INT),
             ("length", CORE_INT),
         ),
-        "dinkster.wan.wan_camera_image_to_video": conditioning,
-        "dinkster.wan.wan_move_tracks_from_coords": (
-            ("TRACKS", TRACKS_TYPE),
-            ("track_length", CORE_INT),
-        ),
-        "dinkster.wan.generate_tracks": (("TRACKS", TRACKS_TYPE), ("track_length", CORE_INT)),
-        "dinkster.wan.wan_move_concat_track": (("TRACKS", TRACKS_TYPE),),
-        "dinkster.wan.wan_move_track_to_video": conditioning,
-        "dinkster.wan.wan_move_visualize_tracks": (("IMAGE", IMAGE_TYPE),),
-        "dinkster.wan.wan_sound_image_to_video": conditioning,
-        "dinkster.wan.wan_sound_image_to_video_extend": conditioning,
-        "dinkster.wan.wan_hu_mo_image_to_video": conditioning,
-        "dinkster.wan.wan_infinite_talk_to_video": (
-            ("model", MODEL_TYPE),
-            *conditioning,
-            ("trim_image", CORE_INT),
-        ),
-        "dinkster.wan.scail2_colored_mask": (
+        "WanCameraImageToVideo": conditioning,
+        "WanMoveTracksFromCoords": (("TRACKS", TRACKS_TYPE), ("track_length", CORE_INT)),
+        "GenerateTracks": (("TRACKS", TRACKS_TYPE), ("track_length", CORE_INT)),
+        "WanMoveConcatTrack": (("TRACKS", TRACKS_TYPE),),
+        "WanMoveTrackToVideo": conditioning,
+        "WanMoveVisualizeTracks": (("IMAGE", IMAGE_TYPE),),
+        "WanSoundImageToVideo": conditioning,
+        "WanSoundImageToVideoExtend": conditioning,
+        "WanHuMoImageToVideo": conditioning,
+        "WanInfiniteTalkToVideo": (("model", MODEL_TYPE), *conditioning, ("trim_image", CORE_INT)),
+        "SCAIL2ColoredMask": (
             ("pose_video_mask", IMAGE_TYPE),
             ("reference_image_mask", IMAGE_TYPE),
         ),
     }
-    schemas = {node.schema().node_type: node.schema() for node in NODES}
+    schemas = {node.schema().node_type: node.schema() for node in COMFY_NODES}
     for name, outputs in cases.items():
         schema = schemas[name]
         assert [(output.id, output.type) for output in schema.outputs] == [

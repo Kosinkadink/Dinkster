@@ -58,12 +58,10 @@ from typing import Any, Literal, TypeVar, cast
 
 from dinkster_assets import (
     ASSET_TYPE,
-    SAVE_TARGET_TYPE,
     AssetVault,
     DeclaredAsset,
     PackAssetCatalog,
     register_asset_type,
-    register_save_target_type,
     resolver_from_env,
 )
 from dinkster_assets.scratch import hold_produced_job
@@ -253,7 +251,7 @@ from dinkster_workers.session import WorkerDied
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
 from .native_policy import NativeDispatchPolicy, select_resident_producer
-from .packs import first_party_pack_metadata, pack_info_from_manifest
+from .packs import pack_info_from_manifest
 from .remotes import RemoteSpec
 
 T = TypeVar("T")
@@ -295,12 +293,37 @@ _PACK_SCRATCH_ENV = "DINKSTER_PACK_SCRATCH"
 _ATTENTION_POLICY_ENV = "DINKSTER_ATTENTION_POLICY"
 
 
-_FIRST_PARTY_PACK_METADATA = first_party_pack_metadata(Path(__file__).resolve().parents[2])
 _FIRST_PARTY_PACK_MODULES = MappingProxyType(
-    {pack: module for pack, (module, _) in _FIRST_PARTY_PACK_METADATA.items()}
+    {
+        "dinkster-nodes-foundation": "dinkster_nodes_foundation",
+        "dinkster-nodes-media-io": "dinkster_nodes_media_io",
+        "dinkster-nodes-image": "dinkster_nodes_image",
+        "dinkster-nodes-remote": "dinkster_nodes_remote",
+        "dinkster-nodes-generation": "dinkster_nodes_generation",
+        "dinkster-nodes-comfy": "dinkster_nodes_comfy",
+        "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
+        "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
+        "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
+        "dinkster-vision-detr": "dinkster_nodes_vision.detr",
+        "dinkster-vision-efficient-sam": "dinkster_nodes_vision.efficient_sam",
+        "dinkster-vision-hed": "dinkster_nodes_vision.hed",
+        "dinkster-vision-rtdetr": "dinkster_nodes_vision.rtdetr",
+        "dinkster-vision-sam31": "dinkster_nodes_vision.sam31",
+        "dinkster-vision-upscale": "dinkster_nodes_vision.upscale",
+    }
 )
 _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
-    {pack: distribution for pack, (_, distribution) in _FIRST_PARTY_PACK_METADATA.items()}
+    {
+        pack_id: "dinkster-nodes-vision"
+        for pack_id in _FIRST_PARTY_PACK_MODULES
+        if pack_id.startswith("dinkster-vision-")
+    }
+)
+_ISOLATED_FIRST_PARTY_PACKS = frozenset(
+    pack_id for pack_id in _FIRST_PARTY_PACK_MODULES if pack_id.startswith("dinkster-vision-")
+)
+_ENGINE_CARRIED_PACKS = frozenset(
+    {"dinkster-native", "dinkster-compat-comfy", "dinkster-nodes-generation"}
 )
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _CHECKOUT_PACKS_LOCK = Path(__file__).with_name("checkout-packs.lock")
@@ -1183,8 +1206,10 @@ def _default_pack_lock() -> Lockfile:
 
 
 def default_pack_ids() -> tuple[str, ...]:
-    """Return every pack selected by the checkout development catalog."""
-    return tuple(entry.pack for entry in _default_pack_lock().packs)
+    """Return defaults other than the separately configured core worker."""
+    return tuple(
+        entry.pack for entry in _default_pack_lock().packs if entry.pack != "dinkster-nodes-comfy"
+    )
 
 
 def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
@@ -1253,7 +1278,11 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
-    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
+    distribution_id = (
+        "dinkster"
+        if pack_id in _ENGINE_CARRIED_PACKS
+        else _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
+    )
     sidecar = pack_id.replace("-", "_")
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
@@ -1277,7 +1306,11 @@ def _installed_pack_spec(
             None,
         )
     declaration = load_manifest(source_manifest) if source_manifest is not None else None
-    if declaration is not None and declaration.compatibility is not None:
+    if (
+        declaration is not None
+        and declaration.compatibility is not None
+        and pack_id not in _ENGINE_CARRIED_PACKS
+    ):
         version = declaration.compatibility.version
         bundled = None
     else:
@@ -1378,7 +1411,9 @@ def default_pack_spec(pack_id: str) -> PackSpec:
     return _installed_pack_spec(
         pack_id,
         module_name,
-        in_process=False,
+        in_process=(
+            pack_id not in _ISOLATED_FIRST_PARTY_PACKS and pack_id != "dinkster-nodes-remote"
+        ),
         env=(
             {"DINKSTER_REMOTE_CATALOG_BASE": "", "DINKSTER_REMOTE_GATEWAY_BASE": ""}
             if pack_id == "dinkster-nodes-remote"
@@ -7623,8 +7658,6 @@ class ServingComposer:
             register_asset_type(registry, resolver_from_env())
         if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:
             register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
-        if SAVE_TARGET_TYPE in type_ids and SAVE_TARGET_TYPE not in registry:
-            register_save_target_type(registry)
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:

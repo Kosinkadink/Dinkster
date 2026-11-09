@@ -20,23 +20,18 @@ from dinkster_api.v1 import (
     schema_to_wire,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_nodes_audio_models import NODES as AUDIO_MODEL_NODES
-from dinkster_nodes_audio_models.audio_encoder import SheetSage2AudioToABC
-from dinkster_nodes_conditioning import NODES as CONDITIONING_NODES
-from dinkster_nodes_conditioning.audio_encoder import AudioEncoderEncode, AudioEncoderLoader
-from dinkster_schema import claim_covers
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.audio_encoder import AUDIO_ENCODER_NODES
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, resident_resource_id
 from dinkster_workers import load_manifest
 
 
 def test_audio_encoder_interfaces_and_native_manifest() -> None:
-    loader, encode, abc = (
-        node.schema() for node in (AudioEncoderLoader, AudioEncoderEncode, SheetSage2AudioToABC)
-    )
+    loader, encode, abc = (node.schema() for node in AUDIO_ENCODER_NODES)
     assert (loader.node_type, encode.node_type, abc.node_type) == (
-        "dinkster.conditioning.audio_encoder_loader",
-        "dinkster.conditioning.audio_encoder_encode",
-        "dinkster.audio.models.sheet_sage2_audio_to_abc",
+        "AudioEncoderLoader",
+        "AudioEncoderEncode",
+        "SheetSage2AudioToABC",
     )
     assert loader.display_name == "Load Audio Encoder"
     assert loader.category == "model/loaders"
@@ -64,16 +59,11 @@ def test_audio_encoder_interfaces_and_native_manifest() -> None:
     assert [(o.id, o.type) for o in abc.outputs] == [
         ("abc", TypeExpr.list_of(TypeExpr.concrete(CORE_STRING)))
     ]
-    for node, registered, package, namespace in (
-        (AudioEncoderLoader, CONDITIONING_NODES, "conditioning", "dinkster.conditioning"),
-        (AudioEncoderEncode, CONDITIONING_NODES, "conditioning", "dinkster.conditioning"),
-        (SheetSage2AudioToABC, AUDIO_MODEL_NODES, "audio-models", "dinkster.audio.models"),
-    ):
-        assert node in registered
+    for node in AUDIO_ENCODER_NODES:
+        assert node in COMFY_NODES
         assert schema_from_wire(schema_to_wire(node.schema())) == node.schema()
-        manifest = load_manifest(f"packages/dinkster-nodes-{package}/dinkster-pack.toml")
-        assert manifest.namespaces == (namespace,)
-        assert claim_covers(namespace, node.schema().node_type)
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == manifest.namespaces
 
 
 def test_audio_encoder_resident_release_and_first_authority(

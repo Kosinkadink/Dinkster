@@ -1,15 +1,15 @@
 """Torch-free public schema for native Stable Video image conditioning."""
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_sd import NODES
-from dinkster_nodes_sd.video_conditioning import SVD_img2vid_Conditioning
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.video_conditioning import SVD_img2vid_Conditioning
 
 
 def test_stable_video_conditioning_schema_matches_comfyui() -> None:
     schema = SVD_img2vid_Conditioning.schema()
-    assert SVD_img2vid_Conditioning in NODES
-    assert schema.node_type == "dinkster.sd.svd_img2vid_conditioning"
-    assert schema.display_name == "SVD_img2vid_Conditioning"
+    assert SVD_img2vid_Conditioning in COMFY_NODES
+    assert schema.node_type == "SVD_img2vid_Conditioning"
+    assert schema.display_name == ""
     assert schema.category == "model/conditioning/stable video"
     assert tuple(item.id for item in schema.inputs) == (
         "clip_vision",

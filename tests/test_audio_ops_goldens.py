@@ -5,10 +5,13 @@ input bytes plus, per case, either the sha256 of the pinned output bytes
 (pure value ops, compared bit-exactly) or the full pinned output (equalizer
 cases, compared value-close); see tools/gen_audio_ops_goldens.py.
 
-The equalizer tolerances below retain the per-case bounds against the pinned
-float32 torchaudio chain. They bound coefficient-rounding drift in the IIR,
-whose sensitivity grows as the shelf pole approaches DC and with gain.
-Do not widen them to absorb port changes.
+The equalizer tolerances below are per-case against the pinned float32
+torchaudio chain. The native port is float64 end to end and agrees with the
+same chain run in float64 to under 1e-12 for every case, so the residual is
+the reference's own float32 arithmetic: coefficient rounding feeds an IIR
+whose sensitivity grows as the shelf pole approaches DC (low corner
+frequency) and with gain. Each bound is the observed drift with about 4x
+headroom; do not widen them to absorb port changes.
 """
 
 from __future__ import annotations
@@ -21,9 +24,15 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_audio.audio_combine import AudioConcat, AudioMerge, JoinAudioChannels
-from dinkster_nodes_audio.audio_effects import AudioEqualizer3Band, TrimAudioDuration
-from dinkster_nodes_audio.audio_transform import AudioAdjustVolume, SplitAudioChannels
+from dinkster_nodes_media_io import (
+    AdjustAudioVolume,
+    ConcatAudio,
+    EqualizeAudio,
+    JoinAudioChannels,
+    MergeAudio,
+    SplitAudioChannels,
+    TrimAudio,
+)
 
 _GOLDENS = json.loads(
     (Path(__file__).parent / "goldens" / "audio_ops_e20d433a.json").read_text("utf-8")
@@ -70,10 +79,10 @@ def test_goldens_are_pinned_to_the_audited_revision() -> None:
 @pytest.mark.parametrize("name", _cases("trim"))
 def test_trim_matches_pinned_bytes_exactly(name: str) -> None:
     case = _GOLDENS["cases"][name]
-    result = TrimAudioDuration.execute(
-        audio=_fixture(case["source"]), start_index=case["start"], duration=case["duration"]
+    result = TrimAudio.execute(
+        audio=_fixture(case["source"]), start=case["start"], duration=case["duration"]
     )
-    _assert_bit_exact(result["AUDIO"], case["output"])
+    _assert_bit_exact(result["audio"], case["output"])
 
 
 def test_split_matches_pinned_bytes_exactly() -> None:
@@ -94,47 +103,47 @@ def test_join_matches_pinned_bytes_exactly() -> None:
 @pytest.mark.parametrize("name", _cases("concat"))
 def test_concat_matches_pinned_bytes_exactly(name: str) -> None:
     case = _GOLDENS["cases"][name]
-    result = AudioConcat.execute(
+    result = ConcatAudio.execute(
         audio1=_fixture(case["audio1"]),
         audio2=_fixture(case["audio2"]),
         direction=case["direction"],
     )
-    _assert_bit_exact(result["AUDIO"], case["output"])
+    _assert_bit_exact(result["audio"], case["output"])
 
 
 @pytest.mark.parametrize("name", _cases("merge"))
 def test_merge_matches_pinned_bytes_exactly(name: str) -> None:
     case = _GOLDENS["cases"][name]
-    result = AudioMerge.execute(
+    result = MergeAudio.execute(
         audio1=_fixture(case["audio1"]),
         audio2=_fixture(case["audio2"]),
         merge_method=case["method"],
     )
-    _assert_bit_exact(result["AUDIO"], case["output"])
+    _assert_bit_exact(result["audio"], case["output"])
 
 
 @pytest.mark.parametrize("name", _cases("volume"))
 def test_volume_matches_pinned_bytes_exactly(name: str) -> None:
     case = _GOLDENS["cases"][name]
-    result = AudioAdjustVolume.execute(audio=_fixture(case["source"]), volume=case["volume"])
-    _assert_bit_exact(result["AUDIO"], case["output"])
+    result = AdjustAudioVolume.execute(audio=_fixture(case["source"]), gain_db=case["volume"])
+    _assert_bit_exact(result["audio"], case["output"])
 
 
 @pytest.mark.parametrize("name", _cases("equalizer"))
 def test_equalizer_is_value_close_to_the_pinned_chain(name: str) -> None:
     case = _GOLDENS["cases"][name]
-    result = AudioEqualizer3Band.execute(
+    result = EqualizeAudio.execute(
         audio=_fixture(case["source"]),
-        low_gain_dB=case["lowGainDb"],
+        low_gain_db=case["lowGainDb"],
         low_freq=case["lowFreq"],
-        mid_gain_dB=case["midGainDb"],
+        mid_gain_db=case["midGainDb"],
         mid_freq=case["midFreq"],
         mid_q=case["midQ"],
-        high_gain_dB=case["highGainDb"],
+        high_gain_db=case["highGainDb"],
         high_freq=case["highFreq"],
     )
-    value = cast("dict[str, object]", result["AUDIO"])
-    waveform = np.asarray(value["waveform"])
+    value = cast("dict[str, object]", result["audio"])
+    waveform = cast("np.ndarray", value["waveform"])
     reference = np.frombuffer(base64.b64decode(case["output"]["dataB64"]), dtype=np.float32)
     reference = reference.reshape(case["output"]["shape"])
     assert list(waveform.shape) == case["output"]["shape"]

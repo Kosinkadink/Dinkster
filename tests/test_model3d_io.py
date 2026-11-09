@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
+import dinkster_nodes_media_io.model3d as model3d_module
 import pytest
 from dinkster_api.v1 import (
     CORE_STRING,
@@ -44,17 +45,16 @@ from dinkster_assets.value import value_asset_references
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_3d import register_types
-from dinkster_nodes_3d.load3d import Load3DAdvanced
-from dinkster_nodes_3d.preview3d import (
+from dinkster_nodes_comfy import register_inference_types
+from dinkster_nodes_comfy.preview3d import (
     Preview3DAdvanced,
     PreviewGaussianSplat,
     PreviewPointCloud,
 )
-from dinkster_nodes_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
+from dinkster_nodes_comfy.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
+from dinkster_nodes_media_io import LoadModel3D, PreviewModel3D, SaveModel3D, register_media_types
 from dinkster_schema import build_node_types, build_schemas
-from dinkster_server import PackInfo
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import TypeRegistry, decode_model3d, register_core_types
 from dinkster_workers import InProcessWorker
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -69,7 +69,7 @@ pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 def test_native_advanced_loader_empty_selection_and_viewport_fallback(
     selection: str | None, viewport: object
 ) -> None:
-    from dinkster_nodes_3d.load3d import Load3DAdvanced
+    from dinkster_nodes_comfy.load3d import Load3DAdvanced
 
     result = Load3DAdvanced.execute(
         model_file=selection, viewport_state=viewport, width=37, height=91
@@ -84,7 +84,7 @@ def test_native_advanced_loader_empty_selection_and_viewport_fallback(
 
 
 def test_native_advanced_loader_preserves_original_files_and_viewport(tmp_path: Path) -> None:
-    from dinkster_nodes_3d.load3d import Load3DAdvanced
+    from dinkster_nodes_comfy.load3d import Load3DAdvanced
 
     root = tmp_path / "input"
     root.mkdir()
@@ -119,7 +119,7 @@ def test_native_advanced_loader_preserves_original_files_and_viewport(tmp_path: 
 def test_native_advanced_loader_runs_after_common_source_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, selection: str
 ) -> None:
-    from dinkster_nodes_3d.load3d import Load3DAdvanced
+    from dinkster_nodes_comfy.load3d import Load3DAdvanced
     from dinkster_server.library import ServerLibrary
     from dinkster_server.preflight import bind_model_names
 
@@ -154,7 +154,7 @@ def test_native_advanced_loader_runs_after_common_source_preflight(
         Graph(
             {
                 "load": GraphNode(
-                    schema.node_type,
+                    "Load3DAdvanced",
                     {
                         "model_file": selection,
                         "viewport_state": TypedLiteral(LOAD_3D_TYPE, viewport),
@@ -173,24 +173,14 @@ def test_native_advanced_loader_runs_after_common_source_preflight(
         registry = TypeRegistry()
         register_core_types(registry)
         register_asset_type(registry, mounts)
-        register_types(registry)
+        register_inference_types(registry)
         composer = ServingComposer(registry=registry, worker_env=environment)
         try:
             manifest = (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-3d/dinkster-pack.toml"
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
             )
-            await composer.add_pack(
-                PackSpec(
-                    manifest=manifest.parent.parent / "dinkster-nodes-image/dinkster-pack.toml",
-                    in_process=in_process,
-                    trust_reserved=True,
-                    packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")},
-                )
-            )
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 graph, ["load"]
             )
@@ -347,8 +337,7 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
     table.add(MountDef("models", root, kind="media/model3d"))
     source = table.bind_name("nested/scene.gltf", "media/model3d")
     assert isinstance(source, LocalAssetRef)
-    schema = Load3DAdvanced.define_schema()
-    input_name = "model" if preview_union else "model_file"
+    schema = LoadModel3D.define_schema()
     selection: object = source.to_wire() if bound_identity else "nested/scene.gltf"
     if preview_union:
         schema = NodeSchema(
@@ -370,7 +359,7 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
         {
             "load": GraphNode(
                 schema.node_type,
-                {input_name: selection},
+                {"model": selection},
             )
         }
     )
@@ -380,10 +369,10 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
     prepared, missing = bind_model_names(graph, {schema.node_type: schema}, library)
     assert missing == []
     if preview_union and bound_identity:
-        assert prepared.nodes["load"].inputs[input_name] is selection
+        assert prepared.nodes["load"].inputs["model"] is selection
     prepared = graph_from_wire(json.loads(json.dumps(graph_to_wire(prepared))))
     worker = MountSnapshotResolver(snapshot)
-    value = prepared.nodes["load"].inputs[input_name]
+    value = prepared.nodes["load"].inputs["model"]
     if preview_union:
         assert isinstance(value, TypedLiteral)
         assert value.type_id == FILE_3D_TYPE
@@ -413,16 +402,15 @@ def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
 ) -> None:
     from dinkster_server.preflight import bind_model_names
 
-    schema = Load3DAdvanced.define_schema()
-    input_name = "model" if preview_union else "model_file"
+    schema = LoadModel3D.define_schema()
     if preview_union:
         schema = NodeSchema(
             "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
         )
-    graph = Graph({"load": GraphNode(schema.node_type, {input_name: selection})})
+    graph = Graph({"load": GraphNode(schema.node_type, {"model": selection})})
     prepared, missing = bind_model_names(graph, {schema.node_type: schema}, None)
     assert missing == []
-    value = prepared.nodes["load"].inputs[input_name]
+    value = prepared.nodes["load"].inputs["model"]
     assert isinstance(value, TypedLiteral)
     assert value.type_id == FILE_3D_TYPE
     registry = TypeRegistry()
@@ -436,13 +424,13 @@ def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 schema.node_type,
-                inputs=tuple(spec for spec in schema.inputs if spec.id == input_name),
+                inputs=schema.inputs,
                 outputs=(OutputSpec("file", TypeExpr.concrete(FILE_3D_TYPE)),),
             )
 
         @classmethod
-        def execute(cls, **inputs: object) -> Mapping[str, object]:
-            return cls.outputs(file=inputs[input_name])
+        def execute(cls, *, model: object) -> Mapping[str, object]:
+            return cls.outputs(file=model)
 
     async def scenario() -> None:
         nodes = (EmptyFileConsumer,)
@@ -457,7 +445,7 @@ def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
         assert not result.artifacts
 
     run_scenario(scenario())
-    linked = Graph({"load": GraphNode(schema.node_type, {input_name: Link("producer", "file")})})
+    linked = Graph({"load": GraphNode(schema.node_type, {"model": Link("producer", "file")})})
     prepared, missing = bind_model_names(linked, {schema.node_type: schema}, None)
     assert prepared == linked
     assert missing == []
@@ -505,8 +493,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
     )
     table = MountTable(tmp_path / "mounts.json")
     table.add(MountDef("models", root, kind="media/model3d"))
-    schema = Load3DAdvanced.define_schema()
-    input_name = "model" if preview_union else "model_file"
+    schema = LoadModel3D.define_schema()
     if preview_union:
         schema = NodeSchema(
             "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
@@ -539,7 +526,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
                     "clientId": "file3d-test",
                     "jobId": "missing-companion",
                     "graph": graph_to_wire(
-                        Graph({"load": GraphNode(schema.node_type, {input_name: "scene.gltf"})})
+                        Graph({"load": GraphNode(schema.node_type, {"model": "scene.gltf"})})
                     ),
                     "targets": ["load"],
                 },
@@ -857,21 +844,21 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
     module = f"preview_3d_source_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_model3d_io import Preview3DFileSource\n"
-        "from dinkster_nodes_3d import register_types\nNODES=(Preview3DFileSource,)\n",
+        "from dinkster_nodes_comfy import register_inference_types\nNODES=(Preview3DFileSource,)\n",
         encoding="ascii",
     )
     manifest = tmp_path / "source.toml"
     manifest.write_text(
         '[pack]\nname="preview-3d-source"\npublisher="dinkster"\n'
         'namespaces=["preview-3d-source"]\n[pack.entry]\n'
-        f'nodes="{module}:NODES"\ntypes="{module}:register_types"\n',
+        f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
 
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_types(registry)
+        register_inference_types(registry)
         composer = ServingComposer(
             registry=registry,
             worker_env={
@@ -884,25 +871,14 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
         try:
             for path in (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-image/dinkster-pack.toml",
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-3d/dinkster-pack.toml",
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml",
                 manifest,
             ):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=path,
-                        in_process=in_process,
-                        trust_reserved=path != manifest,
-                        packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-nodes-image"
-                        else None,
-                    )
-                )
+                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
             nodes = {"source": GraphNode("preview-3d-source.make")}
             for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud):
                 nodes[node.__name__] = GraphNode(
-                    node.schema().node_type,
+                    node.__name__,
                     {
                         "model_3d": Link("source", node.__name__),
                         "viewport_state": Link("source", "viewport"),
@@ -937,6 +913,12 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
     run_scenario(scenario())
 
 
+def glb_bytes(document: bytes = b'{"asset":{"version":"2.0"}}') -> bytes:
+    padded = document + b" " * (-len(document) % 4)
+    chunk = struct.pack("<I4s", len(padded), b"JSON") + padded
+    return struct.pack("<4sII", b"glTF", 2, 12 + len(chunk)) + chunk
+
+
 def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     root = tmp_path / "out"
     root.mkdir()
@@ -960,6 +942,17 @@ def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]
     )
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
     return root, snapshot
+
+
+def _bound(ref: AssetRef, snapshot: Path) -> AssetRef:
+    return AssetRef(
+        ref.digest,
+        ref.name,
+        ref.size,
+        ref.media_type,
+        ref.virtual_path,
+        MountSnapshotResolver(snapshot),
+    )
 
 
 @pytest.mark.parametrize("node", [Save3DAdvanced, SaveGaussianSplat, SavePointCloud])
@@ -1109,6 +1102,118 @@ def test_native_save_rejects_primary_resource_name_collisions(
     assert not (output / "3d").exists()
 
 
+def test_save_then_load_round_trips_glb_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, snapshot = _mount(tmp_path, monkeypatch)
+    data = glb_bytes()
+    saved = SaveModel3D.execute(model=decode_model3d(data))
+    ref = cast(AssetRef, saved["model"])
+    assert ref.media_type == "model/gltf-binary"
+    assert ref.name.endswith(".glb")
+    assert ref.size == len(data)
+    written = root / "3d" / ref.name
+    assert written.read_bytes() == data
+    assert ref.digest == digest_bytes(data)
+    loaded = LoadModel3D.execute(model=_bound(ref, snapshot))
+    assert loaded["model"] == decode_model3d(data)
+
+
+def test_save_honors_explicit_target_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _snapshot = _mount(tmp_path, monkeypatch)
+    saved = SaveModel3D.execute(
+        model=decode_model3d(glb_bytes()),
+        target={"mount": "comfy-output", "prefix": "meshes/scene"},
+    )
+    ref = cast(AssetRef, saved["model"])
+    assert (root / "meshes" / ref.name).is_file()
+
+
+def test_save_refuses_non_glb_values() -> None:
+    with pytest.raises(ValueError, match="not a GLB"):
+        SaveModel3D.execute(model={"format": "glb", "bytes": b"not a model"})
+
+
+def test_save_requires_configured_mounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
+    with pytest.raises(AssetError, match="DINKSTER_MOUNTS_SNAPSHOT"):
+        SaveModel3D.execute(model=decode_model3d(glb_bytes()))
+
+
+def test_save_bounds_encoded_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mount(tmp_path, monkeypatch)
+    monkeypatch.setattr(model3d_module, "MAX_ENCODED_MODEL3D_BYTES", 16)
+    with pytest.raises(ValueError, match="output limit"):
+        SaveModel3D.execute(model=decode_model3d(glb_bytes()))
+
+
+def test_load_refuses_non_glb_assets(tmp_path: Path) -> None:
+    payload = b"not a 3D model"
+    digest = digest_bytes(payload)
+    vault = AssetVault(tmp_path / "vault")
+    with vault.writer(digest) as writer:
+        writer.write(payload)
+        writer.commit()
+    ref = AssetRef(digest, "bad.glb", len(payload), "model/gltf-binary", resolver=vault)
+    with pytest.raises(ValueError, match="cannot decode 'bad.glb' as a 3D model"):
+        LoadModel3D.execute(model=ref)
+
+
+def test_preview_validates_and_passes_the_value_through() -> None:
+    value = decode_model3d(glb_bytes())
+    result = PreviewModel3D.execute(model=value)
+    assert result["model"] is value
+    with pytest.raises(ValueError, match="not a GLB"):
+        PreviewModel3D.execute(model={"format": "glb", "bytes": b"junk"})
+
+
+def test_worker_hands_load_the_asset_and_decodes_it_for_preview(tmp_path: Path) -> None:
+    """Both worker input routes: a declared asset<MODEL3D> input receives
+    the AssetRef itself (no coercion), while a concrete MODEL3D input fed
+    the same asset literal decodes through the registered asset decoder."""
+
+    class DirResolver:
+        def __init__(self, files: dict[str, Path]) -> None:
+            self._files = files
+
+        def resolve(self, digest: str) -> Path | None:
+            return self._files.get(digest)
+
+    async def scenario() -> None:
+        data = glb_bytes()
+        digest = digest_bytes(data)
+        path = tmp_path / "model.glb"
+        path.write_bytes(data)
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, DirResolver({digest: path}))
+        register_media_types(registry)
+        nodes = (LoadModel3D, PreviewModel3D)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        literal = TypedLiteral(
+            "asset<MODEL3D>", {"digest": digest, "name": "model.glb", "size": len(data)}
+        )
+        graph = Graph(
+            nodes={
+                "load": GraphNode("dinkster.load_model3d", {"model": literal}),
+                "preview": GraphNode("dinkster.preview_model3d", {"model": literal}),
+            }
+        )
+        result = await engine.run(graph, ["load", "preview"])
+        expected = decode_model3d(data)
+        assert result.outputs["load"]["model"].resolve() == expected
+        assert result.outputs["preview"]["model"].resolve() == expected
+
+    run_scenario(scenario())
+
+
 class Advanced3DFileSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -1193,7 +1298,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     module = f"advanced_source_{case}"
     (tmp_path / f"{module}.py").write_text(
         "from test_model3d_io import Advanced3DFileSource\n"
-        "from dinkster_nodes_3d import register_types\n"
+        "from dinkster_nodes_comfy import register_inference_types\n"
         "NODES=(Advanced3DFileSource,)\n",
         encoding="ascii",
     )
@@ -1201,45 +1306,34 @@ def test_advanced_3d_save_ordinary_hosts_twice(
     manifest.write_text(
         '[pack]\nname="advanced-3d-source"\npublisher="dinkster"\n'
         'namespaces=["advanced-3d-source"]\n[pack.entry]\n'
-        f'nodes="{module}:NODES"\ntypes="{module}:register_types"\n',
+        f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
         encoding="ascii",
     )
 
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_types(registry)
+        register_inference_types(registry)
         composer = ServingComposer(registry=registry, worker_env=environment)
         try:
             for path in (
                 Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-image/dinkster-pack.toml",
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-3d/dinkster-pack.toml",
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml",
                 manifest,
             ):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=path,
-                        in_process=in_process,
-                        trust_reserved=path != manifest,
-                        packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-nodes-image"
-                        else None,
-                    )
-                )
+                await composer.add_pack(PackSpec(manifest=path, in_process=in_process))
             graph = Graph(
                 {
                     "source": GraphNode("advanced-3d-source.make", {"case": case}),
                     "preview": GraphNode(
-                        Preview3DAdvanced.schema().node_type,
+                        "Preview3DAdvanced",
                         {
                             "model_3d": Link("source", "file"),
                             "viewport_state": Link("source", "viewport"),
                         },
                     ),
                     "save": GraphNode(
-                        Save3DAdvanced.schema().node_type,
+                        "Save3DAdvanced",
                         {
                             "model_3d": Link("preview", "model_3d"),
                             "viewport_state": Link("source", "viewport"),
@@ -1696,18 +1790,18 @@ def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
 
 
 def test_schemas_declare_upload_save_and_preview_intent() -> None:
-    load = Load3DAdvanced.define_schema()
-    model_input = load.input("model_file")
+    load = LoadModel3D.define_schema()
+    model_input = load.input("model")
     assert model_input is not None
     assert model_input.source_filename is not None
     assert model_input.source_filename.kind == "media/model3d"
-    load_output = load.output("model_3d")
+    load_output = load.output("model")
     assert load_output is not None and load_output.preview
-    save = Save3DAdvanced.define_schema()
+    save = SaveModel3D.define_schema()
     assert save.output_node and not save.idempotent
-    preview = Preview3DAdvanced.define_schema()
+    preview = PreviewModel3D.define_schema()
     assert preview.output_node
-    preview_output = preview.output("model_3d")
+    preview_output = preview.output("model")
     assert preview_output is not None and preview_output.preview
 
 

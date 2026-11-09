@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import io
 import wave
-from collections.abc import Generator
 from contextlib import closing
 from fractions import Fraction
 from tempfile import SpooledTemporaryFile
@@ -14,9 +13,10 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import AudioWindowReader
+from dinkster_api.v1 import AudioWindowReader, Curve
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_nodes_audio.audio_save import SaveAudio
+from dinkster_nodes_media_io.audio import SaveAudio
+from dinkster_nodes_media_io.audio_ops import AudioOnsets
 from dinkster_values import (
     AudioRangeError,
     AudioSourceUnavailableError,
@@ -30,7 +30,7 @@ from dinkster_values import (
 from dinkster_values.audio_codec import coerce_audio, decode_audio
 from dinkster_video import assemble_video, save_video_stream
 
-from tests.test_audio_io import _bound, _mount, _save
+from tests.test_audio_io import _bound, _mount
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -169,7 +169,7 @@ def test_aac_saving_decodes_source_once(aac_audio, tmp_path, monkeypatch, decode
     loaded = None
     if consumer == "save-audio":
         _, snapshot = _mount(tmp_path, monkeypatch)
-        saved = _save(SaveAudio, audio=audio, mount="comfy-output")[0]
+        saved = cast(list[AssetRef], SaveAudio.execute(audio=audio)["audios"])[0]
         loaded = audio_from_source(_bound(saved, snapshot))
     else:
         duration = Fraction(facts["frames"], facts["sample_rate"])
@@ -188,11 +188,28 @@ def test_aac_saving_decodes_source_once(aac_audio, tmp_path, monkeypatch, decode
         assert np.max(np.abs(expected - actual)) <= 1 / 32768
 
 
-@pytest.mark.parametrize("consumer", ["reader", "save-audio", "video-generator", "video-mux"])
+def test_aac_onsets_decode_once_and_match_the_materialized_curve(aac_audio, decode_counts):
+    audio = _edited(aac_audio, [44100])
+    facts = effective_audio_facts(audio)
+    full = audio_window(audio, 0, facts["frames"])
+    expected = AudioOnsets.execute(audio=full)["curve"]
+    decode_counts.update(samples=0, sessions=0)
+    actual = AudioOnsets.execute(audio=audio)["curve"]
+    assert isinstance(actual, Curve)
+    assert actual == expected
+    assert decode_counts["sessions"] == 1
+    assert decode_counts["samples"] <= effective_audio_facts(aac_audio)["frames"] + 1024
+    print("onsets", "points", len(actual.points), decode_counts)
+
+
+@pytest.mark.parametrize(
+    "consumer", ["reader", "save-audio", "video-generator", "video-mux", "onsets"]
+)
 def test_aac_consumers_close_decoder_on_failure_or_cancellation(
     aac_audio, tmp_path, monkeypatch, decode_counts, consumer
 ):
-    import dinkster_values.audio_lazy as audio_lazy
+    import dinkster_nodes_media_io.audio as audio_io
+    import dinkster_nodes_media_io.audio_ops as audio_ops
     import dinkster_video.runtime as video_runtime
 
     class Cancelled(BaseException):
@@ -223,17 +240,11 @@ def test_aac_consumers_close_decoder_on_failure_or_cancellation(
     with pytest.raises(Cancelled):
         if consumer == "save-audio":
             _mount(tmp_path, monkeypatch)
-            decode = audio_lazy._decode_frames
-
-            def failing_decode(*args):
-                with closing(cast(Generator[Any, None, None], decode(*args))) as frames:
-                    for frame in frames:
-                        if decode_counts["samples"] > 65536:
-                            raise Cancelled
-                        yield frame
-
-            monkeypatch.setattr(audio_lazy, "_decode_frames", failing_decode)
+            monkeypatch.setattr(audio_io, "AudioWindowReader", FailingReader)
             SaveAudio.execute(audio=aac_audio)
+        elif consumer == "onsets":
+            monkeypatch.setattr(audio_ops, "AudioWindowReader", FailingReader)
+            AudioOnsets.execute(audio=aac_audio)
         else:
             monkeypatch.setattr(video_runtime, "AudioWindowReader", FailingReader)
             save_video_stream(video, io.BytesIO(), container="mp4", codec="h264")
@@ -269,7 +280,7 @@ def concat_audio(aac_audio):
     return joined, audio_window(eager, 0, effective_audio_facts(eager)["frames"])
 
 
-@pytest.mark.parametrize("consumer", ["windows", "mux"])
+@pytest.mark.parametrize("consumer", ["windows", "save", "mux", "onsets"])
 def test_concat_aac_consumers_are_exact_and_decode_each_occurrence_once(
     concat_audio, decode_counts, monkeypatch, tmp_path, consumer
 ):
@@ -298,36 +309,28 @@ def test_concat_aac_consumers_are_exact_and_decode_each_occurrence_once(
         with AudioWindowReader(audio) as reader:
             for start in range(0, total, 1024):
                 reader.read(start, min(1024, total - start))
-    else:
+    elif consumer == "save":
+        _mount(tmp_path, monkeypatch)
+        SaveAudio.execute(audio=audio)
+    elif consumer == "mux":
         video = assemble_video(
             np.zeros((8, 16, 16, 3), np.float32),
             fps=Fraction(8 * expected["sample_rate"], total),
             audio=audio,
         )
         save_video_stream(video, io.BytesIO(), container="mp4", codec="h264")
+    else:
+        curve = AudioOnsets.execute(audio=audio)["curve"]
+        assert isinstance(curve, Curve)
+        # The eager reference must not pass through the instrumented lazy consumer.
+        monkeypatch.setattr(AudioWindowReader, "read", read)
+        assert curve == AudioOnsets.execute(audio=expected)["curve"]
     assert decode_counts["sessions"] == 4
     assert decode_counts["samples"] <= 2 * 125952 + 92160 + 84992
     assert len(windows) > 2
-    assert active[-1] == 1
+    # The final 65k save chunk spans the last two occurrences; small hops touch only one.
+    assert active[-1] == (2 if consumer == "save" else 1)
     print("concat", consumer, len(windows), "max_active", max(active), decode_counts)
-
-
-def test_concat_aac_save_matches_materialized_audio(
-    concat_audio, decode_counts, monkeypatch, tmp_path
-):
-    audio, expected = concat_audio
-    _, snapshot = _mount(tmp_path, monkeypatch)
-    decode_counts.update(samples=0, sessions=0)
-    saved = _save(SaveAudio, audio=audio, mount="comfy-output")[0]
-    assert decode_counts["sessions"] == 4
-    assert decode_counts["samples"] <= 2 * 125952 + 92160 + 84992
-    loaded = audio_from_source(_bound(saved, snapshot))
-    frames = expected["waveform"].shape[-1]
-    assert effective_audio_facts(loaded)["frames"] == frames
-    actual = audio_window(loaded, 0, frames)
-    assert actual["sample_rate"] == expected["sample_rate"]
-    assert actual["waveform"].shape == expected["waveform"].shape
-    assert np.max(np.abs(actual["waveform"] - expected["waveform"])) <= 1 / 32768
 
 
 def test_reader_spills_large_overlaps_and_retires_concat_occurrences(aac_audio, decode_counts):

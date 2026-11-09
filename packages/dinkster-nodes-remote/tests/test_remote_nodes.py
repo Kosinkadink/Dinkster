@@ -788,7 +788,7 @@ def test_isolated_worker_announces_catalog_epoch_and_composer_replaces_it(
     async def scenario() -> None:
         from dinkster_workers import diagnose
 
-        from dinkster.compose import PackSpec, ServingComposer
+        from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 
         async with FakeGateway() as gateway:
             token = tmp_path / "token"
@@ -815,8 +815,8 @@ def test_isolated_worker_announces_catalog_epoch_and_composer_replaces_it(
             try:
                 if spec.require_catalog:
                     await asyncio.to_thread(diagnose, spec.manifest, environment=spec.env)
+                await composer.add_pack(default_pack_spec("dinkster-nodes-media-io"))
                 initial = await composer.add_pack(spec)
-                assert set(composer.composition.packs) == {"dinkster-nodes-remote"}
                 assert "dinkster.remote.image" in composer.composition.schemas
                 assert initial.execution_arms == {"dinkster.remote.image": ("native",)}
                 if spec.require_catalog:

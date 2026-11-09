@@ -1,0 +1,34 @@
+{
+  "format": "dinkster-workflow", "formatVersion": 1, "lineage": "loop-per-item-spawn", "root": "root",
+  "graphs": {
+    "root": {
+      "id": "root", "name": "Spawn one image operation per size",
+      "nodes": {
+        "spawn": { "id": "spawn", "type": "#spawnBody", "values": { "size": [48, 64, 80] }, "region": { "kind": "map", "elementPorts": ["size"] } },
+        "batch": { "id": "batch", "type": "dinkster.image.list.to_batch", "dynamic": { "shape_policy": { "selected": "resize_to_first" } }, "values": { "shape_policy.interpolation": "bicubic" } },
+        "output": { "id": "output", "type": "dinkster.image.compare", "values": {} }
+      },
+      "links": {
+        "spawn_batch": { "id": "spawn_batch", "from": { "node": "spawn", "port": "generatedImage" }, "to": { "node": "batch", "port": "images" } },
+        "batch_output": { "id": "batch_output", "from": { "node": "batch", "port": "image" }, "to": { "node": "output", "port": "image_a" } }
+      },
+      "nets": {}, "reroutes": {}, "nextOrdinal": 3
+    },
+    "spawnBody": {
+      "id": "spawnBody", "name": "Independent image task",
+      "nodes": {
+        "image": { "id": "image", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "linear_gradient" } }, "values": { "batch_size": 1, "channels": "rgb", "color_source.color_a": "#7c3aed", "operation.color_b": "#22d3ee", "operation.angle": 45 } }
+      },
+      "links": {}, "nets": {}, "reroutes": {},
+      "boundary": {
+        "inputs": [
+          { "id": "size", "binds": { "kind": "port", "node": "image", "port": "width" } }
+        ],
+        "outputs": [{ "id": "generatedImage", "binds": { "kind": "port", "node": "image", "port": "image" } }]
+      },
+      "nextOrdinal": 1
+    }
+  },
+  "view": { "graphs": { "root": { "nodes": { "spawn": { "position": { "x": 140, "y": 120 } } } }, "spawnBody": { "nodes": { "image": { "position": { "x": 140, "y": 120 } } } } } },
+  "meta": { "title": "Loop: Per-item Image Spawn" }
+}
