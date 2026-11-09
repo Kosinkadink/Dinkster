@@ -30,6 +30,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
   tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
   tests/test_environment_generations.py::test_registry_preparation_allows_custom_locks_from_selected_inputs \
+  tests/test_environment_generations.py::test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks \
   'tests/test_environment_generations.py::test_generation_requires_dependency_locks_for_the_complete_admitted_catalog[restore]' \
   tests/test_environment_cli.py::test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache \
   tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal \
