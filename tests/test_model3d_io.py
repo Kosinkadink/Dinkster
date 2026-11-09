@@ -895,7 +895,7 @@ def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
                         in_process=in_process,
                         trust_reserved=path != manifest,
                         packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-image"
+                        if path.parent.name == "dinkster-nodes-image"
                         else None,
                     )
                 )
@@ -1224,7 +1224,7 @@ def test_advanced_3d_save_ordinary_hosts_twice(
                         in_process=in_process,
                         trust_reserved=path != manifest,
                         packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-image"
+                        if path.parent.name == "dinkster-nodes-image"
                         else None,
                     )
                 )
