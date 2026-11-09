@@ -11,6 +11,7 @@ import subprocess
 import sys
 import sysconfig
 import zipfile
+from dataclasses import replace
 from functools import partial
 from pathlib import Path, PureWindowsPath
 
@@ -136,9 +137,10 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
     tmp_path: Path,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
-    from dinkster_workers.pack_lock import PackLock
-    from test_installer import _download_ticket, _release_record, _serve_artifacts, write_pack
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_installer import _serve_artifacts, _static_release, write_pack
 
+    from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments.build import wheel
 
     store = tmp_path / "store"
@@ -162,10 +164,17 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         (source / "dinkster-pack.toml").write_text(
             f'[pack]\nname="{name}"\npublisher="dinkster"\nversion="1.2"\n'
             f'engine=">=0"\nnamespaces=["{name}"]\n'
-            '[pack.entry]\nnodes="demo_nodes:NODES"\n'
+            f'[pack.entry]\nnodes="{name}:NODES"\n'
         )
         archive = tmp_path / f"{name}.zip"
-        identity = build_artifact(source, archive)
+        if name == "added":
+            (source / "__init__.py").write_text("NODES = []\n")
+            (source / "pyproject.toml").write_text('[project]\nname="added"\nversion="1.2"\n')
+            archive = tmp_path / "added-1.2-py3-none-any.whl"
+            build_pack_archive(source, archive)
+            identity = artifact_digest(archive.read_bytes())
+        else:
+            identity = build_artifact(source, archive)
         payloads[name] = archive.read_bytes()
         entries.append(LockedPack(name, "1.2", identity, "dinkster", (name,), "git:retained"))
     retained, added = entries
@@ -175,25 +184,25 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
     dependency_path = tmp_path / "added.pack-lock.json"
     dependency.write(dependency_path)
     lock_bytes = dependency_path.read_bytes()
-    release = "/v1/packs/added/versions/1.2"
+    lock_url = "locks/" + artifact_digest(lock_bytes).replace(":", "/") + ".json"
+    release = {
+        **_static_release(added, payloads["added"]),
+        "engine": ">=0",
+        "installLocks": {
+            "linux-cpu": {
+                "baseId": base,
+                "artifactDigest": added.artifact_digest,
+                "digest": artifact_digest(lock_bytes),
+                "size": len(lock_bytes),
+                "url": lock_url,
+            }
+        },
+    }
+    wheel_record = release["wheels"][0]
     files = {
-        release: _release_record(
-            added,
-            state="active",
-            manifest={"dinkster": ">=0"},
-            installLocks={
-                "linux-cpu": {
-                    "baseId": base,
-                    "artifactDigest": added.artifact_digest,
-                    "digest": artifact_digest(lock_bytes),
-                    "size": len(lock_bytes),
-                    "url": release + "/locks/linux-cpu",
-                }
-            },
-        ),
-        release + "/locks/linux-cpu?baseId=sha256%3A" + "a" * 64: lock_bytes,
-        release + "/download-tickets": _download_ticket(added, payloads["added"]),
-        f"/v1/artifacts/{added.artifact_digest}": payloads["added"],
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        "/static/" + lock_url: lock_bytes,
+        "/static/" + wheel_record["url"]: payloads["added"],
     }
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
@@ -219,13 +228,33 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
                 ("retained", "1.2"),
             ]
             assert unavailable == {} and len(locks) == 1
-            assert locks[0].read_bytes() == lock_bytes
-            assert (artifacts / f"{retained.artifact_digest[7:]}.zip").read_bytes() == payloads[
-                "retained"
-            ]
-            assert (artifacts / f"{added.artifact_digest[7:]}.zip").read_bytes() == payloads[
-                "added"
-            ]
+            endpoint = f"http://127.0.0.1:{server.server_port}"
+            assert PackLock.read(locks[0]) == replace(
+                dependency,
+                indexes=(endpoint + "/static/linux-cpu/simple/",),
+                packages=(
+                    LockedDistribution(
+                        "added",
+                        "1.2",
+                        (
+                            LockedWheel(
+                                wheel_record["filename"],
+                                len(payloads["added"]),
+                                hashlib.sha256(payloads["added"]).hexdigest(),
+                                endpoint + "/static/" + wheel_record["url"],
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            assert (
+                pack_archive_path(artifacts, retained.artifact_digest).read_bytes()
+                == payloads["retained"]
+            )
+            assert (
+                pack_archive_path(artifacts, added.artifact_digest).read_bytes()
+                == payloads["added"]
+            )
         assert not catalog.exists() and not artifacts.exists() and not locks[0].exists()
         assert requests and all("retained" not in path for path, _ in requests)
         assert {p: p.read_bytes() for p in project.rglob("*") if p.is_file()} == before

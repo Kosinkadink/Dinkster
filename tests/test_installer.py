@@ -3465,7 +3465,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         files = {
             path: payload
             for path, payload in files.items()
-            if path == "/static/packs/index.json" or "z-other" in path
+            if path in {"/static/packs/index.json", "/static/" + lock_path}
         }
         expected.pop("demo")
     server = _serve_artifacts(files, requests)
@@ -3546,7 +3546,10 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 }
                 assert PackLock.read(path).pack == pack
             if problem == "selected":
-                assert requests and all("/z-other/" in path for path, _ in requests)
+                assert requests and all(
+                    path in {"/static/packs/index.json", "/static/" + lock_path}
+                    for path, _ in requests
+                )
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
         assert sorted(path.name for path in root.iterdir()) == ["current"]
@@ -3611,29 +3614,37 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
 def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
 ) -> None:
+    from dinkster_registry import artifact_digest
+
+    from dinkster.pack_archive import build_pack_archive
+
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     entries = []
     archives = {}
     for name, version in (("retained", "1.0"), ("added", "1.2")):
-        source = write_pack(tmp_path / name, name, "raise RuntimeError('must not import')\n")
-        publisher = "third-party" if name == "added" and problem == "third-party" else "dinkster"
+        source = tmp_path / name
+        (source / name).mkdir(parents=True)
+        (source / name / "__init__.py").write_text("raise RuntimeError('must not import')\n")
         (source / "dinkster-pack.toml").write_text(
-            f'[pack]\nname="{name}"\npublisher="{publisher}"\n'
+            f'[pack]\nname="{name}"\npublisher="dinkster"\n'
             f'version="{version}"\nengine=">=0"\nnamespaces=["{name}"]\n'
-            f'[pack.entry]\nnodes="{name}_nodes:NODES"\n'
+            f'[pack.entry]\nnodes="{name}:NODES"\n'
         )
-        archive = tmp_path / f"{name}.zip"
-        identity = build_artifact(source, archive)
-        entries.append(LockedPack(name, version, identity, "dinkster", (name,)))
+        (source / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="{version}"\n')
+        archive = tmp_path / f"{name}-{version}-py3-none-any.whl"
+        build_pack_archive(source, archive)
+        publisher = "third-party" if name == "added" and problem == "third-party" else "dinkster"
+        entries.append(
+            LockedPack(name, version, artifact_digest(archive.read_bytes()), publisher, (name,))
+        )
         archives[name] = archive.read_bytes()
     old, added = entries
+    release = {**_static_release(added, archives["added"]), "engine": ">=0"}
+    wheel = cast("list[dict[str, object]]", release["wheels"])[0]
     files = {
-        "/v1/packs/added/versions/1.2": _release_record(
-            added, state="active", manifest={"dinkster": ">=0"}
-        ),
-        "/v1/packs/added/versions/1.2/download-tickets": _download_ticket(added, archives["added"]),
-        f"/v1/artifacts/{added.artifact_digest}": (
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        f"/static/{wheel['url']}": (
             b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
         ),
     }
@@ -3642,7 +3653,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     installed.write_text(Lockfile.of([old]).record_json())
     original = installed.read_bytes()
     # The old registry is deliberately unreachable; its pinned archive is retained.
-    (artifacts / f"{old.artifact_digest[7:]}.zip").write_bytes(archives["retained"])
+    pack_archive_path(artifacts, old.artifact_digest).write_bytes(archives["retained"])
     output = tmp_path / "candidate.lock"
     requested = "retained@2.0" if problem == "existing" else "added@1.2"
     args = [
@@ -3672,7 +3683,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 "existing": "distinct absent pack",
                 "duplicate": "distinct absent pack",
                 "third-party": "first-party",
-                "corrupt": "digest mismatch",
+                "corrupt": "sha256",
             }
             assert expected[problem] in error
             assert not output.exists()
@@ -3684,9 +3695,10 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 replace(added, source=f"registry:http://127.0.0.1:{server.server_port}"),
                 old,
             )
-            assert (artifacts / f"{added.artifact_digest[7:]}.zip").read_bytes() == archives[
-                "added"
-            ]
+            assert (
+                pack_archive_path(artifacts, added.artifact_digest).read_bytes()
+                == archives["added"]
+            )
         assert installed.read_bytes() == original
     finally:
         server.shutdown()

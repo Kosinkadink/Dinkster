@@ -164,8 +164,10 @@
   with `prepare-registry-sources --installed-lock PATH --retain-sources --add PACK@VERSION`.
   Existing source identities remain unchanged instead of being re-resolved.
   Repeated or installed pack names, noncanonical selections, incompatible engines,
-  third-party manifests and corrupt archives refuse before a candidate lock is
-  written. Preparation does not activate a generation or modify project data.
+  third-party registry publishers and corrupt wheels refuse before a candidate
+  lock is written. Additions use the static index's compatible `wheels` entry and
+  preserve its authenticated registry publisher, never a manifest trust grant.
+  Preparation does not activate a generation or modify project data.
 - `prepare-registry-locks --pack PACK` acquires only the named source's published
   dependency lock for the exact base; repeat the option to select multiple packs.
   Other source releases need not remain available in the registry. Duplicate or

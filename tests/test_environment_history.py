@@ -361,7 +361,14 @@ def test_standalone_adoption_builds_separate_history_without_touching_old_root(
         (False, False, True, "update"),
         (False, False, False, "pack-install"),
     ],
-    ids=["exact", "missing-base", "missing-engine", "missing-engine-and-base", "reacquired-source", "pack-install"],
+    ids=[
+        "exact",
+        "missing-base",
+        "missing-engine",
+        "missing-engine-and-base",
+        "reacquired-source",
+        "pack-install",
+    ],
 )
 def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     tmp_path: Path,
@@ -378,8 +385,9 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _wheel, _workspace_tree
-    from test_installer import _download_ticket, _release_record, _serve_artifacts
+    from test_installer import _serve_artifacts, _static_release
 
+    from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
 
     original_wheel, encode = publisher.wheel, publisher.canonical_json
@@ -417,17 +425,36 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
             .replace("healthy", name)
             .replace(f"{name}_nodes:", f"{name}:")
             .replace("numpy>=1.26", "fixture-adopt==1.0")
-            .replace("[pack]\n", '[pack]\npublisher="dinkster"\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n')
+            .replace(
+                "[pack]\n",
+                '[pack]\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n'
+                + ('publisher="dinkster"\n' if name == "extra" else ""),
+            )
         )
         (pack / name).mkdir()
         (pack / name / "__init__.py").write_text(HEALTHY_NODES.replace("healthy", name))
         staging = updated_artifacts / "staging.zip"
-        identity = build_artifact(pack, staging)
+        if name == "extra":
+            (pack / "pyproject.toml").write_text('[project]\nname="extra"\nversion="1.0.0"\n')
+            staging = updated_artifacts / "extra-1.0.0-py3-none-any.whl"
+            build_pack_archive(pack, staging)
+            identity = artifact_digest(staging.read_bytes())
+        else:
+            identity = build_artifact(pack, staging)
         retained = updated_artifacts / f"{identity[7:]}.zip"
         staging.rename(retained)
         if name != "extra":
             shutil.copyfile(retained, archives / retained.name)
-        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,), f"local:{pack}"))
+        entries.append(
+            LockedPack(
+                name,
+                "1.0.0",
+                identity,
+                "dinkster" if name == "extra" else "local",
+                (name,),
+                f"local:{pack}",
+            )
+        )
         path = dependencies / f"{name}.pack-lock.json"
         PackLock(
             name,
@@ -460,31 +487,31 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     }
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
     channel = json.loads(Path(fixture["initialChannel"]).read_bytes())
-    extra = entries[-1]
-    release = "/v1/packs/extra/versions/1.0.0"
+    extra = replace(entries[-1], publisher="dinkster", source="registry")
     extra_lock = (dependencies / "extra.pack-lock.json").read_bytes()
     extra_archive = (updated_artifacts / f"{extra.artifact_digest[7:]}.zip").read_bytes()
+    lock_url = "locks/" + artifact_digest(extra_lock).replace(":", "/") + ".json"
+    release = {
+        **_static_release(extra, extra_archive),
+        "engine": ">=0.0.1,<3.0",
+        "installLocks": {
+            "fixture-cpu": {
+                "baseId": channel["base"]["fixture-cpu"]["id"],
+                "artifactDigest": extra.artifact_digest,
+                "digest": artifact_digest(extra_lock),
+                "size": len(extra_lock),
+                "url": lock_url,
+            }
+        },
+    }
+    outer_wheel = release["wheels"][0]
     registry = _serve_artifacts(
         {
-            release: _release_record(
-                extra,
-                state="active",
-                manifest={"dinkster": ">=0"},
-                installLocks={
-                    "fixture-cpu": {
-                        "baseId": channel["base"]["fixture-cpu"]["id"],
-                        "artifactDigest": extra.artifact_digest,
-                        "digest": artifact_digest(extra_lock),
-                        "size": len(extra_lock),
-                        "url": release + "/locks/fixture-cpu",
-                    }
-                },
-            ),
-            release
-            + "/locks/fixture-cpu?baseId="
-            + channel["base"]["fixture-cpu"]["id"].replace(":", "%3A"): extra_lock,
-            release + "/download-tickets": _download_ticket(extra, extra_archive),
-            f"/v1/artifacts/{extra.artifact_digest}": extra_archive,
+            "/static/packs/index.json": json.dumps(
+                {"schemaVersion": 1, "items": [release]}
+            ).encode(),
+            "/static/" + lock_url: extra_lock,
+            "/static/" + outer_wheel["url"]: extra_archive,
         },
         [],
     )
@@ -559,7 +586,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     code, planned = _run(root, "packs-plan", "extra@1.0.0", "--output", str(review))
                     assert code == 0, planned.get("error", planned)
                     assert sorted((root / "journal").glob("*")) == journals
-                    approval = planned["approval"]
+                    pack_approval = planned["approval"]
                     for folder in ("workflows", "models", "outputs", "user"):
                         (root / folder).mkdir(exist_ok=True)
                         (root / folder / "sentinel.bin").write_bytes(
@@ -577,7 +604,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     saved = settings.read_bytes()
                     settings.write_bytes(saved + b"\n")
                     code, stale = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code != 0 and "changed after planning" in stale["error"]
                     assert sorted((root / "journal").glob("*")) == journals
@@ -586,13 +613,13 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                     unreviewed = review / "locks/unreviewed.json"
                     unreviewed.write_bytes(extra_lock)
                     code, tampered = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code != 0 and "reviewed pack inputs changed" in tampered["error"]
                     assert sorted((root / "journal").glob("*")) == journals
                     unreviewed.unlink()
                     code, updated = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code == 0, updated.get("error", updated)
                     assert {
@@ -603,11 +630,30 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         assert (
                             root / "generations/2/packs" / name / "pack-lock.json"
                         ).read_bytes() == payload
-                    assert (
+                    endpoint = f"http://127.0.0.1:{registry.server_port}"
+                    assert PackLock.read(
                         root / "generations/2/packs/extra/pack-lock.json"
-                    ).read_bytes() == extra_lock
+                    ) == replace(
+                        PackLock.read(dependencies / "extra.pack-lock.json"),
+                        indexes=(endpoint + "/static/fixture-cpu/simple/",),
+                        packages=(
+                            *PackLock.read(dependencies / "extra.pack-lock.json").packages,
+                            LockedDistribution(
+                                "extra",
+                                "1.0.0",
+                                (
+                                    LockedWheel(
+                                        outer_wheel["filename"],
+                                        len(extra_archive),
+                                        hashlib.sha256(extra_archive).hexdigest(),
+                                        endpoint + "/static/" + outer_wheel["url"],
+                                    ),
+                                ),
+                            ),
+                        ),
+                    )
                     code_replay, _replayed = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", approval
+                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
                     )
                     assert code_replay != 0 and not (root / "generations/3").exists()
                 else:
@@ -630,7 +676,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                 current_release = Generation.read(
                     root / "generations/2/generation.json"
                 ).engine_release
-                assert current_release != original_release
+                assert (current_release == original_release) == (mutation == "pack-install")
                 for entry in entries[:2]:
                     filename = f"{entry.artifact_digest[7:]}.zip"
                     assert (
@@ -641,7 +687,8 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         == (archives / filename).read_bytes()
                     )
                 original_archives = object_path(store / "engines", original_release) / "artifacts"
-                shutil.rmtree(original_archives)
+                if mutation != "pack-install":
+                    shutil.rmtree(original_archives)
                 corrupt_cache = store / "engines" / ("0" * 64) / "artifacts"
                 corrupt_cache.mkdir(parents=True)
                 for entry in entries[:2]:

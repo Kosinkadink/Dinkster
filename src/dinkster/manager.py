@@ -1126,8 +1126,13 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     selected = resolve_release(
                         registry, pack, version, engine_version=dinkster_version
                     )
-                    cached = args.artifacts / f"{selected.artifact_digest[7:]}.zip"
+                    cached = pack_archive_path(
+                        args.artifacts,
+                        selected.artifact_digest,
+                        label=pack_label(selected.pack, selected.version),
+                    )
                     if not cached.exists():
+                        cached.parent.mkdir(parents=True, exist_ok=True)
                         cached.write_bytes(fetch(selected))
                     entry = registry_source_lock(selected, cached, engine_version=dinkster_version)
                     if entry.publisher != "dinkster":
