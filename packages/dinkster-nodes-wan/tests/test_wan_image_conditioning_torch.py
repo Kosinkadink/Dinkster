@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_wan.wan_image_conditioning import (
+from dinkster_wan.wan_image_conditioning import (
     WanFirstLastFrameToVideo,
     WanFunInpaintToVideo,
     WanImageToVideo,

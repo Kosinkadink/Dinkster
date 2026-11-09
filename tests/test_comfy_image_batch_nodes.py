@@ -9,11 +9,11 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_image import NODES as IMAGE_NODES
-from dinkster_nodes_image.ported.image_dimensions import GetImageSize
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.image_dimensions import GetLatentSize
-from dinkster_nodes_latent.rebatch import RebatchImages, RebatchLatents
+from dinkster_image import NODES as IMAGE_NODES
+from dinkster_image.ported.image_dimensions import GetImageSize
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.image_dimensions import GetLatentSize
+from dinkster_latent.rebatch import RebatchImages, RebatchLatents
 
 
 def test_image_utility_socket_contracts_roundtrip() -> None:

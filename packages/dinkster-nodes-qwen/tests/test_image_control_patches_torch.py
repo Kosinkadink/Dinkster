@@ -7,7 +7,7 @@ import torch
 from dinkster_api.v1 import (
     initialize_inference_process,
 )
-from dinkster_nodes_qwen.image_control_patches import QwenImageDiffsynthControlnet
+from dinkster_qwen.image_control_patches import QwenImageDiffsynthControlnet
 
 
 class _Sampling:

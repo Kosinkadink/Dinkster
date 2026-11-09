@@ -7,7 +7,7 @@ import torch
 from dinkster_api.v1 import (
     materialize_clip_vision_output,
 )
-from dinkster_nodes_sd.clip import unCLIPConditioning
+from dinkster_sd.clip import unCLIPConditioning
 
 
 def _vision_output(value: float) -> Any:

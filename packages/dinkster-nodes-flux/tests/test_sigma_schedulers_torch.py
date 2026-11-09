@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 import torch
-from dinkster_nodes_flux.sigma_schedulers import Flux2Scheduler
+from dinkster_flux.sigma_schedulers import Flux2Scheduler
 
 
 @pytest.mark.parametrize(

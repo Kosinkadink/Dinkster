@@ -6,7 +6,7 @@ import torch
 from dinkster_api.v1 import (
     materialize_latent,
 )
-from dinkster_nodes_misc_models.model_specific_schedulers import Ideogram4Scheduler
+from dinkster_misc_models.model_specific_schedulers import Ideogram4Scheduler
 
 
 def _sigmas(result: Mapping[str, object]) -> torch.Tensor:

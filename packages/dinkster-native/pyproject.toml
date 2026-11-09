@@ -13,7 +13,7 @@ dependencies = [
     "dinkster-protocol",
     "dinkster-schema",
     "dinkster-values",
-    "dinkster-video",
+    "dinkster-video-runtime",
     "dinkster-workers",
     "numba>=0.67",
     "numpy>=1.26",
@@ -35,5 +35,5 @@ dinkster-memory = { workspace = true }
 dinkster-protocol = { workspace = true }
 dinkster-schema = { workspace = true }
 dinkster-values = { workspace = true }
-dinkster-video = { workspace = true }
+dinkster-video-runtime = { workspace = true }
 dinkster-workers = { workspace = true }

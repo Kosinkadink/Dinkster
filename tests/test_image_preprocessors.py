@@ -10,8 +10,8 @@ from typing import cast
 import cv2
 import numpy as np
 import pytest
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.preprocess import (
+from dinkster_image import NODES
+from dinkster_image.preprocess import (
     PREPROCESSOR_NODES,
     BinaryPreprocessor,
     ColorHintPreprocessor,
@@ -382,7 +382,7 @@ def test_inpaint_hint_resizes_and_broadcasts_masks() -> None:
 def test_inpaint_hint_enforces_the_image_operation_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_nodes_image.support.MAX_IMAGE_BYTES", 1)
+    monkeypatch.setattr("dinkster_image.support.MAX_IMAGE_BYTES", 1)
     with pytest.raises(ValueError, match="image operation limit"):
         InpaintHintPreprocessor.execute(
             image=np.zeros((1, 1, 1, 3), dtype=np.float32),

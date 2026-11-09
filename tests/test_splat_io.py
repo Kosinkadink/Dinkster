@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-import dinkster_nodes_3d.save3d as save_module
+import dinkster_3d.save3d as save_module
 import numpy
 import pytest
+from dinkster_3d.save3d import SaveGaussianSplat
+from dinkster_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -17,8 +19,6 @@ from dinkster_assets import (
     classify_media,
     digest_bytes,
 )
-from dinkster_nodes_3d.save3d import SaveGaussianSplat
-from dinkster_nodes_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import render_splat_ply
 

@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
-from dinkster_nodes_flux.flux_image_layout import Flux3LayoutPrompt, FluxKontextImageScale
+from dinkster_flux.flux_image_layout import Flux3LayoutPrompt, FluxKontextImageScale
 from PIL import Image
 
 

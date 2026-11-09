@@ -30,11 +30,11 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_vision_sam3d_body import register_types
-from dinkster_nodes_vision_sam3d_body.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
-from dinkster_nodes_vision_sam3d_body.sam3d_expression import SAM3DBody_FaceExpression
-from dinkster_nodes_vision_sam3d_body.sam3d_prediction import SAM3DBody_Predict
 from dinkster_server import PackInfo
+from dinkster_vision_sam3d_body import register_types
+from dinkster_vision_sam3d_body.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
+from dinkster_vision_sam3d_body.sam3d_expression import SAM3DBody_FaceExpression
+from dinkster_vision_sam3d_body.sam3d_prediction import SAM3DBody_Predict
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -709,7 +709,7 @@ def test_sam3d_loader_ordinary_hosts_twice(
     (tmp_path / f"{module}.py").write_text(
         "import sys\nfrom types import SimpleNamespace\n"
         "from test_sam3d_body_torch import LoaderModel, ModelInspect\n"
-        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "from dinkster_vision_sam3d_body import register_types as register_sam3d\n"
         f"sys.modules[{model_module!r}] = SimpleNamespace(SAM3DBody=LoaderModel)\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-sam3d-body', "
@@ -1035,7 +1035,7 @@ def test_smoothing_ordinary_hosts_twice(tmp_path: Path, in_process: bool, expres
     module = f"sam3d_expression_fixture_{int(in_process)}_{int(expression)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_body_torch import Source, Inspect, ExpressionSource, ExpressionInspect\n"
-        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "from dinkster_vision_sam3d_body import register_types as register_sam3d\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-sam3d-body', "
         "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"
@@ -1135,7 +1135,7 @@ def test_sam3d_ordinary_hosts_twice(tmp_path: Path, in_process: bool, prediction
     module = f"sam3d_fixture_{int(in_process)}_{int(prediction)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_sam3d_body_torch import Source, Inspect, PredictionSource, PredictionInspect\n"
-        "from dinkster_nodes_vision_sam3d_body import register_types as register_sam3d\n"
+        "from dinkster_vision_sam3d_body import register_types as register_sam3d\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-sam3d-body', "
         "('SAM3D_BODY_MODEL', 'MHR_POSE_DATA'), allow_bare=True):\n"

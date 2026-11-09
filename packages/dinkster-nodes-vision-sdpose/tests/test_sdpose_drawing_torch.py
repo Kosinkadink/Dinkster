@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sdpose.sdpose import SDPoseDrawKeypoints
+from dinkster_vision_sdpose.sdpose import SDPoseDrawKeypoints
 from sdpose_pack_fixtures import sdpose_pack_specs
 
 from dinkster.compose import ServingComposer

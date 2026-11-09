@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.sparse_attention import (
+from dinkster_models import NODES
+from dinkster_models.sparse_attention import (
     BlockSparseAttention,
     SparseAttnPatch,
     h3_sparse_attention,
@@ -174,9 +174,7 @@ def test_schema_has_source_identity_required_inputs_and_stable_methods() -> None
 def test_dense_fallback_preserves_previous_override_and_all_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "dinkster_nodes_models.sparse_attention._runtime", lambda: (torch, object())
-    )
+    monkeypatch.setattr("dinkster_models.sparse_attention._runtime", lambda: (torch, object()))
     patch = _patch(minimum=8)
     calls: list[str] = []
 
@@ -199,9 +197,7 @@ def test_dense_fallback_preserves_previous_override_and_all_gates(
 
 
 def test_vsa_plan_inverse_rope_cache_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "dinkster_nodes_models.sparse_attention._runtime", lambda: (torch, object())
-    )
+    monkeypatch.setattr("dinkster_models.sparse_attention._runtime", lambda: (torch, object()))
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
     initialize_inference_process()
     minimax = __import__("dinkster_inference.ldm.minimax.model", fromlist=["PackedLayout"])
@@ -249,7 +245,7 @@ def test_h3_chunked_producer_uses_kernel_seam_and_block_patch_keeps_cpu_dense(
                 torch.full((heads, 128), 3.0),
             )
 
-    monkeypatch.setattr("dinkster_nodes_models.sparse_attention._runtime", lambda: (torch, Kitchen))
+    monkeypatch.setattr("dinkster_models.sparse_attention._runtime", lambda: (torch, Kitchen))
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
     initialize_inference_process()
     management = __import__("dinkster_inference.model_management", fromlist=["cast_to"])
@@ -306,7 +302,7 @@ def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
             (tmp_path / "sparse_attention_fixture_sources.py").write_text(
                 "from tests.first_party_runtime.test_sparse_attention_torch "
                 "import MANIFEST_NODES\n"
-                "from dinkster_nodes_models.types import register_types as register_models\n"
+                "from dinkster_models.types import register_types as register_models\n"
                 "def register_types(registry):\n"
                 "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
                 "        register_models(registry)\n"

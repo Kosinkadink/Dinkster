@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import AudioWindowReader
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_nodes_audio.audio_save import SaveAudio
+from dinkster_audio.audio_save import SaveAudio
 from dinkster_values import (
     AudioRangeError,
     AudioSourceUnavailableError,
@@ -28,7 +28,7 @@ from dinkster_values import (
     iter_audio_chunks,
 )
 from dinkster_values.audio_codec import coerce_audio, decode_audio
-from dinkster_video import assemble_video, save_video_stream
+from dinkster_video_runtime import assemble_video, save_video_stream
 
 from tests.test_audio_io import _bound, _mount, _save
 
@@ -193,7 +193,7 @@ def test_aac_consumers_close_decoder_on_failure_or_cancellation(
     aac_audio, tmp_path, monkeypatch, decode_counts, consumer
 ):
     import dinkster_values.audio_lazy as audio_lazy
-    import dinkster_video.runtime as video_runtime
+    import dinkster_video_runtime.runtime as video_runtime
 
     class Cancelled(BaseException):
         pass

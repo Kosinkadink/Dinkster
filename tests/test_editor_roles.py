@@ -4,12 +4,10 @@ import dataclasses
 from typing import Any, cast
 
 import pytest
-from dinkster_nodes_image.compositor import CreateLayeredImage
-from dinkster_nodes_image.glsl import GlslShader
-from dinkster_nodes_image.layer_document import EditLayers, FlattenLayers
-from dinkster_nodes_image.layer_io import LoadLayers
-from dinkster_nodes_utilities.curve_editor import CurveEditor
-from dinkster_nodes_video.video_edits import VideoCrop, VideoTrim
+from dinkster_image.compositor import CreateLayeredImage
+from dinkster_image.glsl import GlslShader
+from dinkster_image.layer_document import EditLayers, FlattenLayers
+from dinkster_image.layer_io import LoadLayers
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -18,7 +16,9 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
+from dinkster_utilities.curve_editor import CurveEditor
 from dinkster_values import CustomWidgetDescriptor
+from dinkster_video.video_edits import VideoCrop, VideoTrim
 
 
 @pytest.mark.parametrize(

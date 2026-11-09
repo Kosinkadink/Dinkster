@@ -15,6 +15,7 @@ from blake3 import blake3
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_workers import load_manifest
 from dinkster_workers.pack_lock import PackLock
+from dinkster_workers.pack_wheel import pack_manifest_path
 from packaging.specifiers import SpecifierSet
 
 from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
@@ -70,9 +71,9 @@ def publish_official_packs(
         staged = work / "maps"
         staged.mkdir()
         for pack in catalog.packs:
-            archive = sources / f"{pack.pack}-{pack.version}.zip"
+            archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
             extracted = unpack_artifact(archive, work / pack.pack, pack.artifact_digest)
-            manifest = load_manifest(extracted / "dinkster-pack.toml")
+            manifest = load_manifest(pack_manifest_path(extracted))
             if (
                 pack.publisher != "dinkster"
                 or manifest.publisher != "dinkster"
@@ -157,7 +158,9 @@ def publish_official_packs(
                 or published.get("publishedBy", {}).get("principalId") != pack.publisher
                 or published.get("artifact", {}).get("digest") != pack.artifact_digest
                 or published.get("artifact", {}).get("size")
-                != (sources / f"{pack.pack}-{pack.version}.zip").stat().st_size
+                != (sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl")
+                .stat()
+                .st_size
                 or actual.keys() != expected.keys()
                 or any(
                     {key: actual[variant].get(key) for key in binding} != binding
@@ -181,7 +184,7 @@ def publish_official_packs(
             try:
                 verdict = publish_release(
                     registry,
-                    sources / f"{pack.pack}-{pack.version}.zip",
+                    sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
                     pack.pack,
                     pack.version,
                     locks=locks,

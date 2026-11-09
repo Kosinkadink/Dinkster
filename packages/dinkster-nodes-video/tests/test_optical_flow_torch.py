@@ -28,8 +28,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video import NODES
-from dinkster_nodes_video.optical_flow import OpticalFlowLoader
+from dinkster_video import NODES
+from dinkster_video.optical_flow import OpticalFlowLoader
 from video_pack_fixtures import compose_video_packs
 
 from dinkster.compose import ServingComposer
@@ -117,7 +117,7 @@ def test_schema_is_canonical_and_cold_imports_no_tensor_runtime(tmp_path: Path) 
         (
             "import json",
             "import sys",
-            "import dinkster_nodes_video.optical_flow as module",
+            "import dinkster_video.optical_flow as module",
             "module.OpticalFlowLoader.schema()",
             "forbidden = sorted(",
             "    name for name in sys.modules",
@@ -147,7 +147,7 @@ def test_schema_is_canonical_and_cold_imports_no_tensor_runtime(tmp_path: Path) 
     discovery = json.loads(result.stdout)
     assert (
         Path(discovery["path"]).resolve()
-        == root / "packages/dinkster-nodes-video/src/dinkster_nodes_video/optical_flow.py"
+        == root / "packages/dinkster-nodes-video/src/dinkster_video/optical_flow.py"
     )
     assert discovery["forbidden"] == []
 

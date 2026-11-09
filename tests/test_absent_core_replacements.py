@@ -18,27 +18,27 @@ from dinkster_workers.host import load_pack
     ("module", "source", "target"),
     [
         (
-            "dinkster_nodes_image.bounding_boxes",
+            "dinkster_image.bounding_boxes",
             "CreateBoundingBoxes",
             "dinkster.image.create_bounding_boxes",
         ),
         (
-            "dinkster_nodes_image.layers_from_bounding_boxes",
+            "dinkster_image.layers_from_bounding_boxes",
             "LayersFromBoundingBoxes",
             "dinkster.image.layers_from_bounding_boxes",
         ),
         (
-            "dinkster_nodes_image.image_compositor",
+            "dinkster_image.image_compositor",
             "ImageCompositor",
             "dinkster.image.image_compositor",
         ),
-        ("dinkster_nodes_image.webcam", "WebcamCapture", "dinkster.image.webcam_capture"),
+        ("dinkster_image.webcam", "WebcamCapture", "dinkster.image.webcam_capture"),
         (
-            "dinkster_nodes_vision_moge.loader",
+            "dinkster_vision_moge.loader",
             "LoadMoGeModel",
             "dinkster.vision.moge.load_mo_ge_model",
         ),
-        ("dinkster_nodes_3d.splat_mesh", "SplatToMesh", "dinkster.3d.splat_to_mesh"),
+        ("dinkster_3d.splat_mesh", "SplatToMesh", "dinkster.3d.splat_to_mesh"),
     ],
 )
 def test_core_class_pure_rename_preserves_graph_state(

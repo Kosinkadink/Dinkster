@@ -13,13 +13,13 @@ def test_get_3d_components_cold_schema() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
-from dinkster_nodes_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
-from dinkster_nodes_3d.preview3d import (
+from dinkster_3d import NODES
+from dinkster_3d.mesh_io import Get3DComponents, MeshToFile3D, SaveGLB
+from dinkster_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
+from dinkster_3d.preview3d import (
     Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud,
 )
-from dinkster_nodes_3d.splat_files import File3DToSplat, SplatToFile3D
+from dinkster_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_workers import load_manifest
 assert NODES.count(Get3DComponents) == 1
 schema = Get3DComponents.schema()
@@ -65,8 +65,8 @@ assert set(schema.inputs[0].type.types) == {
     'FILE_3D', 'FILE_3D_SPLAT_ANY', 'FILE_3D_PLY', 'FILE_3D_SPLAT', 'FILE_3D_KSPLAT', 'FILE_3D_SPZ'
 }
 assert [(slot.id, slot.type.types) for slot in schema.outputs] == [('splat', ('SPLAT',))]
-assert 'dinkster_nodes_3d.mesh_gltf_read' not in sys.modules
-assert 'dinkster_nodes_3d.mesh_file_read' not in sys.modules
+assert 'dinkster_3d.mesh_gltf_read' not in sys.modules
+assert 'dinkster_3d.mesh_file_read' not in sys.modules
 assert 'dinkster_native.model3d.mesh' not in sys.modules
 for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud):
     assert NODES.count(node) == 1 and node.schema().node_type.startswith("dinkster.3d.")

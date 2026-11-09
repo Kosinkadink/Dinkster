@@ -342,9 +342,7 @@ def test_model_patch_models_manifest_and_fixture_hosts(
                         manifest=manifest,
                         in_process=in_process,
                         trust_reserved=manifest == models_manifest,
-                        packs={
-                            "dinkster-models": PackInfo("dinkster-nodes-models", version="0.0.1")
-                        }
+                        packs={"dinkster-models": PackInfo("dinkster-models", version="0.0.1")}
                         if manifest == models_manifest
                         else None,
                         worker_group=None if in_process else "model-patch-fixture",

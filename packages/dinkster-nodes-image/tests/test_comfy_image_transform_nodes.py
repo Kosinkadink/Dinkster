@@ -1,9 +1,9 @@
 """Core image transform schemas preserve the ComfyUI workflow contract."""
 
-from dinkster_nodes_image.ported import NODES
+from dinkster_image.ported import NODES
 
 IMAGE_TRANSFORM_NODES = tuple(
-    node for node in NODES if node.__module__ == "dinkster_nodes_image.ported.image_transform"
+    node for node in NODES if node.__module__ == "dinkster_image.ported.image_transform"
 )
 
 

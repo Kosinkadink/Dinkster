@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import digest_bytes
 from dinkster_graph import Graph, GraphNode, TypedLiteral
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models import model_selections as loaders
+from dinkster_models import NODES
+from dinkster_models import model_selections as loaders
 from dinkster_server.preflight import bind_model_names
 from dinkster_workers import load_manifest
 

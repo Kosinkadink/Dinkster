@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.model_merging_specific import (
+from dinkster_models import NODES
+from dinkster_models.model_merging_specific import (
     ModelMergeAuraflow,
     ModelMergeCosmos7B,
     ModelMergeCosmos14B,

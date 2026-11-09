@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode
 from dinkster_values import video_from_source
-from dinkster_video import save_video_stream
+from dinkster_video_runtime import save_video_stream
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -39,7 +39,7 @@ def test_native_video_registration_is_torch_free_and_preserves_first_authority()
             sys.executable,
             "-c",
             "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_TYPE, VIDEO_EDIT_TYPE; "
-            "from dinkster_nodes_video import register_types; "
+            "from dinkster_video import register_types; "
             "r=TypeRegistry(); register_types(r); "
             "assert VIDEO_TYPE in r and VIDEO_EDIT_TYPE in r; assert 'torch' not in sys.modules",
         ],
@@ -47,7 +47,7 @@ def test_native_video_registration_is_torch_free_and_preserves_first_authority()
     )
     from dinkster_api.v1 import TypeRegistry, register_video_edit_type
     from dinkster_inference_wire.types import register_inference_types
-    from dinkster_nodes_video import register_types
+    from dinkster_video import register_types
 
     for first, second in (
         (register_inference_types, register_types),

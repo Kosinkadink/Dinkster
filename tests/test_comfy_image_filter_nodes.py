@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 import pytest
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.ported.image_filters import (
+from dinkster_image import NODES
+from dinkster_image.ported.image_filters import (
     Canny,
     ImageBlend,
     ImageBlur,

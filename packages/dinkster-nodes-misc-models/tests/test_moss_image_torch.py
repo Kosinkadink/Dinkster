@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_misc_models.moss_image import (
+from dinkster_misc_models.moss_image import (
     MOSSImageControl,
     MOSSImageLayoutPrompt,
     TextEncodeMOSSImageEdit,

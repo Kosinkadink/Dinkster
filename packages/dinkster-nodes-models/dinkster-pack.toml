@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-models"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.models", "devices"]
@@ -18,6 +18,6 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_models:NODES"
-types = "dinkster_nodes_models.types:register_types"
-choices = "dinkster_nodes_models.device_routing:device_choices"
+nodes = "dinkster_models:NODES"
+types = "dinkster_models.types:register_types"
+choices = "dinkster_models.device_routing:device_choices"

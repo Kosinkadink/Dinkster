@@ -28,8 +28,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video.interpolation_loader import FrameInterpolationModelLoader
 from dinkster_server import PackInfo
+from dinkster_video.interpolation_loader import FrameInterpolationModelLoader
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -254,7 +254,7 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
     (tmp_path / f"{module}.py").write_text(
         "from test_interpolation_loader_torch import (InspectInterpolationModel, "
         "InterpolationImages, InspectInterpolatedImages)\n"
-        "from dinkster_nodes_video import register_types as register_video\n"
+        "from dinkster_video import register_types as register_video\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-video', "
         "('INTERP_MODEL', 'OPTICAL_FLOW'), allow_bare=True):\n"

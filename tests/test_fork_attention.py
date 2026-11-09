@@ -94,7 +94,7 @@ def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
             """
 import importlib
 from dinkster_inference_wire.process import initialize_inference_process
-from dinkster_nodes_sampling.standard_sampling import KSampler
+from dinkster_sampling.standard_sampling import KSampler
 from dinkster_schema import ComboOption, ComboWidget
 
 initialize_inference_process()

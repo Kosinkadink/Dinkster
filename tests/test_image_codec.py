@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
 from dinkster_api.v1 import MASK_TYPE as COMFY_MASK_TYPE
-from dinkster_nodes_image import register_types as register_image_types
+from dinkster_image import register_types as register_image_types
 from dinkster_values import (
     PNG_CONTAINER_VERSION,
     EncodedPayload,

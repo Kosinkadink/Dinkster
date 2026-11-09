@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 import torch
+from dinkster_3d.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from dinkster_api.v1 import MESH_TYPE, Node, NodeSchema, OutputSpec, TriangleMeshBatch, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer
@@ -162,7 +162,7 @@ def test_ambient_occlusion_ordinary_hosts(tmp_path: Path, in_process: bool, node
     module = f"mesh_bake_source_{node_type.rsplit('.', 1)[-1]}_{in_process}"
     (tmp_path / f"{module}.py").write_text(
         "from test_mesh_bake_torch import MeshSource\n"
-        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "from dinkster_3d import register_types as register_inference_types\n"
         "NODES=(MeshSource,)\n",
         encoding="ascii",
     )

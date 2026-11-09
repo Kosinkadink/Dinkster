@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_hunyuan.hunyuan3d import (
+from dinkster_hunyuan.hunyuan3d import (
     Hunyuan3Dv2Conditioning,
     Hunyuan3Dv2ConditioningMultiView,
 )
@@ -126,9 +126,9 @@ def test_hunyuan_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
         try:
             (tmp_path / "hunyuan_fixture.py").write_text(
                 "from test_hunyuan3d_torch import VisionSource, InspectConditioning\n"
-                "from dinkster_nodes_hunyuan import NODES as COMFY_NODES\n"
+                "from dinkster_hunyuan import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, VisionSource, InspectConditioning)\n",
                 encoding="ascii",
             )
@@ -138,15 +138,15 @@ def test_hunyuan_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
                 .replace(
-                    "dinkster_nodes_hunyuan:NODES",
+                    "dinkster_hunyuan:NODES",
                     "hunyuan_fixture:NODES",
                 )
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "hunyuan_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_hunyuan:register_types",
+                    "dinkster_hunyuan:register_types",
                     "hunyuan_fixture:register_inference_types",
                 ),
                 encoding="ascii",

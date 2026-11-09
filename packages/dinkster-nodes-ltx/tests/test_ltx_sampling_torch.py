@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.ltx_sampling import LTXVScheduler, ModelSamplingLTXV
+from dinkster_ltx.ltx_sampling import LTXVScheduler, ModelSamplingLTXV
 from ltx_pack_fixtures import compose_ltx_packs
 
 from dinkster.compose import ServingComposer

@@ -10,13 +10,13 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
+from dinkster_conditioning.clip import CLIPTextEncode
 from dinkster_graph import graph_from_wire, validate
-from dinkster_nodes_conditioning.clip import CLIPTextEncode
-from dinkster_nodes_image.ported.image_file_tools import SaveImage
-from dinkster_nodes_latent.latent import EmptyLatentImage
-from dinkster_nodes_latent.vae import VAEDecode
-from dinkster_nodes_models.model_file_loaders import CheckpointLoaderSimple
-from dinkster_nodes_sampling.standard_sampling import KSampler
+from dinkster_image.ported.image_file_tools import SaveImage
+from dinkster_latent.latent import EmptyLatentImage
+from dinkster_latent.vae import VAEDecode
+from dinkster_models.model_file_loaders import CheckpointLoaderSimple
+from dinkster_sampling.standard_sampling import KSampler
 from dinkster_schema import schema_to_wire
 
 ROOT = Path(__file__).resolve().parents[1]

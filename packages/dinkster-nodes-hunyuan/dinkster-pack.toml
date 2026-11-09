@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-hunyuan"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.hunyuan"]
@@ -22,5 +22,5 @@ api = "dinkster-api/v1"
 "dinkster-video" = ">=0.0.1"
 
 [pack.entry]
-nodes = "dinkster_nodes_hunyuan:NODES"
-types = "dinkster_nodes_hunyuan:register_types"
+nodes = "dinkster_hunyuan:NODES"
+types = "dinkster_hunyuan:register_types"

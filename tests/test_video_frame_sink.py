@@ -13,7 +13,7 @@ import av
 import numpy as np
 import pytest
 from dinkster_api.v1 import annotate_image, save_frame_records
-from dinkster_video import formats, read_video_metadata
+from dinkster_video_runtime import formats, read_video_metadata
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 

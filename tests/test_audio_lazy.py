@@ -19,7 +19,7 @@ from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetError, AssetIntegrityError, AssetRef, AssetVault, digest_bytes
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import value_asset_references
-from dinkster_nodes_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
+from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 from dinkster_values import TypeRegistry
 from dinkster_values.audio_codec import (
     AUDIO_INLINE_LIMIT,
@@ -884,7 +884,7 @@ def test_audio_pack_registration_is_torch_free() -> None:
             sys.executable,
             "-c",
             "import sys; from dinkster_api.v1 import AUDIO_TYPE, TypeRegistry; "
-            "from dinkster_nodes_audio import register_types; "
+            "from dinkster_audio import register_types; "
             "registry=TypeRegistry(); register_types(registry); "
             "assert AUDIO_TYPE in registry; assert 'torch' not in sys.modules; "
             "assert 'dinkster_inference' not in sys.modules",
@@ -897,8 +897,8 @@ def test_audio_pack_registration_is_torch_free() -> None:
 
 @pytest.mark.parametrize("concat", [False, True])
 def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) -> None:
-    from dinkster_nodes_audio import NODES, register_types
-    from dinkster_nodes_audio.audio_effects import TrimAudioDuration
+    from dinkster_audio import NODES, register_types
+    from dinkster_audio.audio_effects import TrimAudioDuration
     from dinkster_protocol import Invocation
     from dinkster_schema import build_node_types
     from dinkster_values import register_core_types

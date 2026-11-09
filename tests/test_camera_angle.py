@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from dinkster_3d.camera_angle import CameraAngle
 from dinkster_api.v1 import (
     CORE_STRING,
     LOAD3D_CAMERA_TYPE,
@@ -18,7 +19,6 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.camera_angle import CameraAngle
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer

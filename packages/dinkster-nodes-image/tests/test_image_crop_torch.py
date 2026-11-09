@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.image_crop import ImageCropToMask, ImageCropV2
-from dinkster_nodes_utilities.image_crop import PrimitiveBoundingBox
+from dinkster_image.ported.image_crop import ImageCropToMask, ImageCropV2
 from dinkster_schema import use_reporter
+from dinkster_utilities.image_crop import PrimitiveBoundingBox
 from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -214,7 +214,7 @@ def test_crop_and_bounding_box_execute_twice_through_ordinary_manifest(
         (tmp_path / f"{fixture_module}.py").write_text(
             "from test_image_crop_torch import CropSource, CropInspect\n"
             "from test_image_crop_torch import MaskCropSource, MaskCropInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (CropSource, CropInspect, MaskCropSource, MaskCropInspect)\n",
             encoding="ascii",
         )

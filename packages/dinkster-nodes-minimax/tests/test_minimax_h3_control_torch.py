@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_minimax.minimax_h3_control import MiniMaxH3FunControlNetApply
+from dinkster_minimax.minimax_h3_control import MiniMaxH3FunControlNetApply
 
 
 class Vae:

@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
+from dinkster_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -73,7 +73,7 @@ def test_lora_hook_schemas_are_torch_free_and_registered() -> None:
 import sys
 
 from dinkster_api.v1 import HOOKS_TYPE, TypeExpr
-from dinkster_nodes_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
+from dinkster_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
 
 HOOK_LORA_NODES = (CreateHookLora, CreateHookLoraModelOnly)
 
@@ -96,7 +96,7 @@ assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
         check=True,
         cwd=root,
     )
-    from dinkster_nodes_models import NODES
+    from dinkster_models import NODES
 
     assert all(node in NODES for node in HOOK_LORA_NODES)
 

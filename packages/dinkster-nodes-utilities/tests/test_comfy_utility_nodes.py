@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 from dinkster_api.v1 import schema_to_wire
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_utilities.utilities import ComfyNumberConvert, SeedNode
+from dinkster_utilities.utilities import ComfyNumberConvert, SeedNode
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario

@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_upscale.image_model_upscale import ImageUpscaleWithModel
 from dinkster_server import PackInfo
+from dinkster_upscale.image_model_upscale import ImageUpscaleWithModel
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -162,7 +162,7 @@ def test_upscale_executes_and_caches_in_ordinary_hosts(tmp_path: Path, in_proces
         (tmp_path / "upscale_fixture.py").write_text(
             "from test_image_model_upscale_torch import UpscaleSource, UpscaleConsumer\n"
             "from dinkster_api.v1 import register_inference_types\n"
-            "from dinkster_nodes_upscale import register_types as register_upscale\n"
+            "from dinkster_upscale import register_types as register_upscale\n"
             "def register_types(registry):\n"
             "    register_inference_types(registry)\n"
             "    with registry.registering_pack('dinkster-upscale', "

@@ -66,6 +66,40 @@ def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
     assert arms == {}
 
 
+def test_in_process_wheel_keeps_standard_library_imports_unshadowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    package = tmp_path / "wheel_import_boundary"
+    package.mkdir()
+    (package / "__init__.py").write_text("NODES = []\n")
+    (package / "types.py").write_text("raise RuntimeError('pack types shadows stdlib')\n")
+    manifest = package / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "wheel-import-boundary"\n'
+        '[pack.entry]\nnodes = "wheel_import_boundary:NODES"\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    try:
+        load_pack(load_manifest(manifest), import_from_pack_root=True)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from types import MappingProxyType; "
+                "from wheel_import_boundary import NODES; assert NODES == []",
+            ],
+            cwd=tmp_path,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        sys.modules.pop("wheel_import_boundary", None)
+
+
 def write_manifest(path: Path, handler: object = None) -> Path:
     handler_line = "" if handler is None else f"workgroup_handler = {handler}\n"
     path.write_text(

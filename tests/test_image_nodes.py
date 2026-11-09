@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     Region,
     TypeRegistry,
 )
-from dinkster_nodes_image.geometry import (
+from dinkster_image.geometry import (
     ImageCrop,
     ImageInfo,
     ImageResize,
@@ -26,7 +26,7 @@ from dinkster_nodes_image.geometry import (
     MakeRegion,
     RegionInfo,
 )
-from dinkster_nodes_image.types import RESERVED_TYPE_IDS, register_image_types
+from dinkster_image.types import RESERVED_TYPE_IDS, register_image_types
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "image_geometry_e20d433a.json"
 GOLDEN = cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))

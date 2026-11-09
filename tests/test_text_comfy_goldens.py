@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
-from dinkster_nodes_text.save_text import SaveText
+from dinkster_text.save_text import SaveText
 
 from tests.test_save_text import _snapshot
 

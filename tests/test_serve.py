@@ -322,16 +322,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
     workspace_names = {path.name for path in workspace}
-    expected_workspace = {"dinkster-api"}
-    if pack_name == "dinkster-vision-depth-anything-3":
-        expected_workspace |= {
-            "dinkster-inference-wire",
-            "dinkster-assets",
-            "dinkster-memory",
-            "dinkster-schema",
-            "dinkster-values",
-        }
-    assert workspace_names == expected_workspace
+    assert workspace_names == {"dinkster-api"}
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")

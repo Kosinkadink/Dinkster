@@ -19,7 +19,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_audio,
 )
-from dinkster_nodes_latent.audio_vae import VAEDecodeAudio, VAEDecodeAudioTiled, VAEEncodeAudio
+from dinkster_latent.audio_vae import VAEDecodeAudio, VAEDecodeAudioTiled, VAEEncodeAudio
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 

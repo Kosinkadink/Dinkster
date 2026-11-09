@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from dinkster_nodes_ltx.ltx_guides import LTXVAddLatentGuide
+from dinkster_ltx.ltx_guides import LTXVAddLatentGuide
 
 
 @pytest.mark.parametrize(

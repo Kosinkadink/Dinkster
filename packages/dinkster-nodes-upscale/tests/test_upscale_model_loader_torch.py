@@ -28,8 +28,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_upscale.upscale_model_loader import UpscaleModelLoader
 from dinkster_server import PackInfo
+from dinkster_upscale.upscale_model_loader import UpscaleModelLoader
 from safetensors.torch import save_file
 from spandrel import (
     ArchRegistry,
@@ -243,7 +243,7 @@ def test_loader_resident_output_executes_and_caches_in_ordinary_hosts(
         (tmp_path / "upscale_loader_fixture.py").write_text(
             "from test_upscale_model_loader_torch import UpscaleLoaderConsumer\n"
             "from dinkster_api.v1 import register_inference_types\n"
-            "from dinkster_nodes_upscale import register_types as register_upscale\n"
+            "from dinkster_upscale import register_types as register_upscale\n"
             "def register_types(registry):\n"
             "    register_inference_types(registry)\n"
             "    with registry.registering_pack('dinkster-upscale', "

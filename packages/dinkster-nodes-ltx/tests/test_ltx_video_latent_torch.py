@@ -1,7 +1,7 @@
 """CPU LTX video latent layout and metadata."""
 
 import torch
-from dinkster_nodes_ltx.video_latent import EmptyLTXVLatentVideo
+from dinkster_ltx.video_latent import EmptyLTXVLatentVideo
 
 
 def test_empty_ltx_video_latent_preserves_layout_and_metadata() -> None:

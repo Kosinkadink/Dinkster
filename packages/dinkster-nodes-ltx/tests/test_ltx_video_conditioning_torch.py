@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.ltx_video_conditioning import (
+from dinkster_ltx.ltx_video_conditioning import (
     LTXVConditioning,
     LTXVCropGuides,
     LTXVImgToVideo,
@@ -218,9 +218,9 @@ def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "ltx_video_conditioning_fixture.py").write_text(
                 "from test_ltx_video_conditioning_torch import LTXConsumer, LTXSource\n"
-                "from dinkster_nodes_ltx import NODES as COMFY_NODES\n"
+                "from dinkster_ltx import NODES as COMFY_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_models.device_routing import device_choices\n"
+                "from dinkster_models.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, LTXSource, LTXConsumer)\n",
                 encoding="ascii",
             )
@@ -228,13 +228,13 @@ def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
             fixture.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["ltx-video-conditioning-fixture",')
-                .replace("dinkster_nodes_ltx:NODES", "ltx_video_conditioning_fixture:NODES")
+                .replace("dinkster_ltx:NODES", "ltx_video_conditioning_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_models.device_routing:device_choices",
+                    "dinkster_models.device_routing:device_choices",
                     "ltx_video_conditioning_fixture:device_choices",
                 )
                 .replace(
-                    "dinkster_nodes_ltx:register_types",
+                    "dinkster_ltx:register_types",
                     "ltx_video_conditioning_fixture:register_inference_types",
                 ),
                 encoding="ascii",

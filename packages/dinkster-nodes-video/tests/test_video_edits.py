@@ -33,7 +33,7 @@ from dinkster_api.v1 import (
     video_from_source,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video.video_edits import VideoCrop, VideoSlice, VideoTrim
+from dinkster_video.video_edits import VideoCrop, VideoSlice, VideoTrim
 from video_pack_fixtures import compose_video_packs
 
 from dinkster.compose import ServingComposer
@@ -49,7 +49,7 @@ import sys
 from dinkster_api.v1 import (
     CORE_BOOLEAN, CORE_FLOAT, VIDEO_TYPE, VIDEO_EDIT_TYPE, NumberWidget, TypeExpr,
 )
-from dinkster_nodes_video.video_edits import VideoCrop, VideoSlice, VideoTrim
+from dinkster_video.video_edits import VideoCrop, VideoSlice, VideoTrim
 s = VideoCrop.schema()
 assert (s.node_type, s.display_name, s.category) == (
     'dinkster.video.video_crop', 'Crop Video', 'video'

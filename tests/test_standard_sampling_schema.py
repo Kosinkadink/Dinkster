@@ -1,8 +1,8 @@
 """Torch-free schema contracts for native standard sampler nodes."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.standard_sampling import (
+from dinkster_sampling import NODES
+from dinkster_sampling.standard_sampling import (
     KSampler,
     KSamplerAdvanced,
 )

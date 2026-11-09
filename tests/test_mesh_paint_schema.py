@@ -14,8 +14,8 @@ import sys
 sys.modules['torch'] = None
 sys.modules['scipy'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.mesh_paint import PaintMesh
+from dinkster_3d import NODES
+from dinkster_3d.mesh_paint import PaintMesh
 from dinkster_workers import load_manifest
 schema = PaintMesh.schema()
 assert [(i.id, i.type.types) for i in schema.inputs] == [

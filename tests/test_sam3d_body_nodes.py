@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 from dinkster_api.v1 import AssetWidget, schema_to_wire
-from dinkster_nodes_vision_sam3d_body import NODES
-from dinkster_nodes_vision_sam3d_body.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
-from dinkster_nodes_vision_sam3d_body.sam3d_export import BuildPoseFile
-from dinkster_nodes_vision_sam3d_body.sam3d_expression import SAM3DBody_FaceExpression
-from dinkster_nodes_vision_sam3d_body.sam3d_prediction import SAM3DBody_Predict
+from dinkster_vision_sam3d_body import NODES
+from dinkster_vision_sam3d_body.sam3d_body import SAM3DBody_Loader, SAM3DBody_Smooth
+from dinkster_vision_sam3d_body.sam3d_export import BuildPoseFile
+from dinkster_vision_sam3d_body.sam3d_expression import SAM3DBody_FaceExpression
+from dinkster_vision_sam3d_body.sam3d_prediction import SAM3DBody_Predict
 from dinkster_workers import load_manifest
 
 from tools.compare_nodes import compare
@@ -52,7 +52,7 @@ def test_sam3d_discovery_is_tensor_runtime_free() -> None:
             "sys.modules['torch'] = None\n"
             "sys.modules['scipy'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_nodes_vision_sam3d_body import (\n"
+            "from dinkster_vision_sam3d_body import (\n"
             "    sam3d_body, sam3d_export, sam3d_expression, sam3d_prediction\n"
             ")\n"
             "prefix = 'dinkster.vision.sam3d.body.'\n"

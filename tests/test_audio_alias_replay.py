@@ -22,8 +22,8 @@ from dinkster_assets import (
     AssetVault,
     digest_bytes,
 )
-from dinkster_nodes_audio.audio_io import LoadAudio
-from dinkster_nodes_audio.audio_save import SaveAudioAdvanced
+from dinkster_audio.audio_io import LoadAudio
+from dinkster_audio.audio_save import SaveAudioAdvanced
 from dinkster_values.audio_codec import audio_window, effective_audio_facts
 
 from tests.test_audio_io import _bound, _mount, _save

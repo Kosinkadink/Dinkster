@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_nodes_models.attention_multiply import (
+from dinkster_models.attention_multiply import (
     CLIPAttentionMultiply,
     UNetCrossAttentionMultiply,
     UNetSelfAttentionMultiply,

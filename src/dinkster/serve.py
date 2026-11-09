@@ -136,7 +136,6 @@ from .benchmark import (
     instrument_engine_factory,
     write_record,
 )
-from .comfy_translations_api import add_comfy_translation_routes
 from .compose import (
     CompositionError,
     PackDelta,
@@ -291,7 +290,7 @@ def _order_default_pack_specs(
     raises (one broken pack must not take the ordering down with it), the
     defaults still compose in manifest-requirement order: composing them in
     load order validates a pack before a declared dependency that sorts
-    later, so dinkster-nodes-image would fail its media-io requirement
+    later, so dinkster-image would fail its media-io requirement
     against a dinkster-nodes-media-io that has not announced yet.
     """
     try:
@@ -2071,7 +2070,6 @@ def main(argv: list[str] | None = None) -> None:
         # accepting one is the client's explicit gesture. Always registered -
         # an empty composition answers with empty candidates, not a 404.
         add_guess_routes(app)
-        add_comfy_translation_routes(app)
         if mount_service is not None:
             # GET routes serve everyone; the mutation half answers 403
             # mount-changes-disabled unless --allow-mount-changes opted in.

@@ -15,60 +15,60 @@ resolution-markers = [
 [manifest]
 members = [
     "dinkster",
+    "dinkster-3d",
+    "dinkster-3d-models",
     "dinkster-api",
     "dinkster-assets",
+    "dinkster-audio",
+    "dinkster-audio-models",
     "dinkster-caches",
     "dinkster-collab",
+    "dinkster-conditioning",
+    "dinkster-cosmos",
     "dinkster-engine",
+    "dinkster-flux",
     "dinkster-graph",
+    "dinkster-hidream",
+    "dinkster-hunyuan",
+    "dinkster-image",
     "dinkster-image-document",
     "dinkster-inference-wire",
+    "dinkster-latent",
+    "dinkster-llm",
+    "dinkster-ltx",
     "dinkster-memory",
+    "dinkster-minimax",
+    "dinkster-misc-models",
+    "dinkster-models",
     "dinkster-native",
-    "dinkster-nodes-3d",
-    "dinkster-nodes-3d-models",
-    "dinkster-nodes-audio",
-    "dinkster-nodes-audio-models",
-    "dinkster-nodes-conditioning",
-    "dinkster-nodes-cosmos",
     "dinkster-nodes-dev",
-    "dinkster-nodes-flux",
-    "dinkster-nodes-hidream",
-    "dinkster-nodes-hunyuan",
-    "dinkster-nodes-image",
-    "dinkster-nodes-latent",
-    "dinkster-nodes-llm",
-    "dinkster-nodes-ltx",
-    "dinkster-nodes-minimax",
-    "dinkster-nodes-misc-models",
-    "dinkster-nodes-models",
-    "dinkster-nodes-qwen",
     "dinkster-nodes-remote",
-    "dinkster-nodes-sampling",
-    "dinkster-nodes-sd",
-    "dinkster-nodes-seedvr",
-    "dinkster-nodes-text",
-    "dinkster-nodes-upscale",
-    "dinkster-nodes-utilities",
-    "dinkster-nodes-video",
-    "dinkster-nodes-vision-background-removal",
-    "dinkster-nodes-vision-depth-anything-3",
-    "dinkster-nodes-vision-marigold",
-    "dinkster-nodes-vision-mediapipe",
-    "dinkster-nodes-vision-moge",
-    "dinkster-nodes-vision-rtdetr",
-    "dinkster-nodes-vision-sam3",
-    "dinkster-nodes-vision-sam3d-body",
-    "dinkster-nodes-vision-sdpose",
-    "dinkster-nodes-void",
-    "dinkster-nodes-wan",
     "dinkster-protocol",
+    "dinkster-qwen",
     "dinkster-registry",
+    "dinkster-sampling",
     "dinkster-schema",
+    "dinkster-sd",
+    "dinkster-seedvr",
     "dinkster-server",
     "dinkster-supervisor",
+    "dinkster-text",
+    "dinkster-upscale",
+    "dinkster-utilities",
     "dinkster-values",
     "dinkster-video",
+    "dinkster-video-runtime",
+    "dinkster-vision-background-removal",
+    "dinkster-vision-depth-anything-3",
+    "dinkster-vision-marigold",
+    "dinkster-vision-mediapipe",
+    "dinkster-vision-moge",
+    "dinkster-vision-rtdetr",
+    "dinkster-vision-sam3",
+    "dinkster-vision-sam3d-body",
+    "dinkster-vision-sdpose",
+    "dinkster-void",
+    "dinkster-wan",
     "dinkster-workers",
 ]
 constraints = [
@@ -963,6 +963,59 @@ release-publication = [
 ]
 
 [[package]]
+name = "dinkster-3d"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-3d" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-image" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+
+[package.optional-dependencies]
+numba = [
+    { name = "numba" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-image", editable = "packages/dinkster-nodes-image" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numba", marker = "extra == 'numba'", specifier = ">=0.67" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "scipy", specifier = ">=1.11" },
+    { name = "torch" },
+    { name = "tqdm", specifier = ">=4" },
+]
+provides-extras = ["numba"]
+
+[[package]]
+name = "dinkster-3d-models"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-3d-models" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "pillow" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-api"
 version = "0.0.2"
 source = { editable = "packages/dinkster-api" }
@@ -1019,6 +1072,46 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-audio"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-audio" }
+dependencies = [
+    { name = "av" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=14" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-audio-models"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-audio-models" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-caches"
 version = "0.0.2"
 source = { editable = "packages/dinkster-caches" }
@@ -1049,6 +1142,46 @@ dependencies = [
 requires-dist = [{ name = "aiohttp", specifier = ">=3.10" }]
 
 [[package]]
+name = "dinkster-conditioning"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-conditioning" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-latent" },
+    { name = "safetensors" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-latent", editable = "packages/dinkster-nodes-latent" },
+    { name = "safetensors" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-cosmos"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-cosmos" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-video" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-video", editable = "packages/dinkster-nodes-video" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-engine"
 version = "0.0.2"
 source = { editable = "packages/dinkster-engine" }
@@ -1068,6 +1201,25 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-flux"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-flux" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-graph"
 version = "0.0.2"
 source = { editable = "packages/dinkster-graph" }
@@ -1080,6 +1232,81 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
+]
+
+[[package]]
+name = "dinkster-hidream"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-hidream" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-hunyuan"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-hunyuan" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-video" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-video", editable = "packages/dinkster-nodes-video" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-image"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-image" }
+dependencies = [
+    { name = "av" },
+    { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "kornia" },
+    { name = "numpy" },
+    { name = "opencv-contrib-python-headless" },
+    { name = "pillow" },
+    { name = "pyopengl" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = "==18.1.0" },
+    { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "kornia" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "opencv-contrib-python-headless", specifier = ">=5.0,<5.1" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "pyopengl", specifier = ">=3.1.8,<4" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "torchvision" },
 ]
 
 [[package]]
@@ -1165,6 +1392,67 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-latent"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-latent" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "safetensors" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "safetensors" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-llm"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-llm" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-ltx"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-ltx" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-latent" },
+    { name = "dinkster-llm" },
+    { name = "dinkster-models" },
+    { name = "dinkster-video" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-latent", editable = "packages/dinkster-nodes-latent" },
+    { name = "dinkster-llm", editable = "packages/dinkster-nodes-llm" },
+    { name = "dinkster-models", editable = "packages/dinkster-nodes-models" },
+    { name = "dinkster-video", editable = "packages/dinkster-nodes-video" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-memory"
 version = "0.0.2"
 source = { editable = "packages/dinkster-memory" }
@@ -1177,6 +1465,65 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "psutil", specifier = ">=5.9" },
+]
+
+[[package]]
+name = "dinkster-minimax"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-minimax" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-misc-models"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-misc-models" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-qwen" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-qwen", editable = "packages/dinkster-nodes-qwen" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-models"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-models" }
+dependencies = [
+    { name = "comfy-kitchen" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "comfy-kitchen" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
 ]
 
 [[package]]
@@ -1193,7 +1540,7 @@ dependencies = [
     { name = "dinkster-protocol" },
     { name = "dinkster-schema" },
     { name = "dinkster-values" },
-    { name = "dinkster-video" },
+    { name = "dinkster-video-runtime" },
     { name = "dinkster-workers" },
     { name = "numba" },
     { name = "numpy" },
@@ -1210,129 +1557,10 @@ requires-dist = [
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
-    { name = "dinkster-video", editable = "packages/dinkster-video" },
+    { name = "dinkster-video-runtime", editable = "packages/dinkster-video-runtime" },
     { name = "dinkster-workers", editable = "packages/dinkster-workers" },
     { name = "numba", specifier = ">=0.67" },
     { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-nodes-3d"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-3d" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-image" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "scipy" },
-    { name = "tqdm" },
-]
-
-[package.optional-dependencies]
-numba = [
-    { name = "numba" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
-    { name = "numba", marker = "extra == 'numba'", specifier = ">=0.67" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pillow", specifier = ">=10" },
-    { name = "scipy", specifier = ">=1.11" },
-    { name = "tqdm", specifier = ">=4" },
-]
-provides-extras = ["numba"]
-
-[[package]]
-name = "dinkster-nodes-3d-models"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-3d-models" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "pillow" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "pillow", specifier = ">=10" },
-]
-
-[[package]]
-name = "dinkster-nodes-audio"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-audio" }
-dependencies = [
-    { name = "av" },
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "numpy" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", specifier = ">=14" },
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-audio-models"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-audio-models" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-conditioning"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-conditioning" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-latent" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-latent", editable = "packages/dinkster-nodes-latent" },
-]
-
-[[package]]
-name = "dinkster-nodes-cosmos"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-cosmos" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-nodes-video" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-nodes-video", editable = "packages/dinkster-nodes-video" },
 ]
 
 [[package]]
@@ -1351,221 +1579,8 @@ requires-dist = [
 ]
 
 [[package]]
-name = "dinkster-nodes-flux"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-flux" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-hidream"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-hidream" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-hunyuan"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-hunyuan" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-video" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-video", editable = "packages/dinkster-nodes-video" },
-]
-
-[[package]]
-name = "dinkster-nodes-image"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-image" }
-dependencies = [
-    { name = "av" },
-    { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "kornia" },
-    { name = "numpy" },
-    { name = "opencv-contrib-python-headless" },
-    { name = "pillow" },
-    { name = "pyopengl" },
-    { name = "scipy" },
-    { name = "torch" },
-    { name = "torchvision" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", specifier = "==18.1.0" },
-    { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "kornia" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "opencv-contrib-python-headless", specifier = ">=5.0,<5.1" },
-    { name = "pillow", specifier = ">=10" },
-    { name = "pyopengl", specifier = ">=3.1.8,<4" },
-    { name = "scipy" },
-    { name = "torch" },
-    { name = "torchvision" },
-]
-
-[[package]]
-name = "dinkster-nodes-latent"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-latent" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-llm"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-llm" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-ltx"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-ltx" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-latent" },
-    { name = "dinkster-nodes-llm" },
-    { name = "dinkster-nodes-models" },
-    { name = "dinkster-nodes-video" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-latent", editable = "packages/dinkster-nodes-latent" },
-    { name = "dinkster-nodes-llm", editable = "packages/dinkster-nodes-llm" },
-    { name = "dinkster-nodes-models", editable = "packages/dinkster-nodes-models" },
-    { name = "dinkster-nodes-video", editable = "packages/dinkster-nodes-video" },
-]
-
-[[package]]
-name = "dinkster-nodes-minimax"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-minimax" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-]
-
-[[package]]
-name = "dinkster-nodes-misc-models"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-misc-models" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-qwen" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-qwen", editable = "packages/dinkster-nodes-qwen" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-models"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-models" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-]
-
-[[package]]
-name = "dinkster-nodes-qwen"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-qwen" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "torch" },
-]
-
-[[package]]
 name = "dinkster-nodes-remote"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-remote" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1576,292 +1591,6 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-api", editable = "packages/dinkster-api" },
     { name = "httpx", specifier = ">=0.28,<1" },
-]
-
-[[package]]
-name = "dinkster-nodes-sampling"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-sampling" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-latent" },
-    { name = "dinkster-values" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-latent", editable = "packages/dinkster-nodes-latent" },
-    { name = "dinkster-values", editable = "packages/dinkster-values" },
-]
-
-[[package]]
-name = "dinkster-nodes-sd"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-sd" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-sampling" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-sampling", editable = "packages/dinkster-nodes-sampling" },
-    { name = "torch" },
-]
-
-[[package]]
-name = "dinkster-nodes-seedvr"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-seedvr" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-text"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-text" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-upscale"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-upscale" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-utilities"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-utilities" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "simpleeval" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "simpleeval", specifier = "==1.0.8" },
-]
-
-[[package]]
-name = "dinkster-nodes-video"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-video" }
-dependencies = [
-    { name = "av" },
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "numpy" },
-    { name = "torch" },
-    { name = "torchvision" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", specifier = ">=14" },
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", specifier = "==0.1.1" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "torch" },
-    { name = "torchvision" },
-]
-
-[[package]]
-name = "dinkster-nodes-vision-background-removal"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-background-removal" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-vision-depth-anything-3"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-depth-anything-3" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-]
-
-[[package]]
-name = "dinkster-nodes-vision-marigold"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-marigold" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-vision-mediapipe"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-mediapipe" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-    { name = "pillow" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pillow", specifier = ">=10" },
-]
-
-[[package]]
-name = "dinkster-nodes-vision-moge"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-moge" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
-name = "dinkster-nodes-vision-rtdetr"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-rtdetr" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "pillow" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "pillow", specifier = ">=10" },
-]
-
-[[package]]
-name = "dinkster-nodes-vision-sam3"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-sam3" }
-dependencies = [
-    { name = "av" },
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", specifier = ">=14" },
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-]
-
-[[package]]
-name = "dinkster-nodes-vision-sam3d-body"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-sam3d-body" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-image" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "scipy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pillow", specifier = ">=10" },
-    { name = "scipy", specifier = ">=1.11" },
-]
-
-[[package]]
-name = "dinkster-nodes-vision-sdpose"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-vision-sdpose" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-nodes-image" },
-    { name = "dinkster-nodes-misc-models" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
-    { name = "dinkster-nodes-misc-models", editable = "packages/dinkster-nodes-misc-models" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-nodes-void"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-void" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-]
-
-[[package]]
-name = "dinkster-nodes-wan"
-version = "0.0.2"
-source = { editable = "packages/dinkster-nodes-wan" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-models" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
-    { name = "dinkster-nodes-conditioning", editable = "packages/dinkster-nodes-conditioning" },
-    { name = "dinkster-nodes-models", editable = "packages/dinkster-nodes-models" },
 ]
 
 [[package]]
@@ -1902,6 +1631,25 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-qwen"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-qwen" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
 name = "dinkster-registry"
 version = "0.0.2"
 source = { editable = "packages/dinkster-registry" }
@@ -1921,6 +1669,31 @@ requires-dist = [
 ]
 
 [[package]]
+name = "dinkster-sampling"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-sampling" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-latent" },
+    { name = "numpy" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-latent", editable = "packages/dinkster-nodes-latent" },
+    { name = "numpy" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+
+[[package]]
 name = "dinkster-schema"
 version = "0.0.2"
 source = { editable = "packages/dinkster-schema" }
@@ -1933,6 +1706,46 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "packaging", specifier = ">=24" },
+]
+
+[[package]]
+name = "dinkster-sd"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-sd" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-sampling" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-sampling", editable = "packages/dinkster-nodes-sampling" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-seedvr"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-seedvr" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numpy" },
+    { name = "torch" },
 ]
 
 [[package]]
@@ -2004,6 +1817,17 @@ requires-dist = [
 environment-tools = [{ name = "uv", specifier = "==0.11.29" }]
 
 [[package]]
+name = "dinkster-text"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-text" }
+dependencies = [
+    { name = "dinkster-api" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
+
+[[package]]
 name = "dinkster-token-verifier"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2019,6 +1843,40 @@ wheels = [
 ]
 
 [[package]]
+name = "dinkster-upscale"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-upscale" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "spandrel" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "spandrel" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-utilities"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-utilities" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "simpleeval" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "simpleeval", specifier = "==1.0.8" },
+]
+
+[[package]]
 name = "dinkster-values"
 version = "0.0.2"
 source = { editable = "packages/dinkster-values" }
@@ -2026,7 +1884,30 @@ source = { editable = "packages/dinkster-values" }
 [[package]]
 name = "dinkster-video"
 version = "0.0.2"
-source = { editable = "packages/dinkster-video" }
+source = { editable = "packages/dinkster-nodes-video" }
+dependencies = [
+    { name = "av" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=14" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[[package]]
+name = "dinkster-video-runtime"
+version = "0.0.2"
+source = { editable = "packages/dinkster-video-runtime" }
 dependencies = [
     { name = "av" },
     { name = "dinkster-image-document" },
@@ -2044,6 +1925,237 @@ requires-dist = [
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
+]
+
+[[package]]
+name = "dinkster-vision-background-removal"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-background-removal" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-depth-anything-3"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-depth-anything-3" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-marigold"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-marigold" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-mediapipe"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-mediapipe" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-moge"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-moge" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-rtdetr"
+version = "0.0.4"
+source = { editable = "packages/dinkster-nodes-vision-rtdetr" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "pillow" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[[package]]
+name = "dinkster-vision-sam3"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-sam3" }
+dependencies = [
+    { name = "av" },
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=14" },
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-sam3d-body"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-sam3d-body" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-image" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-vision-sam3" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "scipy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-image", editable = "packages/dinkster-nodes-image" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-vision-sam3", editable = "packages/dinkster-nodes-vision-sam3" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "scipy", specifier = ">=1.11" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-vision-sdpose"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-vision-sdpose" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-image" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-misc-models" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-image", editable = "packages/dinkster-nodes-image" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-misc-models", editable = "packages/dinkster-nodes-misc-models" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-void"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-void" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-video" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-video", editable = "packages/dinkster-nodes-video" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "dinkster-wan"
+version = "0.0.2"
+source = { editable = "packages/dinkster-nodes-wan" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-conditioning" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-models" },
+    { name = "dinkster-vision-sam3" },
+    { name = "einops" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-conditioning", editable = "packages/dinkster-nodes-conditioning" },
+    { name = "dinkster-inference", specifier = "==0.1.1" },
+    { name = "dinkster-models", editable = "packages/dinkster-nodes-models" },
+    { name = "dinkster-vision-sam3", editable = "packages/dinkster-nodes-vision-sam3" },
+    { name = "einops" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "torch" },
 ]
 
 [[package]]

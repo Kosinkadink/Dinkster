@@ -3,7 +3,7 @@
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_wan.context_windows import WanContextWindowsManual
+from dinkster_wan.context_windows import WanContextWindowsManual
 
 
 @pytest.mark.parametrize(

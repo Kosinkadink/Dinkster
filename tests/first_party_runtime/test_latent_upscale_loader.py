@@ -25,8 +25,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.latent_upscale_loader import LatentUpscaleModelLoader
+from dinkster_models import NODES
+from dinkster_models.latent_upscale_loader import LatentUpscaleModelLoader
 from dinkster_server import PackInfo
 from safetensors.torch import save_file
 
@@ -100,13 +100,13 @@ def test_hunyuan_720p_dispatch_derives_the_reference_config(monkeypatch, tmp_pat
         ),
     }
     monkeypatch.setattr(
-        "dinkster_nodes_models.latent_upscale_loader.initialize_inference_process", lambda: None
+        "dinkster_models.latent_upscale_loader.initialize_inference_process", lambda: None
     )
     monkeypatch.setattr(
-        "dinkster_nodes_models.latent_upscale_loader._asset_path", lambda _: str(tmp_path / "model")
+        "dinkster_models.latent_upscale_loader._asset_path", lambda _: str(tmp_path / "model")
     )
     monkeypatch.setattr(
-        "dinkster_nodes_models.latent_upscale_loader.importlib.import_module", modules.__getitem__
+        "dinkster_models.latent_upscale_loader.importlib.import_module", modules.__getitem__
     )
     result = LatentUpscaleModelLoader.execute(model_name=_Asset(tmp_path / "model"))
     assert isinstance(result["LATENT_UPSCALE_MODEL"], Model)

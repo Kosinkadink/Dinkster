@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-audio"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.audio"]
@@ -18,5 +18,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_audio:NODES"
-types = "dinkster_nodes_audio:register_types"
+nodes = "dinkster_audio:NODES"
+types = "dinkster_audio:register_types"

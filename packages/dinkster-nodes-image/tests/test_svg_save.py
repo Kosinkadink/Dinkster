@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable, digest_bytes
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.svg_save import SaveSVGNode
+from dinkster_image.ported.svg_save import SaveSVGNode
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -110,7 +110,7 @@ def test_svg_save_publishes_ordered_streams_and_submission_metadata(
         module = f"svg_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
             "from test_svg_save import SVGSource, SVGInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (SVGSource, SVGInspect)\n",
             encoding="ascii",
         )

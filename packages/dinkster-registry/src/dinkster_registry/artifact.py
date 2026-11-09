@@ -27,6 +27,8 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+from dinkster_workers.pack_wheel import validate_pack_wheel
+
 from .model import artifact_digest, validate_artifact_digest
 
 MANIFEST_FILENAME = "dinkster-pack.toml"
@@ -104,6 +106,8 @@ def unpack_artifact(archive_path: Path, dest: Path, expected_digest: str) -> Pat
     dest_resolved = dest.resolve()
     with zipfile.ZipFile(archive_path) as archive:
         names = archive.namelist()
+        if any(name.endswith(".dist-info/METADATA") for name in names):
+            validate_pack_wheel(archive)
         if len(names) != len(set(names)):
             raise ArtifactError(f"{archive_path}: duplicate entry names; not a canonical artifact")
         for name in names:

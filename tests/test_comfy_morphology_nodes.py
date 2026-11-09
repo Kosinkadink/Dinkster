@@ -1,8 +1,8 @@
 """Morphology and color conversion preserve ComfyUI's ordered interfaces."""
 
 from dinkster_api.v1 import ComboOption, ComboWidget
-from dinkster_nodes_image import NODES
-from dinkster_nodes_image.ported.morphology import ImageRGBToYUV, ImageYUVToRGB, Morphology
+from dinkster_image import NODES
+from dinkster_image.ported.morphology import ImageRGBToYUV, ImageYUVToRGB, Morphology
 
 
 def test_morphology_nodes_preserve_image_ports_and_operation_choices() -> None:

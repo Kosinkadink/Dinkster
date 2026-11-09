@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import annotate_image, image_input
 from dinkster_values import edit_video, video_from_source
-from dinkster_video import (
+from dinkster_video_runtime import (
     DITHERS,
     FRAME_FORMATS,
     assemble_video,
@@ -459,7 +459,7 @@ def test_preserving_defaults_report_requested_and_actual(
 def test_export_never_calls_full_batch_materializer(
     format: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_video import runtime
+    from dinkster_video_runtime import runtime
 
     monkeypatch.setattr(runtime, "disassemble_video", lambda *a: pytest.fail("full frame batch"))
     encoded = []
@@ -627,7 +627,7 @@ def test_discrete_channels_use_preserving_pcm_default(codec: str, container: str
 
 @pytest.mark.parametrize("enum", [0, 2, 128, 255])
 def test_png_preserves_reserved_color_enums_through_shared_authority(enum: int) -> None:
-    from dinkster_video import formats
+    from dinkster_video_runtime import formats
 
     frame = av.VideoFrame.from_ndarray(np.full((8, 8, 3), 102, np.uint8), format="rgb24")
     data = formats._png(frame, 8, False, "", {"primaries": enum, "transfer": enum, "range": 1})
@@ -638,7 +638,7 @@ def test_png_preserves_reserved_color_enums_through_shared_authority(enum: int) 
 
 @pytest.mark.parametrize("invalid", [-1, 1.5, "sRGB", True])
 def test_png_uses_shared_color_validation_without_coercing_enums(invalid: object) -> None:
-    from dinkster_video import formats
+    from dinkster_video_runtime import formats
 
     frame = av.VideoFrame.from_ndarray(np.zeros((8, 8, 3), np.uint8), format="rgb24")
     with pytest.raises(ValueError, match="invalid image color primaries"):

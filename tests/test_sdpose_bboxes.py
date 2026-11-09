@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_sdpose.sdpose import SDPoseFaceBBoxes
 from dinkster_server import PackInfo
+from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -88,8 +88,8 @@ def test_sdpose_bbox_schema_and_execution_are_torch_free() -> None:
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
             "from dinkster_api.v1 import BOUNDING_BOX_TYPE, POSE_KEYPOINT_TYPE, TypeExpr\n"
-            "from dinkster_nodes_vision_sdpose import NODES\n"
-            "from dinkster_nodes_vision_sdpose.sdpose import SDPoseFaceBBoxes\n"
+            "from dinkster_vision_sdpose import NODES\n"
+            "from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes\n"
             "from dinkster_workers import load_manifest\n"
             "manifest = load_manifest('packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml')\n"
             "schema = SDPoseFaceBBoxes.define_schema()\n"

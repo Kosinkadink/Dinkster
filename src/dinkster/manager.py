@@ -80,6 +80,7 @@ from dinkster_workers import (
     resolve_accelerator,
 )
 from dinkster_workers.doctor import diagnose, prepare_catalog, render_text
+from dinkster_workers.pack_wheel import wheel_filename
 
 from . import __version__ as dinkster_version
 from .compose import CompositionError, PackSpec, resolve_manifest_path
@@ -105,9 +106,9 @@ from .registries import (
     prepare_registry_sources,
     prepare_registry_update_sources,
     publish_release,
-    resolve_release,
     routing_registry_fetcher,
     select_registry,
+    static_pack_releases,
 )
 
 GIT_PREFIX = "git+"
@@ -373,10 +374,11 @@ def _cmd_install(args: argparse.Namespace) -> None:
             url, ref = _parse_git_spec(raw)
             entry, _ = lock_git_pack(url, installer.artifacts_dir, ref=ref)
         elif spec is not None:
-            # pack@version: resolved against exactly ONE registry - the
-            # named/default one - never a search across registries.
-            registry = select_registry(_registry_config(args), args.registry)
-            entry = resolve_release(registry, *spec)
+            raise InstallError(
+                "registry.managed-generation-required: registry installs are bound to a base "
+                "and variant; use dinkster-env setup with --catalog-lock, --artifacts and "
+                "--pack-lock inputs instead of dinkster-pack install"
+            )
         else:
             pack_dir = resolve_manifest_path(raw).parent
             entry, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
@@ -431,17 +433,22 @@ def _cmd_publish(args: argparse.Namespace) -> None:
         raise RegistryPublishError(f"version {args.version!r} {problem}")
     manifest_path = resolve_manifest_path(args.pack)
     manifest = load_manifest(manifest_path)
+    registry = select_registry(_registry_config(args), args.registry)
+    if manifest.compatibility is None or args.version != manifest.compatibility.version:
+        raise RegistryPublishError("publication version must equal the pack manifest version")
     if not args.no_preflight:
-        report = diagnose(manifest_path)
+        report = diagnose(
+            manifest_path,
+            published_packs=[cast("str", row["name"]) for row in static_pack_releases(registry)],
+        )
         if not report.ok:
             print(render_text(report))
             raise SystemExit(1)
-    registry = select_registry(_registry_config(args), args.registry)
     with tempfile.TemporaryDirectory(prefix="dinkster-publish-") as scratch:
-        archive = Path(scratch) / "artifact.zip"
+        archive = Path(scratch) / wheel_filename(manifest)
         try:
-            digest = build_artifact(manifest_path.parent, archive)
-        except ArtifactError as exc:
+            digest = build_pack_archive(manifest_path.parent, archive)
+        except PackArchiveError as exc:
             raise RegistryPublishError(str(exc)) from exc
         verdict = publish_release(registry, archive, manifest.name, args.version, locks=args.locks)
     for finding in verdict.findings:
@@ -1313,10 +1320,10 @@ def main() -> None:
 
     archive = commands.add_parser(
         "archive",
-        help="build a deterministic registry-compatible pack archive",
+        help="build a deterministic registry-compatible pack wheel",
     )
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
-    archive.add_argument("--output", required=True, metavar="FILE.zip", help="archive to write")
+    archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
 
     sources = commands.add_parser(

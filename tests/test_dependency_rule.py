@@ -98,7 +98,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_image_document",
         "dinkster_schema",
         "dinkster_values",
-        "dinkster_video",
+        "dinkster_video_runtime",
         "dinkster_assets",
         "dinkster_memory",
         "dinkster_graph",
@@ -107,7 +107,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_workers",
     },
     # Shared materialization consumes portable values, never packs or the scheduler.
-    "dinkster_video": {"dinkster_values", "dinkster_image_document"},
+    "dinkster_video_runtime": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},
     # The door (DESIGN 3.6): re-exports the pack-author surface from the
     # bottom layers, the RPC-clean protocol leaf and the worker's task-local
@@ -115,7 +115,7 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_api": {
         "dinkster_schema",
         "dinkster_values",
-        "dinkster_video",
+        "dinkster_video_runtime",
         "dinkster_protocol",
         "dinkster_inference_wire",
         "dinkster_memory",
@@ -125,72 +125,72 @@ ALLOWED: dict[str, set[str]] = {
     },
     # Family packs compose only their named sibling dependencies. Shared
     # runtime contracts still cross the pack-author API, not private layers.
-    "dinkster_nodes_3d": {"dinkster_api", "dinkster_nodes_image"},
-    "dinkster_nodes_3d_models": {"dinkster_api"},
-    "dinkster_nodes_audio": {"dinkster_api"},
-    "dinkster_nodes_audio_models": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_conditioning": {"dinkster_api", "dinkster_nodes_latent"},
-    "dinkster_nodes_cosmos": {"dinkster_api", "dinkster_nodes_video"},
-    "dinkster_nodes_flux": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_hidream": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_hunyuan": {
+    "dinkster_3d": {"dinkster_api", "dinkster_image"},
+    "dinkster_3d_models": {"dinkster_api"},
+    "dinkster_audio": {"dinkster_api"},
+    "dinkster_audio_models": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_conditioning": {"dinkster_api", "dinkster_latent"},
+    "dinkster_cosmos": {"dinkster_api", "dinkster_video"},
+    "dinkster_flux": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_hidream": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_hunyuan": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_video",
+        "dinkster_conditioning",
+        "dinkster_video",
     },
-    "dinkster_nodes_image": {"dinkster_api"},
-    "dinkster_nodes_latent": {"dinkster_api"},
-    "dinkster_nodes_llm": {"dinkster_api"},
-    "dinkster_nodes_ltx": {
+    "dinkster_image": {"dinkster_api"},
+    "dinkster_latent": {"dinkster_api"},
+    "dinkster_llm": {"dinkster_api"},
+    "dinkster_ltx": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_latent",
-        "dinkster_nodes_llm",
-        "dinkster_nodes_models",
-        "dinkster_nodes_video",
+        "dinkster_conditioning",
+        "dinkster_latent",
+        "dinkster_llm",
+        "dinkster_models",
+        "dinkster_video",
     },
-    "dinkster_nodes_minimax": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_misc_models": {
+    "dinkster_minimax": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_misc_models": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_qwen",
+        "dinkster_conditioning",
+        "dinkster_qwen",
     },
-    "dinkster_nodes_models": {"dinkster_api"},
-    "dinkster_nodes_qwen": {"dinkster_api", "dinkster_nodes_conditioning"},
+    "dinkster_models": {"dinkster_api"},
+    "dinkster_qwen": {"dinkster_api", "dinkster_conditioning"},
     "dinkster_nodes_remote": {"dinkster_api"},
-    "dinkster_nodes_sampling": {
+    "dinkster_sampling": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_latent",
+        "dinkster_conditioning",
+        "dinkster_latent",
     },
-    "dinkster_nodes_sd": {
+    "dinkster_sd": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_sampling",
+        "dinkster_conditioning",
+        "dinkster_sampling",
     },
-    "dinkster_nodes_seedvr": {"dinkster_api"},
-    "dinkster_nodes_text": {"dinkster_api"},
-    "dinkster_nodes_upscale": {"dinkster_api"},
-    "dinkster_nodes_utilities": {"dinkster_api"},
-    "dinkster_nodes_video": {"dinkster_api"},
-    "dinkster_nodes_vision_background_removal": {"dinkster_api"},
-    "dinkster_nodes_vision_depth_anything_3": {"dinkster_api"},
-    "dinkster_nodes_vision_marigold": {"dinkster_api"},
-    "dinkster_nodes_vision_mediapipe": {"dinkster_api"},
-    "dinkster_nodes_vision_moge": {"dinkster_api"},
-    "dinkster_nodes_vision_rtdetr": {"dinkster_api"},
-    "dinkster_nodes_vision_sam3": {"dinkster_api"},
-    "dinkster_nodes_vision_sam3d_body": {"dinkster_api", "dinkster_nodes_image"},
-    "dinkster_nodes_vision_sdpose": {
+    "dinkster_seedvr": {"dinkster_api"},
+    "dinkster_text": {"dinkster_api"},
+    "dinkster_upscale": {"dinkster_api"},
+    "dinkster_utilities": {"dinkster_api"},
+    "dinkster_video": {"dinkster_api"},
+    "dinkster_vision_background_removal": {"dinkster_api"},
+    "dinkster_vision_depth_anything_3": {"dinkster_api"},
+    "dinkster_vision_marigold": {"dinkster_api"},
+    "dinkster_vision_mediapipe": {"dinkster_api"},
+    "dinkster_vision_moge": {"dinkster_api"},
+    "dinkster_vision_rtdetr": {"dinkster_api"},
+    "dinkster_vision_sam3": {"dinkster_api"},
+    "dinkster_vision_sam3d_body": {"dinkster_api", "dinkster_image"},
+    "dinkster_vision_sdpose": {
         "dinkster_api",
-        "dinkster_nodes_image",
-        "dinkster_nodes_misc_models",
+        "dinkster_image",
+        "dinkster_misc_models",
     },
-    "dinkster_nodes_void": {"dinkster_api", "dinkster_nodes_conditioning"},
-    "dinkster_nodes_wan": {
+    "dinkster_void": {"dinkster_api", "dinkster_conditioning"},
+    "dinkster_wan": {
         "dinkster_api",
-        "dinkster_nodes_conditioning",
-        "dinkster_nodes_models",
+        "dinkster_conditioning",
+        "dinkster_models",
     },
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
@@ -246,7 +246,7 @@ def dinkster_imports(path: Path) -> set[str]:
 
 def workspace_package_names(packages: Path) -> set[str]:
     return {
-        path.name.replace("-", "_")
+        tomllib.loads((path / "pyproject.toml").read_text())["project"]["name"].replace("-", "_")
         for path in packages.iterdir()
         if path.is_dir()
         and path.name.startswith("dinkster-")
@@ -270,10 +270,10 @@ def test_every_package_is_governed() -> None:
 
 def test_workspace_package_discovery_ignores_stale_bytecode(tmp_path: Path) -> None:
     (tmp_path / "dinkster-real").mkdir()
-    (tmp_path / "dinkster-real/pyproject.toml").touch()
+    (tmp_path / "dinkster-real/pyproject.toml").write_text('[project]\nname = "dinkster-renamed"\n')
     (tmp_path / "dinkster-removed/src/dinkster_removed/__pycache__").mkdir(parents=True)
 
-    assert workspace_package_names(tmp_path) == {"dinkster_real"}
+    assert workspace_package_names(tmp_path) == {"dinkster_renamed"}
 
 
 def test_dependency_scan_includes_ungoverned_imports(tmp_path: Path) -> None:
@@ -308,10 +308,11 @@ def test_one_way_dependencies() -> None:
         if package in EXTERNAL_PACKAGES:
             continue
         root = EVIDENCE_ROOT if package == "dinkster_acceptance" else REPO_ROOT
-        src = root / "packages" / package.replace("_", "-") / "src" / package
-        if not src.exists():
+        sources = list((root / "packages").glob(f"*/src/{package}"))
+        if not sources:
             assert not allowed, f"metadata-only package {package} declares code dependencies"
             continue
+        (src,) = sources
         assert src.is_dir(), f"missing package source: {src}"
         for module in src.rglob("*.py"):
             checked += 1
@@ -366,7 +367,7 @@ def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
 
 
 def test_bundled_video_preview_imports_only_the_pack_api() -> None:
-    source = REPO_ROOT / "packages/dinkster-video/preview/src/dinkster_video_preview"
+    source = REPO_ROOT / "packages/dinkster-video-runtime/preview/src/dinkster_video_preview"
     modules = list(source.rglob("*.py"))
     assert modules
     for module in modules:
@@ -377,14 +378,14 @@ def test_media_packages_share_comfyuis_pyav_runtime() -> None:
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     assert packages["av"]["version"] == "18.1.0"
-    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video"):
+    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video-runtime"):
         project = tomllib.loads(
             (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
         )
         requirements = [Requirement(value) for value in project["project"]["dependencies"]]
         (av,) = [requirement for requirement in requirements if requirement.name == "av"]
         assert Version(packages["av"]["version"]) in av.specifier
-        if package == "dinkster-video":
+        if package == "dinkster-video-runtime":
             assert str(av.specifier) == "==18.1.0"
 
 

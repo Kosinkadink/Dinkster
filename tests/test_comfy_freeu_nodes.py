@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.freeu import FreeU, FreeU_V2
+from dinkster_models import NODES
+from dinkster_models.freeu import FreeU, FreeU_V2
 
 
 def test_freeu_nodes_expose_pinned_model_patch_schemas() -> None:

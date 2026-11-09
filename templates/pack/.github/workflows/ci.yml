@@ -29,7 +29,7 @@ jobs:
       - run: uv sync --all-packages
         working-directory: .dinkster
       - run: uv run --project .dinkster ruff check .
-      - run: uv run --project .dinkster pyright my_pack_nodes.py tests
+      - run: uv run --project .dinkster pyright my_pack tests
       - run: uv run --project .dinkster pytest -q tests
       # The publish gate: an unhealthy pack fails CI exactly as it would
       # fail publishing. --json is machine-checkable if you want to allow

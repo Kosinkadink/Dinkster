@@ -1,8 +1,8 @@
 """Public custom-sampling contracts remain safe without Torch."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.custom_sampling import SamplerCustom, SamplerCustomAdvanced
+from dinkster_sampling import NODES
+from dinkster_sampling.custom_sampling import SamplerCustom, SamplerCustomAdvanced
 
 
 def test_custom_sampling_schema_contracts() -> None:

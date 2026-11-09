@@ -6,10 +6,10 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_utilities.logic import ComfyAndNode, ComfyNotNode, ComfyOrNode, CustomCombo
-from dinkster_nodes_utilities.primitive import PrimitiveInt
-from dinkster_nodes_utilities.switch import ComfySwitchNode
 from dinkster_schema import build_node_types, build_schemas
+from dinkster_utilities.logic import ComfyAndNode, ComfyNotNode, ComfyOrNode, CustomCombo
+from dinkster_utilities.primitive import PrimitiveInt
+from dinkster_utilities.switch import ComfySwitchNode
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
 

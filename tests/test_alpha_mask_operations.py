@@ -9,7 +9,7 @@ from dinkster_api.v1 import (
     annotate_mask,
     media_semantics,
 )
-from dinkster_nodes_image._draft_initialization import (
+from dinkster_image._draft_initialization import (
     IMAGE_NODES,
     GlslShader,
     ImageAlphaJoin,

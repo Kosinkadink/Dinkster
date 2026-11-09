@@ -368,9 +368,10 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         '[pack]\nname = "catalogdescriptors"\n[pack.sandbox]\n'
-        '[pack.entry]\nnodes = "descriptor_nodes:NODES"\n'
+        '[pack.entry]\nnodes = "catalogdescriptors:NODES"\n'
     )
-    (tmp_path / "descriptor_nodes.py").write_text(
+    (tmp_path / "catalogdescriptors").mkdir()
+    (tmp_path / "catalogdescriptors/__init__.py").write_text(
         "from dinkster_api.v1 import (Node, NodeSchema, InputSpec, OutputSpec, "
         "OutputDescriptorsSpec, TypeExpr, output_descriptor_entries)\n"
         "class Expressions(Node):\n"

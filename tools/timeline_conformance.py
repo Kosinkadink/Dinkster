@@ -48,8 +48,8 @@ def measure(root: Path) -> dict[str, object]:
     from dinkster_values import video_from_source
     from dinkster_values.timeline_video import TimelineVideo
     from dinkster_values.video_document import encode_document, video_reference
-    from dinkster_video import save_video_stream
-    from dinkster_video.document import clip, make, mutate
+    from dinkster_video_runtime import save_video_stream
+    from dinkster_video_runtime.document import clip, make, mutate
 
     paths = {digest_file(p): p for p in (root / "a.mp4", root / "b.mp4")}
 

@@ -12,6 +12,12 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d_models.triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+    VAEDecodeTripoSplat,
+)
 from dinkster_api.v1 import (
     CLIP_VISION_TYPE,
     CONDITIONING_TYPE,
@@ -33,12 +39,6 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d_models.triposplat import (
-    TripoSplatConditioning,
-    TripoSplatPreprocessImage,
-    TripoSplatSamplingPreview,
-    VAEDecodeTripoSplat,
-)
 from dinkster_schema import use_reporter
 from PIL import Image
 
@@ -144,7 +144,7 @@ def test_native_manifest_preprocesses_twice(tmp_path: Path, in_process: bool) ->
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "triposplat_fixture.py").write_text(
             "from test_triposplat_torch import PreprocessSource, PreprocessInspect\n"
-            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
+            "from dinkster_3d_models import register_types as register_inference_types\n"
             "NODES = (PreprocessSource, PreprocessInspect)\n",
             encoding="ascii",
         )
@@ -348,7 +348,7 @@ def test_native_manifest_conditions_twice(tmp_path: Path, in_process: bool) -> N
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "conditioning_fixture.py").write_text(
             "from test_triposplat_torch import ConditioningSource, ConditioningInspect\n"
-            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
+            "from dinkster_3d_models import register_types as register_inference_types\n"
             "NODES = (ConditioningSource, ConditioningInspect)\n",
             encoding="ascii",
         )
@@ -547,7 +547,7 @@ def test_native_manifest_decodes_splats_twice(tmp_path: Path, in_process: bool) 
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "splat_fixture.py").write_text(
             "from test_triposplat_torch import SplatSource, SplatInspect\n"
-            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
+            "from dinkster_3d_models import register_types as register_inference_types\n"
             "NODES = (SplatSource, SplatInspect)\n",
             encoding="ascii",
         )
@@ -762,7 +762,7 @@ def test_native_manifest_sampling_preview_twice(tmp_path: Path, in_process: bool
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "sampling_preview_fixture.py").write_text(
             "from test_triposplat_torch import SamplingPreviewSource, SamplingPreviewInspect\n"
-            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
+            "from dinkster_3d_models import register_types as register_inference_types\n"
             "NODES = (SamplingPreviewSource, SamplingPreviewInspect)\n",
             encoding="ascii",
         )

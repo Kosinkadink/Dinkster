@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_models.hook_conditioning import (
+from dinkster_models.hook_conditioning import (
     ConditioningSetDefaultCombine,
     ConditioningSetProperties,
     ConditioningSetPropertiesAndCombine,

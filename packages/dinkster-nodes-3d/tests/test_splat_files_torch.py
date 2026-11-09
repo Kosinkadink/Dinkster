@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from dinkster_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_api.v1 import (
     FILE_3D_SPLAT_ANY_TYPE,
     FILE_3D_TYPE,
@@ -30,7 +31,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import AssetVault
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_values import register_core_types
 from geometry_pack_fixtures import geometry_pack_specs
 
@@ -184,7 +184,7 @@ def test_ordinary_splat_export_hosts_with_restart_cache(
         monkeypatch.setenv(key, value)
     module = f"splat_file_source_{format}"
     (tmp_path / f"{module}.py").write_text(
-        "from dinkster_nodes_3d import register_types as register_inference_types\n"
+        "from dinkster_3d import register_types as register_inference_types\n"
         "from test_splat_files_torch import SplatFileSource\nNODES=(SplatFileSource,)\n",
         encoding="ascii",
     )

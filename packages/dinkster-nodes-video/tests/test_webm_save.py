@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video.webm_save import SaveWEBM
+from dinkster_video.webm_save import SaveWEBM
 from video_pack_fixtures import compose_video_packs
 
 from dinkster.compose import ServingComposer
@@ -67,10 +67,10 @@ def _images(*, channels: int = 3, width: int = 24, height: int = 16) -> np.ndarr
 
 
 def test_save_webm_schema_is_discoverable_without_loading_av() -> None:
-    from dinkster_nodes_video import webm_save
+    from dinkster_video import webm_save
 
     assert Path(webm_save.__file__).resolve() == (
-        Path(__file__).resolve().parents[1] / "src/dinkster_nodes_video/webm_save.py"
+        Path(__file__).resolve().parents[1] / "src/dinkster_video/webm_save.py"
     )
     schema = SaveWEBM.define_schema()
     assert "av" not in vars(webm_save)
@@ -99,7 +99,7 @@ def test_save_webm_schema_is_discoverable_without_loading_av() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; from dinkster_nodes_video.webm_save import SaveWEBM; "
+            "import sys; from dinkster_video.webm_save import SaveWEBM; "
             "assert SaveWEBM.define_schema().node_type == 'dinkster.video.save_webm'; "
             "assert not any(name in sys.modules for name in "
             "('av', 'torch', 'dinkster_inference'))",
@@ -118,7 +118,7 @@ def test_save_webm_schema_is_discoverable_without_loading_av() -> None:
 def test_save_webm_vp9_preserves_frames_metadata_source_and_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, channels: int
 ) -> None:
-    from dinkster_nodes_video import webm_save
+    from dinkster_video import webm_save
 
     default, alternate, _ = _mounts(tmp_path, monkeypatch)
     images = _images(channels=channels)

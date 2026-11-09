@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
     materialize_clip_vision_output,
     register_inference_types,
 )
-from dinkster_nodes_conditioning.clip import CLIPVisionEncode
+from dinkster_conditioning.clip import CLIPVisionEncode
 
 
 def _source(variant: int) -> Any:

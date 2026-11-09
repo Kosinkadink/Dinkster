@@ -26,12 +26,12 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_assets import AssetVault, MountDef, MountTable, digest_bytes
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio_models.audio_encoder import SheetSage2AudioToABC
-from dinkster_nodes_conditioning.audio_encoder import (
+from dinkster_audio_models.audio_encoder import SheetSage2AudioToABC
+from dinkster_conditioning.audio_encoder import (
     AudioEncoderEncode,
     AudioEncoderLoader,
 )
+from dinkster_graph import Graph, GraphNode, Link
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -244,9 +244,9 @@ def test_audio_encoder_ordinary_hosts(
             *(
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                    ("dinkster-audio-models", "dinkster_nodes_audio_models"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
+                    ("dinkster-audio-models", "dinkster_audio_models"),
                 )
             ),
             PackSpec(fixture_manifest),

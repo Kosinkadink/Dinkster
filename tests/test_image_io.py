@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from dinkster_assets import AssetRef, digest_file
-from dinkster_nodes_image import register_types
+from dinkster_image import register_types
 from dinkster_values import TypeRegistry
 from dinkster_values.image_codec import decode_image_file
 from dinkster_values.storage import image_input

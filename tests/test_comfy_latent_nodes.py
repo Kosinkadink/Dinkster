@@ -7,19 +7,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-import dinkster_nodes_3d_models
-import dinkster_nodes_flux
-import dinkster_nodes_hidream
-import dinkster_nodes_hunyuan
-import dinkster_nodes_latent
-import dinkster_nodes_misc_models
-import dinkster_nodes_qwen
-import dinkster_nodes_sd
+import dinkster_3d_models
+import dinkster_flux
+import dinkster_hidream
+import dinkster_hunyuan
+import dinkster_latent
+import dinkster_misc_models
+import dinkster_qwen
+import dinkster_sd
 import numpy as np
 import pytest
 from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_latent.latent import (
+from dinkster_latent.latent import (
     LatentBlend,
     LatentComposite,
     LatentCrop,
@@ -28,7 +28,7 @@ from dinkster_nodes_latent.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
-from dinkster_nodes_misc_models.mochi import EmptyMochiLatentVideo
+from dinkster_misc_models.mochi import EmptyMochiLatentVideo
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
@@ -37,7 +37,7 @@ from tests.async_scenarios import run_scenario
 
 def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
     schema = EmptyMochiLatentVideo.schema()
-    assert EmptyMochiLatentVideo in dinkster_nodes_misc_models.NODES
+    assert EmptyMochiLatentVideo in dinkster_misc_models.NODES
     assert schema.node_type == "dinkster.misc.models.empty_mochi_latent_video"
     assert schema.category == "model/latent/mochi"
     assert [(spec.id, spec.default) for spec in schema.inputs] == [
@@ -153,14 +153,14 @@ def test_latent_schemas_use_exact_core_interfaces(
     node = next(
         node
         for pack in (
-            dinkster_nodes_latent,
-            dinkster_nodes_sd,
-            dinkster_nodes_flux,
-            dinkster_nodes_hidream,
-            dinkster_nodes_misc_models,
-            dinkster_nodes_qwen,
-            dinkster_nodes_hunyuan,
-            dinkster_nodes_3d_models,
+            dinkster_latent,
+            dinkster_sd,
+            dinkster_flux,
+            dinkster_hidream,
+            dinkster_misc_models,
+            dinkster_qwen,
+            dinkster_hunyuan,
+            dinkster_3d_models,
         )
         for node in pack.NODES
         if node.schema().node_type == node_id
@@ -384,9 +384,7 @@ def test_manifest_executes_latent_and_mask_without_host_types(
                 encoding="ascii",
             )
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-latent", "dinkster_nodes_latent", in_process=in_process
-                )
+                _installed_pack_spec("dinkster-latent", "dinkster_latent", in_process=in_process)
             )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
             tensor = EncodedLatentTensor(

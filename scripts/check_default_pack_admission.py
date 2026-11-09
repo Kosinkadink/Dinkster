@@ -22,6 +22,7 @@ from dinkster_registry.archive_admission import (
 )
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
+from dinkster_workers.pack_wheel import pack_manifest_path
 from packaging.specifiers import SpecifierSet
 
 from dinkster.installer import InstallError, http_registry_fetcher
@@ -72,7 +73,7 @@ def check_defaults(
                 selected = Lockfile.from_record_json((output / "official-packs.lock").read_text())
                 for pack in selected.packs:
                     shutil.copyfile(
-                        output / f"{pack.pack}-{pack.version}.zip",
+                        output / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
                         artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip",
                     )
         elif published_sources is not None:
@@ -126,6 +127,7 @@ def check_defaults(
             print(f"selected {identity} {pack.artifact_digest} from {pack.source}", flush=True)
             _require_accepted(run_ingest_integrity(data, len(data), pack.artifact_digest), identity)
             source = unpack_artifact(archive, work / "sources" / pack.pack, pack.artifact_digest)
+            source = pack_manifest_path(source).parent
             _require_accepted(
                 run_manifest_admission(
                     source,

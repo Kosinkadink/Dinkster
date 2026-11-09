@@ -18,8 +18,6 @@ from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_video import NODES, register_types
-from dinkster_nodes_video.video_edits import VideoCrop, VideoTrim
 from dinkster_protocol import Invocation
 from dinkster_schema import build_node_types
 from dinkster_values import (
@@ -32,7 +30,9 @@ from dinkster_values import (
     video_meta,
 )
 from dinkster_values.audio_codec import audio_window
-from dinkster_video import disassemble_video
+from dinkster_video import NODES, register_types
+from dinkster_video.video_edits import VideoCrop, VideoTrim
+from dinkster_video_runtime import disassemble_video
 from dinkster_workers import (
     BoundaryDiagnostic,
     InProcessWorker,

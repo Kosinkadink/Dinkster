@@ -1,7 +1,7 @@
 """Latent-upscale consumer using the model producer's codecs."""
 
 from dinkster_api.v1 import TypeRegistry
-from dinkster_nodes_models.types import register_types
+from dinkster_models.types import register_types
 
 from tests.first_party_runtime.test_latent_upscale_loader import LatentUpscaleConsumer
 

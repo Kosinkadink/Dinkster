@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.image_transform import PadImageNode
+from dinkster_image.ported.image_transform import PadImageNode
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -167,7 +167,7 @@ def test_padding_crosses_ordinary_manifest_hosts_and_caches(
         native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "padding_fixture.py").write_text(
             "from test_image_padding_torch import PaddingSource, PaddingInspect\n"
-            "from dinkster_nodes_image import register_types as register_inference_types\n"
+            "from dinkster_image import register_types as register_inference_types\n"
             "NODES = (PaddingSource, PaddingInspect)\n",
             encoding="ascii",
         )

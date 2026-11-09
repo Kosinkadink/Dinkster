@@ -19,14 +19,14 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_engine import ExecutionError
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio_models.audio_latent import (
+from dinkster_audio_models.audio_latent import (
     EmptyAceStep15LatentAudio,
     EmptyAceStepLatentAudio,
     EmptyYuE2LatentAudio,
 )
-from dinkster_nodes_latent.audio_latent import EmptyLatentAudio, GetAudioLatentSize
+from dinkster_engine import ExecutionError
+from dinkster_graph import Graph, GraphNode, Link
+from dinkster_latent.audio_latent import EmptyLatentAudio, GetAudioLatentSize
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -72,9 +72,9 @@ def test_ordinary_manifest_creates_audio_latents_twice(in_process: bool) -> None
         )
         try:
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-audio-models", "dinkster_nodes_audio_models"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-audio-models", "dinkster_audio_models"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)
@@ -217,9 +217,7 @@ def test_audio_size_production_manifest_both_hosts_twice(tmp_path: Path, in_proc
         )
         try:
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-latent", "dinkster_nodes_latent", in_process=in_process
-                )
+                _installed_pack_spec("dinkster-latent", "dinkster_latent", in_process=in_process)
             )
             await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             nodes = {"source": GraphNode("audio-size-fixture.source")}

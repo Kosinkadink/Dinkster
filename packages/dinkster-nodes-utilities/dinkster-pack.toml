@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-utilities"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.utilities"]
@@ -17,5 +17,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_utilities:NODES"
-types = "dinkster_nodes_utilities:register_types"
+nodes = "dinkster_utilities:NODES"
+types = "dinkster_utilities:register_types"

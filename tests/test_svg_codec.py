@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_svg,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image import register_types
+from dinkster_image import register_types
 from dinkster_values import (
     SVG_CODEC_MAGIC,
     SVG_CODEC_VERSION,
@@ -129,7 +129,7 @@ def test_svg_public_type_registers_in_two_fresh_python_processes() -> None:
     script = """
 import sys
 from dinkster_api.v1 import SVG_TYPE, TypeRegistry, materialize_svg
-from dinkster_nodes_image import register_types
+from dinkster_image import register_types
 from dinkster_values.builtin_types import SVG_TYPE as canonical
 
 assert SVG_TYPE is canonical
@@ -192,7 +192,7 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
     async def scenario() -> None:
         (tmp_path / "svg_fixture.py").write_text(
             "from test_svg_codec import SvgConsumer, SvgSource\n"
-            "from dinkster_nodes_image import register_types\n"
+            "from dinkster_image import register_types\n"
             "NODES = (SvgSource, SvgConsumer)\n",
             encoding="ascii",
         )

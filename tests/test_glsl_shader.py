@@ -11,8 +11,8 @@ from typing import BinaryIO, cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import Curve
-from dinkster_nodes_image import glsl as glsl_module
-from dinkster_nodes_image.glsl import (
+from dinkster_image import glsl as glsl_module
+from dinkster_image.glsl import (
     DEFAULT_FRAGMENT_SHADER,
     GLSL_NODES,
     GlslShader,
@@ -322,7 +322,7 @@ def test_parent_translates_child_refusals(
         (tmp_path / "status.json").write_text(json.dumps(status), encoding="utf-8")
         return subprocess.CompletedProcess([], 2, "", "")
 
-    monkeypatch.setattr("dinkster_nodes_image.glsl.subprocess.run", run)
+    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", run)
     with pytest.raises(error_type, match=message):
         glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
 
@@ -334,7 +334,7 @@ def test_parent_translates_child_timeout(monkeypatch: pytest.MonkeyPatch, tmp_pa
     def timeout(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(["python"], 30)
 
-    monkeypatch.setattr("dinkster_nodes_image.glsl.subprocess.run", timeout)
+    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", timeout)
     with pytest.raises(RuntimeError, match="exceeded 30 seconds"):
         glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
 
@@ -356,7 +356,7 @@ def test_parent_refuses_unbounded_child_output_before_loading(
             file.write(bytes(16))
         return subprocess.CompletedProcess([], 0, "", "")
 
-    monkeypatch.setattr("dinkster_nodes_image.glsl.subprocess.run", run)
+    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", run)
     monkeypatch.setattr(
         np,
         "load",

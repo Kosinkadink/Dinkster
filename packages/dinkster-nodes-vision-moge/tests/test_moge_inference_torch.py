@@ -24,8 +24,8 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_moge.moge_inference import MoGeInference
 from dinkster_values import decode_image_array, encode_image_array
+from dinkster_vision_moge.moge_inference import MoGeInference
 
 from dinkster.compose import PackSpec, ServingComposer
 

@@ -630,7 +630,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     for name in ("healthy", "other"):
         source = tmp_path / name
         source.mkdir()
-        manifest_text = HEALTHY_MANIFEST.replace("healthy", name)
+        manifest_text = (
+            HEALTHY_MANIFEST.replace("healthy-nodes", "healthy")
+            .replace('publisher = "dinkster"\n', "")
+            .replace("healthy", name)
+        )
         if problem == "custom":
             manifest_text = manifest_text.replace("numpy>=1.26", "stable-fixture>=1")
             if name == "healthy":
@@ -775,20 +779,27 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             for entry in entries
         } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
         if problem == "restore":
-            from test_installer import _download_ticket, _serve_artifacts
+            from test_installer import _serve_artifacts, _static_release
 
             retained = store / "engines" / ("b" * 64) / "artifacts"
             responses: dict[str, bytes] = {}
+            releases = []
+            wheel_urls = {}
             for entry in entries:
                 filename = f"{entry.artifact_digest[7:]}.zip"
                 data = (artifacts / filename).read_bytes()
                 archive = pack_archive_path(retained, entry.artifact_digest)
                 assert archive.read_bytes() == data
                 archive.unlink()
-                responses[f"/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"] = (
-                    _download_ticket(entry, data)
+                releases.append(_static_release(entry, data))
+                wheel_urls[entry.pack] = (
+                    f"/static/wheels/{hashlib.sha256(data).hexdigest()}/"
+                    f"{entry.pack}-{entry.version}-py3-none-any.whl"
                 )
-                responses[f"/v1/artifacts/{entry.artifact_digest}"] = data
+                responses[wheel_urls[entry.pack]] = data
+            responses["/static/packs/index.json"] = json.dumps(
+                {"schemaVersion": 1, "items": releases}
+            ).encode()
             before = (target / "generation.json").read_bytes()
             requests: list[tuple[str, str | None]] = []
             server = _serve_artifacts(responses, requests)
@@ -804,7 +815,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 assert read_current(root) is None
                 entry = entries[0]
                 pack_archive_path(retained, entry.artifact_digest).unlink()
-                url = f"/v1/artifacts/{entry.artifact_digest}"
+                url = wheel_urls[entry.pack]
                 responses[url] = b"x" * len(responses[url])
                 with pytest.raises(EnvironmentError, match="target exact source restore refused"):
                     invoke(number=3, artifacts=retained, acquire_pack_sources=True)

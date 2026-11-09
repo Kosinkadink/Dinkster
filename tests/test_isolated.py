@@ -2986,7 +2986,7 @@ def test_pack_runs_in_its_own_provisioned_venv(tmp_path: Path) -> None:
             "dinkster-assets",
             "dinkster-caches",
             "dinkster-inference-wire",
-            "dinkster-video",
+            "dinkster-video-runtime",
             "dinkster-image-document",
         )
     ]
@@ -3432,7 +3432,7 @@ def test_pack_venv_reuse_requires_matching_provisioning_inputs(
 
     workspace_project.write_text(
         '[project]\nname = "dinkster-api"\nversion = "1"\n'
-        'dependencies = ["dinkster-schema", "dinkster-video"]\n'
+        'dependencies = ["dinkster-schema", "dinkster-video-runtime"]\n'
     )
     ensure_pack_venv(
         manifest,

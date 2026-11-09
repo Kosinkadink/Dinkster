@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-qwen"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.qwen"]
@@ -21,5 +21,5 @@ api = "dinkster-api/v1"
 dinkster-conditioning = ">=0.0.1,<1"
 
 [pack.entry]
-nodes = "dinkster_nodes_qwen:NODES"
-types = "dinkster_nodes_qwen:register_types"
+nodes = "dinkster_qwen:NODES"
+types = "dinkster_qwen:register_types"

@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_misc_models.anima_lllite import AnimaLLLiteApply
+from dinkster_misc_models.anima_lllite import AnimaLLLiteApply
 
 
 class _Base(torch.nn.Module):

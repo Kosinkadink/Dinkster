@@ -1,8 +1,8 @@
 """Cold public contract for Wan Uni3C render-video guidance."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_wan import NODES
-from dinkster_nodes_wan.wan_uni3c import WanUni3CControlnetApply
+from dinkster_wan import NODES
+from dinkster_wan.wan_uni3c import WanUni3CControlnetApply
 
 
 def test_wan_uni3c_schema_and_cold_registration() -> None:

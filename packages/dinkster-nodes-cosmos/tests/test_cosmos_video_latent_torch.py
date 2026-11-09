@@ -1,7 +1,7 @@
 """CPU Cosmos video latent layout and metadata."""
 
 import torch
-from dinkster_nodes_cosmos.video_latent import EmptyCosmosLatentVideo
+from dinkster_cosmos.video_latent import EmptyCosmosLatentVideo
 
 
 def test_empty_cosmos_video_latent_preserves_layout_and_metadata() -> None:

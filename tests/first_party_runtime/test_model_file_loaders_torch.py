@@ -500,7 +500,7 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
 def test_image_only_checkpoint_loader_preserves_output_roles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_nodes_sd import model_file_loaders as loaders
+    from dinkster_sd import model_file_loaders as loaders
 
     initialize_inference_process()
     from dinkster_inference import sd
@@ -530,7 +530,7 @@ def test_image_only_checkpoint_loader_preserves_output_roles(
 def test_ltx_audio_vae_loader_filters_checkpoint_and_validates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: bool
 ) -> None:
-    from dinkster_nodes_ltx import model_file_loaders as loaders
+    from dinkster_ltx import model_file_loaders as loaders
 
     initialize_inference_process()
     from dinkster_inference import sd
@@ -577,7 +577,7 @@ def test_ltx_audio_vae_loader_filters_checkpoint_and_validates(
 def test_ltx_text_encoder_loader_preserves_file_order_and_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str | None
 ) -> None:
-    from dinkster_nodes_ltx import model_file_loaders as loaders
+    from dinkster_ltx import model_file_loaders as loaders
 
     initialize_inference_process()
     from dinkster_inference import sd

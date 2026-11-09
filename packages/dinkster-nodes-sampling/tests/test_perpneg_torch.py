@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
 )
-from dinkster_nodes_sampling.perpneg import PerpNeg, PerpNegGuider
+from dinkster_sampling.perpneg import PerpNeg, PerpNegGuider
 
 
 def _model_patcher() -> Any:

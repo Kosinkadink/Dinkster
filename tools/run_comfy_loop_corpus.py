@@ -14,8 +14,8 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_nodes_dev.loop_corpus import LOOP_CORPUS_NODES, VALUE_TYPE, Observations
-from dinkster_nodes_utilities import NODES as UTILITY_NODES
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
+from dinkster_utilities import NODES as UTILITY_NODES
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 

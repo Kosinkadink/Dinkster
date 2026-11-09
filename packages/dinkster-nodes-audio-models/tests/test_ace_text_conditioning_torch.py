@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_audio_models.ace_text_conditioning import (
+from dinkster_audio_models.ace_text_conditioning import (
     TextEncodeAceStepAudio,
     TextEncodeAceStepAudio15,
 )
@@ -31,7 +31,7 @@ def test_ace_text_encoders_delegate_exact_options_and_copy_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "dinkster_nodes_audio_models.ace_text_conditioning.initialize_inference_process",
+        "dinkster_audio_models.ace_text_conditioning.initialize_inference_process",
         lambda: None,
     )
     ace = AsymmetricClip()

@@ -1,23 +1,32 @@
 [project]
-name = "dinkster-nodes-vision-sam3d-body"
+name = "dinkster-vision-sam3d-body"
 version = "0.0.2"
 description = "ComfyUI-origin vision-sam3d-body nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-inference-wire", "dinkster-nodes-image", "numpy>=1.26", "scipy>=1.11", "pillow>=10"]
+dependencies = [
+    "dinkster-api",
+    "torch",
+    "dinkster-inference==0.1.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pillow>=10",
+    "dinkster-image>=0.0.1,<1",
+    "dinkster-vision-sam3>=0.0.1,<1",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster_nodes_vision_sam3d_body"]
+packages = ["src/dinkster_vision_sam3d_body"]
+
 
 [tool.hatch.build.targets.wheel.force-include]
-"dinkster-pack.toml" = "dinkster_vision_sam3d_body_pack/dinkster-pack.toml"
-"src/dinkster_nodes_vision_sam3d_body" = "dinkster_vision_sam3d_body_pack/dinkster_nodes_vision_sam3d_body"
-"locales" = "dinkster_vision_sam3d_body_pack/locales"
+"dinkster-pack.toml" = "dinkster_vision_sam3d_body/dinkster-pack.toml"
+"locales" = "dinkster_vision_sam3d_body/locales"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-inference-wire = { workspace = true }
-dinkster-nodes-image = { workspace = true }
+dinkster-image = { workspace = true }
+dinkster-vision-sam3 = { workspace = true }

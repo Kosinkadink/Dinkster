@@ -23,19 +23,56 @@ Start from the template in [`templates/pack/`](../templates/pack/) - it is a
 complete working pack (manifest, nodes, custom type, rendition, tests, CI)
 kept healthy by this repo's own test suite.
 
-## Building a registry archive
+## Building a registry wheel
 
-Build the deterministic ZIP submitted to a registry with:
+The distribution name equals `[pack].name`. Each pack, first-party or
+third-party, ships exactly one top-level import package: the pack name with
+`-` and `.` replaced by `_`. For example, `my-pack` is distribution `my-pack`
+and package `my_pack`. A types-only pack follows the same rule with zero nodes.
+
+Build a deterministic pure-Python wheel from the manifest and package sources:
 
 ```console
-dinkster pack archive ./my-pack --output ./my-pack.zip
+dinkster pack archive ./my-pack --output ./dist
 ```
 
-The command validates `dinkster-pack.toml`, writes the archive, and prints its
-`blake3:<hex>` digest. Registry archive size, file count, path, and expanded
-size limits are checked before output is written. Symlinks are rejected;
+`[pack] version` and `engine` are required for publication. The command writes
+`my_pack-<version>-py3-none-any.whl` and prints its whole-file `sha256:<hex>`.
+An explicit output filename must be the canonical wheel filename. METADATA
+Name, Version and Requires-Dist derive from the manifest, not a separate
+release identity in `pyproject.toml`. The wheel contains
+`my_pack/dinkster-pack.toml` and its relative resources inside `my_pack`,
+plus standard METADATA, WHEEL and SHA-256 RECORD files. Installed discovery
+reads distribution metadata without importing node code.
+
+Wheels are the only publishable format: no source distributions or Dinkster
+ZIP archives. A release contains one `py3-none-any` wheel; admission refuses
+Python ABI and platform tags with `wheel.platform-tag`. Admission refuses `.pth` files,
+entry points (including console scripts), and import names already owned by
+another admitted pack or library. Doctor reports `wheel.distribution-name`
+and `wheel.import-name` for identity violations.
+
+Registry archive size, file count, path, and expanded size limits are checked
+before output is written. Symlinks are rejected;
 version-control, environment, cache, dependency, and build directories are
 omitted at every depth.
+
+The registry alone writes `/static/<variant>/simple/<normalized-name>/`.
+Its PEP 503 links identify wheel filenames and whole-file `#sha256=` hashes.
+Pack metadata, schemas, locales, replacements and install locks share the
+`/static/` prefix. The host installs the registry's exact pins with uv and
+hash verification; it does not freely resolve dependencies against the index.
+Per-pack virtual environments remain isolated.
+Each `/static/packs/index.json` release contains a `wheels` array with
+`filename`, `sha256`, `url`, `size`, `digest` and `tags` on its single wheel.
+The host selects compatible tags and verifies the selected wheel's hashes.
+
+Shared implementation belongs in a library wheel without a pack manifest or
+node/type claims, such as `my-core`, listed in the pack's `requires`.
+`requires` must never name a published pack (`wheel.requires-pack`).
+`[pack.dependencies]` expresses pack composition requirements and permits
+imports of that pack's public helpers. Private modules and names remain
+forbidden. No first-party library is required to publish a pack.
 
 Store pack resources in a form the admission scanner can read; compressed
 resource files (gzip, ZIP, zstd, xz, tar) are held for review.
@@ -69,10 +106,10 @@ api = "dinkster-api/v1"             # author API imported by the pack
 # "my-pack.image-operations" = "1.0.0" # exact provider release version
 
 [pack.entry]
-nodes = "my_pack_nodes:NODES"    # module:attr -> sequence of Node classes
-types = "my_pack_nodes:register_types"   # optional: fn(TypeRegistry) -> None
-# reservations = "my_pack_nodes:PLANNER" # optional: memory policy (advanced)
-# consumers = "my_pack_nodes:CONSUMERS"  # optional: governed memory (advanced)
+nodes = "my_pack:NODES"    # module:attr -> sequence of Node classes
+types = "my_pack:register_types"   # optional: fn(TypeRegistry) -> None
+# reservations = "my_pack:PLANNER" # optional: memory policy (advanced)
+# consumers = "my_pack:CONSUMERS"  # optional: governed memory (advanced)
 
 [pack.presentation]              # all optional; badge data, never identity
 display_name = "My Pack"
@@ -747,12 +784,12 @@ chooses default installations, not which publishers are official. Every
 other publisher uses each pack's own pack-name prefix, for example
 `my-pack.SEGS`, not `SEGS` or `IMAGE`.
 
-For packs loaded from a repository checkout, the host trusts the manifest's
-`publisher` field. An omitted publisher grants no first-party privileges.
-Registry-installed packs must instead use the registry's authenticated
-publisher record, carried into local registration by the installer. That
-installer authority is not implemented by the checkout manifest contract;
-do not treat a downloaded manifest's self-declared publisher as authenticated.
+Registry-installed packs use the registry's authenticated publisher record,
+carried into registration by the installer. Only registry entries published
+by `dinkster` receive reserved-namespace trust. Local-path and git installs
+never receive that trust from a manifest's self-declared publisher.
+An operator release with no authenticated principal keeps an empty publisher
+in the install lock and receives no first-party privileges.
 
 A shared type has one definition and one owner. Request promotion of a
 widely shared concept to a bare built-in with an official codec in

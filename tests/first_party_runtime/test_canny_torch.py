@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_image.ported.image_filters import Canny
+from dinkster_image.ported.image_filters import Canny
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -115,9 +115,7 @@ def test_canny_executes_twice_with_numpy_input_in_both_manifest_hosts(
                 encoding="ascii",
             )
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-image", "dinkster_nodes_image", in_process=in_process
-                )
+                _installed_pack_spec("dinkster-image", "dinkster_image", in_process=in_process)
             )
             await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             engine = composer.composition.make_engine(lambda _event: None)

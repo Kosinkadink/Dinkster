@@ -13,7 +13,7 @@ from dinkster_assets import MountDef, MountTable
 
 from tools.compare_nodes import compare
 
-LoadMoGeModel = importlib.import_module("dinkster_nodes_vision_moge.loader").LoadMoGeModel
+LoadMoGeModel = importlib.import_module("dinkster_vision_moge.loader").LoadMoGeModel
 
 
 def test_loader_schema_matches_reference_except_frozen_id() -> None:

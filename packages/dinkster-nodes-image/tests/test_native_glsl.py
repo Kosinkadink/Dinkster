@@ -7,8 +7,8 @@ import json
 import numpy as np
 import pytest
 from dinkster_api.v1 import Curve
-from dinkster_nodes_image import NODES as IMAGE_NODES
-from dinkster_nodes_image.ported.glsl import NativeGlslShader
+from dinkster_image import NODES as IMAGE_NODES
+from dinkster_image.ported.glsl import NativeGlslShader
 
 
 def _image(batch: int = 1, height: int = 2, width: int = 3) -> np.ndarray:

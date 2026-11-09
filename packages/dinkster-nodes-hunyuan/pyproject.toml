@@ -1,23 +1,29 @@
 [project]
-name = "dinkster-nodes-hunyuan"
+name = "dinkster-hunyuan"
 version = "0.0.2"
 description = "Dinkster hunyuan model nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-conditioning", "dinkster-nodes-video"]
+dependencies = [
+    "dinkster-api",
+    "torch",
+    "dinkster-inference==0.1.1",
+    "dinkster-conditioning>=0.0.1",
+    "dinkster-video>=0.0.1",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster_nodes_hunyuan"]
+packages = ["src/dinkster_hunyuan"]
+
 
 [tool.hatch.build.targets.wheel.force-include]
-"dinkster-pack.toml" = "dinkster_hunyuan_pack/dinkster-pack.toml"
-"src/dinkster_nodes_hunyuan" = "dinkster_hunyuan_pack/dinkster_nodes_hunyuan"
-"locales" = "dinkster_hunyuan_pack/locales"
+"dinkster-pack.toml" = "dinkster_hunyuan/dinkster-pack.toml"
+"locales" = "dinkster_hunyuan/locales"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-nodes-conditioning = { workspace = true }
-dinkster-nodes-video = { workspace = true }
+dinkster-conditioning = { workspace = true }
+dinkster-video = { workspace = true }

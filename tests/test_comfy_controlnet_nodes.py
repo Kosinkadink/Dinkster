@@ -6,14 +6,14 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ComboOption, ComboWidget
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.controlnet import (
+from dinkster_conditioning import NODES
+from dinkster_conditioning.controlnet import (
     ControlNetApply,
     ControlNetApplyAdvanced,
     SetUnionControlNetType,
 )
-from dinkster_nodes_sd import NODES as SD_NODES
-from dinkster_nodes_sd.controlnet import ControlNetApplySD3
+from dinkster_sd import NODES as SD_NODES
+from dinkster_sd.controlnet import ControlNetApplySD3
 
 
 def test_controlnet_schemas_register_the_first_party_ids() -> None:

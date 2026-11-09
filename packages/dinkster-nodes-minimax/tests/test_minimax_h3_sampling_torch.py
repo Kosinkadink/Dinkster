@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_minimax.minimax_h3_sampling import MiniMaxH3SigmaShift
+from dinkster_minimax.minimax_h3_sampling import MiniMaxH3SigmaShift
 from minimax_pack_fixtures import conditioning_providers
 
 from dinkster.compose import PackSpec, ServingComposer

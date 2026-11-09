@@ -16,7 +16,6 @@ from av.error import FFmpegError, InvalidDataError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_assets.value import value_asset_references
-from dinkster_nodes_video.video_edits import VideoCrop, VideoTrim
 from dinkster_values import (
     EncodedPayload,
     TypeRegistry,
@@ -31,7 +30,13 @@ from dinkster_values import (
 )
 from dinkster_values.audio_codec import audio_from_source
 from dinkster_values.storage import image_input
-from dinkster_video import assemble_video, concatenate_video, disassemble_video, save_video_stream
+from dinkster_video.video_edits import VideoCrop, VideoTrim
+from dinkster_video_runtime import (
+    assemble_video,
+    concatenate_video,
+    disassemble_video,
+    save_video_stream,
+)
 
 from tests.async_scenarios import run_scenario
 
@@ -429,7 +434,7 @@ def test_asset_codec_does_not_open_and_rebinds_at_destination(
 def test_exact_closed_trim_copies_packet_payloads(
     depth: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_video import runtime
+    from dinkster_video_runtime import runtime
 
     data = _source(depth=depth)
     value = edit_video(video_from_source(data), {"trim": {"start_time": 0.5, "duration": 1}})
@@ -459,7 +464,7 @@ def test_non_packet_aligned_trim_transcodes_without_snapping() -> None:
 @pytest.mark.parametrize("first", [0, 4])
 @pytest.mark.parametrize("origin", [0, 2])
 def test_fractional_encoded_trim_uses_half_open_stream_ticks(first: int, origin: int) -> None:
-    from dinkster_video import iter_video_pixels
+    from dinkster_video_runtime import iter_video_pixels
 
     rate = Fraction(30000, 1001)
     pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
@@ -514,8 +519,8 @@ def test_fractional_encoded_trim_uses_half_open_stream_ticks(first: int, origin:
 
 @pytest.mark.parametrize("encoded", [False, True])
 def test_fractional_trim_keeps_rational_timeline_and_audio_samples(encoded: bool) -> None:
-    from dinkster_video import iter_video_pixels
-    from dinkster_video.runtime import iter_video_audio
+    from dinkster_video_runtime import iter_video_pixels
+    from dinkster_video_runtime.runtime import iter_video_audio
 
     rate = Fraction(30000, 1001)
     pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
@@ -604,7 +609,7 @@ def test_deferred_components_are_exact_across_codec_and_cropped() -> None:
 
 @pytest.mark.parametrize("channels,layout", [(3, "3.0"), (6, "5.1")])
 def test_component_audio_encoder_frames_retain_samples_layout_and_timing(channels, layout) -> None:
-    from dinkster_video.runtime import _audio_frames, _plan
+    from dinkster_video_runtime.runtime import _audio_frames, _plan
 
     pcm = np.arange(channels * 48000, dtype=np.float32).reshape(1, channels, 48000) / 524288
     value = assemble_video(
@@ -703,7 +708,7 @@ def test_complete_soundtrack_follows_post_concat_trims(
 ) -> None:
     from dinkster_assets.value import bind_video_value
     from dinkster_values.audio_codec import audio_window
-    from dinkster_video.runtime import iter_video_audio
+    from dinkster_video_runtime.runtime import iter_video_audio
 
     # Hand-derived local fixture: two one-second clips, 48kHz mono audio
     # changing every quarter second. The windows select [1,2) or [1.5,2).
@@ -867,10 +872,10 @@ def test_alpha_encoding_cannot_silently_reduce_ten_bit_components() -> None:
 
 
 def test_native_video_chain_matches_across_worker_shared_memory() -> None:
-    from dinkster_nodes_video import NODES, register_types
     from dinkster_protocol import Invocation
     from dinkster_schema import build_node_types
     from dinkster_values import register_core_types
+    from dinkster_video import NODES, register_types
     from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker
 
     source = video_from_source(_source(depth=10))
@@ -943,8 +948,8 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     tmp_path: Path, in_process: bool
 ) -> None:
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_nodes_video import register_types
     from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
+    from dinkster_video import register_types
 
     from dinkster.compose import PackSpec, ServingComposer
 
@@ -1200,7 +1205,7 @@ def test_source_decode_and_spatial_encode_use_source_matrix_and_range(
 
 
 def test_spatial_decode_preserves_known_frame_local_matrix_and_range(monkeypatch) -> None:
-    import dinkster_video.runtime as runtime
+    import dinkster_video_runtime.runtime as runtime
 
     source = video_from_source(_source())
     cropped = edit_video(source, {"crop": {"width": 32, "height": 16}})
@@ -1442,8 +1447,8 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
     from dinkster_caches import MemoryLRUCache
     from dinkster_engine import Engine
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_nodes_video import register_types
     from dinkster_values import register_core_types
+    from dinkster_video import register_types
     from dinkster_workers import RemoteWorker
     from test_remote import TLS_ARGS, TLS_CERT, TOKEN, start_service, stop_service
     from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost

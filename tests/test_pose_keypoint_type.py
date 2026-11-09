@@ -114,14 +114,14 @@ def test_public_pose_registration_preserves_first_authority_and_existing_pose() 
     registry = TypeRegistry()
     pose = registry.register(POSE_TYPE)
     keypoints = registry.register(POSE_KEYPOINT_TYPE)
-    from dinkster_nodes_vision_sdpose import register_types
+    from dinkster_vision_sdpose import register_types
 
     register_types(registry)
     register_types(registry)
     assert registry.spec(POSE_KEYPOINT_TYPE) is keypoints
     assert registry.spec(POSE_TYPE) is pose
     manifest = load_manifest("packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml")
-    assert manifest.types_entry == "dinkster_nodes_vision_sdpose:register_types"
+    assert manifest.types_entry == "dinkster_vision_sdpose:register_types"
 
 
 def test_public_pose_keypoint_registration_and_codec_are_torch_free() -> None:
@@ -132,7 +132,7 @@ def test_public_pose_keypoint_registration_and_codec_are_torch_free() -> None:
             "import sys\n"
             "from dinkster_api.v1 import POSE_KEYPOINT_TYPE, TypeRegistry\n"
             "from dinkster_values.builtin_types import POSE_KEYPOINT_TYPE as canonical\n"
-            "from dinkster_nodes_vision_sdpose import register_types\n"
+            "from dinkster_vision_sdpose import register_types\n"
             "assert POSE_KEYPOINT_TYPE is canonical\n"
             "registry = TypeRegistry()\n"
             "register_types(registry)\n"

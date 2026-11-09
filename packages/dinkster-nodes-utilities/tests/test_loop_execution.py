@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_utilities.loop_lists import ListElement, MakeList
+from dinkster_utilities.loop_lists import ListElement, MakeList
 from dinkster_values import TypeRegistry, ValueMeta, make_list_value, register_core_types
 
 from dinkster.compose import PackSpec, ServingComposer

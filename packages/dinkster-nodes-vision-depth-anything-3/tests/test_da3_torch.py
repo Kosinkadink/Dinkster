@@ -30,8 +30,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_vision_depth_anything_3 import register_types
-from dinkster_nodes_vision_depth_anything_3.depth_anything_3 import (
+from dinkster_vision_depth_anything_3 import register_types
+from dinkster_vision_depth_anything_3.depth_anything_3 import (
     DA3GeometryToMesh,
     DA3Inference,
     DA3Render,
@@ -329,7 +329,7 @@ def test_da3_ordinary_hosts_twice(
     (tmp_path / f"{module_name}.py").write_text(
         "from test_da3_torch import Source, Inspect, _controlled_load\n"
         "from dinkster_api.v1 import initialize_inference_process\n"
-        "from dinkster_nodes_vision_depth_anything_3 import register_types as register_da3\n"
+        "from dinkster_vision_depth_anything_3 import register_types as register_da3\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-depth-anything-3', "
         "('DA3_MODEL', 'DA3_GEOMETRY'), allow_bare=True):\n"

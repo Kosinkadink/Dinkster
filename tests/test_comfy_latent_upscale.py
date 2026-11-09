@@ -12,10 +12,10 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_hunyuan import NODES as HUNYUAN_NODES
-from dinkster_nodes_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
-from dinkster_nodes_ltx import NODES as LTX_NODES
-from dinkster_nodes_ltx.latent_upscale import LTXVLatentUpsampler
+from dinkster_hunyuan import NODES as HUNYUAN_NODES
+from dinkster_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
+from dinkster_ltx import NODES as LTX_NODES
+from dinkster_ltx.latent_upscale import LTXVLatentUpsampler
 from dinkster_schema import claim_covers
 
 

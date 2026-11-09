@@ -25,7 +25,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_rtdetr.rtdetr import DrawBBoxes, RTDETR_detect
+from dinkster_vision_rtdetr.rtdetr import DrawBBoxes, RTDETR_detect
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -203,7 +203,7 @@ def test_ordinary_manifest_detects_and_draws_twice(tmp_path: Path, in_process: b
         module = f"rtdetr_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
             "from test_rtdetr_torch import DetectionSource, DetectionInspect\n"
-            "from dinkster_nodes_vision_rtdetr import register_types as register_inference_types\n"
+            "from dinkster_vision_rtdetr import register_types as register_inference_types\n"
             "NODES = (DetectionSource, DetectionInspect)\n",
             encoding="ascii",
         )

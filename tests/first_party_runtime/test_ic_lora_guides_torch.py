@@ -39,7 +39,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx.ltx_guides import GetICLoRAParameters, LTXVAddGuide
+from dinkster_ltx.ltx_guides import GetICLoRAParameters, LTXVAddGuide
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -210,12 +210,12 @@ def test_canonical_metadata_guide_graph_and_cache(tmp_path: Path, in_process: bo
             *(
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                    ("dinkster-video", "dinkster_nodes_video"),
-                    ("dinkster-models", "dinkster_nodes_models"),
-                    ("dinkster-llm", "dinkster_nodes_llm"),
-                    ("dinkster-ltx", "dinkster_nodes_ltx"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
+                    ("dinkster-video", "dinkster_video"),
+                    ("dinkster-models", "dinkster_models"),
+                    ("dinkster-llm", "dinkster_llm"),
+                    ("dinkster-ltx", "dinkster_ltx"),
                 )
             ),
             PackSpec(fixture),

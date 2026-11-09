@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d_models.trellis_structure import VaeDecodeStructureTrellis2
 from dinkster_api.v1 import (
     CORE_STRING,
     LATENT_TYPE,
@@ -22,7 +23,6 @@ from dinkster_api.v1 import (
     materialize_voxel,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d_models.trellis_structure import VaeDecodeStructureTrellis2
 from dinkster_values import decode_latent, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -121,7 +121,7 @@ def test_ordinary_manifest_structure_twice(tmp_path: Path, in_process: bool) -> 
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         (tmp_path / "trellis_structure_fixture.py").write_text(
             "from test_trellis_structure_torch import StructureSource, StructureInspect\n"
-            "from dinkster_nodes_3d_models import register_types as register_inference_types\n"
+            "from dinkster_3d_models import register_types as register_inference_types\n"
             "NODES = (StructureSource, StructureInspect)\n",
             encoding="ascii",
         )

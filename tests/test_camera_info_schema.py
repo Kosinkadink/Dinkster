@@ -6,14 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dinkster_3d import NODES
+from dinkster_3d.camera_info import CreateCameraInfo
 from dinkster_api.v1 import (
     CAMERA_INFO_STATE_TYPE,
     LOAD3D_CAMERA_TYPE,
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.camera_info import CreateCameraInfo
 from dinkster_workers import load_manifest
 
 
@@ -55,7 +55,7 @@ def test_camera_info_discovery_does_not_import_inference_or_torch() -> None:
             "import sys\n"
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_nodes_3d.camera_info import CreateCameraInfo\n"
+            "from dinkster_3d.camera_info import CreateCameraInfo\n"
             "assert CreateCameraInfo.schema().node_type == 'dinkster.3d.create_camera_info'\n",
         ],
         check=True,

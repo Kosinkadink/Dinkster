@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent
-from dinkster_nodes_sampling import custom_sampling
-from dinkster_nodes_sampling.noise import DisableNoise, RandomNoise
+from dinkster_sampling import custom_sampling
+from dinkster_sampling.noise import DisableNoise, RandomNoise
 
 # Expected values are hand-derived from the explicit fixture tensors, masks,
 # and linear model/noise transforms below, not recorded ComfyUI outputs.
@@ -300,9 +300,9 @@ def test_custom_sampling_on_ordinary_hosts(mode: str, in_process: bool) -> None:
             *(
                 _installed_pack_spec(identity, module, in_process=in_process)
                 for identity, module in (
-                    ("dinkster-latent", "dinkster_nodes_latent"),
-                    ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                    ("dinkster-sampling", "dinkster_nodes_sampling"),
+                    ("dinkster-latent", "dinkster_latent"),
+                    ("dinkster-conditioning", "dinkster_conditioning"),
+                    ("dinkster-sampling", "dinkster_sampling"),
                 )
             ),
             PackSpec(root / "fixtures/custom_sampling/dinkster-pack.toml"),

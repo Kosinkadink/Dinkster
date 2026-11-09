@@ -132,9 +132,9 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
         providers = [
             _installed_pack_spec(identity, module, in_process=in_process)
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-audio-models", "dinkster_nodes_audio_models"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-audio-models", "dinkster_audio_models"),
             )
         ]
         specs = [*providers, PackSpec(fixture, in_process=in_process)]

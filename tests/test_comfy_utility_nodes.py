@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 from dinkster_api.v1 import schema_to_wire
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_utilities.utilities import ComfyNumberConvert, SeedNode
+from dinkster_utilities.utilities import ComfyNumberConvert, SeedNode
 
 from dinkster.compose import ServingComposer, _installed_pack_spec
 from tests.async_scenarios import run_scenario
@@ -86,9 +86,7 @@ def test_isolated_manifest_converts_text_and_linked_seed_without_rounding_intege
         composer = ServingComposer()
         try:
             await composer.add_pack(
-                _installed_pack_spec(
-                    "dinkster-utilities", "dinkster_nodes_utilities", in_process=False
-                )
+                _installed_pack_spec("dinkster-utilities", "dinkster_utilities", in_process=False)
             )
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(

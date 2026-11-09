@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_nodes_misc_models.supir import SUPIRApply
+from dinkster_misc_models.supir import SUPIRApply
 
 
 class Base(torch.nn.Module):

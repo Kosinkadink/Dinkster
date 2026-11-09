@@ -1,23 +1,30 @@
 [project]
-name = "dinkster-nodes-vision-sdpose"
+name = "dinkster-vision-sdpose"
 version = "0.0.2"
 description = "ComfyUI-origin vision-sdpose nodes"
 requires-python = ">=3.12"
-dependencies = ["dinkster-api", "dinkster-nodes-misc-models", "dinkster-nodes-image", "numpy>=1.26"]
+dependencies = [
+    "dinkster-api",
+    "torch",
+    "dinkster-inference==0.1.1",
+    "numpy>=1.26",
+    "dinkster-misc-models>=0.0.1,<1",
+    "dinkster-image>=0.0.1,<1",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster_nodes_vision_sdpose"]
+packages = ["src/dinkster_vision_sdpose"]
+
 
 [tool.hatch.build.targets.wheel.force-include]
-"dinkster-pack.toml" = "dinkster_vision_sdpose_pack/dinkster-pack.toml"
-"src/dinkster_nodes_vision_sdpose" = "dinkster_vision_sdpose_pack/dinkster_nodes_vision_sdpose"
-"locales" = "dinkster_vision_sdpose_pack/locales"
+"dinkster-pack.toml" = "dinkster_vision_sdpose/dinkster-pack.toml"
+"locales" = "dinkster_vision_sdpose/locales"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-nodes-misc-models = { workspace = true }
-dinkster-nodes-image = { workspace = true }
+dinkster-misc-models = { workspace = true }
+dinkster-image = { workspace = true }

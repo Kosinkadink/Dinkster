@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from dinkster_nodes_wan.wan_move_visualize import WanMoveVisualizeTracks
+from dinkster_wan.wan_move_visualize import WanMoveVisualizeTracks
 
 
 def test_visualization_draws_tracks_without_mutating_sources() -> None:

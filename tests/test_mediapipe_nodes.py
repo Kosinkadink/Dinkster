@@ -6,13 +6,13 @@ import sys
 from pathlib import Path
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_vision_mediapipe import NODES
-from dinkster_nodes_vision_mediapipe.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
-from dinkster_nodes_vision_mediapipe.mediapipe_detection import (
+from dinkster_schema import claim_covers
+from dinkster_vision_mediapipe import NODES
+from dinkster_vision_mediapipe.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
+from dinkster_vision_mediapipe.mediapipe_detection import (
     LoadMediaPipeFaceLandmarker,
     MediaPipeFaceLandmarker,
 )
-from dinkster_schema import claim_covers
 from dinkster_workers import load_manifest
 
 from tools.compare_nodes import compare
@@ -43,7 +43,7 @@ def test_mediapipe_discovery_is_torch_free() -> None:
             "import sys\n"
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_nodes_vision_mediapipe import NODES\n"
+            "from dinkster_vision_mediapipe import NODES\n"
             "modules = ('.mediapipe', '.mediapipe_detection')\n"
             "nodes = [n for n in NODES if n.__module__.endswith(modules)]\n"
             "assert len(nodes) == 4\n"

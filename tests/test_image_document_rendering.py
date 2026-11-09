@@ -13,14 +13,14 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_image.layer_document import FlattenLayers
+from dinkster_image.layer_io import LoadLayers
 from dinkster_image_document import (
     RENDERER_CONTRACT,
     decode_document,
     parse_selector,
     render_document,
 )
-from dinkster_nodes_image.layer_document import FlattenLayers
-from dinkster_nodes_image.layer_io import LoadLayers
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
 from dinkster_server.library import ServerLibrary, add_library_routes
 from dinkster_server.preflight import asset_preflight
@@ -663,9 +663,9 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
     from dinkster_caches import MemoryLRUCache
     from dinkster_engine import Engine, EventListener
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
-    from dinkster_nodes_image.compositor import AddLayer
-    from dinkster_nodes_image.ported.image_file_tools import LoadImage
-    from dinkster_nodes_image.types import register_image_types
+    from dinkster_image.compositor import AddLayer
+    from dinkster_image.ported.image_file_tools import LoadImage
+    from dinkster_image.types import register_image_types
     from dinkster_schema import build_node_types, build_schemas
     from dinkster_server import create_app
     from dinkster_values import TypeRegistry, register_core_types

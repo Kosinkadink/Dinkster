@@ -371,8 +371,8 @@ def test_image_and_layer_color_preserve_unknown_ffmpeg_enums() -> None:
 
 @pytest.mark.parametrize("image_first", [False, True])
 def test_pack_registration_order_preserves_mask_contract(image_first: bool) -> None:
-    from dinkster_nodes_image import register_types as register_image_types
-    from dinkster_nodes_video import register_types as register_video_types
+    from dinkster_image import register_types as register_image_types
+    from dinkster_video import register_types as register_video_types
 
     registry = TypeRegistry()
     registrations = [register_image_types, register_video_types]
@@ -465,7 +465,7 @@ def test_inline_media_has_no_external_asset_dependencies(type_id, registration) 
             "dev": register_dev_types,
         }[registration](registry)
     else:
-        importlib.import_module(f"dinkster_nodes_{registration}").register_types(registry)
+        importlib.import_module(f"dinkster_{registration}").register_types(registry)
     array = np.arange(6, dtype=np.float32).reshape((1, 2, 3) if type_id == "MASK" else (1, 1, 2, 3))
     wrapped = registry.wrap(type_id, array)
     assert value_asset_references({"media": wrapped}, complete_registry=registry) == {}

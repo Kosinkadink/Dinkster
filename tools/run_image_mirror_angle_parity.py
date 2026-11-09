@@ -422,9 +422,9 @@ def _run_cases(
 
 def main() -> None:
     egl, gl = _load_angle()
-    image_module = importlib.import_module("dinkster_nodes_image._draft_initialization")
-    adjust_module = importlib.import_module("dinkster_nodes_image.adjust")
-    filter_module = importlib.import_module("dinkster_nodes_image.filters")
+    image_module = importlib.import_module("dinkster_image._draft_initialization")
+    adjust_module = importlib.import_module("dinkster_image.adjust")
+    filter_module = importlib.import_module("dinkster_image.filters")
     declared = {
         schema.node_type: schema.mirror
         for node in image_module.IMAGE_NODES

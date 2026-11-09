@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     resolver_from_env,
 )
 from dinkster_assets import MountDef, MountTable, digest_file
-from dinkster_nodes_models.clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
+from dinkster_models.clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
 
 
 class LoaderAssets(Node):

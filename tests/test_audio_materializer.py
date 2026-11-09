@@ -191,7 +191,7 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
             )
             (tmp_path / "audio_materializer_fixture.py").write_text(
                 "from test_audio_materializer import AudioConsumer, AudioSource\n"
-                "from dinkster_nodes_audio import NODES as AUDIO_NODES, register_types\n"
+                "from dinkster_audio import NODES as AUDIO_NODES, register_types\n"
                 "NODES = (*AUDIO_NODES, AudioSource, AudioConsumer)\n",
                 encoding="ascii",
             )
@@ -199,9 +199,9 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-materializer-fixture",')
-                .replace("dinkster_nodes_audio:NODES", "audio_materializer_fixture:NODES")
+                .replace("dinkster_audio:NODES", "audio_materializer_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_audio:register_types",
+                    "dinkster_audio:register_types",
                     "audio_materializer_fixture:register_types",
                 ),
                 encoding="ascii",

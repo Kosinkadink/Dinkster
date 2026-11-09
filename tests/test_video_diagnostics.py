@@ -34,7 +34,7 @@ from dinkster_schema import (
 )
 from dinkster_server.events import engine_event_to_wire
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_video import assemble_video, save_video_frames, save_video_stream
+from dinkster_video_runtime import assemble_video, save_video_frames, save_video_stream
 from dinkster_workers import InProcessWorker, IsolatedWorker
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image

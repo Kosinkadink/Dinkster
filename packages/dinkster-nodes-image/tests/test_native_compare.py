@@ -1,6 +1,6 @@
 """Retained paired preview streams preserve independent batch sizes."""
 
-from dinkster_nodes_image import NODES as IMAGE_NODES
+from dinkster_image import NODES as IMAGE_NODES
 
 
 def test_exact_image_compare_has_no_outputs_and_previews_each_nonempty_side() -> None:
@@ -8,7 +8,7 @@ def test_exact_image_compare_has_no_outputs_and_previews_each_nonempty_side() ->
     from io import BytesIO
 
     import numpy as np
-    from dinkster_nodes_image.ported.compare import NativeImageCompare
+    from dinkster_image.ported.compare import NativeImageCompare
     from dinkster_schema import schema_from_wire, schema_to_wire, use_reporter
     from PIL import Image
 

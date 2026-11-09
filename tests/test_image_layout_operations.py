@@ -6,7 +6,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.layout import ImageGridCompose, ImageGridDecompose, ImageStitch
+from dinkster_image.layout import ImageGridCompose, ImageGridDecompose, ImageStitch
 from dinkster_schema import schema_to_wire
 
 GOLDEN = cast(

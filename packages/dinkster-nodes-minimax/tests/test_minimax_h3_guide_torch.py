@@ -8,7 +8,7 @@ import pytest
 import torch
 from dinkster_api.v1 import LatentStream, MultiStreamLatent
 from dinkster_inference.audio import resample
-from dinkster_nodes_minimax.minimax_h3_latent import MiniMaxH3AddGuide
+from dinkster_minimax.minimax_h3_latent import MiniMaxH3AddGuide
 
 
 def _latent(video_tokens: int = 7, audio_frames: int = 37) -> dict[str, object]:

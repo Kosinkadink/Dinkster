@@ -19,11 +19,11 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
+from dinkster_audio_models import NODES as AUDIO_MODEL_NODES
+from dinkster_audio_models.audio_encoder import SheetSage2AudioToABC
+from dinkster_conditioning import NODES as CONDITIONING_NODES
+from dinkster_conditioning.audio_encoder import AudioEncoderEncode, AudioEncoderLoader
 from dinkster_memory.resident import ResidentPool
-from dinkster_nodes_audio_models import NODES as AUDIO_MODEL_NODES
-from dinkster_nodes_audio_models.audio_encoder import SheetSage2AudioToABC
-from dinkster_nodes_conditioning import NODES as CONDITIONING_NODES
-from dinkster_nodes_conditioning.audio_encoder import AudioEncoderEncode, AudioEncoderLoader
 from dinkster_schema import claim_covers
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, resident_resource_id
 from dinkster_workers import load_manifest

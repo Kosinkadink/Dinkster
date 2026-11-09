@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_sd.sd_upscale_conditioning import SD_4XUpscale_Conditioning
+from dinkster_sd.sd_upscale_conditioning import SD_4XUpscale_Conditioning
 
 
 def test_sd_upscale_rounds_asymmetric_dimensions_and_preserves_conditioning_sources() -> None:

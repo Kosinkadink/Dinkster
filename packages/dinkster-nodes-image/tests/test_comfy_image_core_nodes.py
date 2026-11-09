@@ -1,7 +1,7 @@
 """Public core image interfaces and alpha-preserving inversion."""
 
 import numpy as np
-from dinkster_nodes_image.ported.image_core import (
+from dinkster_image.ported.image_core import (
     EmptyImage,
     ImageBatch,
     ImageInvert,

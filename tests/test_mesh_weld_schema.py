@@ -13,14 +13,14 @@ def test_weld_vertices_cold_schema() -> None:
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
-from dinkster_nodes_3d.mesh_decimate import DecimateMesh
-from dinkster_nodes_3d.mesh_holes import FillHoles
-from dinkster_nodes_3d.mesh_remesh import RemeshMesh
-from dinkster_nodes_3d.mesh_render import RenderMesh
-from dinkster_nodes_3d.mesh_weld import WeldVertices
-from dinkster_nodes_3d.voxel_texture import BakeTextureFromVoxel
+from dinkster_3d import NODES
+from dinkster_3d.mesh_bake import BakeAmbientOcclusion, BakeNormalMapFromMesh
+from dinkster_3d.mesh_decimate import DecimateMesh
+from dinkster_3d.mesh_holes import FillHoles
+from dinkster_3d.mesh_remesh import RemeshMesh
+from dinkster_3d.mesh_render import RenderMesh
+from dinkster_3d.mesh_weld import WeldVertices
+from dinkster_3d.voxel_texture import BakeTextureFromVoxel
 from dinkster_workers import load_manifest
 assert NODES.count(WeldVertices) == 1
 schema = WeldVertices.schema()
@@ -61,7 +61,7 @@ assert [slot.id for slot in schema.inputs] == [
     'mesh', 'mode', 'width', 'height', 'background', 'model_3d_info', 'camera_info'
 ]
 assert [slot.id for slot in schema.outputs] == ['IMAGE', 'MASK']
-assert 'dinkster_nodes_3d.mesh_render_ops' not in sys.modules
+assert 'dinkster_3d.mesh_render_ops' not in sys.modules
 assert NODES.count(BakeAmbientOcclusion) == 1
 assert 'dinkster.3d' in manifest.namespaces
 schema = BakeAmbientOcclusion.schema()
@@ -69,7 +69,7 @@ assert [slot.id for slot in schema.inputs] == [
     'low_poly', 'high_poly', 'resolution', 'samples', 'max_distance', 'strength', 'bias'
 ]
 assert schema.outputs[0].type.types == ('IMAGE',)
-assert 'dinkster_nodes_3d.mesh_bake_ops' not in sys.modules
+assert 'dinkster_3d.mesh_bake_ops' not in sys.modules
 assert NODES.count(BakeNormalMapFromMesh) == 1
 assert 'dinkster.3d' in manifest.namespaces
 schema = BakeNormalMapFromMesh.schema()
@@ -78,7 +78,7 @@ assert [slot.id for slot in schema.inputs] == [
 ]
 assert [slot.default for slot in schema.inputs[2:]] == [1024, 0.05, True]
 assert schema.outputs[0].type.types == ('IMAGE',)
-assert 'dinkster_nodes_3d.mesh_bake_ops' not in sys.modules
+assert 'dinkster_3d.mesh_bake_ops' not in sys.modules
 assert NODES.count(BakeTextureFromVoxel) == 1
 assert 'dinkster.3d' in manifest.namespaces
 schema = BakeTextureFromVoxel.schema()

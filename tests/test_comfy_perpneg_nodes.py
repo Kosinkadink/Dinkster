@@ -5,8 +5,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from dinkster_nodes_sampling import NODES
-from dinkster_nodes_sampling.perpneg import PerpNeg, PerpNegGuider
+from dinkster_sampling import NODES
+from dinkster_sampling.perpneg import PerpNeg, PerpNegGuider
 from dinkster_schema import claim_covers
 
 

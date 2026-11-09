@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_llm.text_generation import TextGenerate
+from dinkster_llm.text_generation import TextGenerate
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer

@@ -10,8 +10,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     register_inference_types,
 )
-from dinkster_nodes_video.interpolation import FrameInterpolate
 from dinkster_schema import use_reporter
+from dinkster_video.interpolation import FrameInterpolate
 
 
 class LinearInterpolation:

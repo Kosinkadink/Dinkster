@@ -36,9 +36,9 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_vision_mediapipe import register_types
-from dinkster_nodes_vision_mediapipe.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
-from dinkster_nodes_vision_mediapipe.mediapipe_detection import (
+from dinkster_vision_mediapipe import register_types
+from dinkster_vision_mediapipe.mediapipe import MediaPipeFaceMask, MediaPipeFaceMeshVisualize
+from dinkster_vision_mediapipe.mediapipe_detection import (
     LoadMediaPipeFaceLandmarker,
     MediaPipeFaceLandmarker,
 )
@@ -207,7 +207,7 @@ def test_face_drawing_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> 
     module = f"face_fixture_{int(in_process)}"
     (tmp_path / f"{module}.py").write_text(
         "from test_mediapipe_torch import Source, Inspect\n"
-        "from dinkster_nodes_vision_mediapipe import register_types as register_face\n"
+        "from dinkster_vision_mediapipe import register_types as register_face\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-mediapipe', "
         "('FACE_DETECTION_MODEL', 'FACE_LANDMARKS'), allow_bare=True):\n"
@@ -610,7 +610,7 @@ def test_face_loader_detection_ordinary_hosts_twice(
         "import sys\nfrom types import SimpleNamespace\n"
         "from test_mediapipe_torch import (LoaderLandmarker, DetectionSource, DetectionInspect, "
         "_loaded_geometry_probe)\n"
-        "from dinkster_nodes_vision_mediapipe import register_types as register_face\n"
+        "from dinkster_vision_mediapipe import register_types as register_face\n"
         "def register_inference_types(registry):\n"
         "    with registry.registering_pack('dinkster-vision-mediapipe', "
         "('FACE_DETECTION_MODEL', 'FACE_LANDMARKS'), allow_bare=True):\n"

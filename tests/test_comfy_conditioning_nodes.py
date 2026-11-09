@@ -10,11 +10,10 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_audio_models import NODES as AUDIO_MODEL_NODES
-from dinkster_nodes_audio_models.conditioning import ConditioningStableAudio
-from dinkster_nodes_conditioning import NODES
-from dinkster_nodes_conditioning.conditioning import (
+from dinkster_audio_models import NODES as AUDIO_MODEL_NODES
+from dinkster_audio_models.conditioning import ConditioningStableAudio
+from dinkster_conditioning import NODES
+from dinkster_conditioning.conditioning import (
     ConditioningAverage,
     ConditioningCombine,
     ConditioningConcat,
@@ -29,6 +28,7 @@ from dinkster_nodes_conditioning.conditioning import (
     conditioning_set_values,
     conditioning_set_values_with_timestep_range,
 )
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_server import PackInfo
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -562,8 +562,8 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
             (tmp_path / "conditioning_fixture_sources.py").write_text(
                 "from test_comfy_conditioning_nodes import ConditioningScalarInspector\n"
                 "from test_comfy_conditioning_nodes import ConditioningScalarSource\n"
-                "from dinkster_nodes_conditioning import NODES as CONDITIONING_NODES\n"
-                "from dinkster_nodes_conditioning.types import register_types\n"
+                "from dinkster_conditioning import NODES as CONDITIONING_NODES\n"
+                "from dinkster_conditioning.types import register_types\n"
                 "NODES = (*CONDITIONING_NODES, ConditioningScalarSource, "
                 "ConditioningScalarInspector)\n",
                 encoding="ascii",
@@ -572,9 +572,9 @@ def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["conditioning-fixture",')
-                .replace("dinkster_nodes_conditioning:NODES", "conditioning_fixture_sources:NODES")
+                .replace("dinkster_conditioning:NODES", "conditioning_fixture_sources:NODES")
                 .replace(
-                    "dinkster_nodes_conditioning.types:register_types",
+                    "dinkster_conditioning.types:register_types",
                     "conditioning_fixture_sources:register_types",
                 ),
                 encoding="ascii",

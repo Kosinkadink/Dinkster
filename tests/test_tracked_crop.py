@@ -7,7 +7,7 @@ from fractions import Fraction
 from typing import Any, cast
 
 import av
-import dinkster_nodes_image.support as image_support
+import dinkster_image.support as image_support
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
@@ -24,17 +24,17 @@ from dinkster_api.v1 import (
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_image._draft_initialization import (
+from dinkster_image._draft_initialization import (
     IMAGE_NODES,
     MakeImage,
     TrackedCrop,
     TrackedUncrop,
     register_image_types,
 )
-from dinkster_nodes_video import register_types as register_video_types
-from dinkster_nodes_video.video_components import CreateVideo
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
+from dinkster_video import register_types as register_video_types
+from dinkster_video.video_components import CreateVideo
 from dinkster_workers import InProcessWorker
 
 from tests.async_scenarios import run_scenario

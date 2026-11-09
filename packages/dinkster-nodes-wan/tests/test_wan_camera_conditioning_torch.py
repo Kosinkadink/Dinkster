@@ -12,9 +12,9 @@ from dinkster_api.v1 import (
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
 )
-from dinkster_nodes_wan import register_types
-from dinkster_nodes_wan.wan_camera import WanCameraEmbedding
-from dinkster_nodes_wan.wan_camera_conditioning import WanCameraImageToVideo
+from dinkster_wan import register_types
+from dinkster_wan.wan_camera import WanCameraEmbedding
+from dinkster_wan.wan_camera_conditioning import WanCameraImageToVideo
 
 
 class VAE:

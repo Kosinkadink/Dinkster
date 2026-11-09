@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
 from dinkster_api.v1 import (
     CORE_STRING,
     LATENT_TYPE,
@@ -20,14 +21,13 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
+from dinkster_flux.latent_model_specific import EmptyFlux2LatentImage
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d_models.latent_model_specific import EmptyTrellis2LatentStructure
-from dinkster_nodes_flux.latent_model_specific import EmptyFlux2LatentImage
-from dinkster_nodes_hidream.latent_model_specific import EmptyHiDreamO1LatentImage
-from dinkster_nodes_hunyuan.latent_model_specific import EmptyLatentHunyuan3Dv2
-from dinkster_nodes_misc_models.latent_model_specific import EmptyChromaRadianceLatentImage
-from dinkster_nodes_qwen.latent_model_specific import EmptyQwenImageLayeredLatentImage
-from dinkster_nodes_sd.latent_model_specific import EmptySD3LatentImage
+from dinkster_hidream.latent_model_specific import EmptyHiDreamO1LatentImage
+from dinkster_hunyuan.latent_model_specific import EmptyLatentHunyuan3Dv2
+from dinkster_misc_models.latent_model_specific import EmptyChromaRadianceLatentImage
+from dinkster_qwen.latent_model_specific import EmptyQwenImageLayeredLatentImage
+from dinkster_sd.latent_model_specific import EmptySD3LatentImage
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -137,17 +137,17 @@ def test_model_latents_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-sampling", "dinkster_nodes_sampling"),
-                ("dinkster-video", "dinkster_nodes_video"),
-                ("dinkster-3d-models", "dinkster_nodes_3d_models"),
-                ("dinkster-flux", "dinkster_nodes_flux"),
-                ("dinkster-hidream", "dinkster_nodes_hidream"),
-                ("dinkster-hunyuan", "dinkster_nodes_hunyuan"),
-                ("dinkster-qwen", "dinkster_nodes_qwen"),
-                ("dinkster-misc-models", "dinkster_nodes_misc_models"),
-                ("dinkster-sd", "dinkster_nodes_sd"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-sampling", "dinkster_sampling"),
+                ("dinkster-video", "dinkster_video"),
+                ("dinkster-3d-models", "dinkster_3d_models"),
+                ("dinkster-flux", "dinkster_flux"),
+                ("dinkster-hidream", "dinkster_hidream"),
+                ("dinkster-hunyuan", "dinkster_hunyuan"),
+                ("dinkster-qwen", "dinkster_qwen"),
+                ("dinkster-misc-models", "dinkster_misc_models"),
+                ("dinkster-sd", "dinkster_sd"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

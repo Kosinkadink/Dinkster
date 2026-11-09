@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from dinkster_nodes_wan.wan_scail_conditioning import WanSCAILToVideo
+from dinkster_wan.wan_scail_conditioning import WanSCAILToVideo
 
 
 class VAE:

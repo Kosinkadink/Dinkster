@@ -15,12 +15,14 @@ import tomllib
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
-from dinkster_registry import LockedPack, Lockfile, build_artifact, unpack_artifact
+from dinkster_registry import LockedPack, Lockfile, artifact_digest
+from dinkster_registry.archive_admission import extracted_archive
 from dinkster_registry.model import validate_version
 from dinkster_schema import canonical_claim
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import DoctorReport, diagnose_static
 from dinkster_workers.pack_lock import resolve_pack_lock
+from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
 
 
 def is_official_pack_manifest(path: PurePosixPath) -> bool:
@@ -124,31 +126,18 @@ def build(
                 else pack_root / "pyproject.toml"
             )
             project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
-            source = pack_root / "src"
-            if source.is_dir():
-                # Pack workers import from the artifact root, not workspace src/.
-                for module in source.iterdir():
-                    shutil.move(str(module), pack_root / module.name)
-                source.rmdir()
-                manifest_path.write_text(
-                    re.sub(
-                        r'(?m)^(file\s*=\s*")src/',
-                        r"\1",
-                        manifest_path.read_text(encoding="utf-8"),
-                    ),
-                    encoding="utf-8",
-                    newline="\n",
-                )
             manifest = load_manifest(manifest_path)
+            if manifest.compatibility is None or pack_version != manifest.compatibility.version:
+                raise ValueError("wheel version must equal the pack manifest version")
             if manifest.publisher != "dinkster":
                 raise ValueError(f"official pack {manifest.name!r} must declare publisher dinkster")
             tests = pack_root / "tests"
             if tests.is_dir():
                 shutil.rmtree(tests)
-            payload = output / f"{manifest.name}-{pack_version}.zip"
-            digest = build_artifact(pack_root, payload)
-            with tempfile.TemporaryDirectory(prefix="dinkster-official-doctor-") as extracted:
-                artifact_root = unpack_artifact(payload, Path(extracted), digest)
+            payload = output / wheel_filename(manifest)
+            build_pack_archive(pack_root, payload)
+            digest = artifact_digest(payload.read_bytes())
+            with extracted_archive(payload.read_bytes()) as artifact_root:
                 artifact_manifest = load_manifest(artifact_root / "dinkster-pack.toml")
                 static = diagnose_static(artifact_root, artifact_manifest)
                 report = DoctorReport(

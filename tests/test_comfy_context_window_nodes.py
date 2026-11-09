@@ -1,12 +1,12 @@
 """Torch-free schema contracts for native context-window nodes."""
 
 from dinkster_api.v1 import CORE_STRING, NumberWidget, TypeExpr, schema_from_wire, schema_to_wire
-from dinkster_nodes_ltx import NODES as LTX_NODES
-from dinkster_nodes_ltx.context_windows import LTXVContextWindows
-from dinkster_nodes_models import NODES as MODEL_NODES
-from dinkster_nodes_models.context_windows import ContextWindowsManual
-from dinkster_nodes_wan import NODES as WAN_NODES
-from dinkster_nodes_wan.context_windows import WanContextWindowsManual
+from dinkster_ltx import NODES as LTX_NODES
+from dinkster_ltx.context_windows import LTXVContextWindows
+from dinkster_models import NODES as MODEL_NODES
+from dinkster_models.context_windows import ContextWindowsManual
+from dinkster_wan import NODES as WAN_NODES
+from dinkster_wan.context_windows import WanContextWindowsManual
 
 
 def test_context_window_nodes_are_native_pack_schemas() -> None:

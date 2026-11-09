@@ -63,7 +63,7 @@ null until save. Bit depth is intended encoding depth, not float storage
 precision. The components variant cannot participate in packet-copy concat.
 
 `dinkster-values` owns the data validation, serialization, identity, probe, and
-pure edit arithmetic. The non-pack `dinkster-video` library owns decoding,
+pure edit arithmetic. The non-pack `dinkster-video-runtime` library owns decoding,
 filtering, and encoding shared by native and compatibility nodes. Media I/O
 owns node schemas and mount-authorized saving. The asset layer owns local
 source binding and publication; the worker transport owns discovery and staging of referenced

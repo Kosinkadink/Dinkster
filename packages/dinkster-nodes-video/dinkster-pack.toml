@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-video"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.video"]
@@ -19,5 +19,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_video:NODES"
-types = "dinkster_nodes_video:register_types"
+nodes = "dinkster_video:NODES"
+types = "dinkster_video:register_types"

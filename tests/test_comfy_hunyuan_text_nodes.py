@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_hunyuan import NODES
-from dinkster_nodes_hunyuan.hunyuan_text import (
+from dinkster_hunyuan import NODES
+from dinkster_hunyuan.hunyuan_text import (
     CLIPTextEncodeHunyuanDiT,
     TextEncodeHunyuanVideo_ImageToVideo,
 )

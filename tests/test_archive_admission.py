@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from dinkster_registry import build_artifact
+from dinkster_registry import artifact_digest
 from dinkster_registry.archive_admission import (
     ProbeSettings,
     run_doctor_static,
@@ -17,6 +17,7 @@ from dinkster_registry.archive_admission import (
 )
 from dinkster_schema import PackCompatibility
 from dinkster_workers import ManifestError, load_manifest
+from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
 
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
 
@@ -27,9 +28,10 @@ def test_service_fixture_archive_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, platform: str
 ) -> None:
     root = FIXTURES / name
-    archive = tmp_path / "pack.zip"
-    digest = build_artifact(root, archive)
+    archive = tmp_path / wheel_filename(load_manifest(root / "dinkster-pack.toml"))
+    build_pack_archive(root, archive)
     data = archive.read_bytes()
+    digest = artifact_digest(data)
     ingest = run_ingest_integrity(data, len(data), digest)
     assert ingest.findings == ()
     assert ingest.data == {"artifactDigest": digest, "size": len(data)}

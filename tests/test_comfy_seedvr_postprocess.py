@@ -8,8 +8,8 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_seedvr import NODES
-from dinkster_nodes_seedvr.seedvr_postprocess import SeedVR2PostProcessing
+from dinkster_seedvr import NODES
+from dinkster_seedvr.seedvr_postprocess import SeedVR2PostProcessing
 
 
 def test_seedvr_postprocess_schema_wire_and_cold_discovery() -> None:

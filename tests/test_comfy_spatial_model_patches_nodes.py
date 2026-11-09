@@ -1,8 +1,8 @@
 """Public schemas for spatial model patch nodes."""
 
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_COMBO, CORE_FLOAT, CORE_INT, MODEL_TYPE, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.spatial_model_patches import (
+from dinkster_models import NODES
+from dinkster_models.spatial_model_patches import (
     HyperTile,
     PatchModelAddDownscale,
     TomePatchModel,

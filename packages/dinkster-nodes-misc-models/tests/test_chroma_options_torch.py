@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_nodes_misc_models.chroma_options import ChromaRadianceOptions
+from dinkster_misc_models.chroma_options import ChromaRadianceOptions
 
 
 class Patcher:

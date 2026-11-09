@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-vision-background-removal"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.background.removal"]
@@ -18,5 +18,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_vision_background_removal:NODES"
-types = "dinkster_nodes_vision_background_removal:register_types"
+nodes = "dinkster_vision_background_removal:NODES"
+types = "dinkster_vision_background_removal:register_types"

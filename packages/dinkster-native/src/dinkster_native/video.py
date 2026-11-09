@@ -27,8 +27,8 @@ from dinkster_values import (
     video_source,
 )
 from dinkster_values.video_edits import mapping
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
-from dinkster_video.runtime import source_trim_window
+from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
+from dinkster_video_runtime.runtime import source_trim_window
 
 from .audio import TorchAudio
 

@@ -7,7 +7,7 @@ import torch
 from dinkster_api.v1 import (
     materialize_latent,
 )
-from dinkster_nodes_misc_models.lotus import LotusConditioning
+from dinkster_misc_models.lotus import LotusConditioning
 
 _EMBEDDING_HASH = "a7ba15b03c89931a7764a7d4b398201b322e00524d03efaac172b48dc637397d"
 

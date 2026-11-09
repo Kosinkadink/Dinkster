@@ -1,9 +1,11 @@
 # Pack manifest (see docs/pack-authoring.md for the full reference).
-# Rename everything "my-pack"/"my_pack_nodes" to your pack's name; the
+# Rename everything "my-pack"/"my_pack" to your pack's name; the
 # [pack] name is your pack id - it prefixes node types and keys attribution.
 
 [pack]
 name = "my-pack"
+version = "0.1.0"
+engine = ">=0.0.2.dev0,<0.1"
 # Namespace claims: every node type must live under one of these (doctor
 # checks it; composition and registry policy enforce it). Omitted, the
 # pack claims its own name - which is exactly right here, since the node
@@ -28,8 +30,8 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "my_pack_nodes:NODES"
-types = "my_pack_nodes:register_types"
+nodes = "my_pack:NODES"
+types = "my_pack:register_types"
 
 [pack.presentation]
 display_name = "My Pack"

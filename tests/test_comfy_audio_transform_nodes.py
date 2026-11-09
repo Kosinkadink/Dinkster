@@ -1,8 +1,8 @@
 """Torch-free schemas for native ComfyUI audio transform nodes."""
 
 from dinkster_api.v1 import AUDIO_TYPE, CORE_INT, NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_audio import NODES
-from dinkster_nodes_audio.audio_transform import (
+from dinkster_audio import NODES
+from dinkster_audio.audio_transform import (
     AUDIO_TRANSFORM_NODES,
     AudioAdjustVolume,
     SplitAudioChannels,

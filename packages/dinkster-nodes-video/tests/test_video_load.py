@@ -26,8 +26,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import LocalAssetRef, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_video.video_load import LoadVideo
 from dinkster_values import video_source
+from dinkster_video.video_load import LoadVideo
 from video_pack_fixtures import compose_video_packs
 
 from dinkster.compose import ServingComposer
@@ -98,8 +98,8 @@ def test_load_video_schema_is_the_canonical_single_file_surface_without_runtime_
 import sys
 from pathlib import Path
 from dinkster_api.v1 import ASSET_TYPE, VIDEO_TYPE, TypeExpr
-import dinkster_nodes_video.video_load as module
-from dinkster_nodes_video.video_load import LoadVideo
+import dinkster_video.video_load as module
+from dinkster_video.video_load import LoadVideo
 
 assert Path(module.__file__).resolve() == Path(sys.argv[1])
 schema = LoadVideo.schema()
@@ -124,7 +124,7 @@ assert not any(
     for name in sys.modules
 )
 """,
-            str(root / "packages/dinkster-nodes-video/src/dinkster_nodes_video/video_load.py"),
+            str(root / "packages/dinkster-nodes-video/src/dinkster_video/video_load.py"),
         ],
         check=True,
         cwd=root,
@@ -210,9 +210,9 @@ def test_load_video_executes_through_native_and_fixture_packs_with_cache_hits(
         fixture_module.write_text(
             "from pathlib import Path\n"
             "from test_video_load import VideoLoadConsumer\n"
-            "import dinkster_nodes_video.video_load as module\n"
+            "import dinkster_video.video_load as module\n"
             "assert Path(module.__file__).resolve() == "
-            f"Path({str(package / 'src/dinkster_nodes_video/video_load.py')!r})\n"
+            f"Path({str(package / 'src/dinkster_video/video_load.py')!r})\n"
             "from video_pack_fixtures import register_video_types\n"
             "NODES = (VideoLoadConsumer,)\n",
             encoding="ascii",

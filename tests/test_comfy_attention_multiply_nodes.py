@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.attention_multiply import (
+from dinkster_models import NODES
+from dinkster_models.attention_multiply import (
     CLIPAttentionMultiply,
     UNetCrossAttentionMultiply,
     UNetSelfAttentionMultiply,

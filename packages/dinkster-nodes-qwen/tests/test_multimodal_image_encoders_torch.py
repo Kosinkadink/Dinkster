@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from dinkster_nodes_qwen.qwen_image_encoders import (
+from dinkster_qwen.qwen_image_encoders import (
     QwenImage21Cache,
     TextEncodeQwenImage21,
     TextEncodeQwenImageEdit,

@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_seedvr.seedvr_conditioning import SeedVR2Conditioning
+from dinkster_seedvr.seedvr_conditioning import SeedVR2Conditioning
 
 from dinkster.compose import PackSpec, ServingComposer
 

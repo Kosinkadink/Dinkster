@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dinkster_api.v1 import TypeRegistry
 
-from my_pack_nodes import Shout, Tally, register_types
+from my_pack import Shout, Tally, register_types
 
 
 def test_shout() -> None:

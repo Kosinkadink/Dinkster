@@ -8,7 +8,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_latent,
 )
-from dinkster_nodes_misc_models.ar_video import ARVideoI2V
+from dinkster_misc_models.ar_video import ARVideoI2V
 
 
 class Encoder:

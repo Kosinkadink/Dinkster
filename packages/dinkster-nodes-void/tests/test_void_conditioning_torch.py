@@ -35,7 +35,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_void.void_conditioning import (
+from dinkster_void.void_conditioning import (
     VOIDInpaintConditioning,
     VOIDQuadmaskPreprocess,
     VOIDWarpedNoiseSource,
@@ -46,8 +46,8 @@ from dinkster.compose import PackSpec, ServingComposer
 
 
 def test_isolated_void_manifest_installs_only_consumed_codecs() -> None:
-    from dinkster_nodes_void import register_types
-    from dinkster_nodes_void.void_sampler import VOIDSampler
+    from dinkster_void import register_types
+    from dinkster_void.void_sampler import VOIDSampler
     from dinkster_workers import load_manifest
     from dinkster_workers.host import load_pack
 
@@ -188,7 +188,7 @@ def test_void_discovery_is_torch_free() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; from dinkster_nodes_void.void_conditioning import "
+            "import sys; from dinkster_void.void_conditioning import "
             "VOIDQuadmaskPreprocess, VOIDInpaintConditioning, VOIDWarpedNoiseSource; "
             "[node.schema() for node in (VOIDQuadmaskPreprocess, VOIDInpaintConditioning, "
             "VOIDWarpedNoiseSource)]; assert 'torch' not in sys.modules",
@@ -283,7 +283,7 @@ def test_void_nodes_run_twice_through_native_manifest_and_shared_worker(
 ) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]
-        import dinkster_nodes_void.void_conditioning as void_conditioning
+        import dinkster_void.void_conditioning as void_conditioning
 
         assert Path(void_conditioning.__file__).resolve().is_relative_to(package / "src")
         fixture_entry = tmp_path / "void_conditioning_fixture.py"

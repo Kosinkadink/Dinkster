@@ -13,7 +13,7 @@ import pytest
 from dinkster_api.v1 import VIDEO_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_assets.value import register_video_value_type, value_asset_references
-from dinkster_nodes_image.drawing import DrawText
+from dinkster_image.drawing import DrawText
 from dinkster_values import (
     TypeRegistry,
     annotate_image,
@@ -42,16 +42,16 @@ from dinkster_values.video_document import (
     time_range,
     video_reference,
 )
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
-from dinkster_video.document import clip, export_otio, import_otio, make, mutate
-from dinkster_video.image_math import masked_transition
-from dinkster_video.timeline import (
+from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
+from dinkster_video_runtime.document import clip, export_otio, import_otio, make, mutate
+from dinkster_video_runtime.image_math import masked_transition
+from dinkster_video_runtime.timeline import (
     compile_timeline,
     iter_timeline_audio,
     iter_timeline_frames,
     single_clip_video,
 )
-from dinkster_video.timeline_runtime import CPUKernels, SourceMedia
+from dinkster_video_runtime.timeline_runtime import CPUKernels, SourceMedia
 
 from tests.async_scenarios import run_scenario
 from tests.test_video_diagnostics import FormatSave

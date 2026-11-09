@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-ltx"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.ltx"]
@@ -26,5 +26,5 @@ api = "dinkster-api/v1"
 "dinkster-video" = ">=0.0.1"
 
 [pack.entry]
-nodes = "dinkster_nodes_ltx:NODES"
-types = "dinkster_nodes_ltx:register_types"
+nodes = "dinkster_ltx:NODES"
+types = "dinkster_ltx:register_types"

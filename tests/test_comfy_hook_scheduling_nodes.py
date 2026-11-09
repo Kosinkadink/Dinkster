@@ -1,8 +1,8 @@
 """Public schemas for native hook scheduling nodes."""
 
 from dinkster_api.v1 import FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_models import NODES
-from dinkster_nodes_models.hook_scheduling import (
+from dinkster_models import NODES
+from dinkster_models.hook_scheduling import (
     CombineHooks2,
     CombineHooks4,
     CombineHooks8,

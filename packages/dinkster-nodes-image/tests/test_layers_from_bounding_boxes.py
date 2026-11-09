@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.layers_from_bounding_boxes import LayersFromBoundingBoxes
+from dinkster_image.layers_from_bounding_boxes import LayersFromBoundingBoxes
 
 
 def test_layer_frames_crop_content_preserve_mask_and_append_without_mutation():

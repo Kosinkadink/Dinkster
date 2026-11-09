@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_3d.mesh_texture import ApplyTextureToMesh, MeshTextureToImage
 from dinkster_api.v1 import (
     IMAGE_TYPE,
     MESH_TYPE,
@@ -23,7 +24,6 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_3d.mesh_texture import ApplyTextureToMesh, MeshTextureToImage
 from geometry_pack_fixtures import geometry_pack_specs
 
 from dinkster.compose import ServingComposer

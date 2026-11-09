@@ -6,8 +6,8 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import CORE_INT, IMAGE_TYPE, LATENT_TYPE, VAE_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_cosmos import NODES
-from dinkster_nodes_cosmos.cosmos_conditioning import (
+from dinkster_cosmos import NODES
+from dinkster_cosmos.cosmos_conditioning import (
     CosmosImageToVideoLatent,
     CosmosPredict2ImageToVideoLatent,
 )

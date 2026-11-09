@@ -6,15 +6,15 @@ from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_image import NODES as IMAGE_NODES
-from dinkster_nodes_image.ported.post_processing import (
+from dinkster_image import NODES as IMAGE_NODES
+from dinkster_image.ported.post_processing import (
     BatchImagesNode,
     BatchMasksNode,
     ColorTransfer,
     ResizeImageMaskNode,
 )
-from dinkster_nodes_latent import NODES as LATENT_NODES
-from dinkster_nodes_latent.post_processing import BatchLatentsNode
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.post_processing import BatchLatentsNode
 
 
 def _wire(node: type[Any]) -> dict[str, Any]:
@@ -90,7 +90,7 @@ def test_color_transfer_identity_strength_does_not_materialize_the_reference(
 ) -> None:
     target = object()
     monkeypatch.setattr(
-        "dinkster_nodes_image.ported.post_processing.materialize_image", lambda value: value
+        "dinkster_image.ported.post_processing.materialize_image", lambda value: value
     )
     assert (
         ColorTransfer.execute(

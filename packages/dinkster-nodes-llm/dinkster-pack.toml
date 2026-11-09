@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-llm"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.llm"]
@@ -18,5 +18,5 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_llm:NODES"
-types = "dinkster_nodes_llm:register_types"
+nodes = "dinkster_llm:NODES"
+types = "dinkster_llm:register_types"

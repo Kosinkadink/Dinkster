@@ -22,8 +22,8 @@ def test_background_removal_registers_without_torch_or_inference() -> None:
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
             "from dinkster_api.v1 import ASSET_TYPE, BACKGROUND_REMOVAL_TYPE, MASK_TYPE, TypeExpr\n"
-            "from dinkster_nodes_vision_background_removal import NODES\n"
-            "from dinkster_nodes_vision_background_removal.background_removal import "
+            "from dinkster_vision_background_removal import NODES\n"
+            "from dinkster_vision_background_removal.background_removal import "
             "BACKGROUND_REMOVAL_NODES\n"
             "from dinkster_workers import load_manifest\n"
             "manifest = load_manifest('packages/dinkster-nodes-vision-background-removal/"
@@ -53,8 +53,8 @@ def test_bbox_crop_schema_registers_without_torch_or_inference() -> None:
             "import sys\n"
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_nodes_image import NODES\n"
-            "from dinkster_nodes_image.ported.bbox_crop import CropByBBoxes\n"
+            "from dinkster_image import NODES\n"
+            "from dinkster_image.ported.bbox_crop import CropByBBoxes\n"
             "from dinkster_workers import load_manifest\n"
             "manifest = load_manifest('packages/dinkster-nodes-image/dinkster-pack.toml')\n"
             "schema = CropByBBoxes.define_schema()\n"
@@ -82,11 +82,11 @@ def test_native_rtdetr_schemas_register_without_torch_or_inference() -> None:
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
             "from dinkster_api.v1 import BOUNDING_BOX_TYPE, IMAGE_TYPE, TypeExpr\n"
-            "from dinkster_nodes_vision_rtdetr import NODES as RTDETR_NODES\n"
-            "from dinkster_nodes_vision_rtdetr.rtdetr import RTDETR_detect, DrawBBoxes\n"
-            "from dinkster_nodes_vision_sam3 import NODES as SAM3_NODES\n"
-            "from dinkster_nodes_vision_sam3.sam3 import SAM3_TRACKING_NODES\n"
-            "from dinkster_nodes_vision_sam3.sam3_detection import SAM3_Detect\n"
+            "from dinkster_vision_rtdetr import NODES as RTDETR_NODES\n"
+            "from dinkster_vision_rtdetr.rtdetr import RTDETR_detect, DrawBBoxes\n"
+            "from dinkster_vision_sam3 import NODES as SAM3_NODES\n"
+            "from dinkster_vision_sam3.sam3 import SAM3_TRACKING_NODES\n"
+            "from dinkster_vision_sam3.sam3_detection import SAM3_Detect\n"
             "from dinkster_workers import load_manifest\n"
             "for pack, nodes, selected in (\n"
             "    ('rtdetr', RTDETR_NODES, (RTDETR_detect, DrawBBoxes)),\n"
@@ -122,13 +122,13 @@ def test_native_rtdetr_schemas_register_without_torch_or_inference() -> None:
     (
         (
             "upscale",
-            "dinkster_nodes_upscale",
+            "dinkster_upscale",
             "dinkster.upscale.upscale_model_loader",
             "model_name",
         ),
         (
             "vision-background-removal",
-            "dinkster_nodes_vision_background_removal",
+            "dinkster_vision_background_removal",
             "dinkster.vision.background.removal.load_background_removal_model",
             "bg_removal_name",
         ),

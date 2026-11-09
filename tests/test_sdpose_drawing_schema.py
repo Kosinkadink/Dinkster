@@ -14,8 +14,8 @@ import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import IMAGE_TYPE, POSE_KEYPOINT_TYPE, TypeExpr
-from dinkster_nodes_vision_sdpose import NODES
-from dinkster_nodes_vision_sdpose.sdpose import SDPoseDrawKeypoints
+from dinkster_vision_sdpose import NODES
+from dinkster_vision_sdpose.sdpose import SDPoseDrawKeypoints
 from dinkster_workers import load_manifest
 s = SDPoseDrawKeypoints.define_schema()
 assert SDPoseDrawKeypoints in NODES
@@ -27,7 +27,7 @@ assert [p.id for p in s.inputs] == ['keypoints', 'draw_body', 'draw_hands', 'dra
     'draw_feet', 'stick_width', 'face_point_size', 'score_threshold', 'draw_head']
 assert s.inputs[0].type == TypeExpr.concrete(POSE_KEYPOINT_TYPE)
 assert s.outputs[0].type == TypeExpr.concrete(IMAGE_TYPE)
-assert 'dinkster_nodes_vision_sdpose.pose_draw' not in sys.modules
+assert 'dinkster_vision_sdpose.pose_draw' not in sys.modules
 """,
         ],
         check=True,

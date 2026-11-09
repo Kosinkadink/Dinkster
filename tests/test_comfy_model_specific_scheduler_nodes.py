@@ -1,10 +1,10 @@
 """Public schemas for native model-specific scheduler nodes."""
 
 from dinkster_api.v1 import SIGMAS_TYPE, TypeExpr
-from dinkster_nodes_misc_models import NODES as MISC_NODES
-from dinkster_nodes_misc_models.model_specific_schedulers import Ideogram4Scheduler
-from dinkster_nodes_sampling import NODES as SAMPLING_NODES
-from dinkster_nodes_sampling.model_specific_schedulers import (
+from dinkster_misc_models import NODES as MISC_NODES
+from dinkster_misc_models.model_specific_schedulers import Ideogram4Scheduler
+from dinkster_sampling import NODES as SAMPLING_NODES
+from dinkster_sampling.model_specific_schedulers import (
     AlignYourStepsScheduler,
     GITSScheduler,
     OptimalStepsScheduler,

@@ -4,6 +4,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from dinkster_3d import NODES
+from dinkster_3d.gaussian_splat import GetSplatCount, MergeSplat, TransformSplat
+from dinkster_3d.splat_render import RenderSplat
 from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
@@ -17,9 +20,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_engine import ParentGraphBudget, admit_parent_graph
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
-from dinkster_nodes_3d import NODES
-from dinkster_nodes_3d.gaussian_splat import GetSplatCount, MergeSplat, TransformSplat
-from dinkster_nodes_3d.splat_render import RenderSplat
 from dinkster_schema import elaborate
 
 

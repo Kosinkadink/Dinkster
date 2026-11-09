@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_vision_marigold.marigold import MarigoldV2PostProcess
+from dinkster_vision_marigold.marigold import MarigoldV2PostProcess
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -112,8 +112,8 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
         try:
             (tmp_path / "marigold_fixture.py").write_text(
                 "from test_marigold_torch import PredictionSource, InspectDepth\n"
-                "from dinkster_nodes_vision_marigold import NODES as MARIGOLD_NODES\n"
-                "from dinkster_nodes_vision_marigold import register_types\n"
+                "from dinkster_vision_marigold import NODES as MARIGOLD_NODES\n"
+                "from dinkster_vision_marigold import register_types\n"
                 "NODES = (*MARIGOLD_NODES, PredictionSource, InspectDepth)\n",
                 encoding="ascii",
             )
@@ -122,9 +122,9 @@ def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 (root / "dinkster-pack.toml")
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["marigold-fixture",')
-                .replace("dinkster_nodes_vision_marigold:NODES", "marigold_fixture:NODES")
+                .replace("dinkster_vision_marigold:NODES", "marigold_fixture:NODES")
                 .replace(
-                    "dinkster_nodes_vision_marigold:register_types",
+                    "dinkster_vision_marigold:register_types",
                     "marigold_fixture:register_types",
                 ),
                 encoding="ascii",

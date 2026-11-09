@@ -33,7 +33,6 @@ from dinkster_assets import (
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import bind_video_value
 from dinkster_native.video import _VideoValue
-from dinkster_nodes_video.video_components import GetVideoComponents
 from dinkster_protocol import Invocation
 from dinkster_values import (
     TypeRegistry,
@@ -53,7 +52,8 @@ from dinkster_values.audio_codec import (
 )
 from dinkster_values.audio_lazy import LazyAudio
 from dinkster_values.video_codec import validate_video_encoded
-from dinkster_video import assemble_video, disassemble_video
+from dinkster_video.video_components import GetVideoComponents
+from dinkster_video_runtime import assemble_video, disassemble_video
 from dinkster_workers import RemoteWorker
 from dinkster_workers.devices import DeviceMap
 from test_av_codec import FakeTensor, mp4_bytes
@@ -120,7 +120,7 @@ def _video_asset(data: bytes, vault: AssetVault) -> AssetRef:
 @pytest.fixture
 def decoded_audio_samples(monkeypatch, tmp_path):
     import dinkster_values.audio_lazy as lazy
-    import dinkster_video.runtime as runtime
+    import dinkster_video_runtime.runtime as runtime
 
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
     samples = []
@@ -160,7 +160,7 @@ def extract_audio(extraction_kind, monkeypatch):
 def test_extraction_callers_publish_inline_video_before_lazy_audio(
     tmp_path, monkeypatch, extract_audio, decoded_audio_samples, concat
 ) -> None:
-    import dinkster_video.runtime as runtime
+    import dinkster_video_runtime.runtime as runtime
 
     first_data, first_pcm = _encoded_video_audio(
         samples=48000, extra_audio=True, audio_start=Fraction(9, 4), seed=1
@@ -389,7 +389,7 @@ def test_source_video_concat_audio_is_lazy_across_selected_boundary(
 def test_source_video_unknown_duration_uses_measured_video_end(
     tmp_path, decoded_audio_samples
 ) -> None:
-    from dinkster_video.runtime import _extract_audio, _Segment
+    from dinkster_video_runtime.runtime import _extract_audio, _Segment
 
     data, pcm = _encoded_video_audio()
     source = _video_asset(data, AssetVault(tmp_path))

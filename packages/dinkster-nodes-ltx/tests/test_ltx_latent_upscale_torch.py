@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import torch
-from dinkster_nodes_ltx.latent_upscale import LTXVLatentUpsampler
+from dinkster_ltx.latent_upscale import LTXVLatentUpsampler
 
 
 def test_ltx_normalizes_around_the_model_and_removes_noise_mask(monkeypatch) -> None:
@@ -30,11 +30,9 @@ def test_ltx_normalizes_around_the_model_and_removes_noise_mask(monkeypatch) -> 
         load_models_gpu=lambda models, memory_required: calls.append((models, memory_required)),
         intermediate_device=lambda: torch.device("cpu"),
     )
+    monkeypatch.setattr("dinkster_ltx.latent_upscale.initialize_inference_process", lambda: None)
     monkeypatch.setattr(
-        "dinkster_nodes_ltx.latent_upscale.initialize_inference_process", lambda: None
-    )
-    monkeypatch.setattr(
-        "dinkster_nodes_ltx.latent_upscale.importlib.import_module", lambda _name: management
+        "dinkster_ltx.latent_upscale.importlib.import_module", lambda _name: management
     )
     source = {
         "samples": torch.tensor([[[[2.0]]]], dtype=torch.float32),

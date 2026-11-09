@@ -25,7 +25,6 @@ from dinkster_graph import (
     validate,
 )
 from dinkster_graph.wire import GraphWireError
-from dinkster_nodes_text.text import StringConcatenate
 from dinkster_schema import (
     DynamicSlotSpec,
     ElaborationError,
@@ -46,6 +45,7 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
+from dinkster_text.text import StringConcatenate
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import torch
-from dinkster_nodes_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
+from dinkster_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
 
 
 def test_hunyuan_zero_dimensions_returns_the_original_public_latent() -> None:
@@ -27,10 +27,10 @@ def test_hunyuan_one_zero_dimension_uses_width_height_in_the_core_order(monkeypa
             return latent + 3
 
     monkeypatch.setattr(
-        "dinkster_nodes_hunyuan.latent_upscale.initialize_inference_process", lambda: None
+        "dinkster_hunyuan.latent_upscale.initialize_inference_process", lambda: None
     )
     monkeypatch.setattr(
-        "dinkster_nodes_hunyuan.latent_upscale.importlib.import_module",
+        "dinkster_hunyuan.latent_upscale.importlib.import_module",
         lambda name: SimpleNamespace(
             common_upscale=lambda tensor, width, height, _method, _crop: (
                 calls.append((width, height)) or tensor.new_ones((1, 2, height, width))

@@ -20,20 +20,20 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
+from dinkster_cosmos.video_latent import EmptyCosmosLatentVideo
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_inference_wire.latents import MultiStreamLatent
-from dinkster_nodes_cosmos.video_latent import EmptyCosmosLatentVideo
-from dinkster_nodes_hunyuan.video_latent import (
+from dinkster_hunyuan.video_latent import (
     EmptyHunyuanLatentVideo,
     EmptyHunyuanVideo15Latent,
 )
-from dinkster_nodes_latent.video_latent_ops import (
+from dinkster_inference_wire.latents import MultiStreamLatent
+from dinkster_latent.video_latent_ops import (
     NormalizeVideoLatentStart,
     TrimVideoLatent,
 )
-from dinkster_nodes_ltx.video_latent import EmptyLTXVLatentVideo
-from dinkster_nodes_ltx.video_latent_ops import LTXVFreezeLatent
-from dinkster_nodes_misc_models.video_latent import EmptyARVideoLatent
+from dinkster_ltx.video_latent import EmptyLTXVLatentVideo
+from dinkster_ltx.video_latent_ops import LTXVFreezeLatent
+from dinkster_misc_models.video_latent import EmptyARVideoLatent
 
 from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
@@ -106,16 +106,16 @@ def test_ordinary_manifest_executes_video_latents_twice(in_process: bool, tmp_pa
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-video", "dinkster_nodes_video"),
-                ("dinkster-models", "dinkster_nodes_models"),
-                ("dinkster-llm", "dinkster_nodes_llm"),
-                ("dinkster-qwen", "dinkster_nodes_qwen"),
-                ("dinkster-hunyuan", "dinkster_nodes_hunyuan"),
-                ("dinkster-ltx", "dinkster_nodes_ltx"),
-                ("dinkster-cosmos", "dinkster_nodes_cosmos"),
-                ("dinkster-misc-models", "dinkster_nodes_misc_models"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-video", "dinkster_video"),
+                ("dinkster-models", "dinkster_models"),
+                ("dinkster-llm", "dinkster_llm"),
+                ("dinkster-qwen", "dinkster_qwen"),
+                ("dinkster-hunyuan", "dinkster_hunyuan"),
+                ("dinkster-ltx", "dinkster_ltx"),
+                ("dinkster-cosmos", "dinkster_cosmos"),
+                ("dinkster-misc-models", "dinkster_misc_models"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)
@@ -392,12 +392,12 @@ def test_ordinary_manifest_executes_video_latent_transforms_twice(
                 encoding="ascii",
             )
             for identity, module in (
-                ("dinkster-latent", "dinkster_nodes_latent"),
-                ("dinkster-conditioning", "dinkster_nodes_conditioning"),
-                ("dinkster-video", "dinkster_nodes_video"),
-                ("dinkster-models", "dinkster_nodes_models"),
-                ("dinkster-llm", "dinkster_nodes_llm"),
-                ("dinkster-ltx", "dinkster_nodes_ltx"),
+                ("dinkster-latent", "dinkster_latent"),
+                ("dinkster-conditioning", "dinkster_conditioning"),
+                ("dinkster-video", "dinkster_video"),
+                ("dinkster-models", "dinkster_models"),
+                ("dinkster-llm", "dinkster_llm"),
+                ("dinkster-ltx", "dinkster_ltx"),
             ):
                 await composer.add_pack(
                     _installed_pack_spec(identity, module, in_process=in_process)

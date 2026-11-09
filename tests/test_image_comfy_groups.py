@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, cast
 
-from dinkster_nodes_image._draft_initialization import IMAGE_NODES
+from dinkster_image._draft_initialization import IMAGE_NODES
 from dinkster_schema import (
     comfy_group_registry_from_wire,
     comfy_group_registry_problems,

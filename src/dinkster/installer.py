@@ -67,6 +67,7 @@ from dinkster_workers import (
     load_manifest,
 )
 from dinkster_workers.doctor import render_text
+from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import (
     ProvisionError,
     bare_pin,
@@ -160,52 +161,34 @@ def _is_registry_source(source: str) -> bool:
 def http_registry_fetcher(
     endpoint: str, *, token: str = "", timeout: float = DEFAULT_REGISTRY_TIMEOUT
 ) -> RegistryFetcher:
-    """Acquire exact bytes through the registry's download-ticket contract."""
+    """Acquire a hash-pinned wheel using only the registry's static prefix."""
     base = endpoint.rstrip("/")
     if not base.startswith(("http://", "https://")):
         raise InstallError(f"registry endpoint {endpoint!r} must be an http(s) URL")
 
     def fetch(entry: LockedPack) -> bytes:
+        from .registries import NamedRegistry, static_pack_release, static_release_wheel
+
         headers = {"User-Agent": "dinkster-pack"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        ticket_url = f"{base}/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"
-        ticket_request = urllib.request.Request(ticket_url, headers=headers, method="POST")  # noqa: S310 - scheme checked above
         try:
-            with urllib.request.urlopen(ticket_request, timeout=timeout) as response:  # noqa: S310
-                ticket_raw: object = json.load(response)
-            if not isinstance(ticket_raw, dict):
-                raise ValueError("ticket is not an object")
-            ticket = cast("dict[str, object]", ticket_raw)
-            url = ticket.get("url")
-            digest = ticket.get("artifactDigest")
-            size = ticket.get("artifactSize")
-            required_headers = ticket.get("requiredHeaders", {})
-            if (
-                not isinstance(url, str)
-                or digest != entry.artifact_digest
-                or not isinstance(required_headers, dict)
-                or not all(
-                    isinstance(name, str) and isinstance(value, str)
-                    for name, value in required_headers.items()
-                )
-            ):
-                raise ValueError("ticket fields do not match the locked release")
-            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-                raise ValueError("ticket artifactSize must be a nonnegative integer")
-            url = urllib.parse.urljoin(base + "/", url)
-            if not url.startswith(("http://", "https://")):
-                raise ValueError("ticket URL is not HTTP(S)")
-            request = urllib.request.Request(url, headers=cast("dict[str, str]", required_headers))  # noqa: S310 - service-issued ticket URL
+            registry = NamedRegistry("", base)
+            fields = static_pack_release(
+                registry, entry.pack, entry.version, timeout=timeout, token=token
+            )
+            wheel, digest = static_release_wheel(registry, fields)
+            if digest != entry.artifact_digest:
+                raise ValueError("wheel.digest-mismatch: index differs from locked release")
+            request = urllib.request.Request(wheel.url, headers=headers)
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                data = response.read(size + 1)
-            if len(data) != size:
-                raise ValueError(
-                    f"archive size differs from ticket: expected {size}, got {len(data)}; "
-                    "refusing to return unverified bytes"
-                )
+                data = response.read(wheel.size + 1)
+            if len(data) != wheel.size or hashlib.sha256(data).hexdigest() != wheel.sha256:
+                raise ValueError("wheel.hash-mismatch: bytes differ from published size or sha256")
+            if artifact_digest(data) != entry.artifact_digest:
+                raise ValueError("wheel.digest-mismatch: bytes differ from locked release")
             return data
-        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError, InstallError) as exc:
             raise InstallError(
                 f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"
             ) from exc
@@ -828,7 +811,7 @@ class Installer:
         for entry in target.packs:
             if entry.pack in grouped or entry.pack in in_process:
                 continue
-            manifest_path = self._store_dir(entry) / MANIFEST_FILENAME
+            manifest_path = pack_manifest_path(self._store_dir(entry))
             if not manifest_path.is_file():
                 return False
             manifest = load_manifest(manifest_path)
@@ -858,7 +841,7 @@ class Installer:
         """Whether the exact bytes this entry pins are present (unpacked
         store or archived artifact) - what apply-from-plan checks up front
         so a stale-gc'd plan refuses loudly instead of failing mid-stage."""
-        if (self._store_dir(entry) / MANIFEST_FILENAME).is_file():
+        if pack_manifest_path(self._store_dir(entry)).is_file():
             return True
         return pack_archive_path(self.artifacts_dir, entry.artifact_digest).is_file()
 
@@ -966,7 +949,7 @@ class Installer:
         accelerator-conditional requirements) before anything mutates.
         ``artifact`` supplies an explicit archive instead of the cached path.
         None when neither is present (a gc'd plan; apply refuses that separately)."""
-        store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
+        store_manifest = pack_manifest_path(self._store_dir(entry))
         if store_manifest.is_file():
             return load_manifest(store_manifest)
         archive = artifact or pack_archive_path(self.artifacts_dir, entry.artifact_digest)
@@ -974,7 +957,7 @@ class Installer:
             return None
         with tempfile.TemporaryDirectory(prefix="dinkster-manifest-") as scratch:
             unpack_artifact(archive, Path(scratch), entry.artifact_digest)
-            return load_manifest(Path(scratch) / MANIFEST_FILENAME)
+            return load_manifest(pack_manifest_path(Path(scratch)))
 
     def check_engine_compatibility(
         self, target: Lockfile, artifacts: Mapping[str, Path] | None = None
@@ -1007,7 +990,7 @@ class Installer:
         lockfile: Lockfile,
         groups: Sequence[tuple[str, tuple[str, ...]]],
     ) -> Path | None:
-        store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
+        store_manifest = pack_manifest_path(self._store_dir(entry))
         if not store_manifest.is_file():
             return None
         manifest = load_manifest(store_manifest)
@@ -1135,7 +1118,7 @@ class Installer:
             return
         for entry in target.packs:
             store = self._store_dir(entry, allocate=True)
-            if not (store / MANIFEST_FILENAME).is_file():
+            if not pack_manifest_path(store).is_file():
                 archive = artifacts.get(entry.artifact_digest)
                 if archive is None:
                     candidate = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
@@ -1146,7 +1129,7 @@ class Installer:
                         )
                     archive = candidate
                 unpack_artifact(archive, store, entry.artifact_digest)
-            manifest = load_manifest(store / MANIFEST_FILENAME)
+            manifest = load_manifest(pack_manifest_path(store))
             interpreter: Path | str = (
                 self._serving_interpreter if entry.pack in in_process else sys.executable
             )
@@ -1182,7 +1165,7 @@ class Installer:
         entries = {entry.pack: entry for entry in target.packs}
         for entry in target.packs:
             store = self._store_dir(entry, allocate=True)
-            if not (store / MANIFEST_FILENAME).is_file():
+            if not pack_manifest_path(store).is_file():
                 archive = artifacts.get(entry.artifact_digest)
                 if archive is None:
                     candidate = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
@@ -1193,7 +1176,7 @@ class Installer:
                         )
                     archive = candidate
                 unpack_artifact(archive, store, entry.artifact_digest)
-            manifests[entry.pack] = load_manifest(store / MANIFEST_FILENAME)
+            manifests[entry.pack] = load_manifest(pack_manifest_path(store))
 
         member_to_group = {
             member: (name, members) for name, members in groups for member in members
@@ -1554,7 +1537,7 @@ class Installer:
         specs: list[PackSpec] = []
         for entry in lockfile.packs:
             store = self._store_dir(entry)
-            manifest_path = store / MANIFEST_FILENAME
+            manifest_path = pack_manifest_path(store)
             if not manifest_path.is_file():
                 raise InstallError(
                     f"generation content for pack {entry.pack!r} is missing from "
@@ -1591,11 +1574,13 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
+                    trust_reserved=_is_registry_source(entry.source)
+                    and entry.publisher == "dinkster",
                     packs={manifest.name: info},
                     worker_group=group[0] if group is not None else None,
                     group_manifests=(
                         tuple(
-                            self._store_dir(entries[member]) / MANIFEST_FILENAME
+                            pack_manifest_path(self._store_dir(entries[member]))
                             for member in group[1]
                         )
                         if group is not None
