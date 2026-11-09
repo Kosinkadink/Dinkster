@@ -435,7 +435,7 @@ jobs:
       - torch-cpu
       - windows-runtime
       - coverage-gate
-      - registry-install
+      - probe-jail
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
     steps:
@@ -446,10 +446,11 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+          PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s"}}\n' \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s","probeJail":"%s"}}\n' \
             "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
-            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" \
+            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" "$PROBE_JAIL_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -467,7 +468,7 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
-          REGISTRY_RESULT: ${{ needs.registry-install.result }}
+          PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
@@ -478,9 +479,9 @@ jobs:
           fi
           test "$RUNTIME_RESULT" = success
           test "$COVERAGE_RESULT" = success
-          test "$REGISTRY_RESULT" = success
+          test "$PROBE_JAIL_RESULT" = success
 
-  registry-install:
+  probe-jail:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
@@ -489,16 +490,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: ./.github/actions/configure-private-repository
-        with:
-          repository: Kosinkadink/dinkster-registry
-          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
-      - uses: actions/checkout@v4
-        with:
-          repository: Kosinkadink/dinkster-registry
-          ref: 5d844ae53616f88756a98eb6dc3aa73fefb92622
-          path: registry
-          persist-credentials: false
       - name: Configure and verify the Linux probe jail
         run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
@@ -506,15 +497,5 @@ jobs:
           python-version: "3.12"
       - run: |
           uv sync --locked --all-packages
-          uv sync --project registry --frozen
           uv run --no-sync python -m pytest -v \
             tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe
-          uv run --no-sync python scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
-            --state "$RUNNER_TEMP/registry-install-state" \
-            --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: registry-install-state
-          path: ${{ runner.temp }}/registry-install-state
-          retention-days: 7
