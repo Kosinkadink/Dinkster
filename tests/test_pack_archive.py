@@ -1175,8 +1175,27 @@ def test_official_publication_requires_complete_supported_base_bindings(
         server.server_close()
 
 
-@pytest.mark.parametrize("mode", ["raw", "locks", "missing", "refused"])
-def test_publication_client_preserves_archive_and_lock_bytes(tmp_path: Path, mode: str) -> None:
+@pytest.mark.parametrize(
+    ("mode", "state"),
+    [
+        ("raw", "queued"),
+        ("locks", "queued"),
+        ("locks", "scanning"),
+        ("locks", "accepted"),
+        ("missing", "queued"),
+        ("refused", "queued"),
+        ("invalid", "rejected"),
+        ("invalid", "review"),
+        ("invalid", "promoting"),
+        ("invalid", "unknown"),
+        ("invalid", None),
+        ("invalid", ["queued"]),
+    ],
+)
+def test_publication_client_preserves_archive_and_lock_bytes(
+    tmp_path: Path, mode: str, state: object
+) -> None:
+    import json
     import threading
     from email import policy
     from email.parser import BytesParser
@@ -1205,7 +1224,7 @@ def test_publication_client_preserves_archive_and_lock_bytes(tmp_path: Path, mod
             self.wfile.write(
                 b'{"error":{"message":"lock binding refused"}}'
                 if mode == "refused"
-                else b'{"status":"queued","candidateId":"candidate-1"}'
+                else json.dumps({"status": state, "candidateId": "candidate-1"}).encode()
             )
 
         def log_message(self, format: str, *args: object) -> None:
@@ -1216,19 +1235,21 @@ def test_publication_client_preserves_archive_and_lock_bytes(tmp_path: Path, mod
     thread.start()
     registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
     try:
-        if mode in {"missing", "refused"}:
+        if mode in {"missing", "refused", "invalid"}:
             with pytest.raises(
                 RegistryPublishError,
-                match=(
-                    "cannot read publication input" if mode == "missing" else "lock binding refused"
-                ),
+                match={
+                    "missing": "cannot read publication input",
+                    "refused": "lock binding refused",
+                    "invalid": "malformed receipt",
+                }[mode],
             ):
                 publish_release(registry, archive, "demo", "1.2.3", locks=locks)
         else:
             result = publish_release(
                 registry, archive, "demo", "1.2.3", locks=locks if mode == "locks" else None
             )
-            assert result.state == "queued" and result.candidate_id == "candidate-1"
+            assert result.state == state and result.candidate_id == "candidate-1"
         if mode == "missing":
             assert requests == []
             return
