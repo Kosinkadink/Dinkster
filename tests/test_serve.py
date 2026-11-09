@@ -3394,6 +3394,7 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
     serve.main()
 
 
+@pytest.mark.timeout(360)
 @pytest.mark.parametrize(
     ("failed_pack", "surviving_pack", "present_node", "missing_node"),
     [
@@ -3443,7 +3444,9 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                async with asyncio.timeout(10):
+                # Like the full-catalog test above, this composes all defaults:
+                # coverage measured 78 s, so keep its 300 s readiness bound.
+                async with asyncio.timeout(300):
                     while True:
                         report = await (await client.get("/api/composition")).json()
                         entry = report["packs"][failed_pack]
@@ -3456,7 +3459,6 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
                             observed.update(entry)
                             break
                         await asyncio.sleep(0)
-                async with asyncio.timeout(10):
                     while "composing" in await (await client.get("/api/composition")).json():
                         await asyncio.sleep(0)
                 nodes = await (await client.get("/api/nodes")).json()
@@ -3475,7 +3477,7 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
             finally:
                 await client.close()
 
-        run_scenario(inspect())
+        run_scenario(inspect(), timeout=330)
 
     monkeypatch.setattr(serve, "default_pack_spec", fail_one_default)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
