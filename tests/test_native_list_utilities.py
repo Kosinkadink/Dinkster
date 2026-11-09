@@ -13,9 +13,9 @@ from dinkster_api.v1 import (
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
-from dinkster_nodes_comfy.list_utilities import CreateList, GetItemFromList
-from dinkster_nodes_foundation import IntPrimitive
 from dinkster_schema import bind_type_variables, build_node_types, build_schemas
+from dinkster_utilities.list_utilities import CreateList, GetItemFromList
+from dinkster_utilities.primitive import PrimitiveInt
 from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -82,7 +82,7 @@ def test_native_list_nodes_execute_scalar_and_list_envelopes_without_wrappers() 
     async def run() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        nodes = (CreateList, GetItemFromList, IntPrimitive)
+        nodes = (CreateList, GetItemFromList, PrimitiveInt)
         schemas = build_schemas(nodes)
         engine = Engine(
             schemas=schemas,
@@ -93,7 +93,7 @@ def test_native_list_nodes_execute_scalar_and_list_envelopes_without_wrappers() 
         graph = Graph(
             nodes={
                 "items": GraphNode(
-                    "CreateList",
+                    "dinkster.utilities.create_list",
                     {
                         "inputs.input2": TypedLiteral("STRING", "first"),
                         "inputs.input0": TypedLiteral("list<INT>", [7, 13]),
@@ -101,22 +101,22 @@ def test_native_list_nodes_execute_scalar_and_list_envelopes_without_wrappers() 
                     },
                 ),
                 "selected": GraphNode(
-                    "GetItemFromList",
+                    "dinkster.utilities.get_item_from_list",
                     {
                         "list": Link("items", "list"),
                         "index": TypedLiteral("list<INT>", [-1, 0]),
                     },
                 ),
                 "indices": GraphNode(
-                    "CreateList",
+                    "dinkster.utilities.create_list",
                     {"inputs.input0": TypedLiteral("list<INT>", [-2, 0])},
                 ),
                 "linked": GraphNode(
-                    "GetItemFromList",
+                    "dinkster.utilities.get_item_from_list",
                     {"list": Link("items", "list"), "index": Link("indices", "list")},
                 ),
                 "scalar": GraphNode(
-                    "GetItemFromList",
+                    "dinkster.utilities.get_item_from_list",
                     {
                         "list": TypedLiteral("STRING", "singleton"),
                         "index": 0,
@@ -132,7 +132,9 @@ def test_native_list_nodes_execute_scalar_and_list_envelopes_without_wrappers() 
         assert result.outputs["scalar"]["item"].resolve() == "singleton"
         rejected = Graph(
             nodes={
-                "plain": GraphNode("dinkster.int", {"value": TypedLiteral("list<INT>", [2])}),
+                "plain": GraphNode(
+                    "dinkster.utilities.primitive_int", {"value": TypedLiteral("list<INT>", [2])}
+                ),
             }
         )
         assert any(d.severity == "error" for d in validate(rejected, schemas, ["plain"]))

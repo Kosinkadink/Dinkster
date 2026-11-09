@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -9,6 +10,7 @@ _SHARD_COUNTS = frozenset({2, 3, 4, 6, 8})
 # The namespace balances whole files by the root suite's measured phase times.
 _HASH_PREFIX = b"dinkster-windows-pytest-v1:22340:"
 ALL_FILE_SHARDS_MARKER = "all_file_shards"
+_EMPTY_SHARD = pytest.StashKey[bool]()
 
 
 def file_shard(path: str, count: int = 2) -> int:
@@ -52,6 +54,7 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     value = config.getoption("file_shard")
     if value is None:
@@ -66,7 +69,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     root = Path(config.rootpath)
     paths = {item: Path(item.path).relative_to(root).as_posix() for item in items}
-    case_files = set(config.getoption("case_shard_file"))
+    case_files = set(cast(list[str], config.getoption("case_shard_file")))
     missing = case_files - set(paths.values())
     if missing:
         raise pytest.UsageError(
@@ -89,3 +92,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     config.hook.pytest_deselected(items=deselected)
     items[:] = selected
+    config.stash[_EMPTY_SHARD] = bool(deselected) and not selected
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    # A populated package can legitimately assign all its files to other shards.
+    if exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED and session.config.stash.get(
+        _EMPTY_SHARD, False
+    ):
+        session.exitstatus = pytest.ExitCode.OK

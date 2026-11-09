@@ -16,10 +16,13 @@ def test_model_patch_loader_schema_is_torch_free_and_uses_bound_name_asset() -> 
 _COLD_SCHEMA = """
 import sys
 from dinkster_api.v1 import ASSET_TYPE, MODEL_PATCH_TYPE, AssetWidget, TypeExpr
-from dinkster_nodes_comfy.model_patch_loader import ModelPatchLoader
+from dinkster_models import NODES
+from dinkster_models.model_patch_loader import ModelPatchLoader
 
 schema = ModelPatchLoader.schema()
 assert "torch" not in sys.modules
+assert ModelPatchLoader in NODES
+assert schema.node_type == "dinkster.models.model_patch_loader"
 # ModelPatchLoader, F bc5f880d, define_schema() without inputs; ASSET is the
 # native bound-file substitution for the source name combo.
 assert schema.display_name == "Load Model Patch"

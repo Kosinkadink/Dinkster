@@ -12,15 +12,21 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.latent_upscale import LATENT_UPSCALE_NODES
+from dinkster_hunyuan import NODES as HUNYUAN_NODES
+from dinkster_hunyuan.latent_upscale import HunyuanVideo15LatentUpscaleWithModel
+from dinkster_ltx import NODES as LTX_NODES
+from dinkster_ltx.latent_upscale import LTXVLatentUpsampler
+from dinkster_schema import claim_covers
 
 
 def test_latent_upscale_public_schemas_are_exact() -> None:
-    hunyuan, ltx = (node.schema() for node in LATENT_UPSCALE_NODES)
+    hunyuan, ltx = (HunyuanVideo15LatentUpscaleWithModel.schema(), LTXVLatentUpsampler.schema())
     assert [(schema.node_type, schema.category) for schema in (hunyuan, ltx)] == [
-        ("HunyuanVideo15LatentUpscaleWithModel", "model/latent/hunyuan video"),
-        ("LTXVLatentUpsampler", "model/latent/ltxv"),
+        (
+            "dinkster.hunyuan.hunyuan_video15_latent_upscale_with_model",
+            "model/latent/hunyuan video",
+        ),
+        ("dinkster.ltx.ltxv_latent_upsampler", "model/latent/ltxv"),
     ]
     assert [(port.id, port.type.types) for port in hunyuan.inputs] == [
         ("model", (LATENT_UPSCALE_MODEL_TYPE,)),
@@ -40,14 +46,20 @@ def test_latent_upscale_public_schemas_are_exact() -> None:
 
 
 def test_latent_upscale_registration_and_manifest_order_are_complete() -> None:
-    manifest = tomllib.loads(
-        (Path(__file__).parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text(
-            encoding="ascii"
+    for pack, node, nodes in (
+        ("hunyuan", HunyuanVideo15LatentUpscaleWithModel, HUNYUAN_NODES),
+        ("ltx", LTXVLatentUpsampler, LTX_NODES),
+    ):
+        manifest = tomllib.loads(
+            (
+                Path(__file__).parents[1] / f"packages/dinkster-nodes-{pack}/dinkster-pack.toml"
+            ).read_text(encoding="ascii")
         )
-    )
-    registered = tuple(node.schema().node_type for node in COMFY_NODES)
-    assert tuple(manifest["pack"]["namespaces"]) == ("devices", *registered)
-    assert tuple(node.schema().node_type for node in LATENT_UPSCALE_NODES) == (
-        "HunyuanVideo15LatentUpscaleWithModel",
-        "LTXVLatentUpsampler",
-    )
+        assert nodes.count(node) == 1
+        assert all(
+            any(
+                claim_covers(claim, entry.schema().node_type)
+                for claim in manifest["pack"]["namespaces"]
+            )
+            for entry in nodes
+        )

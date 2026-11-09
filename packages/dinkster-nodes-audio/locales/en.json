@@ -1,0 +1,36 @@
+{
+  "nodes": {
+    "dinkster.audio.audio_adjust_volume": {"displayName": "Adjust Audio Volume"},
+    "dinkster.audio.audio_concat": {"displayName": "Concatenate Audio"},
+    "dinkster.audio.audio_equalizer3_band": {"displayName": "Audio Equalizer (3-Band)"},
+    "dinkster.audio.audio_merge": {"displayName": "Merge Audio"},
+    "dinkster.audio.empty_audio": {"displayName": "Empty Audio"},
+    "dinkster.audio.join_audio_channels": {"displayName": "Join Audio Channels"},
+    "dinkster.audio.load_audio": {"displayName": "Load Audio"},
+    "dinkster.audio.preview_audio": {"displayName": "Preview Audio"},
+    "dinkster.audio.record_audio": {"displayName": "Record Audio"},
+    "dinkster.audio.save_audio": {"displayName": "Save Audio (FLAC) (DEPRECATED)"},
+    "dinkster.audio.save_audio_advanced": {"displayName": "Save Audio (Advanced)"},
+    "dinkster.audio.save_audio_mp3": {"displayName": "Save Audio (MP3) (DEPRECATED)"},
+    "dinkster.audio.save_audio_opus": {"displayName": "Save Audio (Opus) (DEPRECATED)"},
+    "dinkster.audio.split_audio_channels": {"displayName": "Split Audio Channels"},
+    "dinkster.audio.trim_audio_duration": {"displayName": "Trim Audio Duration"}
+  },
+  "searchTerms": {
+    "dinkster.audio.audio_adjust_volume": ["AudioAdjustVolume"],
+    "dinkster.audio.audio_concat": ["AudioConcat"],
+    "dinkster.audio.audio_equalizer3_band": ["AudioEqualizer3Band"],
+    "dinkster.audio.audio_merge": ["AudioMerge"],
+    "dinkster.audio.empty_audio": ["EmptyAudio"],
+    "dinkster.audio.join_audio_channels": ["JoinAudioChannels"],
+    "dinkster.audio.load_audio": ["LoadAudio"],
+    "dinkster.audio.preview_audio": ["PreviewAudio"],
+    "dinkster.audio.record_audio": ["RecordAudio"],
+    "dinkster.audio.save_audio": ["SaveAudio"],
+    "dinkster.audio.save_audio_advanced": ["SaveAudioAdvanced"],
+    "dinkster.audio.save_audio_mp3": ["SaveAudioMP3"],
+    "dinkster.audio.save_audio_opus": ["SaveAudioOpus"],
+    "dinkster.audio.split_audio_channels": ["SplitAudioChannels"],
+    "dinkster.audio.trim_audio_duration": ["TrimAudioDuration"]
+  }
+}

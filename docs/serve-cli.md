@@ -191,14 +191,22 @@ Managed install root: serve the packs of its current generation from
 the immutable store. Explicit `--pack` entries are additions on top;
 name collisions fail composition loudly.
 
-Populate the same root with `dinkster-pack`. An install first prints the exact
+Populate a development root with `dinkster-pack`. An install first prints the exact
 pack versions, artifact digests, provenance, and environment work it would
 apply, then requires explicit confirmation:
 
 ```console
-dinkster-pack --root /path/to/install-root install pack@version
 dinkster-pack --root /path/to/install-root install ./path/to/pack
 dinkster-pack --root /path/to/install-root install 'git+https://example.com/pack.git@ref'
+```
+
+Registry installs require a managed generation bound to an engine base and
+accelerator variant. The classic `install pack@version` form refuses rather
+than resolving dependencies freely. Supply the registry's source catalog,
+verified wheel artifacts, and exact dependency locks to managed setup:
+
+```console
+dinkster-env --root /path/to/environment setup --variant linux-cpu --catalog-lock catalog.lock --artifacts artifacts --pack-lock demo.pack-lock.json
 ```
 
 Use `--yes` for a reviewed noninteractive install, or add `--plan plan.json`

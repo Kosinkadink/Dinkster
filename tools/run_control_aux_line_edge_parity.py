@@ -150,7 +150,7 @@ def _setup_dinkster(
 ) -> tuple[Callable[[], np.ndarray], Callable[[], int]]:
     from dinkster_api.v1 import PressureSignal
     from dinkster_assets import AssetVault, install_declared_assets, use_declared_asset_pack
-    from dinkster_nodes_image import (
+    from dinkster_image import (
         EdgePreprocessor,
         LineartPreprocessor,
         ScribblePreprocessor,

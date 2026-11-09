@@ -28,7 +28,7 @@ namespaces = ["healthy"]
 requires = ["numpy>=1.26"]
 
 [pack.entry]
-nodes = "healthy_nodes:NODES"
+nodes = "healthy:NODES"
 """
 
 HEALTHY_NODES = """\
@@ -56,7 +56,8 @@ NODES = [Doubler]
 def write_pack(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST)
-    (root / "healthy_nodes.py").write_text(HEALTHY_NODES)
+    (root / "healthy").mkdir(exist_ok=True)
+    (root / "healthy/__init__.py").write_text(HEALTHY_NODES)
     return root
 
 
@@ -69,7 +70,6 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "setup",
         "pack",
         "installs",
-        "port",
         "demo",
         "isolated-demo",
     ):
@@ -94,7 +94,7 @@ def test_doctor_subcommand_is_the_real_publish_gate(tmp_path: Path, capsys) -> N
     assert payload["reportVersion"] == 1
     assert payload["nodeTypes"] == ["healthy.doubler"]
 
-    (pack / "healthy_nodes.py").write_text("raise Exception()\n")
+    (pack / "healthy/__init__.py").write_text("raise Exception()\n")
     assert main(["doctor", str(pack)]) == 1
     assert "entry.unresolvable" in capsys.readouterr().out
 

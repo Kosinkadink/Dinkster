@@ -6,33 +6,45 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import CORE_INT, IMAGE_TYPE, LATENT_TYPE, VAE_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.cosmos_conditioning import (
-    COSMOS_CONDITIONING_NODES,
+from dinkster_cosmos import NODES
+from dinkster_cosmos.cosmos_conditioning import (
     CosmosImageToVideoLatent,
     CosmosPredict2ImageToVideoLatent,
 )
+from dinkster_schema import claim_covers
 
 
 def test_cosmos_conditioning_schemas_match_the_public_contract() -> None:
     manifest = tomllib.loads(
         (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1]
+            / "packages/dinkster-nodes-cosmos/dinkster-pack.toml"
         ).read_text(encoding="ascii")
     )
     integer = TypeExpr.concrete(CORE_INT)
     image = TypeExpr.concrete(IMAGE_TYPE)
     latent = TypeExpr.concrete(LATENT_TYPE)
     vae = TypeExpr.concrete(VAE_TYPE)
-    for node, defaults, length_step in (
-        (CosmosImageToVideoLatent, (1280, 704, 121), 8),
-        (CosmosPredict2ImageToVideoLatent, (848, 480, 93), 4),
+    for node, node_type, defaults, length_step in (
+        (
+            CosmosImageToVideoLatent,
+            "dinkster.cosmos.cosmos_image_to_video_latent",
+            (1280, 704, 121),
+            8,
+        ),
+        (
+            CosmosPredict2ImageToVideoLatent,
+            "dinkster.cosmos.cosmos_predict2_image_to_video_latent",
+            (848, 480, 93),
+            4,
+        ),
     ):
-        assert node in COSMOS_CONDITIONING_NODES
-        assert node in COMFY_NODES
+        assert node in NODES
         schema = node.define_schema()
-        assert schema.node_type == node.__name__
-        assert schema.node_type in manifest["pack"]["namespaces"]
+        assert schema.node_type == node_type
+        assert any(
+            claim_covers(namespace, node_type) for namespace in manifest["pack"]["namespaces"]
+        )
         assert schema.category == "model/conditioning/cosmos"
         assert [(input.id, input.type) for input in schema.inputs] == [
             ("vae", vae),

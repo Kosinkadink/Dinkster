@@ -11,7 +11,7 @@ in the Dinkster repository.
 
 ```
 dinkster-pack.toml        # the manifest: identity, entries, presentation
-my_pack_nodes.py       # nodes + register_types (the only import: dinkster_api.v1)
+my_pack/__init__.py     # nodes + register_types (the only import: dinkster_api.v1)
 icon.png               # 64x64 static PNG badge, served by digest
 pyproject.toml         # dev tooling only - runtime deps go in the manifest
 tests/test_pack.py     # plain-value node tests + the doctor gate
@@ -23,7 +23,9 @@ tests/test_pack.py     # plain-value node tests + the doctor gate
 1. `[pack] name` in `dinkster-pack.toml` - your pack id. It prefixes node
    types (`my-pack.shout`), keys attribution and logging, and never
    changes once published.
-2. The module name (`my_pack_nodes.py` and the `[pack.entry]` strings).
+2. The distribution name in `pyproject.toml` must equal the pack name.
+   Rename `my_pack` and the `[pack.entry]` strings to that name with
+   hyphens and dots replaced by underscores.
 3. Every `node_type` and value type id (`my-pack.*` -> `your-pack.*`).
 4. `[pack.presentation]` and `icon.png` - your badge, pixels only.
 

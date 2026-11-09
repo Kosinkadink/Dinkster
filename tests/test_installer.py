@@ -18,10 +18,12 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_registry import (
@@ -32,6 +34,7 @@ from dinkster_registry import (
     SnapshotRecord,
     build_artifact,
 )
+from dinkster_store import pack_archive_path
 from dinkster_workers import DoctorReport, Finding, PackManifest
 from dinkster_workers.provision import ProvisionError
 
@@ -54,7 +57,7 @@ def venv_python(venv_dir: Path) -> Path:
 
 def venv_metadata_glob(root: Path, pack: str, filename: str) -> list[Path]:
     scripts = "Scripts" if os.name == "nt" else "bin"
-    return list((root / "venvs").glob(f"*/{pack}/{scripts}/{filename}"))
+    return list((root / "venvs").glob(f"**/{pack}/{scripts}/{filename}"))
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +66,13 @@ def _no_host_runtime_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     shells out to the host's vendor status tool (nvidia-smi), which must
     never run under tests. Tests that WANT runtime facts inject their
     own probe or re-monkeypatch this name."""
+
+    class AcquisitionClock:
+        @staticmethod
+        def now(_timezone: object) -> datetime:
+            return datetime(2026, 11, 3, tzinfo=UTC)
+
+    monkeypatch.setattr("dinkster_store.datetime", AcquisitionClock)
     monkeypatch.setattr(installer_module, "detect_runtime", lambda _accelerator: ())
     monkeypatch.setattr(
         installer_module,
@@ -79,6 +89,18 @@ def write_pack(directory: Path, name: str, body: str = "NODES = []\n") -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "dinkster-pack.toml").write_text(MANIFEST_TEMPLATE.format(name=name))
     (directory / f"{name}_nodes.py").write_text(body)
+    return directory
+
+
+def write_publishable_pack(directory: Path) -> Path:
+    package = directory / "src/demo"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("NODES = []\n")
+    (directory / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "demo"\nversion = "1.2.3"\nengine = ">=0.0.2.dev0,<1"\n'
+        'publisher = "acme"\n[pack.entry]\nnodes = "demo:NODES"\n'
+    )
+    (directory / "pyproject.toml").write_text('[project]\nname = "demo"\nversion = "1.2.3"\n')
     return directory
 
 
@@ -254,7 +276,9 @@ def test_unsealed_generation_catalog_preparation(
         body = "raise RuntimeError('catalog import refused')\n" + body
     source = tmp_path / "source"
     source.mkdir()
-    (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST)
+    (source / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace("healthy-nodes", "healthy").replace('publisher = "dinkster"\n', "")
+    )
     (source / "healthy_nodes.py").write_text(body)
     archive = tmp_path / "healthy.zip"
     digest = build_artifact(source, archive)
@@ -452,6 +476,29 @@ def test_packs_for_serving_reads_the_immutable_store(tmp_path: Path) -> None:
     assert served.artifact_digest == entry.artifact_digest
 
 
+@pytest.mark.parametrize(
+    ("source", "publisher", "trusted"),
+    [
+        ("registry", "dinkster", True),
+        ("registry:official", "dinkster", True),
+        ("registry:official", "other", False),
+        ("local:fixture", "dinkster", False),
+        ("git:fixture", "dinkster", False),
+    ],
+)
+def test_reserved_trust_requires_registry_publisher(
+    tmp_path: Path, source: str, publisher: str, trusted: bool
+) -> None:
+    installer = make_installer(tmp_path)
+    pack_dir = write_pack(tmp_path / "demo", "demo")
+    installer.apply(local_lockfile(installer, pack_dir))
+    installed = installer.current_lockfile()
+    assert installed is not None
+    entry = replace(installed.packs[0], source=source, publisher=publisher)
+    installer.apply(Lockfile.of([entry]))
+    assert installer.packs_for_serving()[0].trust_reserved is trusted
+
+
 def test_archived_manifest_inspection_keeps_declared_template(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     pack_dir = write_pack(tmp_path / "demo", "demo")
@@ -623,8 +670,8 @@ def test_absent_hosting_policy_preserves_per_pack_layout_and_identity(
     installer.apply(target)
     assert target.record_json() == before
     for entry in target.packs:
-        digest = entry.artifact_digest.partition(":")[2]
-        assert venv_python(installer.root / "venvs" / digest / entry.pack).is_file()
+        path = installer.root / "venvs" / entry.pack / "2026-11-03-0.0.0" / entry.pack
+        assert venv_python(path).is_file()
     assert installer.snapshot().venv_groups == ()
 
 
@@ -639,12 +686,7 @@ def test_group_staging_uses_one_aggregate_venv_and_serves_every_member_from_it(
     )
     write_hosting(installer, '[venv-groups]\nmodels = ["beta", "alpha"]\n')
     installer.apply(target)
-    payload = "".join(
-        f"{entry.pack}\0{entry.artifact_digest}\n"
-        for entry in sorted(target.packs, key=lambda item: item.pack)
-    )
-    aggregate = hashlib.sha256(payload.encode()).hexdigest()
-    group = installer.root / "venvs" / aggregate / "models"
+    group = installer.root / "venvs" / "groups" / "2026-11-03-alpha-0.0.0-and-beta-0.0.0" / "models"
     assert (venv_python(group).parent / "members.txt").read_text() == "alpha\nbeta"
     assert not any(
         (installer.root / "venvs" / entry.artifact_digest.partition(":")[2]).exists()
@@ -858,8 +900,7 @@ def test_lock_local_pack_digest_is_identity(tmp_path: Path, claims: tuple[str, .
     assert entry.claims == claims
     assert entry.source == f"local:{pack_dir.resolve()}"
     assert archive.is_file()
-    # the archive is content-addressed next to the digest
-    assert archive.stem in entry.artifact_digest
+    assert archive == installer.artifacts_dir / "demo" / "2026-11-03-0.0.0" / "pack.zip"
     # re-archiving identical content is a no-op identity-wise
     entry_again, archive_again = lock_local_pack(pack_dir, installer.artifacts_dir)
     assert entry_again.artifact_digest == entry.artifact_digest
@@ -976,7 +1017,7 @@ def test_removing_group_policy_restages_per_pack_and_gc_keeps_live_collects_dead
     dead_group = aggregate_dir / "dead-group"
     dead_group.mkdir()
     removed = installer.gc()
-    assert f"venvs/{aggregate_dir.name}/dead-group" in removed
+    assert (dead_group.relative_to(installer.root).as_posix()) in removed
     assert aggregate_dir.exists()  # generation 1 still references the original group
     assert not dead_group.exists()
 
@@ -1339,7 +1380,7 @@ def test_cli_plan_file_and_apply(tmp_path: Path, capsys: pytest.CaptureFixture[s
     installer = Installer(Path(root))
     assert installer.current_number() is None  # planning never mutates
     # The plan-time archive is staged content-addressed, inert until applied.
-    assert list(installer.artifacts_dir.glob("*.zip"))
+    assert list(installer.artifacts_dir.rglob("*.zip"))
 
     run_cli("--root", root, "apply", str(plan_file))
     out = capsys.readouterr().out
@@ -1421,7 +1462,7 @@ def test_cli_gc_requires_confirmation(tmp_path: Path, capsys: pytest.CaptureFixt
     captured = capsys.readouterr()
     assert "would remove: artifacts/" in captured.out
     assert "refusing to mutate" in captured.err
-    assert list(Installer(Path(root)).artifacts_dir.glob("*.zip"))  # still there
+    assert list(Installer(Path(root)).artifacts_dir.rglob("*.zip"))  # still there
 
 
 def test_cli_snapshot_and_restore(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1861,7 +1902,7 @@ def test_cli_restore_plan_file_defers_to_apply(
     assert record.venv_specs == (("demo", VenvSpec(exact=("numpy==1.0", "torch==2.0+cu124"))),)
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None  # plan phase stayed read-only
-    assert not list(fresh_installer.artifacts_dir.glob("*.zip"))
+    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
     assert not list((fresh / "venvs").iterdir())  # scaffold only, nothing staged
 
     run_cli("--root", str(fresh), "apply", str(plan_file))
@@ -1940,11 +1981,11 @@ def test_cli_restore_plan_file_defers_to_apply(
     other = write_pack(tmp_path / "other", "other")
     run_cli("--root", str(stale_root), "install", "--no-venv", "--yes", str(other))
     capsys.readouterr()
-    zips_before = sorted(Installer(stale_root).artifacts_dir.glob("*.zip"))
+    zips_before = sorted(Installer(stale_root).artifacts_dir.rglob("*.zip"))
     with pytest.raises(SystemExit):
         run_cli("--root", str(stale_root), "apply", str(stale_plan))
     assert "plan is stale" in capsys.readouterr().err
-    assert sorted(Installer(stale_root).artifacts_dir.glob("*.zip")) == zips_before
+    assert sorted(Installer(stale_root).artifacts_dir.rglob("*.zip")) == zips_before
 
     # source bytes changed after planning: apply refuses the digest
     # mismatch and activates nothing
@@ -2057,7 +2098,7 @@ def test_cli_reproduce_plan_is_read_only(
     assert "refusing to mutate without confirmation" in captured.err
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None
-    assert not list(fresh_installer.artifacts_dir.glob("*.zip"))
+    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
 
 
 def test_cli_reproduce_plan_file_defers_acquisition_to_apply(
@@ -2089,7 +2130,7 @@ def test_cli_reproduce_plan_file_defers_acquisition_to_apply(
     assert record.acquire and record.derive_claims
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None  # plan phase stayed read-only
-    assert not list(fresh_installer.artifacts_dir.glob("*.zip"))
+    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
 
     run_cli("--root", str(fresh), "apply", str(plan_file))
     out = capsys.readouterr().out
@@ -2218,13 +2259,14 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
     from dinkster import manager
     from dinkster.registries import PublishVerdict
 
-    pack = write_pack(tmp_path / "demo", "demo")
+    pack = write_publishable_pack(tmp_path / "demo")
     report = DoctorReport(
         "demo",
         str(pack / "dinkster-pack.toml"),
         (Finding("error", "entry.unresolvable", "broken import"),),
     )
     monkeypatch.setattr(manager, "diagnose", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(manager, "static_pack_releases", lambda *_args, **_kwargs: ())
     submitted: list[str] = []
 
     def publish(
@@ -2259,7 +2301,7 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
     assert len(submitted) == 1
     output = capsys.readouterr().out
     assert submitted == ["demo"]
-    assert "submitted demo 1.2.3 blake3:" in output
+    assert "submitted demo 1.2.3 sha256:" in output
     assert output.rstrip().endswith("as candidate candidate-1")
 
 
@@ -2270,9 +2312,13 @@ def test_cli_publishes_exact_archive_with_optional_published_locks(
     from email import policy
     from email.parser import BytesParser
 
-    pack = write_pack(tmp_path / "demo", "demo")
-    expected_archive = tmp_path / "expected.zip"
-    digest = build_artifact(pack, expected_archive)
+    from dinkster_registry import artifact_digest
+    from dinkster_workers.pack_wheel import build_pack_archive
+
+    pack = write_publishable_pack(tmp_path / "demo")
+    expected_archive = tmp_path / "demo-1.2.3-py3-none-any.whl"
+    build_pack_archive(pack, expected_archive)
+    digest = artifact_digest(expected_archive.read_bytes())
     locks = tmp_path / "locks.json"
     lock_bytes = (
         json.dumps(
@@ -2364,7 +2410,9 @@ def test_cli_publishes_exact_archive_with_optional_published_locks(
         assert path == "/v1/publish/demo/versions/1.2.3"
         assert authorization == "Bearer test-publish-token"
         if mode == "raw":
-            assert content_type == "application/zip" and body == expected_archive.read_bytes()
+            assert (
+                content_type == "application/octet-stream" and body == expected_archive.read_bytes()
+            )
         else:
             message = BytesParser(policy=policy.default).parsebytes(
                 f"Content-Type: {content_type}\r\n\r\n".encode() + body
@@ -2374,8 +2422,8 @@ def test_cli_publishes_exact_archive_with_optional_published_locks(
                 "archive",
                 "locks",
             ]
-            assert parts[0].get_filename() == "artifact.zip"
-            assert parts[0].get_content_type() == "application/zip"
+            assert parts[0].get_filename() == expected_archive.name
+            assert parts[0].get_content_type() == "application/octet-stream"
             assert parts[0].get_payload(decode=True) == expected_archive.read_bytes()
             assert parts[1].get_filename() is None
             assert parts[1].get_payload(decode=True) == lock_bytes
@@ -2489,9 +2537,8 @@ def test_acquire_refetches_local_source_bytes(tmp_path: Path) -> None:
     installer.acquire(entry)
     assert installer.artifact_available(entry) and archive.is_file()
     installer.acquire(entry)  # no-op, no error
-    # nothing but content-addressed zips in the artifacts dir (no
-    # leftover scratch)
-    assert all(child.suffix == ".zip" for child in installer.artifacts_dir.iterdir())
+    assert list(installer.artifacts_dir.rglob("*.zip")) == [archive]
+    assert not list(installer.artifacts_dir.glob("acquire-*"))
 
 
 def test_acquire_refuses_changed_or_vanished_local_source(tmp_path: Path) -> None:
@@ -2504,7 +2551,8 @@ def test_acquire_refuses_changed_or_vanished_local_source(tmp_path: Path) -> Non
         installer.acquire(entry)
     # the mismatched candidate was discarded, not admitted
     assert not installer.artifact_available(entry)
-    assert all(child.suffix == ".zip" for child in installer.artifacts_dir.iterdir())
+    assert not list(installer.artifacts_dir.rglob("*.zip"))
+    assert not list(installer.artifacts_dir.glob("acquire-*"))
     shutil.rmtree(demo)
     with pytest.raises(InstallError, match="no longer exists"):
         installer.acquire(entry)
@@ -2581,7 +2629,7 @@ def test_acquire_registry_source_downloads_digest_verified(tmp_path: Path) -> No
     )
     with pytest.raises(InstallError, match="refusing to\\s+substitute different bytes"):
         lying.acquire(release)
-    assert not list(lying.artifacts_dir.glob("*.zip"))
+    assert not list(lying.artifacts_dir.rglob("*.zip"))
 
     # a failed download propagates and admits nothing
     def broken(_entry: LockedPack) -> bytes:
@@ -2595,11 +2643,11 @@ def test_acquire_registry_source_downloads_digest_verified(tmp_path: Path) -> No
     )
     with pytest.raises(InstallError, match="failed: down"):
         offline.acquire(release)
-    assert not list(offline.artifacts_dir.glob("*.zip"))
+    assert not list(offline.artifacts_dir.rglob("*.zip"))
 
 
 def _serve_artifacts(
-    files: dict[str, bytes], requests: list[tuple[str, str | None]]
+    files: Mapping[str, bytes | Callable[[], bytes]], requests: list[tuple[str, str | None]]
 ) -> ThreadingHTTPServer:
     """A registry stand-in: plain HTTP GET of hosted paths, recording
     (path, Authorization header) per request. Caller must shutdown()."""
@@ -2612,6 +2660,8 @@ def _serve_artifacts(
                 self.send_response(404)
                 self.end_headers()
                 return
+            if callable(blob):
+                blob = blob()
             self.send_response(200)
             self.send_header("Content-Length", str(len(blob)))
             self.end_headers()
@@ -2631,22 +2681,51 @@ def _serve_artifacts(
     return server
 
 
-def _download_ticket(entry: LockedPack, data: bytes) -> bytes:
-    return json.dumps(
-        {
-            "packName": entry.pack,
-            "version": entry.version,
-            "artifactDigest": entry.artifact_digest,
-            "artifactSize": len(data),
-            "url": f"/v1/artifacts/{entry.artifact_digest}",
-            "requiredHeaders": {},
-        }
-    ).encode()
+def _static_release(entry: LockedPack, data: bytes) -> dict[str, object]:
+    filename = f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl"
+    sha256 = hashlib.sha256(data).hexdigest()
+    return {
+        "name": entry.pack,
+        "version": entry.version,
+        "publisher": entry.publisher,
+        "library": False,
+        "requires": [],
+        "engine": ">=0.0.2.dev0,<1",
+        "wheels": [
+            {
+                "filename": filename,
+                "sha256": sha256,
+                "url": f"wheels/{sha256}/{filename}",
+                "size": len(data),
+                "digest": entry.artifact_digest,
+                "tags": ["py3-none-any"],
+            }
+        ],
+        "installLocks": {},
+    }
 
 
-def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> None:
-    """The fetcher acquires a ticket for the exact locked release and then
-    downloads bytes that the installer independently verifies."""
+def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
+    from dinkster.registries import NamedRegistry, prepare_registry_sources
+
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts({}, requests)
+    try:
+        lock, unavailable = prepare_registry_sources(
+            NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
+            {},
+            tmp_path / "artifacts",
+            engine_version="0.0.3",
+        )
+        assert lock.packs == ()
+        assert unavailable == {}
+        assert requests == []
+    finally:
+        server.shutdown()
+
+
+def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> None:
+    """Index and wheel requests stay under the static prefix with exact hash checks."""
     installer = make_installer(tmp_path)
     demo = write_pack(tmp_path / "demo", "demo")
     entry, archive = lock_local_pack(demo, installer.artifacts_dir)
@@ -2654,20 +2733,26 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
     release = replace(entry, source="registry", version="1.0.0")
 
     requests: list[tuple[str, str | None]] = []
-    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
-    artifact_path = f"/v1/artifacts/{release.artifact_digest}"
+    record = _static_release(release, data)
+    index_path = "/static/packs/index.json"
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    artifact_path = f"/static/{wheel['url']}"
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
+        {
+            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            artifact_path: data,
+        },
+        requests,
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fetch = http_registry_fetcher(endpoint + "/")  # trailing slash normalized
         assert fetch(release) == data
-        assert requests == [(ticket_path, None), (artifact_path, None)]
+        assert requests == [(index_path, None), (artifact_path, None)]
 
         authed = http_registry_fetcher(endpoint, token="s3cret")
         assert authed(release) == data
-        assert requests[-2:] == [(ticket_path, "Bearer s3cret"), (artifact_path, None)]
+        assert requests[-2:] == [(index_path, "Bearer s3cret"), (artifact_path, "Bearer s3cret")]
 
         missing = replace(release, artifact_digest="blake3:" + "0" * 64)
         with pytest.raises(InstallError, match=r"registry download of demo@1\.0\.0 .* failed"):
@@ -2696,32 +2781,31 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
         (3, False),
     ],
 )
-def test_http_registry_fetcher_rejects_invalid_ticket_size(size: object, malformed: bool) -> None:
+def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malformed: bool) -> None:
     release = LockedPack("demo", "1.0.0", "blake3:" + "1" * 64, "acme", ())
     data = b"ab"
-    ticket = json.loads(_download_ticket(release, data))
+    record = _static_release(release, data)
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     if size == "missing":
-        del ticket["artifactSize"]
+        del wheel["size"]
     else:
-        ticket["artifactSize"] = size
-    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
+        wheel["size"] = size
+    index_path = "/static/packs/index.json"
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
-            ticket_path: json.dumps(ticket).encode(),
-            f"/v1/artifacts/{release.artifact_digest}": data,
+            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            f"/static/{wheel['url']}": data,
         },
         requests,
     )
     try:
-        reason = (
-            "artifactSize must be a nonnegative integer" if malformed else "archive size differs"
-        )
+        reason = "invalid wheel" if malformed else "wheel.hash-mismatch"
         with pytest.raises(InstallError, match=reason) as refusal:
             http_registry_fetcher(f"http://127.0.0.1:{server.server_port}")(release)
         assert "demo@1.0.0" in str(refusal.value)
         if malformed:
-            assert requests == [(ticket_path, None)]
+            assert requests == [(index_path, None)]
     finally:
         server.shutdown()
 
@@ -2744,8 +2828,7 @@ def test_cli_restore_downloads_registry_sources(
     [entry_record] = document["lockfile"]["packs"]
     entry_record["source"] = "registry"
     snap.write_text(json.dumps(document))
-    hex_digest = entry_record["artifactDigest"].partition(":")[2]
-    data = (source_root / "artifacts" / f"{hex_digest}.zip").read_bytes()
+    data = pack_archive_path(source_root / "artifacts", entry_record["artifactDigest"]).read_bytes()
 
     # no endpoint configured: refused up front, naming the way forward
     with pytest.raises(SystemExit):
@@ -2755,11 +2838,12 @@ def test_cli_restore_downloads_registry_sources(
 
     requests: list[tuple[str, str | None]] = []
     locked = Lockfile.from_record_json(json.dumps(document["lockfile"])).packs[0]
-    ticket_path = f"/v1/packs/{locked.pack}/versions/{locked.version}/download-tickets"
-    artifact_path = f"/v1/artifacts/{locked.artifact_digest}"
-    server = _serve_artifacts(
-        {ticket_path: _download_ticket(locked, data), artifact_path: data}, requests
-    )
+    record = _static_release(locked, data)
+    index_path = "/static/packs/index.json"
+    index_data = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    artifact_path = f"/static/{wheel['url']}"
+    server = _serve_artifacts({index_path: index_data, artifact_path: data}, requests)
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fresh = tmp_path / "fresh-root"
@@ -2777,12 +2861,12 @@ def test_cli_restore_downloads_registry_sources(
         assert "re-acquire demo from registry" in out
         assert "re-acquired demo: digest verified" in out
         assert "activated generation 1" in out
-        assert requests == [(ticket_path, None), (artifact_path, None)]
+        assert requests == [(index_path, None), (artifact_path, None)]
 
         # a lying server: different bytes refuse, nothing activates
         lying = _serve_artifacts(
             {
-                ticket_path: _download_ticket(locked, data),
+                index_path: index_data,
                 artifact_path: b"x" * len(data),
             },
             [],
@@ -2800,7 +2884,7 @@ def test_cli_restore_downloads_registry_sources(
                     "--yes",
                     str(snap),
                 )
-            assert "refusing to" in capsys.readouterr().err
+            assert "wheel.hash-mismatch" in capsys.readouterr().err
             assert Installer(bad_root).current_lockfile() is None
         finally:
             lying.shutdown()
@@ -2979,18 +3063,6 @@ def test_parse_registry_spec_grammar() -> None:
         assert parse_registry_spec(not_a_spec) is None, not_a_spec
 
 
-def _release_record(entry: LockedPack, **overrides: object) -> bytes:
-    record: dict[str, object] = {
-        "packName": entry.pack,
-        "version": entry.version,
-        "artifact": {"digest": entry.artifact_digest},
-        "publishedBy": {"principalId": entry.publisher},
-        "nodeTypes": [f"{entry.pack}.node"],
-    }
-    record.update(overrides)
-    return json.dumps(record).encode()
-
-
 def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
     """Resolution asks one registry for the exact (pack, version) and
     cross-checks the answer: a 404 names the miss, a substituted or
@@ -3002,23 +3074,11 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
     demo = write_pack(tmp_path / "demo", "demo")
     entry, _ = lock_local_pack(demo, installer.artifacts_dir)
     release = replace(entry, version="1.0.0", publisher="acme")
-    good = "/v1/packs/demo/versions/1.0.0"
-
+    good = "/static/packs/index.json"
+    record = _static_release(release, b"wheel")
+    files = {good: json.dumps({"schemaVersion": 1, "items": [record]}).encode()}
     requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts(
-        {
-            good: _release_record(release),
-            "/v1/packs/demo/versions/2.0.0": _release_record(release, version="9.9.9"),
-            "/v1/packs/demo/versions/3.0.0": _release_record(
-                release, version="3.0.0", artifact={"digest": "md5:1"}
-            ),
-            "/v1/packs/demo/versions/4.0.0": b"not json",
-            "/v1/packs/demo/versions/5.0.0": _release_record(
-                release, publishedBy={"principalId": 7}
-            ),
-        },
-        requests,
-    )
+    server = _serve_artifacts(files, requests)
     try:
         registry = NamedRegistry(
             name="corp", endpoint=f"http://127.0.0.1:{server.server_port}", token_env="RESOLVE_T"
@@ -3032,14 +3092,21 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
 
         with pytest.raises(InstallError, match="publishes no release demo@0.0.1"):
             resolve_release(registry, "demo", "0.0.1")
-        with pytest.raises(InstallError, match="refusing the substitution"):
+        with pytest.raises(InstallError, match="publishes no release demo@2.0.0"):
             resolve_release(registry, "demo", "2.0.0")
-        with pytest.raises(InstallError, match="artifact digest"):
-            resolve_release(registry, "demo", "3.0.0")
+        wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+        wheel["digest"] = "md5:1"
+        files[good] = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+        with pytest.raises(InstallError, match="invalid wheel fields"):
+            resolve_release(registry, "demo", "1.0.0")
+        files[good] = b"not json"
         with pytest.raises(InstallError, match="invalid JSON"):
-            resolve_release(registry, "demo", "4.0.0")
+            resolve_release(registry, "demo", "1.0.0")
+        record = _static_release(release, b"wheel")
+        record["publisher"] = 7
+        files[good] = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
         with pytest.raises(InstallError, match="malformed release record"):
-            resolve_release(registry, "demo", "5.0.0")
+            resolve_release(registry, "demo", "1.0.0")
     finally:
         server.shutdown()
 
@@ -3061,36 +3128,20 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
     versions = [
-        ("99.0", "", "active"),
-        ("12.0", ">=0.7,<0.9", "active"),
-        ("11.0", ">=0.4,<0.7", "yanked"),
-        ("10.0", ">=0.5,<0.6", "active"),
-        ("2.9", ">=0.4,<0.7", "pending_review"),
-        ("2.8rc1", ">=0.6,<0.7", "active"),
-        ("2.7", ">=0.5,<0.6", "active"),
-        ("1.5", ">=0.4,<0.5", "active"),
+        ("12.0", ">=0.7,<0.9"),
+        ("10.0", ">=0.5,<0.6"),
+        ("2.8rc1", ">=0.6,<0.7"),
+        ("2.7", ">=0.5,<0.6"),
+        ("1.5", ">=0.4,<0.5"),
     ]
     digests = {
-        version: "blake3:" + f"{index:064x}"
-        for index, (version, _, _) in enumerate(versions, start=1)
+        version: "blake3:" + f"{index:064x}" for index, (version, _) in enumerate(versions, start=1)
     }
-    files: dict[str, bytes] = {}
-    for cursor, rows, following in (("", versions[:2], "older"), ("older", versions[2:], None)):
-        path = "/v1/packs/demo/versions?limit=100" + (f"&cursor={cursor}" if cursor else "")
-        files[path] = json.dumps(
-            {
-                "items": [
-                    {"version": version, "dinkster": bounds, "state": state}
-                    for version, bounds, state in rows
-                ],
-                "nextCursor": following,
-            }
-        ).encode()
-    for version, bounds, state in versions:
+    rows = []
+    for version, bounds in versions:
         entry = LockedPack("demo", version, digests[version], "dinkster", ())
-        files[f"/v1/packs/demo/versions/{version}"] = _release_record(
-            entry, state=state, manifest={"dinkster": bounds}
-        )
+        rows.append({**_static_release(entry, b"wheel"), "engine": bounds})
+    files = {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}
     server = _serve_artifacts(files, [])
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
@@ -3107,20 +3158,20 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
         server.shutdown()
 
 
-@pytest.mark.parametrize("detail", [{"state": "yanked"}, {"manifest": {"dinkster": ">=0.8,<0.9"}}])
+@pytest.mark.parametrize("removed", [True, False])
 def test_registry_selection_rechecks_exact_release_before_install(
-    detail: dict[str, object],
+    removed: bool,
 ) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
     entry = LockedPack("demo", "3.1", "blake3:" + "b" * 64, "dinkster", ())
+    record = {**_static_release(entry, b"wheel"), "engine": ">=0.4,<0.7"}
+    responses = iter(
+        json.dumps({"schemaVersion": 1, "items": rows}).encode()
+        for rows in ([record], [] if removed else [{**record, "engine": ">=0.8,<0.9"}])
+    )
     files = {
-        "/v1/packs/demo/versions?limit=100": json.dumps(
-            {"items": [{"version": "3.1", "dinkster": ">=0.4,<0.7", "state": "active"}]}
-        ).encode(),
-        "/v1/packs/demo/versions/3.1": _release_record(
-            entry, **{"state": "active", "manifest": {"dinkster": ">=0.4,<0.7"}, **detail}
-        ),
+        "/static/packs/index.json": responses.__next__,
     }
     server = _serve_artifacts(files, [])
     try:
@@ -3132,54 +3183,50 @@ def test_registry_selection_rechecks_exact_release_before_install(
 
 
 @pytest.mark.parametrize(
-    "page",
+    ("page", "reason"),
     [
-        {"items": "bad"},
-        {"items": [42]},
-        {"items": [{"version": "1.0", "state": "active"}]},
-        {"items": [{"version": "v1.0", "dinkster": ">=0.4", "state": "active"}]},
-        {"items": [{"version": "1.0", "dinkster": "not-a-range", "state": "active"}]},
-        {"items": [{"version": "v1.0", "dinkster": "", "state": "active"}]},
-        {"items": [], "nextCursor": False},
-        {"items": [], "nextCursor": "again"},
+        ({"schemaVersion": 1, "items": "bad"}, "unsupported schema or missing items"),
+        ({"schemaVersion": 1, "items": [42]}, "non-object release"),
+        ({"schemaVersion": 1, "items": [{"version": "1.0"}]}, "name and version strings"),
+        (
+            {"schemaVersion": 1, "items": [{"name": "demo", "version": "1.0"}]},
+            "one universal wheel",
+        ),
+        ({"schemaVersion": 2, "items": []}, "unsupported schema"),
+        ({"items": []}, "unsupported schema"),
     ],
 )
-def test_registry_compatible_selection_refuses_malformed_pages(page: dict[str, object]) -> None:
+def test_registry_compatible_selection_refuses_malformed_pages(
+    page: dict[str, object], reason: str
+) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
     payload = json.dumps(page).encode()
-    server = _serve_artifacts(
-        {
-            "/v1/packs/demo/versions?limit=100": payload,
-            "/v1/packs/demo/versions?limit=100&cursor=again": payload,
-        },
-        [],
-    )
+    server = _serve_artifacts({"/static/packs/index.json": payload}, [])
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
-        with pytest.raises(InstallError, match="registry.*versions of demo"):
+        with pytest.raises(InstallError, match=reason):
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
     finally:
         server.shutdown()
 
 
-def test_registry_compatible_selection_refuses_only_undeclared_releases() -> None:
+@pytest.mark.parametrize("engine", [None, "", "not-a-range"])
+def test_registry_compatible_selection_refuses_only_undeclared_releases(engine: str | None) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
     calls: list[tuple[str, str | None]] = []
+    record = _static_release(LockedPack("demo", "3.0", "blake3:" + "b" * 64, "acme", ()), b"wheel")
+    record["engine"] = engine
     server = _serve_artifacts(
-        {
-            "/v1/packs/demo/versions?limit=100": json.dumps(
-                {"items": [{"version": "3.0", "dinkster": "", "state": "active"}]}
-            ).encode()
-        },
+        {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode()},
         calls,
     )
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
-        with pytest.raises(InstallError, match=r"no active demo >= 1.0 compatible with engine 0.5"):
+        with pytest.raises(InstallError, match="versions of demo"):
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
-        assert calls == [("/v1/packs/demo/versions?limit=100", None)]
+        assert calls == [("/static/packs/index.json", None)]
     finally:
         server.shutdown()
 
@@ -3202,7 +3249,7 @@ def test_registry_source_identity_comes_from_verified_archive(
     pack = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
     name = "other" if problem == "name" else "demo"
     version = "2.3.2" if problem == "version" else "2.3.1"
-    publisher = "" if problem == "publisher" else "acme"
+    publisher = "" if problem == "publisher" else "audit-actor"
     declaration = (
         "" if problem == "declaration" else f'version = "{version}"\nengine = ">=0.0.2.dev0,<0.7"\n'
     )
@@ -3218,19 +3265,11 @@ def test_registry_source_identity_comes_from_verified_archive(
             unsafe.writestr("../escape.txt", "must not be extracted")
         digest = artifact_digest(archive.read_bytes())
     release = LockedPack("demo", "2.3.1", digest, "audit-actor", ())
+    record = {**_static_release(release, archive.read_bytes()), "engine": ">=0.0.2.dev0,<0.7"}
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     files = {
-        "/v1/packs/demo/versions?limit=100": json.dumps(
-            {"items": [{"version": "2.3.1", "dinkster": ">=0.0.2.dev0,<0.7", "state": "active"}]}
-        ).encode(),
-        "/v1/packs/demo/versions/2.3.1": _release_record(
-            release, state="active", manifest={"dinkster": ">=0.0.2.dev0,<0.7"}
-        ),
-        "/v1/packs/demo/versions/2.3.1/download-tickets": _download_ticket(
-            release, archive.read_bytes()
-        ),
-        f"/v1/artifacts/{digest}": (
-            b"x" * archive.stat().st_size if problem == "digest" else archive.read_bytes()
-        ),
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+        f"/static/{wheel['url']}": archive.read_bytes(),
     }
     server = _serve_artifacts(files, [])
     try:
@@ -3238,6 +3277,8 @@ def test_registry_source_identity_comes_from_verified_archive(
         selected = resolve_compatible_release(registry, "demo", "2.0", "0.5")
         cached = tmp_path / f"{digest[7:]}.zip"
         cached.write_bytes(http_registry_fetcher(registry.endpoint)(selected))
+        if problem == "digest":
+            cached.write_bytes(b"x" * cached.stat().st_size)
         engine = {"below": "0.0.1", "above": "0.7"}.get(problem or "", "0.5")
         if problem:
             reason = {
@@ -3256,9 +3297,9 @@ def test_registry_source_identity_comes_from_verified_archive(
         else:
             entry = registry_source_lock(selected, cached, engine_version=engine)
             assert entry == LockedPack(
-                "demo", "2.3.1", digest, "acme", ("demo-tools",), "registry:official"
+                "demo", "2.3.1", digest, "audit-actor", ("demo-tools",), "registry:official"
             )
-            assert entry.publisher != selected.publisher
+            assert entry.publisher == selected.publisher
             assert cached.read_bytes() == archive.read_bytes()
             generation = tmp_path / "generation"
             generation.mkdir()
@@ -3289,20 +3330,42 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
     declared = default_pack_minimums()
     assert tomllib.loads(DEFAULT_PACKS_PATH.read_text()) == {"packs": declared}
     assert set(declared) == {
-        "dinkster-nodes-comfy",
-        "dinkster-nodes-foundation",
-        "dinkster-nodes-image",
-        "dinkster-nodes-media-io",
+        "dinkster-3d",
+        "dinkster-3d-models",
+        "dinkster-audio",
+        "dinkster-audio-models",
+        "dinkster-conditioning",
+        "dinkster-cosmos",
+        "dinkster-flux",
+        "dinkster-hidream",
+        "dinkster-hunyuan",
+        "dinkster-image",
+        "dinkster-latent",
+        "dinkster-llm",
+        "dinkster-ltx",
+        "dinkster-minimax",
+        "dinkster-misc-models",
+        "dinkster-models",
         "dinkster-nodes-remote",
-        "dinkster-vision-birefnet",
-        "dinkster-vision-depth-anything-v2",
-        "dinkster-vision-depth-anything-v3",
-        "dinkster-vision-detr",
-        "dinkster-vision-efficient-sam",
-        "dinkster-vision-hed",
+        "dinkster-qwen",
+        "dinkster-sampling",
+        "dinkster-sd",
+        "dinkster-seedvr",
+        "dinkster-text",
+        "dinkster-upscale",
+        "dinkster-utilities",
+        "dinkster-video",
+        "dinkster-vision-background-removal",
+        "dinkster-vision-depth-anything-3",
+        "dinkster-vision-marigold",
+        "dinkster-vision-mediapipe",
+        "dinkster-vision-moge",
         "dinkster-vision-rtdetr",
-        "dinkster-vision-sam31",
-        "dinkster-vision-upscale",
+        "dinkster-vision-sam3",
+        "dinkster-vision-sam3d-body",
+        "dinkster-vision-sdpose",
+        "dinkster-void",
+        "dinkster-wan",
     }
     root = Path(__file__).resolve().parents[1]
     manifests = {
@@ -3342,6 +3405,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     files: dict[str, bytes] = {}
     entries = []
     expected = {}
+    releases = []
     for pack in ("demo", "z-other"):
         fault = problem if pack == "z-other" else None
         entry = LockedPack(
@@ -3358,9 +3422,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             "packages": [],
         }
         payload = json.dumps(lock).encode()
-        expected[pack] = payload
-        path = f"/v1/packs/{pack}/versions/1.2.3"
-        lock_path = path + "/locks/linux-cpu"
+        expected[pack] = lock
+        lock_path = "locks/" + artifact_digest(payload).replace(":", "/") + ".json"
         binding = {
             "baseId": "sha256:" + "2" * 64 if fault == "base" else base,
             "artifactDigest": "blake3:" + "c" * 64 if fault == "archive" else entry.artifact_digest,
@@ -3368,15 +3431,31 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             "size": len(payload) + 1 if fault == "size" else len(payload),
             "url": "https://other.test/lock" if fault == "url" else lock_path,
         }
-        files[path] = _release_record(
-            entry,
-            state="active",
-            artifact={"digest": "blake3:" + "e" * 64}
-            if fault == "release"
-            else {"digest": entry.artifact_digest},
-            installLocks={} if fault == "missing" else {"linux-cpu": binding},
+        filename = f"{pack.replace('-', '_')}-1.2.3-py3-none-any.whl"
+        releases.append(
+            {
+                "name": pack,
+                "version": "1.2.3",
+                "library": False,
+                "publisher": "acme",
+                "requires": [],
+                "wheels": [
+                    {
+                        "filename": filename,
+                        "sha256": "f" * 64,
+                        "url": f"wheels/{'f' * 64}/{filename}",
+                        "size": 12,
+                        "digest": "blake3:" + "e" * 64
+                        if fault == "release"
+                        else entry.artifact_digest,
+                        "tags": ["py3-none-any"],
+                    }
+                ],
+                "installLocks": {} if fault == "missing" else {"linux-cpu": binding},
+            }
         )
-        files[lock_path + "?baseId=sha256%3A" + "1" * 64] = payload
+        files["/static/" + lock_path] = payload
+    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": releases}).encode()
     server = _serve_artifacts(files, [])
     root = tmp_path / "project"
     root.mkdir()
@@ -3414,9 +3493,28 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             run_cli(*args)
             report = json.loads(capsys.readouterr().out)
             assert report["locks"] == [str(output / f"{pack}.pack-lock.json") for pack in expected]
-            for pack, payload in expected.items():
+            for pack, original_lock in expected.items():
                 path = output / f"{pack}.pack-lock.json"
-                assert path.read_bytes() == payload
+                filename = f"{pack.replace('-', '_')}-1.2.3-py3-none-any.whl"
+                endpoint = f"http://127.0.0.1:{server.server_port}"
+                assert json.loads(path.read_bytes()) == {
+                    **original_lock,
+                    "indexes": [endpoint + "/static/linux-cpu/simple/"],
+                    "packages": [
+                        {
+                            "name": pack,
+                            "version": "1.2.3",
+                            "wheels": [
+                                {
+                                    "filename": filename,
+                                    "sha256": "f" * 64,
+                                    "size": 12,
+                                    "url": endpoint + f"/static/wheels/{'f' * 64}/{filename}",
+                                }
+                            ],
+                        }
+                    ],
+                }
                 assert PackLock.read(path).pack == pack
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
@@ -3474,7 +3572,7 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         run_cli(*args)
         assert json.loads(capsys.readouterr().out)["packs"] == ["local-pack"]
         assert Lockfile.from_record_json(candidate.read_text()) == lock
-        assert (artifacts / f"{identity[7:]}.zip").read_bytes() == archive.read_bytes()
+        assert pack_archive_path(artifacts, identity).read_bytes() == archive.read_bytes()
     assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
 
 
@@ -3485,32 +3583,25 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
     from dinkster import __version__
     from dinkster.registries import default_pack_minimums
 
-    pack_name = "dinkster-nodes-foundation"
+    pack_name = "dinkster-text"
     source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
     (source / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
-        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["std"]\n'
+        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["dinkster.text"]\n'
         '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
     )
     archive = tmp_path / "published.zip"
     digest = build_artifact(source, archive)
     release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    record = {**_static_release(release, archive.read_bytes()), "engine": ">=0.0.2.dev0,<0.1"}
+    newer = {**_static_release(replace(release, version="0.0.4"), b"newer"), "engine": ">=0.2"}
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    artifact_path = f"/static/{wheel['url']}"
     files = {
-        f"/v1/packs/{pack_name}/versions?limit=100": json.dumps(
-            {
-                "items": [
-                    {"version": "0.0.4", "dinkster": ">=0.2", "state": "active"},
-                    {"version": "0.0.3", "dinkster": ">=0.0.2.dev0,<0.1", "state": "active"},
-                ]
-            }
+        "/static/packs/index.json": json.dumps(
+            {"schemaVersion": 1, "items": [newer, record]}
         ).encode(),
-        f"/v1/packs/{pack_name}/versions/0.0.3": _release_record(
-            release, state="active", manifest={"dinkster": ">=0.0.2.dev0,<0.1"}
-        ),
-        f"/v1/packs/{pack_name}/versions/0.0.3/download-tickets": _download_ticket(
-            release, archive.read_bytes()
-        ),
-        f"/v1/artifacts/{digest}": (
+        artifact_path: (
             b"x" * archive.stat().st_size if mode == "corrupt" else archive.read_bytes()
         ),
     }
@@ -3544,7 +3635,7 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err
-            assert ("missing" if mode == "strict" else "digest mismatch") in error
+            assert ("missing" if mode == "strict" else "wheel.hash-mismatch") in error
             assert not output.exists()
             if mode == "corrupt":
                 assert not list(artifacts.iterdir())
@@ -3562,19 +3653,18 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
                 assert lock.packs == (
                     replace(
                         release,
-                        publisher="dinkster",
-                        claims=("std",),
+                        claims=("dinkster-text",),
                         source=f"registry:http://127.0.0.1:{server.server_port}",
                     ),
                 )
                 assert report["packs"] == [pack_name]
-                cached = artifacts / f"{digest[7:]}.zip"
+                cached = pack_archive_path(artifacts, digest)
                 assert cached.read_bytes() == archive.read_bytes()
                 if mode == "partial":
                     assert set(report["unavailable"]) == set(default_pack_minimums()) - {pack_name}
                 else:
                     assert report["unavailable"] == {}
-                    files[f"/v1/artifacts/{digest}"] = b"x" * archive.stat().st_size
+                    files[artifact_path] = b"x" * archive.stat().st_size
                     run_cli(*args)
                     assert json.loads(capsys.readouterr().out) == report
                     retained = output.read_bytes()
@@ -3618,28 +3708,28 @@ def test_cli_reresolves_installed_sources_without_mutating_project(
     )
     archive = tmp_path / "published.zip"
     digest = build_artifact(source, archive)
-    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    release = LockedPack(pack_name, "0.0.3", digest, "dinkster", ())
     rows = [
-        {"version": "0.0.4", "dinkster": ">=0.2", "state": "active"},
-        {"version": "0.0.3", "dinkster": bounds, "state": "active"},
         {
-            "version": "0.0.2",
-            "dinkster": bounds if mode == "compatible" else ">=0.2",
-            "state": "active",
-        },
-        {"version": "0.0.1", "dinkster": bounds, "state": "active"},
+            **_static_release(replace(release, version=version), archive.read_bytes()),
+            "engine": engine,
+        }
+        for version, engine in (
+            ("0.0.4", ">=0.2"),
+            ("0.0.3", bounds),
+            ("0.0.2", bounds if mode == "compatible" else ">=0.2"),
+            ("0.0.1", bounds),
+        )
     ]
+    wheel = cast("list[dict[str, object]]", rows[1]["wheels"])[0]
     files = {
-        f"/v1/packs/{pack_name}/versions?limit=100": json.dumps(
-            {"items": [row for row in rows if mode != "lower-only" or row["version"] != "0.0.3"]}
+        "/static/packs/index.json": json.dumps(
+            {
+                "schemaVersion": 1,
+                "items": [row for row in rows if mode != "lower-only" or row["version"] != "0.0.3"],
+            }
         ).encode(),
-        f"/v1/packs/{pack_name}/versions/0.0.3": _release_record(
-            release, state="active", manifest={"dinkster": bounds}
-        ),
-        f"/v1/packs/{pack_name}/versions/0.0.3/download-tickets": _download_ticket(
-            release, archive.read_bytes()
-        ),
-        f"/v1/artifacts/{digest}": archive.read_bytes(),
+        f"/static/{wheel['url']}": archive.read_bytes(),
     }
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts({} if mode == "offline" else files, requests)
@@ -3845,12 +3935,18 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
     entry, archive = lock_local_pack(demo, installer.artifacts_dir)
     data = archive.read_bytes()
     release = replace(entry, source="registry:corp")
-    ticket_path = f"/v1/packs/{release.pack}/versions/{release.version}/download-tickets"
-    artifact_path = f"/v1/artifacts/{release.artifact_digest}"
+    record = _static_release(release, data)
+    index_path = "/static/packs/index.json"
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    artifact_path = f"/static/{wheel['url']}"
 
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
+        {
+            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            artifact_path: data,
+        },
+        requests,
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -3865,10 +3961,16 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         fetch = routing_registry_fetcher(config, None)
 
         assert fetch(release) == data
-        assert requests[-2:] == [(ticket_path, "Bearer corp-secret"), (artifact_path, None)]
+        assert requests[-2:] == [
+            (index_path, "Bearer corp-secret"),
+            (artifact_path, "Bearer corp-secret"),
+        ]
         assert fetch(replace(release, source="registry")) == data  # default
         assert fetch(replace(release, source=f"registry:{endpoint}")) == data
-        assert requests[-2:] == [(ticket_path, "Bearer corp-secret"), (artifact_path, None)]
+        assert requests[-2:] == [
+            (index_path, "Bearer corp-secret"),
+            (artifact_path, "Bearer corp-secret"),
+        ]
 
         with pytest.raises(InstallError, match="registry 'ghost'.*not configured.*corp"):
             fetch(replace(release, source="registry:ghost"))
@@ -3881,73 +3983,25 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         routing_registry_fetcher(RegistryConfig(), None)(replace(release, source="registry"))
 
 
-def test_cli_install_resolves_pack_version_from_named_registry(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("no_venv", [False, True])
+def test_cli_registry_install_requires_managed_generation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], no_venv: bool
 ) -> None:
-    """End to end: 'dinkster-pack install demo@1.0.0' resolves the digest
-    from the configured default registry's index, records
-    registry:<name> provenance, and apply downloads + verifies the exact
-    bytes. An unknown version refuses naming the miss; with several
-    registries and no default, resolution refuses naming the choices."""
-    scratch = make_installer(tmp_path / "scratch")
-    demo = write_pack(tmp_path / "demo", "demo")
-    entry, archive = lock_local_pack(demo, scratch.artifacts_dir)
-    data = archive.read_bytes()
-    release = replace(entry, version="1.0.0", publisher="acme")
-    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
-    artifact_path = f"/v1/artifacts/{entry.artifact_digest}"
-
-    requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts(
-        {
-            "/v1/packs/demo/versions/1.0.0": _release_record(release),
-            ticket_path: _download_ticket(release, data),
-            artifact_path: data,
-        },
-        requests,
-    )
-    try:
-        endpoint = f"http://127.0.0.1:{server.server_port}"
-        root = tmp_path / "root"
-        write_registries(
-            root / "registries.toml",
-            f'[registries.corp]\nendpoint = "{endpoint}"\n'
-            f'token-env = "CORP_TOKEN"\ndefault = true\n',
+    root = tmp_path / "root"
+    with pytest.raises(SystemExit):
+        run_cli(
+            "--root",
+            str(root),
+            "install",
+            "--yes",
+            *(["--no-venv"] if no_venv else []),
+            "demo@1.0.0",
         )
-        monkeypatch.setenv("CORP_TOKEN", "corp-secret")
-
-        run_cli("--root", str(root), "install", "--no-venv", "--yes", "demo@1.0.0")
-        out = capsys.readouterr().out
-        assert "add: demo" in out and "activated generation 1" in out
-        lockfile = Installer(root).current_lockfile()
-        assert lockfile is not None
-        [locked] = lockfile.packs
-        assert locked.source == "registry:corp"
-        assert locked.version == "1.0.0" and locked.publisher == "acme"
-        assert locked.artifact_digest == entry.artifact_digest
-        # both the index lookup and the artifact download carried the credential
-        assert [(path, auth) for path, auth in requests] == [
-            ("/v1/packs/demo/versions/1.0.0", "Bearer corp-secret"),
-            (ticket_path, "Bearer corp-secret"),
-            (artifact_path, None),
-        ]
-
-        with pytest.raises(SystemExit):
-            run_cli("--root", str(root), "install", "--no-venv", "--yes", "demo@9.9.9")
-        assert "publishes no release demo@9.9.9" in capsys.readouterr().err
-
-        # several registries, no default: refuse naming the choices
-        write_registries(
-            root / "registries.toml",
-            f'[registries.corp]\nendpoint = "{endpoint}"\n\n'
-            f'[registries.other]\nendpoint = "http://other.example"\n',
-        )
-        with pytest.raises(SystemExit):
-            run_cli("--root", str(root), "install", "--no-venv", "--yes", "demo@1.0.0")
-        err = capsys.readouterr().err
-        assert "none is the default" in err and "corp, other" in err
-    finally:
-        server.shutdown()
+    error = capsys.readouterr().err
+    assert "registry.managed-generation-required" in error
+    assert "base and variant" in error
+    assert "dinkster-env setup" in error
+    assert Installer(root).current_lockfile() is None
 
 
 # -- shared content store ----------------------------------------------
@@ -3965,10 +4019,6 @@ def make_shared_installer(
     )
 
 
-def hex_of(lockfile: Lockfile, index: int = 0) -> str:
-    return lockfile.packs[index].artifact_digest.partition(":")[2]
-
-
 def test_shared_store_two_roots_share_one_copy(tmp_path: Path) -> None:
     shared = tmp_path / "shared"
     first = make_shared_installer(tmp_path, "root-a", shared)
@@ -3977,10 +4027,10 @@ def test_shared_store_two_roots_share_one_copy(tmp_path: Path) -> None:
     target_a = local_lockfile(first, pack_dir)
     first.apply(target_a)
     second.apply(local_lockfile(second, pack_dir))
-    digest = hex_of(target_a)
+    label = "demo/2026-11-03-0.0.0"
     # one copy of the content, under the shared store - never under a root
-    assert (shared / "store" / digest / "dinkster-pack.toml").is_file()
-    assert (shared / "artifacts" / f"{digest}.zip").is_file()
+    assert (shared / "store" / label / "dinkster-pack.toml").is_file()
+    assert (shared / "artifacts" / label / "pack.zip").is_file()
     assert not (first.root / "store").exists()
     assert not (second.root / "store").exists()
     # per-root state stays per root
@@ -4014,10 +4064,10 @@ def test_shared_venvs_key_by_accelerator(tmp_path: Path) -> None:
     target = local_lockfile(cpu, pack_dir)
     cpu.apply(target)
     cuda.apply(local_lockfile(cuda, pack_dir))
-    digest = hex_of(target)
+    label = "demo/2026-11-03-0.0.0"
     # same bytes, different accelerator resolution, different venv
-    assert venv_python(shared / "venvs" / "cpu" / digest / "demo").is_file()
-    assert venv_python(shared / "venvs" / "cuda" / digest / "demo").is_file()
+    assert venv_python(shared / "venvs" / "cpu" / label / "demo").is_file()
+    assert venv_python(shared / "venvs" / "cuda" / label / "demo").is_file()
 
 
 def test_shared_gc_unions_references_across_registered_roots(tmp_path: Path) -> None:
@@ -4037,8 +4087,7 @@ def test_shared_gc_unions_references_across_registered_roots(tmp_path: Path) -> 
         "venvs/cpu/feedface",
     }
     # root B's content survived a gc run from root A
-    digest = hex_of(only_b)
-    assert (shared / "store" / digest / "dinkster-pack.toml").is_file()
+    assert (shared / "store" / "solo/2026-11-03-0.0.0" / "dinkster-pack.toml").is_file()
     assert second.packs_for_serving()
 
 
@@ -4053,7 +4102,7 @@ def test_shared_gc_counts_old_generations_of_other_roots(tmp_path: Path) -> None
     second.apply(local_lockfile(second, pack_dir))
     # B's generation 1 content is rollback material - A's gc must keep it
     assert first.gc() == ()
-    assert (shared / "store" / hex_of(old)).is_dir()
+    assert (shared / "store" / "demo/2026-11-03-0.0.0").is_dir()
 
 
 def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> None:
@@ -4068,7 +4117,7 @@ def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> 
     with pytest.raises(InstallError, match="registered install root"):
         first.gc_candidates()
     # nothing was deleted
-    assert (shared / "store" / hex_of(target)).is_dir()
+    assert (shared / "store" / "demo/2026-11-03-0.0.0").is_dir()
     # forgetting the root is explicit: delete its registry entry, then gc
     roots_dir = shared / "roots"
     entries = [entry for entry in roots_dir.iterdir() if entry.is_file()]
@@ -4076,18 +4125,67 @@ def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> 
         if entry.read_text().strip() == str(second.root.resolve()):
             entry.unlink()
     removed = first.gc()
-    assert f"store/{hex_of(target)}" in removed
+    assert "store/demo/2026-11-03-0.0.0" in removed
 
 
-def test_private_root_layout_is_unchanged(tmp_path: Path) -> None:
+def test_private_root_layout_uses_readable_pack_names(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     target = local_lockfile(installer, write_pack(tmp_path / "demo", "demo"))
     installer.apply(target)
-    digest = hex_of(target)
+    label = "demo/2026-11-03-0.0.0"
     assert installer.shared_store is None
-    assert (installer.root / "store" / digest / "dinkster-pack.toml").is_file()
-    assert venv_python(installer.root / "venvs" / digest / "demo").is_file()
+    assert (installer.root / "store" / label / "dinkster-pack.toml").is_file()
+    assert venv_python(installer.root / "venvs" / label / "demo").is_file()
     assert not (installer.root / "shared-store").exists()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_pack_identity_reuses_paths_and_separates_same_label_updates(
+    tmp_path: Path, legacy: bool
+) -> None:
+    installer = make_installer(tmp_path)
+    source = write_pack(tmp_path / "demo", "demo")
+    if legacy:
+        entry, archive = lock_local_pack(source, tmp_path / "external")
+        old_archive = installer.artifacts_dir / f"{entry.artifact_digest[7:]}.zip"
+        shutil.copyfile(archive, old_archive)
+        (installer.store_root / entry.artifact_digest[7:]).mkdir()
+        (installer.root / "venvs" / entry.artifact_digest[7:]).mkdir()
+    else:
+        entry, old_archive = lock_local_pack(source, installer.artifacts_dir)
+    first = Lockfile.of([entry])
+    installer.apply(first)
+    first_spec = installer.packs_for_serving()[0]
+    first_manifest = Path(first_spec.manifest)
+    assert first_spec.python is not None
+    first_python = Path(first_spec.python)
+    if legacy:
+        assert first_manifest.parent == installer.store_root / entry.artifact_digest[7:]
+        assert first_python == venv_python(
+            installer.root / "venvs" / entry.artifact_digest[7:] / "demo"
+        )
+    before = old_archive.read_bytes(), first_manifest.read_bytes(), first_python.read_bytes()
+    installer.apply(Lockfile.of([replace(entry, version="9.0.0")]))
+    assert installer.packs_for_serving()[0].manifest == first_spec.manifest
+    assert installer.packs_for_serving()[0].python == first_spec.python
+    assert pack_archive_path(installer.artifacts_dir, entry.artifact_digest) == old_archive
+    (source / "demo_nodes.py").write_text("NODES = [99]\n")
+    newer, new_archive = lock_local_pack(source, installer.artifacts_dir)
+    assert newer.artifact_digest != entry.artifact_digest
+    expected = "2026-11-03-0.0.0" + ("" if legacy else "--2")
+    assert new_archive == installer.artifacts_dir / "demo" / expected / "pack.zip"
+    installer.apply(Lockfile.of([newer]))
+    latest = installer.packs_for_serving()[0]
+    assert Path(latest.manifest).parent == installer.store_root / "demo" / expected
+    assert latest.python == str(venv_python(installer.root / "venvs" / "demo" / expected / "demo"))
+    assert before == (
+        old_archive.read_bytes(),
+        first_manifest.read_bytes(),
+        first_python.read_bytes(),
+    )
+    installer.rollback()
+    assert installer.packs_for_serving()[0].python == first_spec.python
+    assert installer.gc() == ()
 
 
 def test_cli_shared_store_flag_and_gc_across_roots(

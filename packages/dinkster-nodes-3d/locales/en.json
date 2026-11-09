@@ -1,0 +1,319 @@
+{
+  "nodes": {
+    "dinkster.3d.apply_texture_to_mesh": {
+      "displayName": "Apply Texture to Mesh"
+    },
+    "dinkster.3d.bake_ambient_occlusion": {
+      "displayName": "Bake Ambient Occlusion"
+    },
+    "dinkster.3d.bake_normal_map_from_mesh": {
+      "displayName": "Bake Normal Map from Mesh"
+    },
+    "dinkster.3d.bake_texture_from_voxel": {
+      "displayName": "Bake Texture From Voxel"
+    },
+    "dinkster.3d.camera_angle": {
+      "displayName": "Compose Camera Angle Prompt"
+    },
+    "dinkster.3d.create_camera_info": {
+      "displayName": "Create Camera Info"
+    },
+    "dinkster.3d.decimate_mesh": {
+      "displayName": "Decimate Mesh"
+    },
+    "dinkster.3d.file3_d_to_splat": {
+      "displayName": "Get Splat"
+    },
+    "dinkster.3d.fill_holes": {
+      "displayName": "Fill Holes"
+    },
+    "dinkster.3d.get3_d_components": {
+      "displayName": "Get 3D Components"
+    },
+    "dinkster.3d.get_mesh_info": {
+      "displayName": "Get Mesh Info"
+    },
+    "dinkster.3d.get_splat_count": {
+      "displayName": "Get Splat Count"
+    },
+    "dinkster.3d.load3_d": {
+      "displayName": "Load 3D & Animation"
+    },
+    "dinkster.3d.load3_d_advanced": {
+      "displayName": "Load 3D (Advanced)"
+    },
+    "dinkster.3d.merge_meshes": {
+      "displayName": "Merge Meshes"
+    },
+    "dinkster.3d.merge_splat": {
+      "displayName": "Merge Splats"
+    },
+    "dinkster.3d.mesh_smooth_normals": {
+      "displayName": "Smooth Mesh Normals"
+    },
+    "dinkster.3d.mesh_texture_to_image": {
+      "displayName": "Mesh Texture to Image"
+    },
+    "dinkster.3d.mesh_to_file3_d": {
+      "displayName": "Create 3D File (from Mesh)"
+    },
+    "dinkster.3d.paint_mesh": {
+      "displayName": "Paint Mesh"
+    },
+    "dinkster.3d.preview3_d": {
+      "displayName": "Preview 3D & Animation (DEPRECATED)"
+    },
+    "dinkster.3d.preview3_d_advanced": {
+      "displayName": "Preview 3D (Advanced)"
+    },
+    "dinkster.3d.preview_gaussian_splat": {
+      "displayName": "Preview Splat"
+    },
+    "dinkster.3d.preview_point_cloud": {
+      "displayName": "Preview Point Cloud"
+    },
+    "dinkster.3d.remesh_mesh": {
+      "displayName": "Remesh Mesh (Narrow-Band DC)"
+    },
+    "dinkster.3d.render_mesh": {
+      "displayName": "Render Mesh"
+    },
+    "dinkster.3d.render_splat": {
+      "displayName": "Render Splat"
+    },
+    "dinkster.3d.render_uv_atlas": {
+      "displayName": "Render UV Atlas"
+    },
+    "dinkster.3d.rotate_mesh": {
+      "displayName": "Rotate Mesh"
+    },
+    "dinkster.3d.save3_d_advanced": {
+      "displayName": "Save 3D (Advanced)"
+    },
+    "dinkster.3d.save_glb": {
+      "displayName": "Save 3D Model"
+    },
+    "dinkster.3d.save_gaussian_splat": {
+      "displayName": "Save Splat"
+    },
+    "dinkster.3d.save_point_cloud": {
+      "displayName": "Save Point Cloud"
+    },
+    "dinkster.3d.splat_to_file3_d": {
+      "displayName": "Create 3D File (from Splat)"
+    },
+    "dinkster.3d.transform_splat": {
+      "displayName": "Transform Splat"
+    },
+    "dinkster.3d.unwrap_mesh": {
+      "displayName": "Unwrap Mesh UVs"
+    },
+    "dinkster.3d.voxel_to_mesh": {
+      "displayName": "Voxel to Mesh"
+    },
+    "dinkster.3d.voxel_to_mesh_basic": {
+      "displayName": "Voxel to Mesh (Basic) (DEPRECATED)"
+    },
+    "dinkster.3d.weld_vertices": {
+      "displayName": "Weld Vertices"
+    }
+  },
+  "searchTerms": {
+    "dinkster.3d.apply_texture_to_mesh": [
+      "ApplyTextureToMesh"
+    ],
+    "dinkster.3d.bake_ambient_occlusion": [
+      "BakeAmbientOcclusion"
+    ],
+    "dinkster.3d.bake_normal_map_from_mesh": [
+      "BakeNormalMapFromMesh"
+    ],
+    "dinkster.3d.bake_texture_from_voxel": [
+      "BakeTextureFromVoxel"
+    ],
+    "dinkster.3d.camera_angle": [
+      "multi angle",
+      "camera view",
+      "orbit camera",
+      "shot angle",
+      "camera prompt",
+      "CameraAngle"
+    ],
+    "dinkster.3d.create_camera_info": [
+      "camera position",
+      "make camera info",
+      "orbit camera",
+      "look at camera",
+      "CreateCameraInfo"
+    ],
+    "dinkster.3d.decimate_mesh": [
+      "DecimateMesh"
+    ],
+    "dinkster.3d.file3_d_to_splat": [
+      "load splat",
+      "ply to splat",
+      "import splat",
+      "file to splat",
+      "File3DToSplat"
+    ],
+    "dinkster.3d.fill_holes": [
+      "FillHoles"
+    ],
+    "dinkster.3d.get3_d_components": [
+      "Get3DComponents"
+    ],
+    "dinkster.3d.get_mesh_info": [
+      "GetMeshInfo"
+    ],
+    "dinkster.3d.get_splat_count": [
+      "splat count",
+      "gaussian count",
+      "number of splats",
+      "splat info",
+      "GetSplatCount"
+    ],
+    "dinkster.3d.load3_d": [
+      "Load3D"
+    ],
+    "dinkster.3d.load3_d_advanced": [
+      "load mesh",
+      "load gltf",
+      "load glb",
+      "load obj",
+      "load fbx",
+      "load stl",
+      "Load3DAdvanced"
+    ],
+    "dinkster.3d.merge_meshes": [
+      "MergeMeshes"
+    ],
+    "dinkster.3d.merge_splat": [
+      "union splat",
+      "densify gaussian",
+      "combine splat",
+      "merge gaussian",
+      "MergeSplat"
+    ],
+    "dinkster.3d.mesh_smooth_normals": [
+      "MeshSmoothNormals"
+    ],
+    "dinkster.3d.mesh_texture_to_image": [
+      "MeshTextureToImage"
+    ],
+    "dinkster.3d.mesh_to_file3_d": [
+      "mesh to glb",
+      "mesh to file",
+      "export mesh",
+      "MeshToFile3D"
+    ],
+    "dinkster.3d.paint_mesh": [
+      "PaintMesh"
+    ],
+    "dinkster.3d.preview3_d": [
+      "Preview3D"
+    ],
+    "dinkster.3d.preview3_d_advanced": [
+      "preview",
+      "preview 3d",
+      "3d viewer",
+      "view mesh",
+      "frame 3d",
+      "3d camera output",
+      "Preview3DAdvanced"
+    ],
+    "dinkster.3d.preview_gaussian_splat": [
+      "preview",
+      "preview splat",
+      "preview gaussian",
+      "preview gaussian splat",
+      "preview 3dgs",
+      "preview ply",
+      "preview spz",
+      "preview ksplat",
+      "view splat",
+      "view gaussian",
+      "view gaussian splat",
+      "view 3dgs",
+      "PreviewGaussianSplat"
+    ],
+    "dinkster.3d.preview_point_cloud": [
+      "preview",
+      "preview point cloud",
+      "preview pointcloud",
+      "preview ply",
+      "view point cloud",
+      "view pointcloud",
+      "PreviewPointCloud"
+    ],
+    "dinkster.3d.remesh_mesh": [
+      "RemeshMesh"
+    ],
+    "dinkster.3d.render_mesh": [
+      "mesh to image",
+      "render mesh",
+      "preview textured mesh",
+      "RenderMesh"
+    ],
+    "dinkster.3d.render_splat": [
+      "splat to image",
+      "render splat",
+      "gaussian turntable",
+      "RenderSplat"
+    ],
+    "dinkster.3d.render_uv_atlas": [
+      "RenderUVAtlas"
+    ],
+    "dinkster.3d.rotate_mesh": [
+      "RotateMesh"
+    ],
+    "dinkster.3d.save3_d_advanced": [
+      "save 3d",
+      "export 3d model",
+      "save mesh advanced",
+      "Save3DAdvanced"
+    ],
+    "dinkster.3d.save_glb": [
+      "export 3d model",
+      "save mesh",
+      "SaveGLB"
+    ],
+    "dinkster.3d.save_gaussian_splat": [
+      "save splat",
+      "save gaussian splat",
+      "export gaussian",
+      "export splat",
+      "SaveGaussianSplat"
+    ],
+    "dinkster.3d.save_point_cloud": [
+      "save point cloud",
+      "save pointcloud",
+      "export point cloud",
+      "SavePointCloud"
+    ],
+    "dinkster.3d.splat_to_file3_d": [
+      "gaussian to ply",
+      "splat to file",
+      "export gaussian",
+      "SplatToFile3D"
+    ],
+    "dinkster.3d.transform_splat": [
+      "move splat",
+      "rotate splat",
+      "scale splat",
+      "gaussian transform",
+      "TransformSplat"
+    ],
+    "dinkster.3d.unwrap_mesh": [
+      "UnwrapMesh"
+    ],
+    "dinkster.3d.voxel_to_mesh": [
+      "VoxelToMesh"
+    ],
+    "dinkster.3d.voxel_to_mesh_basic": [
+      "VoxelToMeshBasic"
+    ],
+    "dinkster.3d.weld_vertices": [
+      "WeldVertices"
+    ]
+  }
+}

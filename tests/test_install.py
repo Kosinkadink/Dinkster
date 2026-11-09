@@ -120,12 +120,13 @@ def test_lockfile_refuses_duplicate_pack_identities() -> None:
         Lockfile.of([locked(), locked(digest=DIGEST_B)])
 
 
-def test_lockfile_refuses_cross_publisher_claim_conflicts() -> None:
+@pytest.mark.parametrize("publishers", [("alice", "bob"), ("", ""), ("alice", "")])
+def test_lockfile_refuses_cross_publisher_claim_conflicts(publishers: tuple[str, str]) -> None:
     """The conflict is caught before anything reaches the machine, never
     at user runtime - and separator equivalence cannot dodge it:
     'img-extra' is the same claim as 'img.extra', which nests in 'img'."""
-    a = locked("img", claims=("img",))
-    b = locked("img-extra", publisher="bob", claims=("img-extra",))
+    a = locked("img", publisher=publishers[0], claims=("img",))
+    b = locked("img-extra", publisher=publishers[1], claims=("img-extra",))
     with pytest.raises(InstallError, match="conflicting namespaces"):
         Lockfile.of([a, b])
 

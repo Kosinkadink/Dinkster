@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.batch import (
+from dinkster_image.batch import (
     BATCH_NODES,
     ImageBatchCombine,
     ImageBatchEdit,

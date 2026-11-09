@@ -8,9 +8,9 @@ lockfile the installation" into directories and an atomic pointer swap.
 Install root layout (everything content-addressed by artifact digest, so
 staging never disturbs what a current generation references):
 
-    artifacts/<hex>.zip   verified artifact archives
-    store/<hex>/          unpacked artifacts (immutable once written)
-    venvs/<hex>/<pack>/   per-artifact venvs (an upgrade stages a NEW venv)
+    artifacts/<pack>/<date>-<version>/pack.zip  verified artifact archives
+    store/<pack>/<date>-<version>/             immutable unpacked artifacts
+    venvs/<pack>/<date>-<version>/<pack>/       per-artifact virtual environments
     generations/<n>.json  lockfile records, append-only numbering
     current               the active generation number (one small file)
 
@@ -58,6 +58,7 @@ from dinkster_registry import (
 )
 from dinkster_registry.artifact import MANIFEST_FILENAME, build_artifact, unpack_artifact
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 from dinkster_workers import (
     PackManifest,
     detect_accelerator,
@@ -66,6 +67,7 @@ from dinkster_workers import (
     load_manifest,
 )
 from dinkster_workers.doctor import render_text
+from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import (
     ProvisionError,
     bare_pin,
@@ -159,52 +161,34 @@ def _is_registry_source(source: str) -> bool:
 def http_registry_fetcher(
     endpoint: str, *, token: str = "", timeout: float = DEFAULT_REGISTRY_TIMEOUT
 ) -> RegistryFetcher:
-    """Acquire exact bytes through the registry's download-ticket contract."""
+    """Acquire a hash-pinned wheel using only the registry's static prefix."""
     base = endpoint.rstrip("/")
     if not base.startswith(("http://", "https://")):
         raise InstallError(f"registry endpoint {endpoint!r} must be an http(s) URL")
 
     def fetch(entry: LockedPack) -> bytes:
+        from .registries import NamedRegistry, static_pack_release, static_release_wheel
+
         headers = {"User-Agent": "dinkster-pack"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        ticket_url = f"{base}/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"
-        ticket_request = urllib.request.Request(ticket_url, headers=headers, method="POST")  # noqa: S310 - scheme checked above
         try:
-            with urllib.request.urlopen(ticket_request, timeout=timeout) as response:  # noqa: S310
-                ticket_raw: object = json.load(response)
-            if not isinstance(ticket_raw, dict):
-                raise ValueError("ticket is not an object")
-            ticket = cast("dict[str, object]", ticket_raw)
-            url = ticket.get("url")
-            digest = ticket.get("artifactDigest")
-            size = ticket.get("artifactSize")
-            required_headers = ticket.get("requiredHeaders", {})
-            if (
-                not isinstance(url, str)
-                or digest != entry.artifact_digest
-                or not isinstance(required_headers, dict)
-                or not all(
-                    isinstance(name, str) and isinstance(value, str)
-                    for name, value in required_headers.items()
-                )
-            ):
-                raise ValueError("ticket fields do not match the locked release")
-            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-                raise ValueError("ticket artifactSize must be a nonnegative integer")
-            url = urllib.parse.urljoin(base + "/", url)
-            if not url.startswith(("http://", "https://")):
-                raise ValueError("ticket URL is not HTTP(S)")
-            request = urllib.request.Request(url, headers=cast("dict[str, str]", required_headers))  # noqa: S310 - service-issued ticket URL
+            registry = NamedRegistry("", base)
+            fields = static_pack_release(
+                registry, entry.pack, entry.version, timeout=timeout, token=token
+            )
+            wheel, digest = static_release_wheel(registry, fields)
+            if digest != entry.artifact_digest:
+                raise ValueError("wheel.digest-mismatch: index differs from locked release")
+            request = urllib.request.Request(wheel.url, headers=headers)
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                data = response.read(size + 1)
-            if len(data) != size:
-                raise ValueError(
-                    f"archive size differs from ticket: expected {size}, got {len(data)}; "
-                    "refusing to return unverified bytes"
-                )
+                data = response.read(wheel.size + 1)
+            if len(data) != wheel.size or hashlib.sha256(data).hexdigest() != wheel.sha256:
+                raise ValueError("wheel.hash-mismatch: bytes differ from published size or sha256")
+            if artifact_digest(data) != entry.artifact_digest:
+                raise ValueError("wheel.digest-mismatch: bytes differ from locked release")
             return data
-        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError, InstallError) as exc:
             raise InstallError(
                 f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"
             ) from exc
@@ -220,6 +204,19 @@ def _digest_hex(digest: str) -> str:
 def _is_hex_name(name: str) -> bool:
     """Whether a filename is pure lowercase hex (a digest-derived key)."""
     return bool(name) and all(char in "0123456789abcdef" for char in name)
+
+
+def _content_objects(root: Path, *, archives: bool = False) -> tuple[tuple[str, Path], ...]:
+    indexed = object_entries(root, algorithm="blake3", legacy_suffix=".zip" if archives else "")
+    found = [(_digest_hex(identity), path) for identity, path in indexed]
+    namespaces = {path.relative_to(root).parts[0] for _, path in indexed}
+    if root.is_dir():
+        for child in root.iterdir():
+            if child.name not in namespaces and (
+                child.is_dir() if not archives else child.is_file() and child.suffix == ".zip"
+            ):
+                found.append((child.stem if archives else child.name, child))
+    return tuple(found)
 
 
 @dataclass(frozen=True)
@@ -369,7 +366,7 @@ def _archive_pack(pack_dir: Path, artifacts_dir: Path) -> tuple[PackManifest, st
     unpublished install source. The staging name is unique per call (a
     shared artifacts dir sees concurrent writers from different install
     roots), and admission is an atomic hard-link publication - the store
-    only ever contains complete digest-named archives."""
+    only ever contains complete identity-indexed archives."""
     manifest = load_manifest(pack_dir / MANIFEST_FILENAME)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     fd, staging_name = tempfile.mkstemp(prefix="staging-", suffix=".zip.tmp", dir=artifacts_dir)
@@ -377,7 +374,10 @@ def _archive_pack(pack_dir: Path, artifacts_dir: Path) -> tuple[PackManifest, st
     staging = Path(staging_name)
     try:
         digest = build_artifact(pack_dir, staging)
-        archive = artifacts_dir / f"{_digest_hex(digest)}.zip"
+        archive = pack_archive_path(
+            artifacts_dir, digest, label=pack_label(canonical_name(manifest.name), LOCAL_VERSION)
+        )
+        archive.parent.mkdir(parents=True, exist_ok=True)
         try:
             os.link(staging, archive)
         except FileExistsError:
@@ -746,10 +746,20 @@ class Installer:
         manifest lives under here) versus a dev --pack addition."""
         return self._content_root / "store"
 
-    def _store_dir(self, entry: LockedPack) -> Path:
-        return self.store_root / _digest_hex(entry.artifact_digest)
+    def _pack_label(self, entry: LockedPack) -> str:
+        archive = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
+        if archive.name == "pack.zip":
+            return archive.parent.relative_to(self.artifacts_dir).as_posix()
+        return pack_label(entry.pack, entry.version)
 
-    def _venv_root(self, entry: LockedPack) -> Path:
+    def _store_dir(self, entry: LockedPack, *, allocate: bool = False) -> Path:
+        return object_path(
+            self.store_root,
+            entry.artifact_digest,
+            label=self._pack_label(entry) if allocate else None,
+        )
+
+    def _venv_root(self, entry: LockedPack, *, allocate: bool = False) -> Path:
         """Per-artifact venv parent; ``ensure_pack_venv`` names the venv
         after the MANIFEST name inside it (which may differ from the
         canonical ``entry.pack`` in case/separators).
@@ -763,13 +773,28 @@ class Installer:
         venvs = self._content_root / "venvs"
         if self._shared is not None:
             venvs = venvs / self.accelerator
-        return venvs / _digest_hex(entry.artifact_digest)
+        store = self._store_dir(entry)
+        label = (
+            store.relative_to(self.store_root).as_posix()
+            if store.name != _digest_hex(entry.artifact_digest)
+            else self._pack_label(entry)
+        )
+        return object_path(venvs, entry.artifact_digest, label=label if allocate else None)
 
-    def _group_venv_root(self, entries: Sequence[LockedPack]) -> Path:
+    def _group_venv_root(self, entries: Sequence[LockedPack], *, allocate: bool = False) -> Path:
         venvs = self._content_root / "venvs"
         if self._shared is not None:
             venvs = venvs / self.accelerator
-        return venvs / _aggregate_digest(entries)
+        label = pack_label(
+            "groups",
+            "-and-".join(
+                f"{entry.pack}-{entry.version}"
+                for entry in sorted(entries, key=lambda item: item.pack)
+            ),
+        )
+        return object_path(
+            venvs, "sha256:" + _aggregate_digest(entries), label=label if allocate else None
+        )
 
     def _topology_staged(
         self,
@@ -786,7 +811,7 @@ class Installer:
         for entry in target.packs:
             if entry.pack in grouped or entry.pack in in_process:
                 continue
-            manifest_path = self._store_dir(entry) / MANIFEST_FILENAME
+            manifest_path = pack_manifest_path(self._store_dir(entry))
             if not manifest_path.is_file():
                 return False
             manifest = load_manifest(manifest_path)
@@ -796,12 +821,13 @@ class Installer:
 
     def _aggregate_venvs_present(self, target: Lockfile) -> bool:
         """Whether a prior grouped layout exists for this target."""
-        artifact_keys = {_digest_hex(entry.artifact_digest) for entry in target.packs}
+        artifact_paths = {self._venv_root(entry) for entry in target.packs}
         root = self._content_root / "venvs"
         if self._shared is not None:
             root = root / self.accelerator
         return root.is_dir() and any(
-            child.is_dir() and child.name not in artifact_keys for child in root.iterdir()
+            child.is_dir() and child not in artifact_paths
+            for _, child in object_entries(root, algorithm="blake3")
         )
 
     def venv_staged(self, entry: LockedPack) -> bool:
@@ -815,9 +841,9 @@ class Installer:
         """Whether the exact bytes this entry pins are present (unpacked
         store or archived artifact) - what apply-from-plan checks up front
         so a stale-gc'd plan refuses loudly instead of failing mid-stage."""
-        if (self._store_dir(entry) / MANIFEST_FILENAME).is_file():
+        if pack_manifest_path(self._store_dir(entry)).is_file():
             return True
-        return (self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip").is_file()
+        return pack_archive_path(self.artifacts_dir, entry.artifact_digest).is_file()
 
     def acquirable(self, entry: LockedPack) -> bool:
         """Whether ``acquire`` knows how to re-fetch this entry's bytes
@@ -877,7 +903,11 @@ class Installer:
             with tempfile.TemporaryDirectory(prefix="acquire-", dir=self.artifacts_dir) as scratch:
                 candidate = Path(scratch) / "artifact.zip"
                 candidate.write_bytes(data)
-                os.replace(candidate, self.artifacts_dir / f"{_digest_hex(digest)}.zip")
+                archive = pack_archive_path(
+                    self.artifacts_dir, digest, label=pack_label(entry.pack, entry.version)
+                )
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(candidate, archive)
         else:
             raise InstallError(
                 f"cannot re-acquire {entry.pack}: source {source!r} is not "
@@ -904,7 +934,11 @@ class Installer:
                     f"the source has changed since capture - refusing to "
                     f"substitute different bytes"
                 )
-            os.replace(candidate, self.artifacts_dir / f"{_digest_hex(digest)}.zip")
+            archive = pack_archive_path(
+                self.artifacts_dir, digest, label=pack_label(entry.pack, entry.version)
+            )
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(candidate, archive)
 
     def manifest_of(
         self, entry: LockedPack, *, artifact: Path | None = None
@@ -915,15 +949,15 @@ class Installer:
         accelerator-conditional requirements) before anything mutates.
         ``artifact`` supplies an explicit archive instead of the cached path.
         None when neither is present (a gc'd plan; apply refuses that separately)."""
-        store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
+        store_manifest = pack_manifest_path(self._store_dir(entry))
         if store_manifest.is_file():
             return load_manifest(store_manifest)
-        archive = artifact or self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
+        archive = artifact or pack_archive_path(self.artifacts_dir, entry.artifact_digest)
         if not archive.is_file():
             return None
         with tempfile.TemporaryDirectory(prefix="dinkster-manifest-") as scratch:
             unpack_artifact(archive, Path(scratch), entry.artifact_digest)
-            return load_manifest(Path(scratch) / MANIFEST_FILENAME)
+            return load_manifest(pack_manifest_path(Path(scratch)))
 
     def check_engine_compatibility(
         self, target: Lockfile, artifacts: Mapping[str, Path] | None = None
@@ -956,7 +990,7 @@ class Installer:
         lockfile: Lockfile,
         groups: Sequence[tuple[str, tuple[str, ...]]],
     ) -> Path | None:
-        store_manifest = self._store_dir(entry) / MANIFEST_FILENAME
+        store_manifest = pack_manifest_path(self._store_dir(entry))
         if not store_manifest.is_file():
             return None
         manifest = load_manifest(store_manifest)
@@ -1083,11 +1117,11 @@ class Installer:
             )
             return
         for entry in target.packs:
-            store = self._store_dir(entry)
-            if not (store / MANIFEST_FILENAME).is_file():
+            store = self._store_dir(entry, allocate=True)
+            if not pack_manifest_path(store).is_file():
                 archive = artifacts.get(entry.artifact_digest)
                 if archive is None:
-                    candidate = self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
+                    candidate = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
                     if not candidate.is_file():
                         raise InstallError(
                             f"pack {entry.pack!r} ({entry.artifact_digest}) is not "
@@ -1095,13 +1129,15 @@ class Installer:
                         )
                     archive = candidate
                 unpack_artifact(archive, store, entry.artifact_digest)
-            manifest = load_manifest(store / MANIFEST_FILENAME)
+            manifest = load_manifest(pack_manifest_path(store))
             interpreter: Path | str = (
                 self._serving_interpreter if entry.pack in in_process else sys.executable
             )
             if entry.pack not in in_process and venvs:
                 spec = venv_specs.get(entry.pack) if venv_specs is not None else None
-                interpreter = self._provision_entry(entry, manifest, self._venv_root(entry), spec)
+                interpreter = self._provision_entry(
+                    entry, manifest, self._venv_root(entry, allocate=True), spec
+                )
             if entry.pack in in_process:
                 self._validate_in_process_runtime(entry.pack, manifest, runtime_pins or {})
             report = diagnose(manifest.path, interpreter=interpreter)
@@ -1128,11 +1164,11 @@ class Installer:
         manifests: dict[str, PackManifest] = {}
         entries = {entry.pack: entry for entry in target.packs}
         for entry in target.packs:
-            store = self._store_dir(entry)
-            if not (store / MANIFEST_FILENAME).is_file():
+            store = self._store_dir(entry, allocate=True)
+            if not pack_manifest_path(store).is_file():
                 archive = artifacts.get(entry.artifact_digest)
                 if archive is None:
-                    candidate = self.artifacts_dir / f"{_digest_hex(entry.artifact_digest)}.zip"
+                    candidate = pack_archive_path(self.artifacts_dir, entry.artifact_digest)
                     if not candidate.is_file():
                         raise InstallError(
                             f"pack {entry.pack!r} ({entry.artifact_digest}) is not "
@@ -1140,7 +1176,7 @@ class Installer:
                         )
                     archive = candidate
                 unpack_artifact(archive, store, entry.artifact_digest)
-            manifests[entry.pack] = load_manifest(store / MANIFEST_FILENAME)
+            manifests[entry.pack] = load_manifest(pack_manifest_path(store))
 
         member_to_group = {
             member: (name, members) for name, members in groups for member in members
@@ -1163,7 +1199,7 @@ class Installer:
                         group_entries,
                         tuple(manifests[member] for member in members),
                         name,
-                        self._group_venv_root(group_entries),
+                        self._group_venv_root(group_entries, allocate=True),
                         first_spec,
                     )
                 except ProvisionError as exc:
@@ -1175,7 +1211,7 @@ class Installer:
                 if entry.pack not in member_to_group and entry.pack not in in_process:
                     spec = venv_specs.get(entry.pack) if venv_specs is not None else None
                     interpreters[entry.pack] = self._provision_entry(
-                        entry, manifests[entry.pack], self._venv_root(entry), spec
+                        entry, manifests[entry.pack], self._venv_root(entry, allocate=True), spec
                     )
         for entry in target.packs:
             if entry.pack in in_process:
@@ -1427,22 +1463,18 @@ class Installer:
         return referenced
 
     def _venv_dirs(self) -> tuple[tuple[str, str], ...]:
-        """(store-relative path, digest hex) for every materialized venv
-        dir - one level deep on a private root, accelerator/digest on a
-        shared store."""
+        """Store-relative path and full digest hex for each venv object."""
         venvs = self._content_root / "venvs"
         found: list[tuple[str, str]] = []
-        if self._shared is None:
-            for child in venvs.iterdir():
+        roots = (
+            [venvs]
+            if self._shared is None
+            else [child for child in venvs.iterdir() if child.is_dir()]
+        )
+        for root in roots:
+            for digest, child in _content_objects(root):
                 if child.is_dir():
-                    found.append((f"venvs/{child.name}", child.name))
-        else:
-            for accel in venvs.iterdir():
-                if not accel.is_dir():
-                    continue
-                for child in accel.iterdir():
-                    if child.is_dir():
-                        found.append((f"venvs/{accel.name}/{child.name}", child.name))
+                    found.append((child.relative_to(self._content_root).as_posix(), digest))
         return tuple(found)
 
     def gc_candidates(self) -> tuple[str, ...]:
@@ -1452,9 +1484,9 @@ class Installer:
         root (the shared store when one is configured)."""
         referenced = self._referenced_digests()
         candidates: list[str] = []
-        for child in self.store_root.iterdir():
-            if child.is_dir() and child.name not in referenced:
-                candidates.append(f"store/{child.name}")
+        for digest, child in _content_objects(self.store_root):
+            if child.is_dir() and digest not in referenced:
+                candidates.append(child.relative_to(self._content_root).as_posix())
         for rel, digest in self._venv_dirs():
             if digest not in referenced:
                 candidates.append(rel)
@@ -1466,9 +1498,9 @@ class Installer:
                 for child in parent.iterdir():
                     if child.is_dir() and f"{digest}/{child.name}" not in group_refs:
                         candidates.append(f"{rel}/{child.name}")
-        for archive in self.artifacts_dir.glob("*.zip"):
-            if archive.stem not in referenced:
-                candidates.append(f"artifacts/{archive.name}")
+        for digest, archive in _content_objects(self.artifacts_dir, archives=True):
+            if digest not in referenced:
+                candidates.append(archive.relative_to(self._content_root).as_posix())
         return tuple(sorted(candidates))
 
     def gc(self) -> tuple[str, ...]:
@@ -1513,7 +1545,7 @@ class Installer:
         specs: list[PackSpec] = []
         for entry in lockfile.packs:
             store = self._store_dir(entry)
-            manifest_path = store / MANIFEST_FILENAME
+            manifest_path = pack_manifest_path(store)
             if not manifest_path.is_file():
                 raise InstallError(
                     f"generation content for pack {entry.pack!r} is missing from "
@@ -1550,11 +1582,13 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
+                    trust_reserved=_is_registry_source(entry.source)
+                    and entry.publisher == "dinkster",
                     packs={manifest.name: info},
                     worker_group=group[0] if group is not None else None,
                     group_manifests=(
                         tuple(
-                            self._store_dir(entries[member]) / MANIFEST_FILENAME
+                            pack_manifest_path(self._store_dir(entries[member]))
                             for member in group[1]
                         )
                         if group is not None

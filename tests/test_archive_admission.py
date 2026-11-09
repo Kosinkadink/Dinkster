@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
-from dinkster_registry import build_artifact
+from dinkster_registry import artifact_digest
 from dinkster_registry.archive_admission import (
     ProbeSettings,
     run_doctor_static,
@@ -17,6 +18,7 @@ from dinkster_registry.archive_admission import (
 )
 from dinkster_schema import PackCompatibility
 from dinkster_workers import ManifestError, load_manifest
+from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
 
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
 
@@ -27,9 +29,10 @@ def test_service_fixture_archive_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, platform: str
 ) -> None:
     root = FIXTURES / name
-    archive = tmp_path / "pack.zip"
-    digest = build_artifact(root, archive)
+    archive = tmp_path / wheel_filename(load_manifest(root / "dinkster-pack.toml"))
+    build_pack_archive(root, archive)
     data = archive.read_bytes()
+    digest = artifact_digest(data)
     ingest = run_ingest_integrity(data, len(data), digest)
     assert ingest.findings == ()
     assert ingest.data == {"artifactDigest": digest, "size": len(data)}
@@ -98,6 +101,33 @@ def test_service_fixture_probe_contract(name: str) -> None:
         else {"color.adjust": (1, "80d5efe19d0bd3ea8046438497b146d4870f67f1")}
     )
     assert all(item["role"] == "executing" for item in result.data["schemas"])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("times_out", [False, True])
+def test_executable_probe_retains_elapsed_time(tmp_path: Path, times_out: bool) -> None:
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    if times_out:
+        (root / "color_tools" / "__init__.py").write_text(
+            "import threading\nthreading.Event().wait()\n"
+        )
+    settings = ProbeSettings(probe_timeout_seconds=1 if times_out else 30)
+    started = time.monotonic()
+    result = run_executable_probe(root, settings=settings, require_isolation=False)
+    total = time.monotonic() - started
+    assert result.operator_details is not None
+    elapsed = result.operator_details["elapsedSeconds"]
+    assert isinstance(elapsed, float) and 0 < elapsed <= total
+    if times_out:
+        assert elapsed >= settings.probe_timeout_seconds
+        assert result.blocked
+        assert [(finding.code, finding.message) for finding in result.findings] == [
+            ("probe.timeout", f"Executable probe exceeded 1s (elapsed {elapsed:.6f}s).")
+        ]
+    else:
+        assert not result.blocked and result.data is not None
+        assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ import sys
 import tarfile
 import threading
 import zipfile
+from datetime import UTC, datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 import zstandard
 from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor import environment_artifacts
 from dinkster_supervisor.environment_artifacts import (
     acquire,
@@ -31,7 +33,7 @@ from dinkster_supervisor.environment_artifacts import (
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_custom import custom_selection, variant_file
 from dinkster_supervisor.environment_downloads import DownloadError
-from dinkster_supervisor.environment_state import EnvironmentError
+from dinkster_supervisor.environment_state import EnvironmentError, content_digest
 from test_environment_generations import _standalone_tree
 
 from dinkster.generation_packs import stage_generation_packs
@@ -242,6 +244,7 @@ def test_acquires_only_selected_variant_dependency_locks(tmp_path: Path):
 
 
 def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_path: Path):
+    acquired_date = datetime.now(UTC).date().isoformat()
     mirror, store = tmp_path / "mirror", tmp_path / "store"
     _mirror(mirror)
     release, payloads = _release_sources(mirror)
@@ -257,27 +260,25 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
     assert len(entries) == 2
     assert acquire_sources(catalog, store, download=False) == acquired
     for entry in entries:
-        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        cached = pack_archive_path(artifacts, entry.artifact_digest)
+        assert cached == artifacts / entry.pack / f"{acquired_date}-1.0" / "pack.zip"
         assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
         cached.write_bytes(b"damaged cache")
     with pytest.raises(EnvironmentError, match="intact cached release source"):
         acquire_sources(catalog, store, download=False)
     for entry in entries:
-        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        cached = pack_archive_path(artifacts, entry.artifact_digest)
         assert cached.read_bytes() == b"damaged cache"
     acquire_sources(catalog, store)
     for entry in entries:
-        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        cached = pack_archive_path(artifacts, entry.artifact_digest)
         assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
     target = tmp_path / "target"
     target.mkdir()
     stage_generation_packs(
         target,
         Lockfile.from_record_json(lock.read_text()),
-        {
-            entry.pack: artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
-            for entry in entries
-        },
+        {entry.pack: pack_archive_path(artifacts, entry.artifact_digest) for entry in entries},
     )
     assert (target / "dinkster.lock").read_bytes() == payloads["official-packs.lock"]
     for entry in entries:
@@ -320,8 +321,11 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
         [b"base wheel bytes; execution is covered by generation tests", b"engine wheel bytes"]
     )
     for path in acquired:
-        assert path.parent.name == hashlib.sha256(path.read_bytes()).hexdigest()
-    retained = store / "engines" / channel["engine"]["release"][7:] / "release-manifest.json"
+        assert path.parent.name == path.stem
+        assert object_path(store / "wheels", content_digest(path)) == path.parent
+    retained = (
+        object_path(store / "engines", channel["engine"]["release"]) / "release-manifest.json"
+    )
     assert retained.read_bytes() == _json(engine) + b"\n"
 
 
@@ -343,14 +347,15 @@ def test_acquisition_retains_published_base_metadata_without_replacing_custom_pr
     (mirror / "base/fixture-cpu" / base["id"][7:] / "manifest.json").write_bytes(_json(base))
     catalog = discover((str(mirror),), "main")
     acquire(catalog, "fixture-cpu", store)
-    retained = store / "bases" / base["id"][7:] / "manifest.json"
+    retained = object_path(store / "bases", base["id"]) / "manifest.json"
+    assert retained.parent == store / "bases/fixture-cpu/2026-11-01-py3.14.10-torchnone"
     assert json.loads(retained.read_bytes()) == base
     custom = _json({**base, "source": "user-defined", "build": {"sourceDigest": "a" * 64}})
     retained.write_bytes(custom)
     acquire(catalog, "fixture-cpu", store)
     assert retained.read_bytes() == custom
     retained.unlink()
-    wheel = store / "bases" / base["id"][7:] / "wheels" / base["wheels"][0]["filename"]
+    wheel = retained.parent / "wheels" / base["wheels"][0]["filename"]
     wheel.write_bytes(b"damaged cached base")
     with pytest.raises(EnvironmentError, match="extracted base wheel differs"):
         acquire(catalog, "fixture-cpu", store)
@@ -382,10 +387,10 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     assert not store.exists()
     manifest.write_bytes(b"changed after discovery")
     acquire(catalog, "fixture-cpu", store)
-    retained = store / "engines" / identity / "release-manifest.json"
+    retained = object_path(store / "engines", "sha256:" + identity) / "release-manifest.json"
     assert retained.read_bytes() == data
     assert hashlib.sha256(retained.read_bytes()).hexdigest() == identity
-    assert all(engine["label"] not in part for path in store.rglob("*") for part in path.parts)
+    assert retained.parent == store / "engines" / engine["label"]
     retained.write_bytes(b"corrupt cache")
     acquire(catalog, "fixture-cpu", store)
     assert retained.read_bytes() == data
@@ -491,16 +496,18 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
                 else None,
             ):
                 acquire(catalog, "fixture-cpu", store, package_index=package_index)
-            assert (store / "wheels" / dependency["sha256"] / filename).exists() == (
-                failure == "dependency"
-            )
+            assert (
+                object_path(store / "wheels", "sha256:" + dependency["sha256"]) / filename
+            ).exists() == (failure == "dependency")
             assert not list(store.glob("engines/*/constraints-fixture-cpu.txt"))
             assert not any(".tar.gz" in path for path in requests)
             if failure == "base-hash":
                 assert not store.exists()
             return
         constraints = acquire(catalog, "fixture-cpu", store, package_index=package_index)
-        assert (store / "wheels" / dependency["sha256"] / filename).read_bytes() == payload
+        assert (
+            object_path(store / "wheels", "sha256:" + dependency["sha256"]) / filename
+        ).read_bytes() == payload
         assert set(constraints.read_text().splitlines()) == {
             "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(engine_payload).hexdigest(),
             "third-party==7.2 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
@@ -754,7 +761,9 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
         next((tmp_path / "store/wheels").glob("*/fixture_engine*.whl")).read_bytes()
         == b"engine wheel bytes"
     )
-    retained = tmp_path / "store/engines" / release / "release-manifest.json"
+    retained = (
+        object_path(tmp_path / "store/engines", "sha256:" + release) / "release-manifest.json"
+    )
     assert (
         retained.read_bytes() == (second / f"engine/{release}/release-manifest.json").read_bytes()
     )
@@ -790,7 +799,7 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
     store = tmp_path / "store"
     with pytest.raises(EnvironmentError, match="extracted base wheel differs"):
         acquire(catalog, "fixture-cpu", store)
-    assert not (store / "bases" / base["id"][7:]).exists()
+    assert not object_path(store / "bases", base["id"]).exists()
     assert not list(store.glob("wheels/*/*.whl"))
 
 
@@ -1454,7 +1463,7 @@ def test_custom_rebuild_preserves_recoverable_archive_and_provenance(
         lambda *_: json.loads(json.dumps(template["wheels"])),
     )
     first = environment_custom.build_custom_base(selection, template, sources, store)
-    retained = store / "downloads" / first["id"][7:]
+    retained = object_path(store / "downloads", first["id"])
     original = {path.name: path.read_bytes() for path in retained.iterdir()}
     assert environment_custom.build_custom_base(selection, template, sources, store) == first
     assert {path.name: path.read_bytes() for path in retained.iterdir()} == original
@@ -1466,7 +1475,7 @@ def test_custom_rebuild_preserves_recoverable_archive_and_provenance(
     )
     assert {
         path.name: path.read_bytes()
-        for path in (download_only / "downloads" / first["id"][7:]).iterdir()
+        for path in object_path(download_only / "downloads", first["id"]).iterdir()
     } == original
     recovered = environment_artifacts.acquire_base(first, (str(retained),), tmp_path / "recovered")
     for wheel in first["wheels"]:

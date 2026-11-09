@@ -1,16 +1,20 @@
 """Torch-free public ACE Step text-conditioning schemas."""
 
 from dinkster_api.v1 import ComboWidget, NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
+from dinkster_audio_models import NODES
+from dinkster_audio_models.ace_text_conditioning import (
+    TextEncodeAceStepAudio,
+    TextEncodeAceStepAudio15,
+)
 
 
 def test_ace_text_conditioning_schemas_and_registration() -> None:
-    ace, ace15 = (node.schema() for node in ACE_TEXT_CONDITIONING_NODES)
-    assert all(node in COMFY_NODES for node in ACE_TEXT_CONDITIONING_NODES)
+    ace, ace15 = TextEncodeAceStepAudio.schema(), TextEncodeAceStepAudio15.schema()
+    assert TextEncodeAceStepAudio in NODES
+    assert TextEncodeAceStepAudio15 in NODES
     assert [(node.node_type, node.category) for node in (ace, ace15)] == [
-        ("TextEncodeAceStepAudio", "model/conditioning/ace"),
-        ("TextEncodeAceStepAudio1.5", "model/conditioning/ace"),
+        ("dinkster.audio.models.text_encode_ace_step_audio", "model/conditioning/ace"),
+        ("dinkster.audio.models.text_encode_ace_step_audio1_5", "model/conditioning/ace"),
     ]
     assert [
         (item.id, item.type.runtime_type_id(), item.required, item.default) for item in ace.inputs

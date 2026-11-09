@@ -333,21 +333,22 @@ def test_invocation_storage_contract_crosses_worker_boundary(
     "module,registration",
     [
         ("dinkster_nodes_dev.image", "register_dev_types"),
-        ("dinkster_nodes_image.types", "register_image_types"),
-        ("dinkster_nodes_media_io", "register_media_types"),
-        ("dinkster.comfy_compose", "register_comfy_host_types"),
+        ("dinkster_image.types", "register_image_types"),
+        ("dinkster_audio", "register_types"),
+        ("dinkster_video", "register_types"),
+        ("dinkster_api.v1", "register_media_types"),
         *[
-            (f"dinkster_nodes_vision.{name}.nodes", "register_types")
+            (f"dinkster_vision_{name}", "register_types")
             for name in (
-                "birefnet",
-                "depth_anything_v2",
-                "depth_anything_v3",
-                "detr",
-                "efficient_sam",
-                "hed",
+                "background_removal",
+                "depth_anything_3",
+                "marigold",
+                "mediapipe",
+                "moge",
                 "rtdetr",
-                "sam31",
-                "upscale",
+                "sam3",
+                "sam3d_body",
+                "sdpose",
             )
         ],
     ],

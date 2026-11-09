@@ -14,10 +14,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from dinkster_store import object_path
 from dinkster_workers.boundary import PROTOCOL_VERSION
 from dinkster_workers.pack_environment import (
     GenerationContext,
     doctor_generation,
+    fetch_wheel,
     main,
     pack_drift,
     preflight_generation,
@@ -55,6 +57,37 @@ def _wheel(root: Path, name: str, version: str, module: str, body: str) -> Locke
     return LockedWheel(
         filename, path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest(), path.as_uri()
     )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_wheel_cache_keeps_same_filename_contents_distinct_and_reuses_offline(
+    tmp_path: Path, legacy: bool
+) -> None:
+    source, store = tmp_path / "source", tmp_path / "store"
+    source.mkdir()
+    first = _wheel(source, "example", "1.0", "example", "VALUE = 1\n")
+    original = (source / first.filename).read_bytes()
+    if legacy:
+        cached = store / first.sha256 / first.filename
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(original)
+    first_path = fetch_wheel(first, store)
+    assert first_path.parent.name == (first.sha256 if legacy else "example-1.0-py3-none-any")
+    second = _wheel(source, "example", "1.0", "example", "VALUE = 23\n")
+    second_path = fetch_wheel(second, store)
+    assert second_path.parent.name == (
+        "example-1.0-py3-none-any" if legacy else "example-1.0-py3-none-any--2"
+    )
+    assert first_path.read_bytes() == original
+    assert second_path.read_bytes() == (source / second.filename).read_bytes()
+    renamed_source = source / "example-1.0-1-py3-none-any.whl"
+    renamed_source.write_bytes(original)
+    renamed = replace(first, filename=renamed_source.name, url=renamed_source.as_uri())
+    assert fetch_wheel(renamed, store) == first_path.parent / renamed.filename
+    (source / first.filename).unlink()
+    assert fetch_wheel(first, store, offline=True) == first_path
+    assert fetch_wheel(second, store, offline=True) == second_path
+    assert first_path.read_bytes() == original
 
 
 def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
@@ -148,7 +181,7 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
         "short": "wheel hash or size mismatch",
         "oversize": "wheel exceeds locked size",
     }[failure] in message
-    assert not (store / wheel.sha256 / wheel.filename).exists()
+    assert not (object_path(store, "sha256:" + wheel.sha256) / wheel.filename).exists()
     assert not list(store.rglob("*.partial"))
     assert not (generation / "packs/example").exists()
 
@@ -285,6 +318,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
 ) -> None:
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_workers import load_manifest
+    from dinkster_workers.pack_wheel import pack_manifest_path
 
     from scripts.build_official_packs import build
 
@@ -294,18 +328,30 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
     source = tmp_path / "source"
     source.mkdir()
-    for family in ("comfy", "foundation", "image", "media-io", "remote", "generation"):
+    for family in (
+        "comfy",
+        "foundation",
+        "image",
+        "media-io",
+        "remote",
+        "generation",
+        "text",
+        "upscale",
+    ):
         root = source / "packages" / f"dinkster-nodes-{family}"
         root.mkdir(parents=True)
         (root / "dinkster-pack.toml").write_text(
             f'[pack]\nname="dinkster-nodes-{family}"\npublisher="dinkster"\n'
+            'version="1.2.3"\nengine=">=0.0.2"\n'
             'requires = ["fixture-extra<3"]\n'
             '[pack.dependencies]\ndinkster-nodes-foundation=">=0.0.1"\n'
-            '[pack.entry]\nnodes="nodes:NODES"\n'
+            f'[pack.entry]\nnodes="dinkster_nodes_{family.replace("-", "_")}:NODES"\n'
         )
-        (root / "nodes.py").write_text("raise AssertionError('node bodies must not load')\n")
+        module = root / f"dinkster_nodes_{family.replace('-', '_')}"
+        module.mkdir()
+        (module / "__init__.py").write_text("raise AssertionError('node bodies must not load')\n")
         (root / "pyproject.toml").write_text(
-            '[project]\nrequires-python=">=3.12"\n'
+            f'[project]\nname="dinkster-nodes-{family}"\nversion="1.2.3"\nrequires-python=">=3.12"\n'
             'dependencies=["fixture-extra>=2", "dinkster-nodes-foundation>=0.0.1"]\n'
         )
     subprocess.run(["git", "init", "--quiet", str(source)], check=True)
@@ -355,7 +401,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     assert (cli_output / "official-packs.lock").read_bytes() == (
         output / "official-packs.lock"
     ).read_bytes()
-    assert len(payloads) == 11
+    assert len(payloads) == 15
     assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
     assert {entry.pack for entry in inventory.packs} == {
@@ -364,6 +410,8 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-nodes-text",
+        "dinkster-nodes-upscale",
     }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"
@@ -379,11 +427,11 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         ]
         assert lock.packages[0].wheels == (pinned,)
         extracted = unpack_artifact(
-            output / f"{entry.pack}-1.2.3.zip",
+            output / f"{entry.pack.replace('-', '_')}-1.2.3-py3-none-any.whl",
             tmp_path / "unpacked" / entry.pack,
             entry.artifact_digest,
         )
-        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        manifest = load_manifest(pack_manifest_path(extracted))
         assert set(manifest.requires) == set(lock.requirements)
         assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
 

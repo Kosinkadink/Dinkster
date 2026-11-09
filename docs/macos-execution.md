@@ -22,7 +22,7 @@ with matching PyTorch and image-library versions on the same Mac.
 | Pack | CPU/macOS result | Executed coverage |
 | --- | --- | --- |
 | `dinkster-nodes-foundation` | Announced; workflow passed | Integer value feeding image width |
-| `dinkster-nodes-image` | Announced; workflow passed | Empty image and invert |
+| `dinkster-image` | Announced; workflow passed | Empty image and invert |
 | `dinkster-nodes-media-io` | Announced; workflow passed | Save PNG through a writable library mount |
 | `dinkster-nodes-generation` | Announced; workflow passed | SD1.5, SDXL, and Klein native generation |
 | `dinkster-compat-comfy` | Announced; workflow passed | Translated image and model workflows |

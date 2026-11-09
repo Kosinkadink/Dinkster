@@ -1,0 +1,27 @@
+{
+  "reference_commit": "bc5f880dbdd43e426077f42ccec53bb577ffee9f",
+  "source_file": "comfy_api/latest/_input_impl/video_types.py",
+  "source_sha256": "a8623787e5b26fae9b53b7de11f84fdc0ab6e047d2332407efb4c66920d67b02",
+  "artifact_sha256": "446f89029d695bab37b6d4359d4920f6fd30c950251ce9d4e50ad0e5267a91fd",
+  "provenance": "Retained trim-first-source.mp4 from immutable source VideoFromComponents.get_stream_source/as_trimmed. Decode-only extraction; no source execution or encoding during oracle extraction.",
+  "input": "numpy.linspace(0, 1, 8 * 16 * 24 * 3, dtype=float32).reshape(8, 16, 24, 3), fps=4",
+  "input_sha256": "6109ba904b30bd6eec570e64b6f60ca9585c218606f6d985c4de99feae5f3849",
+  "decoder": "PyAV 18.1.0, NumPy 2.5.1; independently extracted twice with identical hashes",
+  "rgb24_method": "VideoFrame.to_ndarray(format=rgb24)",
+  "rgb8_via_float32_method": "VideoFrame.reformat(format=gbrpf32le, src_colorspace=1, dst_colorspace=0, src_color_range=1, dst_color_range=2).to_ndarray(); rint(clip(pixels, 0, 1) * 255).astype(uint8)",
+  "start": "1/2",
+  "duration": "3/4",
+  "fps": "4",
+  "shape": [3, 16, 24, 3],
+  "timestamps": ["1/2", "3/4", "1"],
+  "rgb24_sha256": [
+    "019199fa930cabf01df1dda578f5120468bebda642428e01bb5e2db755f7e8d6",
+    "8d9c563b2f56d70530440539e9295a5fb3fe58cd30951fd203707cf7ab9642ba",
+    "7f71eb2cddfba99fdf72082660eb72bafad8d9eeedee6a5a0610c155629d3084"
+  ],
+  "rgb8_via_float32_sha256": [
+    "795ad24c47aa1880d5366ef666f50694b5395c5b873699f2fd55e85f2a52c29f",
+    "2079769624711394aa7ca685db5e84f87ce0bad8605cdefe0ad60e70a1a475ef",
+    "3ed6a7cfe6e02fdd8a5b48998dea682b6643fdf866dc9c5752e50d0bea0923e8"
+  ]
+}

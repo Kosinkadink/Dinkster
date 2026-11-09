@@ -1,7 +1,9 @@
 name: Registry default pack admission
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Independent official pack publication"]
+    types: [completed]
     branches: [main]
   pull_request:
 
@@ -9,11 +11,61 @@ permissions:
   contents: read
 
 concurrency:
-  group: default-pack-admission-${{ github.ref }}
+  group: default-pack-admission-${{ github.event.workflow_run.id || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  select:
+    if: github.event_name == 'pull_request' || (github.repository == 'Kosinkadink/Dinkster' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success')
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      engine: ${{ steps.identity.outputs.engine }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - name: Require a successful publication job, not a skipped publication
+        if: github.event_name == 'workflow_run'
+        id: publication
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: context.payload.workflow_run.id, per_page: 100,
+            });
+            core.setOutput('published', jobs.some(job => job.name === 'publish' && job.conclusion === 'success'));
+      - uses: actions/download-artifact@v4
+        if: steps.publication.outputs.published == 'true'
+        with:
+          name: official-publication-inputs
+          path: .publication
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Select the engine bound to the publication inputs
+        id: identity
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'pull_request') {
+              core.setOutput('engine', context.payload.pull_request.head.sha);
+            } else if ('${{ steps.publication.outputs.published }}' === 'true') {
+              const fs = require('fs');
+              const engine = JSON.parse(fs.readFileSync('.publication/engine/release-manifest.json', 'utf8'));
+              if (engine.repository !== 'Kosinkadink/Dinkster' || !/^[0-9a-f]{40}$/.test(engine.commit) || typeof engine.version !== 'string') {
+                throw new Error('Publication must identify an exact engine commit and version');
+              }
+              core.setOutput('engine', engine.commit);
+              core.setOutput('version', engine.version);
+            }
+
   admission:
+    needs: select
+    if: needs.select.outputs.engine != ''
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -24,9 +76,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ needs.select.outputs.engine }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_run'
+        with:
+          name: official-publication-inputs
+          path: .publication
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
       - name: Configure the same full Linux jail used by registry admission
         run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
@@ -43,7 +102,21 @@ jobs:
           echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
       - name: Resolve defaults and run the registry scanner in process
+        env:
+          CANDIDATE_BASE: ${{ github.event.pull_request.base.sha }}
+          PUBLISHED_VERSION: ${{ needs.select.outputs.version }}
         run: |
-          version=$(uv run --no-sync python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
+          arguments=()
+          if [ -n "$CANDIDATE_BASE" ]; then
+            publication_changed=$(git diff --name-only "$CANDIDATE_BASE" HEAD -- .github/workflows/official-packs.yml)
+            if [ -n "$publication_changed" ]; then
+              CANDIDATE_BASE=0000000000000000000000000000000000000000
+            fi
+            arguments+=(--candidate-base "$CANDIDATE_BASE")
+            version=$(uv run --no-sync python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
+          else
+            arguments+=(--published-sources .publication/sources/official-packs.lock)
+            version="$PUBLISHED_VERSION"
+          fi
           uv run --no-sync python -m scripts.check_default_pack_admission \
-            --engine-version "$version"
+            --engine-version "$version" "${arguments[@]}"

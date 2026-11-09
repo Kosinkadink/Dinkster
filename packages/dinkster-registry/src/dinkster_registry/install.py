@@ -92,7 +92,7 @@ class LockedPack:
     version: str
     artifact_digest: str
     publisher: str
-    """Canonical publisher id (attribution + the claim-conflict rule)."""
+    """Authenticated publisher id, or empty when the registry records no principal."""
     claims: tuple[str, ...]
     """Canonical namespace claims, for pre-install collision checking."""
     source: str = "registry"
@@ -135,7 +135,8 @@ class Lockfile:
         ordered = tuple(sorted(packs, key=lambda entry: entry.pack))
         for entry in ordered:
             _require_canonical("pack name", entry.pack)
-            _require_canonical("publisher id", entry.publisher)
+            if entry.publisher:
+                _require_canonical("publisher id", entry.publisher)
             # No minimum claim count: a pure executor pack (empty [pack]
             # namespaces, non-empty executes) locks no claims. Pack-name
             # uniqueness is enforced below independently of claims.
@@ -160,7 +161,7 @@ class Lockfile:
                         f"two entries lock pack {entry.pack!r}; one canonical "
                         f"name is one pack, whatever the source"
                     )
-                if earlier.publisher == entry.publisher:
+                if entry.publisher and earlier.publisher == entry.publisher:
                     continue  # same-publisher nesting is the legal suite shape
                 for a in earlier.claims:
                     for b in entry.claims:

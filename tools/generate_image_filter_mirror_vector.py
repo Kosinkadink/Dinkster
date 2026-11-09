@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import numpy as np
-from dinkster_nodes_image.filters import FILTER_MIRROR_PER_CHANNEL_TOLERANCE, ImageFilter
+from dinkster_image.filters import FILTER_MIRROR_PER_CHANNEL_TOLERANCE, ImageFilter
 
 OUTPUT_PATH = (
     Path(__file__).parents[1] / "tests" / "fixtures" / "mirror-parity" / "image_filter_v1.json"

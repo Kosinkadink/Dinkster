@@ -1,6 +1,16 @@
 name: Independent official pack publication
 
 on:
+  workflow_dispatch:
+    inputs:
+      head:
+        description: Full commit SHA on main with a successful published engine release
+        required: true
+        type: string
+      recovery_artifact:
+        description: Original official-publication-inputs artifact ID; reuse its wheels and same-run native locks
+        required: false
+        type: string
   workflow_run:
     workflows: ["Versioned wheel release"]
     types: [completed]
@@ -25,12 +35,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: official-packs-${{ github.event.workflow_run.head_sha || github.ref }}
+  group: official-packs-${{ inputs.head || github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: false
 
 jobs:
   select:
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster')
+    if: (github.event_name != 'workflow_dispatch' || (github.repository == 'Kosinkadink/Dinkster' && github.ref == 'refs/heads/main')) && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'))
     permissions:
       contents: read
       actions: read
@@ -40,26 +50,87 @@ jobs:
       packs: ${{ steps.select.outputs.packs }}
       engine: ${{ steps.select.outputs.engine }}
       applicable: ${{ steps.select.outputs.applicable }}
+      recovery_run: ${{ steps.engine_release.outputs.recovery_run }}
+      recovery_locks: ${{ steps.engine_release.outputs.recovery_locks }}
     steps:
+      - name: Check whether the exact commit published an engine
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+        id: engine_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let runs = [context.payload.workflow_run];
+            if (context.eventName === 'workflow_dispatch') {
+              const head = context.payload.inputs.head;
+              if (!/^[0-9a-f]{40}$/.test(head)) {
+                throw new Error('Catch-up publication requires a full commit SHA');
+              }
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo, basehead: `${head}...main`,
+              });
+              if (!['ahead', 'identical'].includes(comparison.data.status)) {
+                throw new Error('Catch-up publication commit must belong to main');
+              }
+              runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                ...context.repo, workflow_id: 'release.yml', head_sha: head,
+                branch: 'main', event: 'push', status: 'success', per_page: 100,
+              });
+              runs = runs.filter(run => run.head_sha === head && run.event === 'push'
+                && run.head_branch === 'main' && run.conclusion === 'success'
+                && run.head_repository.full_name === 'Kosinkadink/Dinkster');
+            }
+            let published = false;
+            for (const run of runs) {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                ...context.repo, run_id: run.id, per_page: 100,
+              });
+              if (jobs.some(job => job.name === 'release' && job.conclusion === 'success')) {
+                published = true;
+                break;
+              }
+            }
+            if (context.eventName === 'workflow_dispatch' && !published) {
+              throw new Error('Catch-up publication requires a successful same-commit engine release');
+            }
+            const artifactId = context.payload.inputs?.recovery_artifact;
+            if (context.eventName === 'workflow_dispatch' && artifactId) {
+              if (!/^[1-9][0-9]*$/.test(artifactId) || !Number.isSafeInteger(Number(artifactId))) {
+                throw new Error('Recovery requires an artifact ID');
+              }
+              const { data: artifact } = await github.rest.actions.getArtifact({
+                ...context.repo, artifact_id: Number(artifactId),
+              });
+              const { data: run } = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: artifact.workflow_run.id,
+              });
+              if (artifact.name !== 'official-publication-inputs' || artifact.expired
+                  || run.head_sha !== context.payload.inputs.head || run.head_branch !== 'main'
+                  || run.head_repository.full_name !== 'Kosinkadink/Dinkster'
+                  || run.path !== '.github/workflows/official-packs.yml'
+                  || run.event !== 'workflow_run' || run.conclusion !== 'success') {
+                throw new Error('Recovery requires original successful main publication inputs at head');
+              }
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                ...context.repo, run_id: run.id, per_page: 100,
+              });
+              const locks = artifacts.filter(item => item.name.startsWith('publication-locks-'));
+              if (!locks.length || locks.some(item => item.expired)
+                  || new Set(locks.map(item => item.name)).size !== locks.length) {
+                throw new Error('Recovery requires unexpired unique native lock artifacts');
+              }
+              core.setOutput('recovery_run', run.id);
+              core.setOutput('recovery_locks', locks.map(item => item.id).join(','));
+            }
+            core.setOutput('published', published);
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.head || github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
-      - name: Check whether the triggering run published an engine
-        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
-        id: engine_release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-              ...context.repo, run_id: context.payload.workflow_run.id, per_page: 100,
-            });
-            core.setOutput('published', jobs.some(job => job.name === 'release' && job.conclusion === 'success'));
       - name: Select committed pack changes or an exact pack tag
         id: select
         env:
@@ -81,11 +152,13 @@ jobs:
           if event == 'workflow_run' and (os.environ['CONCLUSION'] != 'success' or os.environ['ENGINE_PUBLISHED'] != 'true'):
               print('No official packs published: same-commit engine release did not succeed')
               packs, applicable = (), False
+          elif event == 'workflow_dispatch':
+              packs, applicable = select_packs(root, before='0' * 40), True
           elif tag:
               packs, applicable = select_packs(root, tag=tag), True
           else:
               packs, applicable = publication_selection(root, before), True
-          if event != 'workflow_run':
+          if event not in {'workflow_run', 'workflow_dispatch'}:
               print('Preflight uses candidate-head engine dependency pins; it does not claim a published engine release')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('packs=' + json.dumps(packs) + '\n')
@@ -95,7 +168,7 @@ jobs:
 
   sources:
     needs: select
-    if: needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'
+    if: needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true' && !needs.select.outputs.recovery_run
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -103,7 +176,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ needs.select.outputs.engine }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
@@ -116,7 +189,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PACKS: ${{ needs.select.outputs.packs }}
           ENGINE_COMMIT: ${{ needs.select.outputs.engine }}
-          CANDIDATE: ${{ github.event_name != 'workflow_run' }}
+          CANDIDATE: ${{ github.event_name != 'workflow_run' && github.event_name != 'workflow_dispatch' }}
         run: |
           uv run --no-sync python - <<'PY'
           import json, os
@@ -137,8 +210,47 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
+  recovery:
+    needs: select
+    if: needs.select.outputs.recovery_run != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ inputs.recovery_artifact }}
+          run-id: ${{ needs.select.outputs.recovery_run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: .official-publication
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.select.outputs.recovery_locks }}
+          run-id: ${{ needs.select.outputs.recovery_run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: .official-publication/locks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: |
+            .official-publication/sources/
+            .official-publication/bases/
+            .official-publication/engine/
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publication-locks-recovered
+          path: .official-publication/locks/*.pack-lock.json
+          include-hidden-files: true
+          if-no-files-found: error
+
   locks:
-    needs: sources
+    needs: [select, sources]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -156,7 +268,7 @@ jobs:
           $bashDirectory >> $env:GITHUB_PATH
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ needs.select.outputs.engine }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -183,13 +295,14 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [sources, locks]
+    needs: [select, sources, locks, recovery]
+    if: always() && !cancelled() && needs.select.result == 'success' && (needs.recovery.result == 'success' || (needs.sources.result == 'success' && needs.locks.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.select.outputs.engine }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -206,15 +319,18 @@ jobs:
       - run: uv sync --locked --all-packages
       - name: Validate the complete publication set without credentials
         shell: bash
+        env:
+          CANDIDATE: ${{ github.event_name != 'workflow_run' && github.event_name != 'workflow_dispatch' }}
         run: |
           arguments=()
+          if [ "$CANDIDATE" != true ]; then arguments+=(--check-published); fi
           for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
           uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
-            --output .official-publication/preflight --check-published
+            --output .official-publication/preflight
       - name: Submit own-version packs to the official registry
-        if: github.repository == 'Kosinkadink/Dinkster' && github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success'
+        if: github.repository == 'Kosinkadink/Dinkster' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success'))
         shell: bash
         env:
           DINKSTER_REGISTRY_TOKEN: ${{ secrets.DINKSTER_REGISTRY_TOKEN }}

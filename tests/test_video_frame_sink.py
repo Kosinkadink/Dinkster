@@ -13,9 +13,9 @@ import av
 import numpy as np
 import pytest
 from dinkster_api.v1 import annotate_image, save_frame_records
-from dinkster_nodes_media_io.image_metadata import metadata_document, png_metadata
-from dinkster_video import formats, read_video_metadata
+from dinkster_video_runtime import formats, read_video_metadata
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 COLOR = {"primaries": 1, "transfer": 13, "range": 2}
 METADATA = {"workflow": {"nodes": []}, "prompt": "sample", "comment": "true"}
@@ -336,9 +336,15 @@ def test_png_metadata_matches_ordinary_still_reader(format: str) -> None:
         "comment": "true",
     }
     reference = io.BytesIO()
-    Image.new("RGB", (8, 8)).save(
-        reference, format="PNG", pnginfo=png_metadata(json.dumps(metadata))
-    )
+    pnginfo = PngInfo()
+    for key, value in metadata.items():
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        )
+        pnginfo.add_text(key, text)
+    Image.new("RGB", (8, 8)).save(reference, format="PNG", pnginfo=pnginfo)
     output = io.BytesIO()
     save_frame_records(
         Records(), output, format=format, bit_depth=8, color=COLOR, metadata=metadata
@@ -351,21 +357,8 @@ def test_png_metadata_matches_ordinary_still_reader(format: str) -> None:
             with Image.open(io.BytesIO(archive.read("000002.png"))) as following:
                 assert "prompt" not in following.info
     with Image.open(io.BytesIO(data)) as image, Image.open(reference) as ordinary:
-        expected = metadata_document(
-            cast(dict[str, object], ordinary.info),
-            name="image.png",
-            digest="",
-            media_type="image/png",
-            size=len(data),
-        )
-        actual = metadata_document(
-            cast(dict[str, object], image.info),
-            name="image.png",
-            digest="",
-            media_type="image/png",
-            size=len(data),
-        )
-        assert actual["comfy"] == expected["comfy"]
+        for key in ("prompt", "workflow"):
+            assert json.loads(image.info[key]) == metadata[key]
         for key in metadata:
             assert image.info[key] == ordinary.info[key]
 

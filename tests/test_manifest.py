@@ -7,7 +7,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from dinkster_native.fork_nodes import FORK_NODES
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
     ComfyAliasConfidence,
@@ -65,6 +64,40 @@ def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
         "fixture.extension.value",
     }
     assert arms == {}
+
+
+def test_in_process_wheel_keeps_standard_library_imports_unshadowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    package = tmp_path / "wheel_import_boundary"
+    package.mkdir()
+    (package / "__init__.py").write_text("NODES = []\n")
+    (package / "types.py").write_text("raise RuntimeError('pack types shadows stdlib')\n")
+    manifest = package / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "wheel-import-boundary"\n'
+        '[pack.entry]\nnodes = "wheel_import_boundary:NODES"\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    try:
+        load_pack(load_manifest(manifest), import_from_pack_root=True)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from types import MappingProxyType; "
+                "from wheel_import_boundary import NODES; assert NODES == []",
+            ],
+            cwd=tmp_path,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        sys.modules.pop("wheel_import_boundary", None)
 
 
 def write_manifest(path: Path, handler: object = None) -> Path:
@@ -358,76 +391,6 @@ def write_group_registry(path: Path) -> None:
     from test_comfy_group_registry import registry
 
     path.write_text(json.dumps(comfy_group_registry_to_wire(registry())), encoding="utf-8")
-
-
-def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
-    manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-pack.toml"))
-
-    fork_backed = (
-        "dinkster.load_checkpoint",
-        "dinkster.load_diffusion_model",
-        "dinkster.clip_text_encode",
-        "dinkster.empty_latent_image",
-        "dinkster.ksampler",
-        "dinkster.vae_decode",
-        "dinkster.load_clip",
-        "dinkster.load_vae",
-        "dinkster.empty_minimax_h3_av",
-        "dinkster.minimax_h3_t2va_conditioning",
-        "dinkster.minimax_h3_image_to_video",
-        "dinkster.separate_av_latent",
-        "dinkster.vae_decode_audio",
-    )
-    default_native = fork_backed
-    mesh = (
-        "dinkster.image_crop_to_mask",
-        "dinkster.preview_mask",
-        "dinkster.voxel_to_mesh",
-        "dinkster.get_mesh_info",
-        "dinkster.remesh_mesh",
-        "dinkster.decimate_mesh",
-        "dinkster.smooth_mesh_normals",
-        "dinkster.unwrap_mesh",
-        "dinkster.paint_mesh",
-        "dinkster.bake_texture_from_voxel",
-        "dinkster.bake_normal_map_from_mesh",
-        "dinkster.bake_ambient_occlusion",
-        "dinkster.render_uv_atlas",
-        "dinkster.apply_texture_to_mesh",
-        "dinkster.mesh_to_model3d",
-    )
-    assert manifest.executes == (*default_native, *mesh)
-    assert dict(manifest.arms) == {"native": (*default_native, *mesh)}
-    assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
-    assert manifest.assets == ()
-    assert (
-        manifest.workgroup_handler_entry
-        == "dinkster_native.workgroup:create_single_job_workgroup_handler"
-    )
-
-    legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
-    legacy_native = set(fork_backed)
-    assert set(legacy.executes) == legacy_native | set(mesh)
-    assert set(dict(legacy.arms)["native"]) == legacy_native
-    assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
-
-    native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    native_nodes = set((*default_native, *mesh))
-    assert native.namespaces == ("comfy", "dinkster")
-    assert set(native.executes) == native_nodes
-    assert set(dict(native.arms)["native"]) == native_nodes
-    assert {node.schema().node_type for node in FORK_NODES} == native_nodes - set(mesh)
-
-    generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
-    assert generation.namespaces == ("comfy", "dinkster")
-    assert "comfy.BlockSparseAttention" not in generation.schema_only
-    _worker, _registry, nodes, _arms = load_pack(generation, import_from_pack_root=True)
-    assert {
-        "comfy.BlockSparseAttention",
-        "dinkster.context_windows_manual",
-        "dinkster.wan_context_windows_manual",
-        "dinkster.ltxv_context_windows",
-    }.isdisjoint(node.schema().node_type for node in nodes)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

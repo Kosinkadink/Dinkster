@@ -1,0 +1,181 @@
+{
+  "nodes": {
+    "dinkster.misc.models.ar_video_i2_v": {
+      "displayName": "dinkster.misc.models.ar_video_i2_v"
+    },
+    "dinkster.misc.models.anima_ll_lite_apply": {
+      "displayName": "Apply Anima LLLite"
+    },
+    "dinkster.misc.models.bernini_conditioning": {
+      "displayName": "Bernini Conditioning"
+    },
+    "dinkster.misc.models.build_json_prompt_ideogram": {
+      "displayName": "Build JSON Prompt (Ideogram)"
+    },
+    "dinkster.misc.models.clip_text_encode_kandinsky5": {
+      "displayName": "CLIP Text Encode (Kandinsky 5)"
+    },
+    "dinkster.misc.models.clip_text_encode_lumina2": {
+      "displayName": "CLIP Text Encode (Lumina 2)"
+    },
+    "dinkster.misc.models.clip_text_encode_pix_art_alpha": {
+      "displayName": "CLIP Text Encode (PixArt Alpha)"
+    },
+    "dinkster.misc.models.chroma_radiance_options": {
+      "displayName": "dinkster.misc.models.chroma_radiance_options"
+    },
+    "dinkster.misc.models.empty_ar_video_latent": {
+      "displayName": "dinkster.misc.models.empty_ar_video_latent"
+    },
+    "dinkster.misc.models.empty_chroma_radiance_latent_image": {
+      "displayName": "EmptyChromaRadianceLatentImage"
+    },
+    "dinkster.misc.models.empty_mochi_latent_video": {
+      "displayName": "dinkster.misc.models.empty_mochi_latent_video"
+    },
+    "dinkster.misc.models.ideogram4_scheduler": {
+      "displayName": "Ideogram 4 Scheduler"
+    },
+    "dinkster.misc.models.instruct_pix_to_pix_conditioning": {
+      "displayName": "dinkster.misc.models.instruct_pix_to_pix_conditioning"
+    },
+    "dinkster.misc.models.kandinsky5_image_to_video": {
+      "displayName": "dinkster.misc.models.kandinsky5_image_to_video"
+    },
+    "dinkster.misc.models.lotus_conditioning": {
+      "displayName": "dinkster.misc.models.lotus_conditioning"
+    },
+    "dinkster.misc.models.moss_image_control": {
+      "displayName": "MOSS-Image Color/Depth Control"
+    },
+    "dinkster.misc.models.moss_image_layout_prompt": {
+      "displayName": "MOSS-Image Layout Prompt"
+    },
+    "dinkster.misc.models.supir_apply": {
+      "displayName": "Apply SUPIR Patch"
+    },
+    "dinkster.misc.models.sampler_ar_video": {
+      "displayName": "Sampler AR Video"
+    },
+    "dinkster.misc.models.sense_nova_sampling_options": {
+      "displayName": "SenseNova Sampling Options"
+    },
+    "dinkster.misc.models.text_encode_boogu_edit": {
+      "displayName": "dinkster.misc.models.text_encode_boogu_edit"
+    },
+    "dinkster.misc.models.text_encode_fibo2": {
+      "displayName": "dinkster.misc.models.text_encode_fibo2"
+    },
+    "dinkster.misc.models.text_encode_joy_image_edit": {
+      "displayName": "dinkster.misc.models.text_encode_joy_image_edit"
+    },
+    "dinkster.misc.models.text_encode_moss_image_edit": {
+      "displayName": "Text Encode MOSS-Image Edit"
+    },
+    "dinkster.misc.models.text_encode_mage_flow_edit": {
+      "displayName": "dinkster.misc.models.text_encode_mage_flow_edit"
+    },
+    "dinkster.misc.models.text_encode_ming_image_edit": {
+      "displayName": "Text Encode Ming Image Edit"
+    },
+    "dinkster.misc.models.text_encode_z_image_omni": {
+      "displayName": "dinkster.misc.models.text_encode_z_image_omni"
+    },
+    "dinkster.misc.models.z_image_fun_controlnet": {
+      "displayName": "Apply Fun ControlNet"
+    }
+  },
+  "searchTerms": {
+    "dinkster.misc.models.ar_video_i2_v": [
+      "ARVideoI2V"
+    ],
+    "dinkster.misc.models.anima_ll_lite_apply": [
+      "AnimaLLLiteApply"
+    ],
+    "dinkster.misc.models.bernini_conditioning": [
+      "BerniniConditioning"
+    ],
+    "dinkster.misc.models.build_json_prompt_ideogram": [
+      "BuildJsonPromptIdeogram"
+    ],
+    "dinkster.misc.models.clip_text_encode_kandinsky5": [
+      "kandinsky prompt",
+      "CLIPTextEncodeKandinsky5"
+    ],
+    "dinkster.misc.models.clip_text_encode_lumina2": [
+      "lumina prompt",
+      "CLIPTextEncodeLumina2"
+    ],
+    "dinkster.misc.models.clip_text_encode_pix_art_alpha": [
+      "pixart prompt",
+      "CLIPTextEncodePixArtAlpha"
+    ],
+    "dinkster.misc.models.chroma_radiance_options": [
+      "ChromaRadianceOptions"
+    ],
+    "dinkster.misc.models.empty_ar_video_latent": [
+      "EmptyARVideoLatent"
+    ],
+    "dinkster.misc.models.empty_chroma_radiance_latent_image": [
+      "EmptyChromaRadianceLatentImage"
+    ],
+    "dinkster.misc.models.empty_mochi_latent_video": [
+      "EmptyMochiLatentVideo"
+    ],
+    "dinkster.misc.models.ideogram4_scheduler": [
+      "Ideogram4Scheduler"
+    ],
+    "dinkster.misc.models.instruct_pix_to_pix_conditioning": [
+      "InstructPixToPixConditioning"
+    ],
+    "dinkster.misc.models.kandinsky5_image_to_video": [
+      "Kandinsky5ImageToVideo"
+    ],
+    "dinkster.misc.models.lotus_conditioning": [
+      "LotusConditioning"
+    ],
+    "dinkster.misc.models.moss_image_control": [
+      "MOSSImageControl"
+    ],
+    "dinkster.misc.models.moss_image_layout_prompt": [
+      "MOSSImageLayoutPrompt"
+    ],
+    "dinkster.misc.models.supir_apply": [
+      "SUPIRApply"
+    ],
+    "dinkster.misc.models.sampler_ar_video": [
+      "SamplerARVideo"
+    ],
+    "dinkster.misc.models.sense_nova_sampling_options": [
+      "SenseNovaSamplingOptions"
+    ],
+    "dinkster.misc.models.text_encode_boogu_edit": [
+      "TextEncodeBooguEdit"
+    ],
+    "dinkster.misc.models.text_encode_fibo2": [
+      "TextEncodeFibo2"
+    ],
+    "dinkster.misc.models.text_encode_joy_image_edit": [
+      "TextEncodeJoyImageEdit"
+    ],
+    "dinkster.misc.models.text_encode_moss_image_edit": [
+      "TextEncodeMOSSImageEdit"
+    ],
+    "dinkster.misc.models.text_encode_mage_flow_edit": [
+      "TextEncodeMageFlowEdit"
+    ],
+    "dinkster.misc.models.text_encode_ming_image_edit": [
+      "TextEncodeMingImageEdit"
+    ],
+    "dinkster.misc.models.text_encode_z_image_omni": [
+      "TextEncodeZImageOmni"
+    ],
+    "dinkster.misc.models.z_image_fun_controlnet": [
+      "z-image controlnet",
+      "qwen image 2.1 controlnet",
+      "controlnet union",
+      "fun controlnet",
+      "ZImageFunControlnet"
+    ]
+  }
+}

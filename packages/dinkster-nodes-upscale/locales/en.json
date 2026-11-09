@@ -1,0 +1,10 @@
+{
+  "nodes": {
+    "dinkster.upscale.upscale_model_loader": {"displayName": "Load Upscale Model"},
+    "dinkster.upscale.image_upscale_with_model": {"displayName": "Upscale Image (using Model)"}
+  },
+  "searchTerms": {
+    "dinkster.upscale.upscale_model_loader": ["UpscaleModelLoader"],
+    "dinkster.upscale.image_upscale_with_model": ["ImageUpscaleWithModel", "upscale", "super resolution"]
+  }
+}

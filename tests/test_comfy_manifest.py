@@ -1,48 +1,59 @@
-"""The complete manifest preserves the public node registry's order."""
+"""ComfyUI family conversion targets the owning first-party pack."""
 
 from dataclasses import replace
 
 import pytest
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_schema import schema_signature, validate_replacement_references
-from dinkster_workers import load_manifest
-
-
-def test_manifest_claims_match_the_complete_registry() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == manifest.namespaces
+from dinkster_image.ported.post_processing import BatchImagesNode, BatchMasksNode
+from dinkster_latent.post_processing import BatchLatentsNode
+from dinkster_schema import Node, schema_signature, validate_replacement_references
+from dinkster_utilities.list_utilities import CreateList
+from dinkster_utilities.logic import ComfyAndNode, ComfyOrNode
+from dinkster_utilities.math import ComfyMathExpression
 
 
 @pytest.mark.parametrize(
-    ("node_type", "family", "template", "flat_port", "inputs", "outputs"),
+    ("node", "target", "family", "template", "inputs", "outputs"),
     [
-        ("BatchImagesNode", "images", "image", "", (), ("IMAGE",)),
-        ("BatchMasksNode", "masks", "mask", "", (), ("MASK",)),
-        ("BatchLatentsNode", "latents", "latent", "", (), ("LATENT",)),
-        ("ComfyAndNode", "values", "value", "values.values", (), ("BOOLEAN",)),
-        ("ComfyOrNode", "values", "value", "values.values", (), ("BOOLEAN",)),
-        ("CreateList", "inputs", "input", "", (), ("list",)),
-        ("ComfyMathExpression", "values", "value", "", ("expression",), ("FLOAT", "INT", "BOOL")),
+        (BatchImagesNode, "dinkster.image.batch_images_node", "images", "image", (), ("IMAGE",)),
+        (BatchMasksNode, "dinkster.image.batch_masks_node", "masks", "mask", (), ("MASK",)),
+        (
+            BatchLatentsNode,
+            "dinkster.latent.batch_latents_node",
+            "latents",
+            "latent",
+            (),
+            ("LATENT",),
+        ),
+        (ComfyAndNode, "dinkster.utilities.comfy_and_node", "values", "value", (), ("BOOLEAN",)),
+        (ComfyOrNode, "dinkster.utilities.comfy_or_node", "values", "value", (), ("BOOLEAN",)),
+        (CreateList, "dinkster.utilities.create_list", "inputs", "input", (), ("list",)),
+        (
+            ComfyMathExpression,
+            "dinkster.utilities.comfy_math_expression",
+            "values",
+            "value",
+            ("expression",),
+            ("FLOAT", "INT", "BOOL"),
+        ),
     ],
 )
-def test_canonical_families_ship_complete_historical_migrations(
-    node_type: str,
+def test_comfy_families_convert_to_first_party_ids(
+    node: type[Node],
+    target: str,
     family: str,
     template: str,
-    flat_port: str,
     inputs: tuple[str, ...],
     outputs: tuple[str, ...],
 ) -> None:
-    node = next(node for node in COMFY_NODES if node.schema().node_type == node_type)
     schema = node.schema()
+    assert schema.node_type == target
     assert schema_to_wire(schema).get("replacements") == [
         {
-            "from": node_type,
-            "migration": {"historicalInputs": [family]},
+            "from": node.__name__,
             "cases": [
                 {
-                    "to": node_type,
+                    "to": target,
                     **(
                         {"inputs": {name: {"kind": "copy", "input": name} for name in inputs}}
                         if inputs
@@ -54,9 +65,7 @@ def test_canonical_families_ship_complete_historical_migrations(
                             "sourceFamily": family,
                             "sourceTemplate": {
                                 "inputs": [template],
-                                **({"memberPort": flat_port} if flat_port else {}),
                             },
-                            "memberIds": "targetPositions",
                             "inputs": {template: {"kind": "copy", "input": template}},
                         },
                     },

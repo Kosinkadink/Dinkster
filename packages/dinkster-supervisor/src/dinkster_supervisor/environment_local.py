@@ -19,9 +19,11 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from blake3 import blake3
+from dinkster_store import object_path, pack_archive_path, pack_label, readable_label
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
 from packaging.utils import parse_wheel_filename
 
+from .environment_artifacts import base_label, engine_label
 from .environment_constraints import effective_constraints, requirement_hashes
 from .environment_downloads import fetch_artifact
 from .environment_state import (
@@ -171,7 +173,13 @@ def retain_wheels(
                 with urlopen(url, timeout=60) as response, downloaded.open("wb") as output:
                     shutil.copyfileobj(response, output)
                 sha, size = content_digest(downloaded)[7:], downloaded.stat().st_size
-                fetch_artifact((directory,), filename, store / "wheels" / sha / filename, sha, size)
+                destination = (
+                    object_path(
+                        store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+                    )
+                    / filename
+                )
+                fetch_artifact((directory,), filename, destination, sha, size)
         if sha is not None and size is None and urlsplit(url).scheme == "https":
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
@@ -181,7 +189,12 @@ def retain_wheels(
                 raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
             sha = sha or content_digest(local)[7:]
             size = size if size is not None else local.stat().st_size
-        destination = store / "wheels" / sha / filename
+        destination = (
+            object_path(
+                store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+            )
+            / filename
+        )
         mirror = (
             str(Path(unquote(urlsplit(url).path)).parent)
             if urlsplit(url).scheme == "file"
@@ -369,7 +382,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         )
         identity = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
         base["id"] = identity
-        base_root = store / "bases" / identity[7:]
+        base_root = object_path(store / "bases", identity, label=base_label(base))
         if base_root.exists():
             cached_files = {
                 path.relative_to(base_root).as_posix(): content_digest(path)
@@ -397,7 +410,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         release_id = (
             "sha256:" + hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
         )
-        engine_root = store / "engines" / release_id[7:]
+        engine_root = object_path(store / "engines", release_id, label=engine_label(release))
         engine_root.mkdir(parents=True, exist_ok=True)
         write_document(engine_root / "release-manifest.json", release)
         constraints = engine_root / f"constraints-{selection['variant']}.txt"
@@ -430,9 +443,9 @@ def prepare_local_packs(
     """Resolve checkout pack requirements against this target, never a published base lock."""
     from .environment_generations import pack_operation, prepare_pack_catalogs, stage_pack_sources
 
-    artifacts = store / "engines" / release[7:] / "artifacts"
+    artifacts = object_path(store / "engines", release) / "artifacts"
     links = [
-        str(store / "wheels" / digest)
+        str(object_path(store / "wheels", "sha256:" + digest))
         for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))
     ]
     run_local_command(
@@ -460,8 +473,14 @@ def prepare_local_packs(
     locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
     for archive in artifacts.glob("*.zip"):
         digest = blake3(archive.read_bytes()).hexdigest()
-        cached = artifacts / f"{digest}.zip"
+        pack, separator, version = archive.stem.rpartition("-")
+        cached = pack_archive_path(
+            artifacts,
+            "blake3:" + digest,
+            label=pack_label(pack if separator else version, version if separator else "0.0.0"),
+        )
         if archive != cached:
+            cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(archive, cached)
     for operation in ("preflight", "rebuild", "doctor"):
         pack_operation(

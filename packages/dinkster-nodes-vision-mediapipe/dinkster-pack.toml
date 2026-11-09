@@ -1,0 +1,23 @@
+[pack]
+name = "dinkster-vision-mediapipe"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.vision.mediapipe"]
+type-namespaces = ["FACE_DETECTION_MODEL", "FACE_LANDMARKS"]
+requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26", "pillow>=10"]
+
+[pack.inference]
+imports = ["mediapipe.face_geometry", "mediapipe.face_landmarker", "model_management", "model_patcher", "storage", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_vision_mediapipe:NODES"
+types = "dinkster_vision_mediapipe:register_types"

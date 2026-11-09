@@ -1,26 +1,44 @@
 """Torch-free Stable Cascade public interfaces."""
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.stable_cascade import STABLE_CASCADE_NODES
+from dinkster_sd import NODES
+from dinkster_sd.stable_cascade import (
+    StableCascade_EmptyLatentImage,
+    StableCascade_StageB_Conditioning,
+    StableCascade_StageC_VAEEncode,
+    StableCascade_SuperResolutionControlnet,
+)
 
 
 def test_stable_cascade_interfaces() -> None:
     expected = (
         (
-            "StableCascade_EmptyLatentImage",
+            "dinkster.sd.stable_cascade_empty_latent_image",
             ("width", "height", "compression", "batch_size"),
             ("stage_c", "stage_b"),
         ),
-        ("StableCascade_StageB_Conditioning", ("conditioning", "stage_c"), ("CONDITIONING",)),
-        ("StableCascade_StageC_VAEEncode", ("image", "vae", "compression"), ("stage_c", "stage_b")),
         (
-            "StableCascade_SuperResolutionControlnet",
+            "dinkster.sd.stable_cascade_stage_b_conditioning",
+            ("conditioning", "stage_c"),
+            ("CONDITIONING",),
+        ),
+        (
+            "dinkster.sd.stable_cascade_stage_c_vae_encode",
+            ("image", "vae", "compression"),
+            ("stage_c", "stage_b"),
+        ),
+        (
+            "dinkster.sd.stable_cascade_super_resolution_controlnet",
             ("image", "vae"),
             ("controlnet_input", "stage_c", "stage_b"),
         ),
     )
-    nodes = STABLE_CASCADE_NODES
+    nodes = (
+        StableCascade_EmptyLatentImage,
+        StableCascade_StageB_Conditioning,
+        StableCascade_StageC_VAEEncode,
+        StableCascade_SuperResolutionControlnet,
+    )
     assert (
         tuple(
             (
@@ -33,8 +51,8 @@ def test_stable_cascade_interfaces() -> None:
         == expected
     )
     for node in nodes:
-        assert node in COMFY_NODES
+        assert NODES.count(node) == 1
         assert schema_to_wire(node.schema())
-    compression = STABLE_CASCADE_NODES[0].schema().inputs[2]
+    compression = StableCascade_EmptyLatentImage.schema().inputs[2]
     assert compression.default == 42
     assert compression.advanced

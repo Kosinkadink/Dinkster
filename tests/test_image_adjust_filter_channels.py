@@ -8,9 +8,9 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_image.adjust import ADJUST_OPERATIONS, ImageAdjust
-from dinkster_nodes_image.channels import ImageAlphaJoin, ImageChannelMerge, ImageChannelSplit
-from dinkster_nodes_image.filters import DITHER_MODES, FILTER_OPERATIONS, ImageFilter
+from dinkster_image.adjust import ADJUST_OPERATIONS, ImageAdjust
+from dinkster_image.channels import ImageAlphaJoin, ImageChannelMerge, ImageChannelSplit
+from dinkster_image.filters import DITHER_MODES, FILTER_OPERATIONS, ImageFilter
 
 GOLDEN = cast(
     "dict[str, object]",

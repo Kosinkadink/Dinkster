@@ -20,6 +20,8 @@
   augmentation metadata to conditioning records.
 - Native VAEEncode, VAEDecode and their tiled variants preserve the core
   interfaces, including image/video batches and spatial/temporal tile settings.
+- Ported VAE nodes support tiled image/video decoding within their local
+  inference boundary, without disabling gradients for ordinary nodes.
 - SD1.5 CLIP-L and image VAE components execute through the pinned
   `dinkster_inference` runtime.
 - Flux conditioning supports CLIP-L and T5 text-encoder pairs.

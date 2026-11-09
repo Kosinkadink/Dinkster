@@ -5,20 +5,117 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import time
 import urllib.error
 import urllib.request
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from blake3 import blake3
-from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_registry import LockedPack, Lockfile, artifact_digest, unpack_artifact
 from dinkster_workers import load_manifest
+from dinkster_workers.manifest import PackDependency
 from dinkster_workers.pack_lock import PackLock
+from dinkster_workers.pack_wheel import pack_manifest_path
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
+from scripts.build_official_packs import library_metadata
 from scripts.build_release import read_base_manifest
+
+
+def _wait_active(
+    registry: NamedRegistry,
+    dependency: PackDependency,
+    version: str | None,
+    candidate_id: str | None,
+    deadline: float,
+) -> None:
+    subject = f"{dependency.pack}@{version or dependency.version}"
+    last = "no active public version"
+    while (remaining := deadline - time.monotonic()) > 0:
+        path = f"/v1/packs/{quote(dependency.pack, safe='')}/versions"
+        if version is not None:
+            path += "/" + quote(version, safe="")
+        else:
+            path += "?limit=100"
+        while path:
+            try:
+                request = urllib.request.Request(
+                    registry.endpoint.rstrip("/") + path,
+                    headers={"Cache-Control": "no-cache"},
+                )
+                with urllib.request.urlopen(request, timeout=min(60, remaining)) as response:
+                    document = json.load(response)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    raise RegistryPublishError(
+                        f"{subject}: activation lookup failed: {exc}"
+                    ) from exc
+                document = {}
+            except (OSError, ValueError) as exc:
+                raise RegistryPublishError(f"{subject}: activation lookup failed: {exc}") from exc
+            if version is not None:
+                if (
+                    document.get("state") == "active"
+                    and document.get("version") == version
+                    and document.get("packName") == dependency.pack
+                ):
+                    return
+                last = document.get("stateReason") or document.get("state") or last
+                break
+            for release in document.get("items", []):
+                if release.get("state") == "active" and dependency.accepts(release["version"]):
+                    # A listing is not the public version page required by admission.
+                    _wait_active(
+                        registry,
+                        dependency,
+                        release["version"],
+                        None,
+                        deadline,
+                    )
+                    return
+            cursor = document.get("nextCursor")
+            path = (
+                f"/v1/packs/{quote(dependency.pack, safe='')}/versions?limit=100"
+                f"&cursor={quote(cursor, safe='')}"
+                if cursor
+                else ""
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+        if candidate_id is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            headers = {"Cache-Control": "no-cache"}
+            if token := registry.token():
+                headers["Authorization"] = f"Bearer {token}"
+            request = urllib.request.Request(
+                registry.endpoint.rstrip("/") + "/v1/publish/" + quote(candidate_id, safe=""),
+                headers=headers,
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=min(60, remaining)) as response:
+                    candidate = json.load(response)
+            except (OSError, ValueError) as exc:
+                raise RegistryPublishError(f"{subject}: candidate lookup failed: {exc}") from exc
+            last = str(candidate.get("reason") or candidate.get("status"))
+            if candidate.get("status") in {"rejected", "review"}:
+                findings = "; ".join(
+                    f"{finding.get('code')}: {finding.get('message')}"
+                    for finding in candidate.get("findings", [])
+                )
+                raise RegistryPublishError(
+                    f"{subject}: activation refused (not retried): {last}; {findings}"
+                )
+        time.sleep(max(0, min(2, deadline - time.monotonic())))
+    raise RegistryPublishError(f"{subject}: activation timed out (not retried): {last}")
 
 
 def publish_official_packs(
@@ -30,6 +127,7 @@ def publish_official_packs(
     *,
     registry: NamedRegistry | None = None,
     preflight_registry: str | None = None,
+    activation_timeout: float = 600,
 ) -> list[dict[str, object]]:
     """Validate the entire publication set before exposing maps or making a request.
 
@@ -54,6 +152,19 @@ def publish_official_packs(
     catalog = Lockfile.from_record_json((sources / "official-packs.lock").read_text())
     if not catalog.packs:
         raise ValueError("official publication requires selected packs")
+    libraries = {}
+    for pack in catalog.packs:
+        archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        if artifact_digest(archive.read_bytes()) != pack.artifact_digest:
+            raise ValueError(f"official publication archive digest mismatch: {pack.pack}")
+        with zipfile.ZipFile(archive) as wheel:
+            if not any(Path(name).name == "dinkster-pack.toml" for name in wheel.namelist()):
+                name, version, requirements = library_metadata(archive)
+                if (name, version) != (pack.pack, pack.version) or pack.claims:
+                    raise ValueError(f"official library source identity mismatch: {pack.pack}")
+                libraries[pack.pack] = requirements
+    node_names = {pack.pack for pack in catalog.packs} - libraries.keys()
+    dependencies: dict[str, tuple[PackDependency, ...]] = {}
     required = {
         f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
         for pack in catalog.packs
@@ -70,17 +181,33 @@ def publish_official_packs(
         staged = work / "maps"
         staged.mkdir()
         for pack in catalog.packs:
-            archive = sources / f"{pack.pack}-{pack.version}.zip"
-            extracted = unpack_artifact(archive, work / pack.pack, pack.artifact_digest)
-            manifest = load_manifest(extracted / "dinkster-pack.toml")
-            if (
-                pack.publisher != "dinkster"
-                or manifest.publisher != "dinkster"
-                or manifest.name != pack.pack
-                or manifest.compatibility is None
-                or manifest.compatibility.version != pack.version
-            ):
+            archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+            if pack.publisher != "dinkster":
                 raise ValueError(f"official publication source identity mismatch: {pack.pack}")
+            if pack.pack in libraries:
+                dependencies[pack.pack] = ()
+                requirements = libraries[pack.pack]
+            else:
+                extracted = unpack_artifact(archive, work / pack.pack, pack.artifact_digest)
+                manifest = load_manifest(pack_manifest_path(extracted))
+                dependencies[pack.pack] = manifest.dependencies
+                requirements = manifest.requires
+                if (
+                    manifest.publisher != "dinkster"
+                    or manifest.name != pack.pack
+                    or manifest.compatibility is None
+                    or manifest.compatibility.version != pack.version
+                ):
+                    raise ValueError(f"official publication source identity mismatch: {pack.pack}")
+            for value in requirements:
+                requirement = Requirement(value)
+                name = canonicalize_name(requirement.name)
+                if name in node_names:
+                    raise ValueError(f"wheel.requires-pack: {pack.pack} requires node pack {name}")
+                if name in libraries:
+                    if requirement.url:
+                        raise ValueError("official library dependencies must use version ranges")
+                    dependencies[pack.pack] += (PackDependency(name, str(requirement.specifier)),)
             bindings = {}
             for variant, base in sorted(bases.items()):
                 name = f"{pack.pack}-{pack.version}-{variant}.pack-lock.json"
@@ -118,6 +245,25 @@ def publish_official_packs(
                 encoding="ascii",
             )
         staged.rename(output)
+    selected = {pack.pack: pack for pack in catalog.packs}
+    ordered: list[LockedPack] = []
+    pending = list(catalog.packs)
+    while pending:
+        pending_names = {pack.pack for pack in pending}
+        ready = [
+            pack
+            for pack in pending
+            if all(dep.pack not in pending_names for dep in dependencies[pack.pack])
+        ]
+        if not ready:
+            raise ValueError("official publication has cyclic pack dependencies")
+        for pack in ready:
+            for dep in dependencies[pack.pack]:
+                if dep.pack in selected and not dep.accepts(selected[dep.pack].version):
+                    raise ValueError(f"{pack.pack}: selected {dep.pack} excludes {dep.version}")
+        ordered.extend(ready)
+        pending = [pack for pack in pending if pack not in ready]
+    public = set()
     endpoint = registry.endpoint if registry is not None else preflight_registry
     if endpoint is not None:
         for pack in catalog.packs:
@@ -157,7 +303,9 @@ def publish_official_packs(
                 or published.get("publishedBy", {}).get("principalId") != pack.publisher
                 or published.get("artifact", {}).get("digest") != pack.artifact_digest
                 or published.get("artifact", {}).get("size")
-                != (sources / f"{pack.pack}-{pack.version}.zip").stat().st_size
+                != (sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl")
+                .stat()
+                .st_size
                 or actual.keys() != expected.keys()
                 or any(
                     {key: actual[variant].get(key) for key in binding} != binding
@@ -168,8 +316,10 @@ def publish_official_packs(
                     f"{pack.pack}@{pack.version}: published archive or install locks differ; "
                     "bump the pack version"
                 )
+            public.add(pack.pack)
     result: list[dict[str, object]] = []
-    for pack in catalog.packs:
+    candidates: dict[str, str] = {}
+    for pack in ordered if registry is not None else catalog.packs:
         locks = output / f"{pack.pack}-{pack.version}.json"
         row: dict[str, object] = {
             "pack": pack.pack,
@@ -178,10 +328,22 @@ def publish_official_packs(
             "locks": str(locks),
         }
         if registry is not None:
+            if pack.pack in public:
+                row.update(state="published")
+                result.append(row)
+                continue
+            for dep in dependencies[pack.pack]:
+                _wait_active(
+                    registry,
+                    dep,
+                    selected[dep.pack].version if dep.pack in selected else None,
+                    candidates.get(dep.pack),
+                    time.monotonic() + activation_timeout,
+                )
             try:
                 verdict = publish_release(
                     registry,
-                    sources / f"{pack.pack}-{pack.version}.zip",
+                    sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
                     pack.pack,
                     pack.version,
                     locks=locks,
@@ -192,6 +354,7 @@ def publish_official_packs(
                     f"if archive or install locks changed, bump the pack version: {exc}"
                 ) from exc
             row.update(state=verdict.state, candidateId=verdict.candidate_id)
+            candidates[pack.pack] = verdict.candidate_id
         result.append(row)
     return result
 

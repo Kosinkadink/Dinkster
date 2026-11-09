@@ -1,0 +1,34 @@
+[project]
+name = "dinkster-wan"
+version = "0.0.2"
+description = "Dinkster wan model nodes"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-api",
+    "torch",
+    "dinkster-inference==0.1.1",
+    "numpy",
+    "scipy",
+    "einops",
+    "dinkster-conditioning>=0.0.1",
+    "dinkster-models>=0.0.1",
+    "dinkster-vision-sam3>=0.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_wan"]
+
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_wan/dinkster-pack.toml"
+"locales" = "dinkster_wan/locales"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-conditioning = { workspace = true }
+dinkster-models = { workspace = true }
+dinkster-vision-sam3 = { workspace = true }

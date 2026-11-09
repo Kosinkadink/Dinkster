@@ -10,11 +10,6 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, TypedLiteral
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
-from dinkster_nodes_comfy.loops import LOOP_NODES
-from dinkster_nodes_comfy.math import ComfyMathExpression
-from dinkster_nodes_comfy.primitive import PrimitiveBoolean, PrimitiveInt
-from dinkster_nodes_comfy.switch import ComfySwitchNode
-from dinkster_nodes_foundation.lists import ListElement, MakeList
 from dinkster_schema import (
     ABSENT,
     InputSpec,
@@ -26,13 +21,28 @@ from dinkster_schema import (
     build_schemas,
     schema_to_wire,
 )
+from dinkster_utilities.loop_lists import ListElement, MakeList
+from dinkster_utilities.loops import (
+    EndLoop,
+    LoopIteration,
+    LoopProgress,
+    LoopResult,
+    StartLoop,
+)
+from dinkster_utilities.math import ComfyMathExpression
+from dinkster_utilities.primitive import PrimitiveBoolean, PrimitiveInt
+from dinkster_utilities.switch import ComfySwitchNode
 from dinkster_values import TypeRegistry, ValueMeta, is_absent, list_children, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
 from tests.async_scenarios import run_scenario
 
 NODES = (
-    *LOOP_NODES,
+    StartLoop,
+    EndLoop,
+    LoopIteration,
+    LoopProgress,
+    LoopResult,
     ComfyMathExpression,
     PrimitiveInt,
     PrimitiveBoolean,
@@ -46,11 +56,11 @@ NODES = (
     ("node_type", "expected"),
     [
         (
-            "EndLoop",
+            "dinkster.utilities.end_loop",
             [("output_value", False), ("next_iteration_value", False), ("accumulate", True)],
         ),
         (
-            "LoopIteration",
+            "dinkster.utilities.loop_iteration",
             [
                 ("iteration_index", True),
                 ("is_first", True),
@@ -65,11 +75,11 @@ NODES = (
 def test_loop_wire_inputs_preserve_v3_declaration_order(
     node_type: str, expected: list[tuple[str, bool]]
 ) -> None:
-    schema = build_schemas(LOOP_NODES)[node_type]
+    schema = build_schemas(NODES)[node_type]
     interface = cast(list[dict[str, object]], schema_to_wire(schema)["interface"])
     inputs = [(item["id"], item["required"]) for item in interface if item["role"] == "input"]
     assert inputs == expected
-    if node_type == "EndLoop":
+    if node_type == "dinkster.utilities.end_loop":
         family = next(item for item in interface if item["role"] == "inputFamily")
         assert family["id"] == "terminations"
         assert family["required"] is False
@@ -107,7 +117,7 @@ def test_carried_value_and_empty_loop(
     graph = Graph(
         {
             "start": GraphNode(
-                "StartLoop",
+                "dinkster.utilities.start_loop",
                 {
                     "mode.num_iterations": count,
                     "initial_iteration_value": TypedLiteral("INT", 0),
@@ -115,7 +125,7 @@ def test_carried_value_and_empty_loop(
                 slot_variants={"mode": "simple"},
             ),
             "body": GraphNode(
-                "ComfyMathExpression",
+                "dinkster.utilities.comfy_math_expression",
                 {
                     "expression": "a + b + 1",
                     "values.a": Link("start", "current_iteration_value"),
@@ -123,7 +133,7 @@ def test_carried_value_and_empty_loop(
                 },
             ),
             "end": GraphNode(
-                "EndLoop",
+                "dinkster.utilities.end_loop",
                 {
                     "output_value": Link("body", "INT"),
                     "next_iteration_value": Link("body", "INT"),
@@ -154,15 +164,20 @@ def test_loop_modes(mode: str) -> None:
     output = "iteration_index" if mode == "For" else "list_item"
     graph = Graph(
         {
-            "start": GraphNode("StartLoop", options, slot_variants={"mode": mode}),
+            "start": GraphNode(
+                "dinkster.utilities.start_loop", options, slot_variants={"mode": mode}
+            ),
             "body": GraphNode(
-                "ComfyMathExpression",
+                "dinkster.utilities.comfy_math_expression",
                 {
                     "expression": "a * 2",
                     "values.a": Link("start", output),
                 },
             ),
-            "end": GraphNode("EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}),
+            "end": GraphNode(
+                "dinkster.utilities.end_loop",
+                {"output_value": Link("body", "INT"), "accumulate": True},
+            ),
         }
     )
     result = run_scenario(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
@@ -176,10 +191,12 @@ def test_nested_loop_keeps_each_occurrences_results(inner_cache: bool) -> None:
     graph = Graph(
         {
             "outer": GraphNode(
-                "StartLoop", {"mode.num_iterations": 2}, slot_variants={"mode": "simple"}
+                "dinkster.utilities.start_loop",
+                {"mode.num_iterations": 2},
+                slot_variants={"mode": "simple"},
             ),
             "inner": GraphNode(
-                "StartLoop",
+                "dinkster.utilities.start_loop",
                 {
                     "mode.num_iterations": 3,
                     "parent_iteration": Link("outer", "iteration_index"),
@@ -188,7 +205,7 @@ def test_nested_loop_keeps_each_occurrences_results(inner_cache: bool) -> None:
                 slot_variants={"mode": "simple"},
             ),
             "body": GraphNode(
-                "ComfyMathExpression",
+                "dinkster.utilities.comfy_math_expression",
                 {
                     "expression": "a * 10 + b",
                     "values.a": Link("outer", "iteration_index"),
@@ -196,10 +213,12 @@ def test_nested_loop_keeps_each_occurrences_results(inner_cache: bool) -> None:
                 },
             ),
             "inner_end": GraphNode(
-                "EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}
+                "dinkster.utilities.end_loop",
+                {"output_value": Link("body", "INT"), "accumulate": True},
             ),
             "outer_end": GraphNode(
-                "EndLoop", {"output_value": Link("inner_end", "outputs"), "accumulate": True}
+                "dinkster.utilities.end_loop",
+                {"output_value": Link("inner_end", "outputs"), "accumulate": True},
             ),
         }
     )
@@ -224,9 +243,7 @@ def test_loop_expansion_and_publication_across_worker_boundary(
         register_core_types(registry)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname="loop-test"\npublisher="dinkster"\nnamespaces=["StartLoop","EndLoop",'
-            '"LoopIteration","LoopProgress","LoopResult","ComfyMathExpression",'
-            '"PrimitiveInt","PrimitiveBoolean","ComfySwitchNode","std"]\n[pack.entry]\n'
+            '[pack]\nname="loop-test"\npublisher="dinkster"\nnamespaces=["dinkster.utilities"]\n[pack.entry]\n'
             'nodes="tests.test_comfy_loops:NODES"\n',
             encoding="ascii",
         )
@@ -257,14 +274,17 @@ def test_loop_expansion_and_publication_across_worker_boundary(
             graph = Graph(
                 {
                     "start": GraphNode(
-                        "StartLoop", {"mode.num_iterations": 3}, slot_variants={"mode": "simple"}
+                        "dinkster.utilities.start_loop",
+                        {"mode.num_iterations": 3},
+                        slot_variants={"mode": "simple"},
                     ),
                     "body": GraphNode(
-                        "ComfyMathExpression",
+                        "dinkster.utilities.comfy_math_expression",
                         {"expression": "a + 7", "values.a": Link("start", "iteration_index")},
                     ),
                     "end": GraphNode(
-                        "EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}
+                        "dinkster.utilities.end_loop",
+                        {"output_value": Link("body", "INT"), "accumulate": True},
                     ),
                 }
             )
@@ -281,12 +301,14 @@ def test_loop_expansion_and_publication_across_worker_boundary(
 def test_accumulation_control_reads_its_value(accumulate: bool, linked: bool) -> None:
     graph = Graph(
         {
-            "control": GraphNode("PrimitiveBoolean", {"value": accumulate}),
+            "control": GraphNode("dinkster.utilities.primitive_boolean", {"value": accumulate}),
             "start": GraphNode(
-                "StartLoop", {"mode.num_iterations": 3}, slot_variants={"mode": "simple"}
+                "dinkster.utilities.start_loop",
+                {"mode.num_iterations": 3},
+                slot_variants={"mode": "simple"},
             ),
             "end": GraphNode(
-                "EndLoop",
+                "dinkster.utilities.end_loop",
                 {
                     "output_value": Link("start", "iteration_index"),
                     "accumulate": Link("control", "BOOLEAN")
@@ -329,12 +351,17 @@ def test_loop_collection_preserves_child_envelopes() -> None:
     graph = Graph(
         {
             "source": GraphNode("test.stamped", {}),
-            "items": GraphNode("std.list.make", {"items.0": Link("source", "value")}),
+            "items": GraphNode(
+                "dinkster.utilities.make_list", {"items.0": Link("source", "value")}
+            ),
             "start": GraphNode(
-                "StartLoop", {"mode.list": Link("items", "list")}, slot_variants={"mode": "List"}
+                "dinkster.utilities.start_loop",
+                {"mode.list": Link("items", "list")},
+                slot_variants={"mode": "List"},
             ),
             "end": GraphNode(
-                "EndLoop", {"output_value": Link("start", "list_item"), "accumulate": True}
+                "dinkster.utilities.end_loop",
+                {"output_value": Link("start", "list_item"), "accumulate": True},
             ),
         }
     )
@@ -381,11 +408,13 @@ def test_absent_loop_dependency_completes(cache_enabled: bool, absent_input: str
     graph = Graph(
         {
             "start": GraphNode(
-                "StartLoop", {"mode.num_iterations": 1}, slot_variants={"mode": "simple"}
+                "dinkster.utilities.start_loop",
+                {"mode.num_iterations": 1},
+                slot_variants={"mode": "simple"},
             ),
             "empty": GraphNode("test.empty", {"index": Link("start", "iteration_index")}),
             "end": GraphNode(
-                "EndLoop",
+                "dinkster.utilities.end_loop",
                 {
                     "output_value": Link("start", "iteration_index"),
                     absent_input: Link("empty", "value"),
@@ -412,12 +441,13 @@ def test_loop_inside_map_can_override_its_end() -> None:
     body = Graph(
         {
             "start": GraphNode(
-                "StartLoop",
+                "dinkster.utilities.start_loop",
                 {"mode.num_iterations": Link("$region", "count")},
                 slot_variants={"mode": "simple"},
             ),
             "end": GraphNode(
-                "EndLoop", {"output_value": Link("start", "iteration_index"), "accumulate": True}
+                "dinkster.utilities.end_loop",
+                {"output_value": Link("start", "iteration_index"), "accumulate": True},
             ),
         }
     )

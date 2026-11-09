@@ -1,0 +1,28 @@
+[pack]
+name = "dinkster-wan"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.wan"]
+requires = ["torch", "dinkster-inference==0.1.1", "numpy", "scipy", "einops"]
+type-namespaces = ["WAN_CAMERA_EMBEDDING", "TRACKS"]
+
+[pack.inference]
+imports = ["audio", "clip_vision", "latent_formats", "ldm.sam3.tracker", "ldm.wan.model_animate2", "ldm.wan.model_multitalk", "ldm.wan.uni3c", "model_management", "patcher_extension", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+"dinkster-conditioning" = ">=0.0.1"
+"dinkster-models" = ">=0.0.1"
+"dinkster-vision-sam3" = ">=0.0.1"
+
+[pack.entry]
+nodes = "dinkster_wan:NODES"
+types = "dinkster_wan:register_types"

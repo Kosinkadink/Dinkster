@@ -249,7 +249,6 @@ class TestSetupCommands:
     def test_benchmark_import_dependencies_are_installed(self) -> None:
         for recipe in BACKEND_ENV_RECIPES.values():
             assert "packages/dinkster-graph" in recipe.editable_packages
-            assert "packages/dinkster-compat-comfy" in recipe.editable_packages
 
     def test_workspace_dependency_closure_is_installed(self) -> None:
         projects: dict[str, tuple[str, tuple[str, ...]]] = {}

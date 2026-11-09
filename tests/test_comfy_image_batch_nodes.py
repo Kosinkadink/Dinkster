@@ -9,18 +9,51 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy.image_dimensions import GetImageSize, GetLatentSize
-from dinkster_nodes_comfy.rebatch import RebatchImages, RebatchLatents
+from dinkster_image import NODES as IMAGE_NODES
+from dinkster_image.ported.image_dimensions import GetImageSize
+from dinkster_latent import NODES as LATENT_NODES
+from dinkster_latent.image_dimensions import GetLatentSize
+from dinkster_latent.rebatch import RebatchImages, RebatchLatents
 
 
 def test_image_utility_socket_contracts_roundtrip() -> None:
-    for node, input_name, value_type, output_names in (
-        (GetImageSize, "image", IMAGE_TYPE, ("width", "height", "batch_size")),
-        (GetLatentSize, "latent", LATENT_TYPE, ("width", "height", "frames", "batch_size")),
-        (RebatchImages, "images", IMAGE_TYPE, ("IMAGE",)),
-        (RebatchLatents, "latents", LATENT_TYPE, ("LATENT",)),
+    for node, registered, node_type, input_name, value_type, output_names in (
+        (
+            GetImageSize,
+            IMAGE_NODES,
+            "dinkster.image.get_image_size",
+            "image",
+            IMAGE_TYPE,
+            ("width", "height", "batch_size"),
+        ),
+        (
+            GetLatentSize,
+            LATENT_NODES,
+            "dinkster.latent.get_latent_size",
+            "latent",
+            LATENT_TYPE,
+            ("width", "height", "frames", "batch_size"),
+        ),
+        (
+            RebatchImages,
+            LATENT_NODES,
+            "dinkster.latent.rebatch_images",
+            "images",
+            IMAGE_TYPE,
+            ("IMAGE",),
+        ),
+        (
+            RebatchLatents,
+            LATENT_NODES,
+            "dinkster.latent.rebatch_latents",
+            "latents",
+            LATENT_TYPE,
+            ("LATENT",),
+        ),
     ):
+        assert node in registered
         schema = node.schema()
+        assert schema.node_type == node_type
         assert schema.inputs[0].id == input_name
         assert tuple(output.id for output in schema.outputs) == output_names
         if node in (RebatchImages, RebatchLatents):

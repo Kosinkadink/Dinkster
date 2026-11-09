@@ -35,18 +35,31 @@ runs:
     - name: Test CPU comfy contracts
       if: inputs.suite != 'vision'
       shell: bash
-      run: .venv/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests ${{ inputs.comfy-pytest-args }}
+      run: |
+        for package in packages/dinkster-nodes-*; do
+          case "$package" in
+            *-vision-*|*-dev|*-remote) continue ;;
+          esac
+          if [ -d "$package/tests" ]; then
+            .venv/bin/python -m pytest -q "$package/tests" ${{ inputs.comfy-pytest-args }}
+          fi
+        done
+        .venv/bin/python -m pytest --import-mode=importlib -q tests/first_party_runtime tests/test_comfy_vae_nodes.py ${{ inputs.comfy-pytest-args }}
     - name: Check vision types
       if: inputs.suite != 'comfy'
       shell: bash
-      run: .venv/bin/pyright -p packages/dinkster-nodes-vision
+      run: .venv/bin/pyright packages/dinkster-nodes-vision-*/src
     - name: Test CPU vision and root contracts
       if: inputs.suite != 'comfy'
       shell: bash
       env:
         DINKSTER_ACCELERATOR: cpu
       run: |
-        .venv/bin/python -m pytest -q packages/dinkster-nodes-vision/tests
+        for package in packages/dinkster-nodes-vision-*; do
+          if [ -d "$package/tests" ]; then
+            .venv/bin/python -m pytest -q "$package/tests"
+          fi
+        done
         .venv/bin/python -m pytest -v \
           tests/test_audio_materializer.py \
           tests/test_cpu_pack_composition.py \

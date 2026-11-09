@@ -1,0 +1,25 @@
+[pack]
+name = "dinkster-flux"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.flux"]
+requires = ["dinkster-inference==0.1.1", "torch"]
+
+[pack.inference]
+imports = ["latent_formats", "ldm.qwen_image21.model", "model_management", "model_prefetch", "patcher_extension", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+dinkster-conditioning = ">=0.0.1,<1"
+
+[pack.entry]
+nodes = "dinkster_flux:NODES"
+types = "dinkster_flux:register_types"

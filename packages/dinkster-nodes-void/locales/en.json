@@ -1,0 +1,36 @@
+{
+  "nodes": {
+    "dinkster.void.void_inpaint_conditioning": {
+      "displayName": "VOIDInpaintConditioning"
+    },
+    "dinkster.void.void_quadmask_preprocess": {
+      "displayName": "VOID Quadmask Preprocessor"
+    },
+    "dinkster.void.void_sampler": {
+      "displayName": "VOIDSampler"
+    },
+    "dinkster.void.void_warped_noise": {
+      "displayName": "VOIDWarpedNoise"
+    },
+    "dinkster.void.void_warped_noise_source": {
+      "displayName": "VOIDWarpedNoiseSource"
+    }
+  },
+  "searchTerms": {
+    "dinkster.void.void_inpaint_conditioning": [
+      "VOIDInpaintConditioning"
+    ],
+    "dinkster.void.void_quadmask_preprocess": [
+      "VOIDQuadmaskPreprocess"
+    ],
+    "dinkster.void.void_sampler": [
+      "VOIDSampler"
+    ],
+    "dinkster.void.void_warped_noise": [
+      "VOIDWarpedNoise"
+    ],
+    "dinkster.void.void_warped_noise_source": [
+      "VOIDWarpedNoiseSource"
+    ]
+  }
+}

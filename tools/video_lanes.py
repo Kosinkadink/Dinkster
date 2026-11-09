@@ -34,7 +34,7 @@ from dinkster_values import (
     video_from_source,
     video_meta,
 )
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
+from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
 from dinkster_workers import RemoteWorker
 from dinkster_workers.service import READY_LINE_PREFIX
 

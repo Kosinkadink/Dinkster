@@ -1,6 +1,6 @@
-# dinkster-nodes-image
+# dinkster-image
 
-`dinkster-nodes-image` supplies Dinkster's deterministic first-party image and mask
+`dinkster-image` supplies Dinkster's deterministic first-party image and mask
 operations. Implementations use channels-last NumPy arrays on CPU and do not
 import a tensor framework. `dinkster.image` values use BHWC layout and
 `dinkster.mask` values use BHW layout.

@@ -18,7 +18,6 @@ from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
-from dinkster_nodes_media_io import MEDIA_IO_NODES, CropVideo, TrimVideo, register_media_types
 from dinkster_protocol import Invocation
 from dinkster_schema import build_node_types
 from dinkster_values import (
@@ -31,7 +30,9 @@ from dinkster_values import (
     video_meta,
 )
 from dinkster_values.audio_codec import audio_window
-from dinkster_video import disassemble_video
+from dinkster_video import NODES, register_types
+from dinkster_video.video_edits import VideoCrop, VideoTrim
+from dinkster_video_runtime import disassemble_video
 from dinkster_workers import (
     BoundaryDiagnostic,
     InProcessWorker,
@@ -45,7 +46,7 @@ from test_remote import TOKEN, start_service, stop_service
 from tests.async_scenarios import run_scenario
 
 MEDIA_MANIFEST = (
-    Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
+    Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-video/dinkster-pack.toml"
 )
 ASSET_TOKEN = "video-editor-asset-token-0123456789"
 
@@ -78,7 +79,7 @@ def _source(*, width: int = 64, height: int = 32, frame_count: int = 20) -> byte
 def _registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
-    register_media_types(registry)
+    register_types(registry)
     return registry
 
 
@@ -87,20 +88,22 @@ def _saved_graph(
 ) -> tuple[str, Graph]:
     graph = Graph(
         {
-            "load": GraphNode("dinkster.load_video_value", {"video": ref.to_wire()}),
+            "load": GraphNode("dinkster.video.load_video", {"file": ref.to_wire()}),
             "trim": GraphNode(
-                "dinkster.video.trim",
+                "dinkster.video.video_trim",
                 {
-                    "video": Link("load", "video"),
-                    "video_edit": dict(edit),
+                    "video": Link("load", "VIDEO"),
+                    "trim": dict(edit),
                     "strict_duration": strict_duration,
                 },
             ),
             "crop": GraphNode(
-                "dinkster.video.crop",
-                {"video": Link("trim", "video"), "video_edit": dict(edit)},
+                "dinkster.video.video_crop",
+                {"video": Link("trim", "video"), "crop": dict(edit)},
             ),
-            "frames": GraphNode("dinkster.video.disassemble", {"video": Link("crop", "video")}),
+            "frames": GraphNode(
+                "dinkster.video.get_video_components", {"video": Link("crop", "video")}
+            ),
         }
     )
     document = json.dumps(graph_to_wire(graph), sort_keys=True, separators=(",", ":"))
@@ -165,8 +168,8 @@ def test_video_edit_sections_sentinels_and_clamping(
 ) -> None:
     raw = json.dumps(widget, sort_keys=True)
     source = video_from_source(_source())
-    trimmed = TrimVideo.execute(video=source, video_edit=widget)["video"]
-    result = CropVideo.execute(video=trimmed, video_edit=widget)["video"]
+    trimmed = VideoTrim.execute(video=source, trim=widget)["video"]
+    result = VideoCrop.execute(video=trimmed, crop=widget)["video"]
     effective = cast(Mapping[str, object], video_meta(result)["effective"])
     assert (effective["width"], effective["height"], effective["duration"]) == expected
     assert json.dumps(widget, sort_keys=True) == raw
@@ -191,13 +194,13 @@ def test_raw_editor_document_survives_save_reload_and_import_unchanged() -> None
         for graph in (reloaded, imported):
             trim_inputs = cast(GraphNode, graph.nodes["trim"]).inputs
             crop_inputs = cast(GraphNode, graph.nodes["crop"]).inputs
-            assert trim_inputs["video_edit"] == after
-            assert crop_inputs["video_edit"] == after
+            assert trim_inputs["trim"] == after
+            assert crop_inputs["crop"] == after
             assert trim_inputs["strict_duration"] is True
-            assert "strict_duration" not in cast(Mapping[str, object], trim_inputs["video_edit"])
+            assert "strict_duration" not in cast(Mapping[str, object], trim_inputs["trim"])
             assert "features" not in trim_inputs
             assert "features" not in crop_inputs
-        assert json.loads(saved)["nodes"]["trim"]["inputs"]["video_edit"] == after
+        assert json.loads(saved)["nodes"]["trim"]["inputs"]["trim"] == after
     assert before == {
         "vendor": {"future": [1, "keep"]},
         "trim": {"start_time": 1.25, "duration": 3.5, "extra": True},
@@ -208,8 +211,10 @@ def test_raw_editor_document_survives_save_reload_and_import_unchanged() -> None
 def test_raw_crop_persists_while_runtime_uses_even_aligned_values() -> None:
     raw_crop = {"x": 13, "y": 5, "width": 201, "height": 101}
     source = video_from_source(_source(width=256, height=128, frame_count=3))
-    raw = CropVideo.execute(video=source, video_edit={"crop": raw_crop})["video"]
-    normalized = CropVideo.execute(video=source, x=12, y=4, width=200, height=100)["video"]
+    raw = VideoCrop.execute(video=source, crop={"crop": raw_crop})["video"]
+    normalized = VideoCrop.execute(
+        video=source, crop={"crop": {"x": 12, "y": 4, "width": 200, "height": 100}}
+    )["video"]
 
     assert decode_video(encode_video(raw))["edits"] == [{"crop": raw_crop}]
     assert cast(Mapping[str, object], video_meta(raw)["effective"])["width"] == 200
@@ -219,31 +224,23 @@ def test_raw_crop_persists_while_runtime_uses_even_aligned_values() -> None:
     )
 
 
-def test_widget_sections_are_authoritative_and_scalars_remain_linkable() -> None:
+def test_widget_sections_are_independent_and_scalars_remain_linkable() -> None:
     source = video_from_source(_source())
-    unchanged = TrimVideo.execute(
+    unchanged = VideoTrim.execute(
         video=source,
-        video_edit={"crop": {"width": 20}},
-        start_time=0.5,
-        duration=0.5,
+        trim={"crop": {"width": 20}},
     )["video"]
     assert encode_video(unchanged) == encode_video(source)
 
     linked = Graph(
         {
-            "load": GraphNode("dinkster.load_video_value", {"video": {}}),
-            "info": GraphNode("dinkster.video.info", {"video": Link("load", "video")}),
-            "trim": GraphNode(
-                "dinkster.video.trim",
-                {"video": Link("load", "video"), "duration": Link("info", "duration")},
+            "load": GraphNode("dinkster.video.load_video", {"file": {}}),
+            "info": GraphNode(
+                "dinkster.video.get_video_components", {"video": Link("load", "VIDEO")}
             ),
-            "crop": GraphNode(
-                "dinkster.video.crop",
-                {
-                    "video": Link("trim", "video"),
-                    "width": Link("info", "width"),
-                    "height": Link("info", "height"),
-                },
+            "trim": GraphNode(
+                "dinkster.video.video_slice",
+                {"video": Link("load", "VIDEO"), "duration": Link("info", "fps")},
             ),
         }
     )
@@ -255,8 +252,8 @@ def test_strict_duration_is_separate_from_video_edit() -> None:
     source = video_from_source(_source())
     widget = {"trim": {"start_time": 1.5, "duration": 1.0}}
     with pytest.raises(ValueError, match="exceeds available duration"):
-        TrimVideo.execute(video=source, video_edit=widget, strict_duration=True)
-    clamped = TrimVideo.execute(video=source, video_edit=widget, strict_duration=False)["video"]
+        VideoTrim.execute(video=source, trim=widget, strict_duration=True)
+    clamped = VideoTrim.execute(video=source, trim=widget, strict_duration=False)["video"]
     assert cast(Mapping[str, object], video_meta(clamped)["effective"])["duration"] == [1, 2]
     assert "strict_duration" not in widget
 
@@ -290,11 +287,11 @@ def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(
             "crop": {"x": 3, "y": 3, "width": 33, "height": 17},
         }
         document, graph = _saved_graph(ref, widget)
-        assert json.loads(document)["nodes"]["trim"]["inputs"]["video_edit"] == widget
-        assert json.loads(document)["nodes"]["crop"]["inputs"]["video_edit"] == widget
+        assert json.loads(document)["nodes"]["trim"]["inputs"]["trim"] == widget
+        assert json.loads(document)["nodes"]["crop"]["inputs"]["crop"] == widget
 
         registry = _registry()
-        local_worker = InProcessWorker(build_node_types(MEDIA_IO_NODES), registry)
+        local_worker = InProcessWorker(build_node_types(NODES), registry)
         local = await Engine(
             schemas=dict(local_worker.schemas),
             registry=registry,
@@ -373,7 +370,7 @@ def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(
     run_scenario(scenario())
 
 
-def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isolated() -> None:
+def test_media_packs_execute_audio_video_and_video_edit_in_process_and_isolated() -> None:
     source = video_from_source(_source(frame_count=20))
     samples = np.arange(32, dtype=np.float32).reshape(1, 1, 32) / 32
     audio = {"waveform": samples, "sample_rate": 8000}
@@ -381,51 +378,61 @@ def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isola
 
     async def scenario() -> None:
         local_worker, registry, _, _ = load_pack(load_manifest(MEDIA_MANIFEST))
+        audio_manifest = MEDIA_MANIFEST.parent.parent / "dinkster-nodes-audio/dinkster-pack.toml"
+        local_audio_worker, _, _, _ = load_pack(load_manifest(audio_manifest), registry=registry)
         assert (
             registry.spec(VIDEO_EDIT_TYPE).decode(registry.spec(VIDEO_EDIT_TYPE).encode(edit))
             == edit
         )
 
-        async def run(worker: InProcessWorker | IsolatedWorker) -> tuple[object, object]:
-            trimmed_audio = await worker.invoke(
+        async def run(
+            worker: InProcessWorker | IsolatedWorker,
+            audio_worker: InProcessWorker | IsolatedWorker,
+        ) -> tuple[object, object]:
+            trimmed_audio = await audio_worker.invoke(
                 Invocation(
                     invocation_id="audio",
                     node_id="audio",
-                    node_type="dinkster.audio.trim",
+                    node_type="dinkster.audio.trim_audio_duration",
                     inputs={
                         "audio": registry.wrap(AUDIO_TYPE, audio),
-                        "start": registry.wrap(CORE_FLOAT, 0.001),
+                        "start_index": registry.wrap(CORE_FLOAT, 0.001),
                         "duration": registry.wrap(CORE_FLOAT, 0.002),
                     },
-                    effective_schema=worker.schemas["dinkster.audio.trim"],
+                    effective_schema=audio_worker.schemas["dinkster.audio.trim_audio_duration"],
                 )
             )
             assert trimmed_audio.error is None and trimmed_audio.outputs is not None
-            assert trimmed_audio.outputs["audio"].type_id == AUDIO_TYPE
+            assert trimmed_audio.outputs["AUDIO"].type_id == AUDIO_TYPE
 
             trimmed_video = await worker.invoke(
                 Invocation(
                     invocation_id="video",
                     node_id="video",
-                    node_type="dinkster.video.trim",
+                    node_type="dinkster.video.video_trim",
                     inputs={
                         "video": registry.wrap(VIDEO_TYPE, source),
-                        "video_edit": registry.wrap(VIDEO_EDIT_TYPE, edit),
+                        "trim": registry.wrap(VIDEO_EDIT_TYPE, edit),
                     },
-                    effective_schema=worker.schemas["dinkster.video.trim"],
+                    effective_schema=worker.schemas["dinkster.video.video_trim"],
                 )
             )
             assert trimmed_video.error is None and trimmed_video.outputs is not None
             assert trimmed_video.outputs["video"].type_id == VIDEO_TYPE
-            return trimmed_audio.outputs["audio"].resolve(), trimmed_video.outputs[
+            return trimmed_audio.outputs["AUDIO"].resolve(), trimmed_video.outputs[
                 "video"
             ].resolve()
 
-        local_audio, local_video = await run(local_worker)
+        local_audio, local_video = await run(local_worker, local_audio_worker)
         isolated = IsolatedWorker(MEDIA_MANIFEST, registry, shm_threshold=64)
+        isolated_audio_worker = IsolatedWorker(audio_manifest, registry, shm_threshold=64)
         await isolated.start()
         try:
-            isolated_audio, isolated_video = await run(isolated)
+            await isolated_audio_worker.start()
+            try:
+                isolated_audio, isolated_video = await run(isolated, isolated_audio_worker)
+            finally:
+                await isolated_audio_worker.close()
         finally:
             await isolated.close()
 

@@ -1,0 +1,22 @@
+[pack]
+name = "dinkster-vision-rtdetr"
+version = "0.0.4"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.vision.rtdetr"]
+requires = ["torch", "dinkster-inference==0.1.1", "torchvision", "pillow>=10"]
+
+[pack.inference]
+imports = ["model_management", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_vision_rtdetr:NODES"
+types = "dinkster_vision_rtdetr:register_types"

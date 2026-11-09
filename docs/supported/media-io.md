@@ -1,5 +1,12 @@
 ## Media I/O
 
+- Save Audio (Opus) uses its declared 128k quality when callers omit quality.
+- Audio saves reject malformed, empty or non-finite waveforms and invalid sample
+  rates before encoding. Encoded output supports mono and stereo channels.
+- First-party utility lists transport whole IMAGE values between isolated
+  workers without decoding their pixels in the utilities worker.
+- Get Video Components preserves silent video frames and reports an absent
+  optional audio output when the source has no audio stream.
 - Node packs can publish produced bytes through the public
   `dinkster_api.v1.produced_output_scratch` writer selector. It uses the existing
   worker scratch and active job authority without granting mounted-file access.
@@ -71,6 +78,8 @@
   Custom targets and non-media files, including empty text files, are supported
   through both ordinary hosts. Failed invocations do not return kept artifacts;
   returning an ASSET without attaching it does not advertise a saved file.
+  Structured save destinations validate received mount/prefix values before
+  exposure and retain declared auxiliary references without granting write access.
   One invocation supports up to 4096 explicit saved-file attachments, including
   complete admitted image batches, subject to existing file and transport bounds.
   Mounted-file descriptors do not impose the encoded-preview byte limit on saved
@@ -95,6 +104,10 @@
 - Shared editor values preserve plural pixel boxes with metadata, image-comparison
   and compositor state, and nested tensor-layer documents including optional
   masks, transforms, authored layer order, and canvas dimensions
+- Native and Comfy compositor values validate encoded recipes before exposure
+  and retain declared auxiliary asset references. Document digests bind edits to
+  supplied layer documents, not filesystem access or asset retrieval. Cleanup
+  remains disabled.
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
@@ -164,6 +177,9 @@
   compression, lossless, and alpha controls
 - Asset-backed native video loading to IMAGE, optional AUDIO, fps, frame count,
   and duration, with rate, resize, start, frame-cap, and frame-selection controls
+- VIDEO asset references cover nested clips, component and complete soundtracks,
+  and declared timeline sources/resources. Conflicting sizes for one identity are
+  refused; raw inline video cannot declare external dependencies. Cleanup remains disabled.
 - Native video saving through PyAV: MP4/H.264 at 8 or 10 bits, WebM/VP9 at
   8 bits with optional alpha, WebM/AV1 and MP4/H.265 at 8 or 10 bits,
   ProRes including 4444 alpha, and lossless RGB/RGBA FFV1/MKV at 8 or 16 bits;
@@ -177,6 +193,11 @@
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
+- Ordinary file encoding defaults to H.264 CRF 18 with the encoder's medium
+  preset and no zerolatency tuning, or AV1 CRF 24 with SVT preset 8 and one
+  logical processor without forced low-delay settings. Explicit CRF and
+  microsecond/trimmed-source timestamp handling remain available; ordinary
+  H.264 encoding disables B-frames independently of its quality settings.
 - Opt-in unedited component-video encoding preserves source H.264/AV1
   quantization, color signaling, CRF defaults, optional H.264 preset, and
   thousandth-rounded encoded frame rates without changing component values.
@@ -263,6 +284,9 @@
   explicit batch selection, normalized selectors in cache identity, and
   structured invalid or unavailable responses. Waveforms use fixed colors
   without antialiasing or labels
+- AUDIO asset references include nested concatenated sources. Encoded admission
+  rejects missing external references and conflicting byte sizes for one identity;
+  inline-only audio has no external asset dependency. This does not enable cleanup.
 - Native audio saving through PyAV: FLAC, MP3 with V0/128k/320k quality, and
   Opus with 64k-320k bit rates and 48 kHz coercion of unsupported rates; one
   ordered published asset per batch element under a mounted save target

@@ -140,6 +140,7 @@ from .builtin_types import (
     VIDEO_TYPE,
     VOXEL_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
+    WEBCAM_TYPE,
 )
 from .curve import MAX_CURVE_POINTS, Curve, register_curve_type
 from .detection_codec import (
@@ -153,6 +154,8 @@ from .detection_codec import (
     encode_detection,
     encode_region,
     region_meta,
+    validate_detection_encoded,
+    validate_region_encoded,
 )
 from .image_codec import (
     IMAGE_BATCH_MERGER_ID,
@@ -503,6 +506,7 @@ __all__ = [
     "BOUNDING_BOX_TYPE",
     "BOUNDING_BOXES_TYPE",
     "IMAGECOMPARE_TYPE",
+    "WEBCAM_TYPE",
     "COMFY_ARRAY_TYPE",
     "CONTEXT_WINDOWS_TYPE",
     "INPAINT_CONDITIONING_TYPE",
@@ -562,6 +566,8 @@ __all__ = [
     "decode_detection",
     "decode_region",
     "detection_meta",
+    "validate_detection_encoded",
+    "validate_region_encoded",
     "decode_image_array",
     "decode_image_components",
     "open_image_components",

@@ -10,12 +10,10 @@ from typing import cast
 import numpy as np
 import opentimelineio as otio
 import pytest
-from dinkster_api.v1 import VIDEO_TYPE
+from dinkster_api.v1 import VIDEO_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_nodes_image.drawing import DrawText
-from dinkster_nodes_media_io import register_media_types
-from dinkster_nodes_media_io.video_document import VIDEO_DOCUMENT_NODES
-from dinkster_nodes_media_io.video_ops import CropVideo, TrimVideo
+from dinkster_assets.value import register_video_value_type, value_asset_references
+from dinkster_image.drawing import DrawText
 from dinkster_values import (
     TypeRegistry,
     annotate_image,
@@ -32,6 +30,8 @@ from dinkster_values.video_document import (
     TimelineError,
     decode_document,
     document,
+    document_fingerprint,
+    document_meta,
     effective_document,
     encode_document,
     extension,
@@ -42,21 +42,63 @@ from dinkster_values.video_document import (
     time_range,
     video_reference,
 )
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
-from dinkster_video.document import COMMAND_NODES, clip, export_otio, import_otio, make, mutate
-from dinkster_video.image_math import masked_transition
-from dinkster_video.timeline import (
+from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
+from dinkster_video_runtime.document import clip, export_otio, import_otio, make, mutate
+from dinkster_video_runtime.image_math import masked_transition
+from dinkster_video_runtime.timeline import (
     compile_timeline,
     iter_timeline_audio,
     iter_timeline_frames,
     single_clip_video,
 )
-from dinkster_video.timeline_runtime import CPUKernels, SourceMedia
+from dinkster_video_runtime.timeline_runtime import CPUKernels, SourceMedia
 
 from tests.async_scenarios import run_scenario
+from tests.test_video_diagnostics import FormatSave
+from tests.test_video_diagnostics import register_types as register_format_types
 from tests.test_video_runtime import _packets, _source
 
 FIXTURES = Path(__file__).parent / "fixtures" / "otio"
+
+
+class DocumentVideo(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(
+            node_type="test.document-video",
+            inputs=(InputSpec("document", TypeExpr.concrete(DOCUMENT_TYPE)),),
+            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, document):
+        return cls.outputs(video=TimelineVideo(document))
+
+
+DOCUMENT_NODES = (DocumentVideo, FormatSave)
+
+
+def register_document_types(registry):
+    register_format_types(registry)
+    registry.register(
+        DOCUMENT_TYPE,
+        encode=encode_document,
+        decode=decode_document,
+        coerce=document,
+        fingerprint=document_fingerprint,
+        meta=document_meta,
+    )
+
+
+@pytest.fixture
+def document_manifest(tmp_path):
+    manifest = tmp_path / "document-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="video-document-fixture"\npublisher="dinkster"\n'
+        '[pack.entry]\nnodes="tests.test_video_document:DOCUMENT_NODES"\n'
+        'types="tests.test_video_document:register_document_types"\n'
+    )
+    return manifest
 
 
 @pytest.fixture
@@ -142,21 +184,33 @@ def test_opaque_otio_url_never_reaches_resolver():
 
 
 @pytest.mark.parametrize(
-    "widget",
+    "widget,edits",
     [
-        {},
-        {"trim": None, "crop": None, "foreign": "preserved"},
-        {"trim": {"start_time": 0.5, "duration": 0}},
-        {"crop": {"x": -7, "y": 3, "width": 31, "height": 23}},
-        {
-            "trim": {"start_time": -0.5, "duration": 99},
-            "crop": {"width": 0, "height": -1},
-            "strict_duration": "ignored",
-            "foreign": [1, 2],
-        },
+        ({}, []),
+        ({"trim": None, "crop": None, "foreign": "preserved"}, []),
+        (
+            {"trim": {"start_time": 0.5, "duration": 0}},
+            [{"trim": {"start_time": 0.5, "duration": 0}, "strict_duration": False}],
+        ),
+        (
+            {"crop": {"x": -7, "y": 3, "width": 31, "height": 23}},
+            [{"crop": {"x": -7, "y": 3, "width": 31, "height": 23}}],
+        ),
+        (
+            {
+                "trim": {"start_time": -0.5, "duration": 99},
+                "crop": {"width": 0, "height": -1},
+                "strict_duration": "ignored",
+                "foreign": [1, 2],
+            },
+            [
+                {"trim": {"start_time": -0.5, "duration": 99}, "strict_duration": False},
+                {"crop": {"x": 0, "y": 0, "width": 0, "height": -1}},
+            ],
+        ),
     ],
 )
-def test_widget_one_authority_and_verbatim_roundtrip(bound_video, widget):
+def test_widget_one_authority_and_verbatim_roundtrip(bound_video, widget, edits):
     value, factory, _ = bound_video
     base = edit_video(value, {"trim": {"start_time": 0.5, "duration": 1.5}})
     doc = timeline_for(base, video_edit=widget)
@@ -165,9 +219,9 @@ def test_widget_one_authority_and_verbatim_roundtrip(bound_video, widget):
     child["source_range"]["start_time"]["value"] = 999
     normalized = document(doc)
     actual = single_clip_video(normalized, SourceMedia(factory))
-    expected = CropVideo.execute(
-        video=TrimVideo.execute(video=base, video_edit=widget)["video"], video_edit=widget
-    )["video"]
+    expected = base
+    for edit in edits:
+        expected = edit_video(expected, edit)
     assert encode_video(actual) == encode_video(expected)
     roundtrip = import_otio(export_otio(normalized))
     assert (
@@ -214,13 +268,12 @@ def test_v3_wire_is_source_only_and_v2_stable(bound_video):
     assert video_fingerprint(VIDEO_TYPE)(value) == identity
 
 
-def test_node_command_enumeration_and_codec_registration():
-    assert {node.define_schema().node_type for node in VIDEO_DOCUMENT_NODES} == set(
-        COMMAND_NODES.values()
-    )
+def test_document_codec_registration():
     registry = TypeRegistry()
-    register_media_types(registry)
-    assert DOCUMENT_TYPE in registry
+    register_document_types(registry)
+    value = make(clips=[clip("a", start=2, duration=10)])
+    spec = registry.spec(DOCUMENT_TYPE)
+    assert spec.decode(spec.encode(value)) == value
 
 
 def test_split_move_ripple_roll_and_retime():
@@ -378,8 +431,27 @@ def test_layer_source_uses_declared_resources_and_shared_renderer(media_assets):
     with Image.open(io.BytesIO(expected.png)) as image:
         np.testing.assert_array_equal(result, np.asarray(image, dtype=np.float32) / 255)
     assert len(cast(list, video_meta(TimelineVideo(doc))["asset_refs"])) == 2
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE)
+    roots = value_asset_references(
+        {"video": registry.wrap(VIDEO_TYPE, TimelineVideo(doc))}, complete_registry=registry
+    )
+    assert roots == {item.digest: item for item in (asset, raster)}
     with pytest.raises(TimelineError, match="explicitly declared"):
         next(SourceMedia(factory).frames({**reference, "resources": []}, Fraction(0), Fraction(1)))
+    conflicting = mutate(
+        doc,
+        "bind_source",
+        {
+            "source": "layer",
+            "reference": {
+                **reference,
+                "resources": [{**asset.to_wire(), "size": asset.size + 1}],
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="size"):
+        video_meta(TimelineVideo(conflicting))
 
 
 def test_audio_windows_gain_crossfade_and_silence(bound_video):
@@ -404,8 +476,7 @@ def test_audio_windows_gain_crossfade_and_silence(bound_video):
     np.testing.assert_array_equal(samples[:, 100:], np.zeros((2, 100), np.float32))
 
 
-def test_document_and_v3_render_match_in_process_and_shared_memory(bound_video):
-    from dinkster_nodes_media_io import MEDIA_IO_NODES
+def test_document_and_v3_render_match_in_process_and_shared_memory(bound_video, document_manifest):
     from dinkster_protocol import Invocation
     from dinkster_schema import build_node_types
     from dinkster_values import register_core_types
@@ -417,26 +488,25 @@ def test_document_and_v3_render_match_in_process_and_shared_memory(bound_video):
     async def scenario():
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
+        register_document_types(registry)
 
         async def run(worker):
             result = await worker.invoke(
                 Invocation(
                     invocation_id="render",
                     node_id="render",
-                    node_type="dinkster.video_document.render",
+                    node_type="test.document-video",
                     inputs={"document": registry.wrap(DOCUMENT_TYPE, doc)},
-                    effective_schema=worker.schemas["dinkster.video_document.render"],
+                    effective_schema=worker.schemas["test.document-video"],
                 )
             )
             assert result.error is None and result.outputs is not None
             return encode_video(result.outputs["video"].resolve())
 
-        expected = await run(InProcessWorker(build_node_types(MEDIA_IO_NODES), registry))
+        expected = await run(InProcessWorker(build_node_types(DOCUMENT_NODES), registry))
         diagnostics = []
         worker = IsolatedWorker(
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-media-io/dinkster-pack.toml",
+            document_manifest,
             registry,
             shm_threshold=64,
             on_diagnostic=diagnostics.append,
@@ -515,11 +585,10 @@ def test_disabled_clip_and_unsupported_composition_effect(bound_video):
 
 
 def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
-    bound_video, tmp_path, monkeypatch
+    bound_video, tmp_path, monkeypatch, document_manifest
 ):
     import av
     from aiohttp import web
-    from dinkster_assets import SAVE_TARGET_TYPE
     from dinkster_protocol import Invocation
     from dinkster_values import register_core_types
     from dinkster_workers import RemoteWorker
@@ -544,13 +613,11 @@ def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
     async def scenario():
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
+        register_document_types(registry)
         vault = tmp_path / "daemon-vault"
-        manifest = (
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
+        proc, host, port = await start_service(
+            document_manifest, tmp_path, "--asset-vault", str(vault)
         )
-        proc, host, port = await start_service(manifest, tmp_path, "--asset-vault", str(vault))
         try:
             async with VideoHost() as endpoint:
                 worker = RemoteWorker(
@@ -573,24 +640,20 @@ def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
                             Invocation(
                                 invocation_id="timeline-save",
                                 node_id="save",
-                                node_type="dinkster.save_video_value",
+                                node_type="test.format-save",
                                 inputs={
                                     "video": registry.wrap(VIDEO_TYPE, lazy),
-                                    "target": registry.wrap(
-                                        SAVE_TARGET_TYPE,
-                                        {"mount": "comfy-output", "prefix": "timeline"},
-                                    ),
                                 },
-                                effective_schema=worker.schemas["dinkster.save_video_value"],
+                                effective_schema=worker.schemas["test.format-save"],
                             )
                         )
                     assert result.error is None and result.outputs is not None
-                    assert set(result.outputs) == {"video"}
-                    ref = result.outputs["video"].resolve()
+                    assert set(result.outputs) == {"asset"}
+                    ref = result.outputs["asset"].resolve()
                     assert isinstance(ref, AssetRef)
                     assert endpoint.requests == 1
                     assert AssetVault(vault).has(digest)
-                    outputs = list(output_root.glob("*.mp4"))
+                    outputs = list(output_root.glob("video/*.mp4"))
                     assert len(outputs) == 1
                     assert ref.digest == digest_bytes(outputs[0].read_bytes())
                     assert len(_packets(outputs[0].read_bytes())) == 20

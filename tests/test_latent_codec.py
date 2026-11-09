@@ -108,31 +108,23 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        media = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-media-io"
+        latent_pack = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-latent"
         (tmp_path / "empty_latent_fixture.py").write_text(
             "from tests.test_latent_codec import EmptyLatentInspect, EmptyLatentSource\n"
-            "from dinkster_api.v1 import register_inference_types\n"
-            "from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types\n"
-            "from dinkster_nodes_media_io import capture_device_choices\n"
-            "NODES = (*MEDIA_IO_NODES, EmptyLatentSource, EmptyLatentInspect)\n"
-            "def register_types(registry):\n"
-            "    register_inference_types(registry)\n"
-            "    register_media_types(registry)\n",
+            "from dinkster_latent import NODES as LATENT_NODES\n"
+            "from dinkster_latent.types import register_types\n"
+            "NODES = (*LATENT_NODES, EmptyLatentSource, EmptyLatentInspect)\n",
             encoding="ascii",
         )
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            (media / "dinkster-pack.toml")
+            (latent_pack / "dinkster-pack.toml")
             .read_text(encoding="ascii")
             .replace("namespaces = [", 'namespaces = ["empty-latent-fixture",')
-            .replace("dinkster_nodes_media_io:MEDIA_IO_NODES", "empty_latent_fixture:NODES")
+            .replace("dinkster_latent:NODES", "empty_latent_fixture:NODES")
             .replace(
-                "dinkster_nodes_media_io:register_media_types",
+                "dinkster_latent.types:register_types",
                 "empty_latent_fixture:register_types",
-            )
-            .replace(
-                "dinkster_nodes_media_io:capture_device_choices",
-                "empty_latent_fixture:capture_device_choices",
             ),
             encoding="ascii",
         )
@@ -148,7 +140,9 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
             composer = ServingComposer(
                 cache_mode="layered",
                 cache_dir=tmp_path / "cache",
-                worker_env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(media.parents[1])))},
+                worker_env={
+                    "PYTHONPATH": os.pathsep.join((str(tmp_path), str(latent_pack.parents[1])))
+                },
             )
             try:
                 await composer.add_pack(

@@ -1,0 +1,27 @@
+[project]
+name = "dinkster-audio"
+version = "0.0.2"
+description = "Dinkster audio input, editing and output nodes"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-api",
+    "av>=14",
+    "numpy>=1.26",
+    "torch",
+    "dinkster-inference==0.1.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_audio"]
+
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_audio/dinkster-pack.toml"
+"locales" = "dinkster_audio/locales"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }

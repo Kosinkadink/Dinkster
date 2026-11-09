@@ -1,0 +1,26 @@
+[pack]
+name = "dinkster-misc-models"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.misc.models"]
+requires = ["dinkster-inference==0.1.1", "torch"]
+
+[pack.inference]
+imports = ["ldm.anima.lllite", "ldm.sensenova.sampling", "ldm.supir.supir_patch", "model_management", "samplers", "text_encoders.fibo2", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+dinkster-conditioning = ">=0.0.1,<1"
+dinkster-qwen = ">=0.0.1,<1"
+
+[pack.entry]
+nodes = "dinkster_misc_models:NODES"
+types = "dinkster_misc_models:register_types"

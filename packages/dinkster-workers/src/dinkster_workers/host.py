@@ -46,6 +46,7 @@ from dinkster_assets import (
     use_declared_asset_pack,
 )
 from dinkster_assets.declared import use_produced_output_job
+from dinkster_assets.scratch import hold_produced_vault
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     AcceleratorMemoryPolicy,
@@ -160,7 +161,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
-from .produced_assets import offer_source_assets, source_asset_files
+from .produced_assets import offer_source_assets, rendition_values, source_asset_files
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
 from .run_control import BoundaryRunContext
@@ -186,16 +187,16 @@ def _legacy_checkpoint_conversion_capable() -> bool:
     try:
         return all(
             importlib.util.find_spec(module) is not None
-            for module in ("dinkster_compat_comfy", "torch", "safetensors.torch")
+            for module in ("dinkster_native", "torch", "safetensors.torch")
         )
     except Exception:  # noqa: BLE001 - unavailable optional components omit capability
         return False
 
 
 def _convert_legacy_checkpoint(path: Path, logical_name: str) -> tuple[str, str | None]:
-    """Run the canonical compat converter and classify its stable result."""
+    """Run the native weight converter and classify its stable result."""
     try:
-        legacy_sources = importlib.import_module("dinkster_compat_comfy.legacy_sources")
+        legacy_sources = importlib.import_module("dinkster_native.legacy_sources")
     except Exception as exc:  # noqa: BLE001 - unavailable worker runtime is retryable
         return "error", f"{type(exc).__name__}: {exc}"
     try:
@@ -361,7 +362,6 @@ def load_pack(
     # through dinkster_api.v1.declared_asset. The active context keeps tables
     # isolated when several manifests share this process.
     if import_from_pack_root:
-        root = str(manifest.root.resolve())
         entries = tuple(
             entry
             for entry in (
@@ -384,11 +384,9 @@ def load_pack(
                     f"in-process entry module {module_name!r} for pack {manifest.name!r} "
                     f"is already loaded from outside the pack root: {module_file}"
                 )
-        if root not in sys.path:
-            # In-process packs have no editable venv installation. Retain the
-            # root for lazy imports after composition; removal intentionally
-            # leaves imported modules resident for the serving lifetime.
-            sys.path.insert(0, root)
+        # Keep the import root available for lazy imports, using the same
+        # wheel package boundary as isolated workers.
+        add_pack_root_to_import_path(manifest, sys.path)
 
     install_declared_assets(manifest.name, manifest.assets, resolver_from_env())
 
@@ -1006,6 +1004,7 @@ async def serve_connection(
     # a stub it has not decoded yet, so this side must hold the resident until
     # the parent vouches for it (DESIGN 3.10: the in-flight half of the gate).
     inflight_result_refs: dict[str, frozenset[str]] = {}
+    result_receipts: dict[str, asyncio.Future[None]] = {}
     inflight_control_refs: dict[str, set[str]] = {}
     full_release_operations: set[str] = set()
     full_release_commits: set[str] = set()
@@ -1399,6 +1398,12 @@ async def serve_connection(
 
         result_send_locked = False
         try:
+            vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+            # Read-only vaults are borrowed from the parent, which retains them.
+            if vault_root and os.access(vault_root, os.W_OK):
+                produced_context.enter_context(
+                    contextlib.closing(hold_produced_vault(Path(vault_root)))
+                )
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
             produced_context.enter_context(
@@ -1668,7 +1673,22 @@ async def serve_connection(
                 codec.take_pending_store_blobs()
                 inflight_result_refs.pop(invocation_id, None)
             attribute_moved_wire(out_header, moved, out_blobs)
+            if result.outputs and any(
+                value.meta.get("asset_refs") for value in result.outputs.values()
+            ):
+                result_receipts[invocation_id] = asyncio.get_running_loop().create_future()
             await send(out_header, out_blobs, out_segments)
+            if result_send_locked:
+                result_transfer_lock.release()
+                result_send_locked = False
+            receipt = result_receipts.get(invocation_id)
+            if receipt is not None:
+                # The parent waits for this reservation before decoding/adopting.
+                # Execution is over, but produced-byte ownership lasts until its ack.
+                if reserve_sent:
+                    await send({"type": "memoryRelease", "requestId": invocation_id})
+                    reserve_sent = False
+                await receipt
         except asyncio.CancelledError:
             raise  # engine gave up; nothing to report
         except Exception as exc:  # noqa: BLE001 - host must survive any invocation
@@ -1702,6 +1722,7 @@ async def serve_connection(
                     }
                 )
         finally:
+            result_receipts.pop(invocation_id, None)
             produced_context.close()
             context = run_contexts.pop(invocation_id, None)
             if context is not None:
@@ -1810,7 +1831,13 @@ async def serve_connection(
             "requestId": request_id,
         }
         cancelled = False
+        produced_context = contextlib.ExitStack()
         try:
+            vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+            if vault_root and os.access(vault_root, os.W_OK):
+                produced_context.enter_context(
+                    contextlib.closing(hold_produced_vault(Path(vault_root)))
+                )
             if request_id != str(header.get("invocationId", "")):
                 raise ValueError("lazy-protocol-skew: request id mismatch")
             consumed: list[str] = []
@@ -1882,6 +1909,7 @@ async def serve_connection(
                 "traceback": traceback.format_exc(),
             }
         finally:
+            produced_context.close()
             if not cancelled:
                 try:
                     await send(reply)
@@ -2501,6 +2529,7 @@ async def serve_connection(
     workgroup_tasks: set[asyncio.Task[None]] = set()
     route_tasks: dict[str, asyncio.Task[None]] = {}
     rendition_tasks: dict[str, asyncio.Task[None]] = {}
+    rendition_receipts: dict[str, asyncio.Future[None]] = {}
     pack_routes = {route.id: route for _, item in extension_contributions for route in item.routes}
 
     async def run_pack_route(header: Mapping[str, Any]) -> None:
@@ -2541,6 +2570,9 @@ async def serve_connection(
         request_id = str(header.get("requestId", ""))
         reply: dict[str, object] = {"type": "renditionResult", "requestId": request_id}
         result_blobs: list[bytes] = []
+        result_segments: list[SharedMemory] = []
+        ownership = contextlib.ExitStack()
+        transfer_locked = False
         try:
             spec = requested_rendition(header)
             parameters_raw = header.get("parameters", {})
@@ -2562,6 +2594,14 @@ async def serve_connection(
                 if header.get("normalize") is True:
                     reply["parameters"] = dict(spec.normalize_parameters(parameters, meta))
             else:
+                ownership.enter_context(
+                    use_produced_output_job(f"{process_instance_token()}-{request_id}", 1)
+                )
+                vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+                if vault_root and os.access(vault_root, os.W_OK):
+                    ownership.enter_context(
+                        contextlib.closing(hold_produced_vault(Path(vault_root)))
+                    )
                 value_wire = header.get("value")
                 if not isinstance(value_wire, Mapping):
                     raise InvalidRenditionRequest("rendition value is missing")
@@ -2575,15 +2615,45 @@ async def serve_connection(
                 reply["mime"] = rendition.mime
                 reply["dataBlob"] = 0
                 result_blobs.append(rendition.data)
+                outputs = await run_sync_resource(rendition_values, worker.registry, rendition)
+                if outputs:
+                    await result_transfer_lock.acquire()
+                    transfer_locked = True
+                    offer_source_assets(outputs)
+                    files = await run_sync_resource(
+                        source_asset_files, outputs, resolver_from_env()
+                    )
+                    # Use a self-contained codec: the document projection must not
+                    # borrow a conversation entry that the caller has not decoded.
+                    projection_codec = ValueCodec(worker.registry, use_shm=False)
+                    reply["outputs"] = {
+                        name: projection_codec.encode(output, result_blobs, result_segments)[0]
+                        for name, output in outputs.items()
+                    }
+                    if files and blob_transfer is not None:
+                        await ensure_peer_holds(files)
+                    rendition_receipts[request_id] = asyncio.get_running_loop().create_future()
+            await send(reply, result_blobs, result_segments)
+            if transfer_locked:
+                result_transfer_lock.release()
+                transfer_locked = False
+            receipt = rendition_receipts.get(request_id)
+            if receipt is not None:
+                await receipt
         except InvalidRenditionRequest as exc:
             reply.update(error="invalid-request", message=str(exc))
-        except RenditionUnavailable as exc:
+        except (RenditionUnavailable, AssetError) as exc:
             reply.update(error="unavailable", message=str(exc))
         except Exception as exc:
             reply.update(error="failed", message=f"{type(exc).__name__}: {exc}")
         finally:
+            if transfer_locked:
+                result_transfer_lock.release()
+            rendition_receipts.pop(request_id, None)
+            ownership.close()
             rendition_tasks.pop(request_id, None)
-        await send(reply, result_blobs)
+        if "error" in reply:
+            await send({key: reply[key] for key in ("type", "requestId", "error", "message")})
 
     async def run_workgroup(command: WorkGroupMessage) -> None:
         assert workgroup_handler is not None
@@ -2708,6 +2778,15 @@ async def serve_connection(
                 rendition_tasks[request_id] = track_resource_task(
                     asyncio.create_task(run_rendition(header, blobs))
                 )
+            elif kind == "renditionAck":
+                receipt = rendition_receipts.get(str(header.get("requestId", "")))
+                if receipt is None or receipt.done():
+                    raise BoundaryError("rendition acknowledgement names no pending transfer")
+                receipt.set_result(None)
+            elif kind == "cancelRendition":
+                task = rendition_tasks.get(str(header.get("requestId", "")))
+                if task is not None:
+                    task.cancel()
             elif kind == "invoke":
                 invocation_id = str(header["invocationId"])
                 if maintenance_operations:
@@ -2974,6 +3053,9 @@ async def serve_connection(
                     await send({"type": "resultAcked", **key.to_wire()})
                 else:
                     inflight_result_refs.pop(invocation_id, None)
+                receipt = result_receipts.get(invocation_id)
+                if receipt is not None and not receipt.done():
+                    receipt.set_result(None)
             elif kind == "shmAck":
                 for name in header.get("segments", ()):
                     segment = sent_segments.pop(str(name), None)

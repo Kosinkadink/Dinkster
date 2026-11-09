@@ -148,9 +148,73 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   finalized only after their dependencies are staged into a fresh generation.
 - `<root>/journal/<timestamp>.json`: `format: dinkster.journal/1`, `operation`,
   `previous` integer or null, `target` integer, `stage`, and optional `error`.
-  Operations are setup/update/rollback/move/repair/gc. Stages are planned,
+  Operations are setup/update/rollback/restore/move/repair/gc. Stages are planned,
   building, starting, switching, complete and rolled-back; the last two are
   terminal. Interrupted records must be recovered before another operation.
+
+`dinkster-env --root ROOT history` lists successful software activations;
+`history show ID` includes the snapshot and structured differences. Both accept
+`--json` and return the usual `dinkster.environment-result/1` envelope.
+`<root>/history/<id>.json` stores `dinkster.install-history/1` entries with a
+`dinkster.install-snapshot/1` software description, timestamp, reason, generation,
+and differences from the preceding entry. These files are independent of
+generation retention. Capture admits only sealed software manifests, constraints,
+source locks and pack dependency locks, plus hosting and host facts; workflows,
+models, outputs, libraries and mounts are not captured.
+
+`setup --adopt-from OLD_ROOT --engine-release SHA --base-id SHA --variant NAME`
+creates a new supervisor root from a standalone pack-only installation. Both
+digests must match the explicitly selected channel; `catalog` exposes them.
+Each installed pack requires an explicit target-variant `--pack-lock PATH`.
+Planning shows the complete source lock, target dependency locks and in-process
+placement. It never records the ambient interpreter as an engine/base release.
+The plan compares local installed distribution metadata to target pack locks,
+showing shared-store accelerator scopes separately without guessing which one
+the old root used. It never runs old interpreters, pack code or .pth files.
+Ambient/inherited dependencies are explicitly unrecorded, not an exact freeze;
+a distribution absent from a target pack lock may still belong to the target base.
+Changes to inspected distribution metadata invalidate the approved plan.
+Shared-venv groups refuse rather than being silently split. The destination must
+not exist and neither it nor the selected store may overlap the old root or its
+shared content store. Confirmation copies verified software archives into owned
+scratch and uses ordinary setup construction, health checks and history
+publication. Source metadata and archive digests are rechecked before activation.
+The old installation, its history, settings and user data are not copied or changed.
+
+`restore ID [--plan | --yes]` rebuilds an exact published snapshot as a fresh
+generation through normal health-checked activation, even if its old directory
+was collected. Recorded manifests, locations, constraints and locks drive
+acquisition; current channels do not select replacement versions. The new entry
+names `restoredFrom` and both recorded and executing tools versions. Tools are
+advisory and are never installed, replaced or downgraded by restore. Unavailable
+inputs produce a read-only `restorePlan` with missing payloads, candidate snapshots
+and every proposed substitution. Candidates minimize changed software identity
+fields; equal-cost alternatives remain explicit rather than selecting the newest.
+A base-only proposal preserves recorded pack sources, dependency locks and
+in-process placement, and must pass their compatibility and availability checks
+against the proposed base. Engine replacements also require the sealed pack
+manifests' declared versions and engine ranges to agree with the recorded sources
+and proposed engine. Older entries without those declarations do not infer them.
+Snapshots retain pack manifests, not pack code. Acquisition provenance preserves
+the original source archive cache release across engine replacements; target-owned
+source admission still verifies the exact recorded pack digests.
+`restore ID --approve DIGEST` approves one complete proposal. `--yes` alone never
+approves substitutions. A changed project, current pointer or history invalidates
+the approval. Without an obtainable candidate, restore makes no changes.
+Failed restores append separate immutable receipts under
+`<root>/attempts/`, exposed as `attempts` in the history JSON result.
+The activation journal records `restoredFrom` before construction; recovery of an
+interrupted restore appends its failure receipt before making the journal terminal.
+Repeated recovery never duplicates an attempt. Source archives are retained in
+the engine cache after admission. Restore uses the target engine's exact-pin pack
+restore in a disposable install root to reacquire missing sources; it does not
+resolve newer pack versions or mutate the project's standalone pack install.
+Pack provisioning uses the staged snapshot locks as its complete source set,
+not the current generation's locks, so later-added packs are not inherited.
+
+Activation journals retain a prepared `historyEntry` before starting the target.
+Only a completed activation publishes that entry. Recovery republishes an
+interrupted publication idempotently; existing history bytes are never replaced.
 
 `dinkster-env --root SOURCE move DESTINATION [--data STORE]` prints its plan
 before confirmation. Move keeps source data until destination doctor and engine
@@ -234,6 +298,9 @@ selection. An unpublished local output is not a production download pin.
 https://releases.dinkster.org --yes --json` acquires the channel's native ZIP
 using its tools manifest hash and archive size/hash, without acquiring engine
 or base payloads. Omit `--yes` to inspect the selection without creating a cache.
+Local ZIP folders use `<date>-<public-supervisor-version>/`, reserving `--2`,
+`--3` for different manifest identities with the same label. Existing hash8-suffixed
+folders remain reusable. Planning previews collisions without changing the cache.
 Channels must supply an independent `tools` pointer for acquisition. A missing
 or invalid pointer fails without falling back to engine assets; engine
 releases do not carry native tools ZIPs.
@@ -305,16 +372,32 @@ corrupt metadata falls through to the next configured location.
 
 Under the caller's store writer lock, `acquire(catalog, variant, store)` fetches
 and verifies base parts, safely extracts a missing base, verifies its selected
-wheels and populates `wheels/<sha256 hex>/<filename>`. After wheel verification,
-it atomically retains the producer base document at `bases/<base hex>/manifest.json`
+wheels and populates `wheels/<wheel filename stem>/<filename>`. After wheel verification,
+it atomically retains the producer base document at
+`bases/<variant>/<date>-py<python>-torch<version>/manifest.json`
 if absent, preserving an existing document's custom provenance. Base identity
 remains the producer's canonical fields, independent of JSON formatting.
+Each cache category records full content identities in `.objects.json`; a durable
+allocation journal and OS lock protect collision reservations. Different bytes
+with the same label receive `--2`, `--3`, and so on. A changed label for the same
+identity reuses its original location. Existing full-hash paths remain supported
+without renaming installed interpreters or environments. Base archive parts use
+the same base label under `downloads/`. Unknown build dates use the first local
+acquisition date in UTC. Wheel filenames remain unchanged, including backend tags.
+Pack archives use `artifacts/<pack>/<date>-<version>/pack.zip`, with the date
+of first local acquisition. Standalone pack sources use the same label beneath
+`store/`; per-pack virtual environments use `venvs/<pack>/<date>-<version>/<pack>/`,
+with an accelerator parent in shared stores. Grouped environments use bounded
+sorted member labels under `venvs/groups/`, retaining their full aggregate
+identity. Explicit collection resolves those identities rather than treating
+readable namespace directories as disposable objects. Existing digest-named
+archives and environments remain in place.
 Engine-owned wheel and constraints artifacts are verified through the same
 downloader. Base-owned
 engine wheels are omitted, and tools/source archives are not installed into
 the generation. Effective constraints are stored under
-`engines/<release hex>/constraints-<variant>.txt`. The original verified engine
-manifest bytes are atomically retained at `engines/<release hex>/release-manifest.json`,
+`engines/<date>-<version>/constraints-<variant>.txt`. The original verified engine
+manifest bytes are atomically retained beside those constraints,
 without reserialization or another metadata fetch. Missing or inconsistent
 catalog bytes refuse acquisition before cache creation. A base without hosted parts
 currently reports that manifest reconstruction is required; it never resolves
@@ -331,7 +414,7 @@ missing hashes and wheel filename/version mismatches fail without resolution.
 The resulting constraints are retained beside the generation record.
 
 `environment_generations.build_generation` constructs a complete target from
-an already verified base under `bases/<hex>/python/` and effective hashed
+an already verified base resolved by its full identity and effective hashed
 requirements. It runs uv offline with no indexes and binary wheels only,
 reading the store's wheels and uv cache. Linux attempts CoW interpreter clones
 and falls back to hardlinks when the filesystem cannot clone; Windows uses
@@ -577,20 +660,23 @@ token. An unreachable or ambiguous supervisor cannot establish an idle engine;
 queue checks refuse mutation unless every observed engine is safely idle.
 Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
 
-`rollback [--plan | --yes] --json` selects the previous generation from the
-latest successful activation journal, starts its retained interpreter on new
-ports, waits for health, replaces `current`, then stops the newer processes.
-It does not sync or rebuild either tree. Apply revalidates project bytes and
-current under the writer lock; unconfirmed rollback does not write anything.
+`rollback [--plan | --yes] --json` selects the preceding successful history entry
+and rebuilds it as a fresh generation through the same path as `restore ID`.
+The old generation directory is not required. The new entry has reason `rollback`
+and names its source in `restoredFrom`. Missing inputs require the same complete
+proposal approval with `rollback --approve DIGEST`; `--yes` never substitutes
+software identities. Project settings and data stay unchanged, including edits
+made after the recorded activation. Apply revalidates the plan and current state
+under the writer locks; unconfirmed rollback does not write anything.
 
 Channel/variant selection journals also carry optional `projectSettings`, an
 object containing `previous` and `target` project.json text strings. Activation
 writes target settings during `switching`, immediately before `current`.
 Interrupted switching restores the previous exact text along with the pointer;
 earlier stages never changed settings. Unexpected settings during recovery refuse
-rather than overwrite an external edit. Rollback reverses the successful pair
-without rebuilding; settings edited since selection refuse rollback rather than
-discard user changes. Journals without this field leave project settings alone.
+rather than overwrite an external edit. Software rollback never reverses this
+settings pair: only software identities are restored. Journals without this field
+leave project settings alone.
 
 Activation journals retain `bindings`: objects containing `name`, `port`,
 `gpus` (device-id strings), `running` (boolean), and `targetPort`. The prior
@@ -598,7 +684,8 @@ assignments and new ports are durable before construction or process launch.
 Stopped bindings remain stopped across activation. Recovery stops authenticated
 target processes, restores the previous pointer and running assignments, removes
 only a newly constructed failed target, and marks the journal `rolled-back`.
-A rollback target is retained even if its activation fails. Ambiguous process
+Failed rebuilt rollback targets are removed, just like failed restore targets.
+Ambiguous process
 identity leaves the journal incomplete rather than killing an unrelated process.
 
 Initial activation uses the same journal with operation `setup` and previous

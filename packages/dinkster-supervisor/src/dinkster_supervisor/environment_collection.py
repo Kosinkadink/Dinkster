@@ -9,6 +9,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+from dinkster_store import object_entries
+
 from .environment_constraints import requirement_hashes
 from .environment_generations import pack_operation
 from .environment_runtime import engine_assignments
@@ -119,11 +121,11 @@ def store_collection_plan(root: Path, store: Path, excluded: tuple[int, ...]) ->
             raise EnvironmentError("collection refuses linked cache directories")
         if not directory.exists():
             continue
-        for entry in directory.iterdir():
-            relative = store_cache_path(f"{category}/{entry.name}")
+        for identity, entry in object_entries(directory):
+            relative = store_cache_path(entry.relative_to(store).as_posix())
             if entry.is_symlink() or not entry.is_dir():
                 raise EnvironmentError("collection refuses linked or non-directory cache entries")
-            if entry.name not in referenced:
+            if identity[7:] not in referenced:
                 collected.append(relative)
     if (store / "uv-cache").is_symlink():
         raise EnvironmentError("collection refuses linked uv cache")
@@ -141,7 +143,12 @@ def _store_trees(path: Path, journal: Journal) -> tuple[tuple[Path, Path], ...]:
     directory = _quarantine(store, path)
     trees = tuple((store / name, directory / name) for name in journal.collected_store_paths)
     for original, parked in trees:
-        if any(p.is_symlink() for p in (original.parent, original, parked.parent, parked)):
+        if any(
+            parent.is_symlink() or parent.is_junction()
+            for tree in (original, parked)
+            for parent in (tree, *tree.parents)
+            if parent.is_relative_to(store)
+        ):
             raise EnvironmentError("collection refuses linked cache trees")
     return trees
 

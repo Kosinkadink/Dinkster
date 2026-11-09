@@ -19,6 +19,7 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [splat-density-allocation-headroom.md](splat-density-allocation-headroom.md) | SplatToMesh density buffers | found in bc5f880d; native checks minimum grid memory before allocation |
 | [normal-bake-shared-high-normals.md](normal-bake-shared-high-normals.md) | BakeNormalMapFromMesh shared high-mesh normals | reproduced at bc5f880d; native normals follow geometry broadcast |
 | [render-mesh-single-triangle.md](render-mesh-single-triangle.md) | RenderMesh triangle BVH | reproduced at bc5f880d; native single-leaf rendering succeeds |
 | [surface-net-small-grid-progress-divisor.md](surface-net-small-grid-progress-divisor.md) | VoxelToMesh surface-net extraction | reproduced at bc5f880d; native progress reporting avoids zero divisor |

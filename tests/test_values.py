@@ -4,6 +4,7 @@ import pickle
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, fields, replace
+from typing import cast
 
 import pytest
 from dinkster_values import (
@@ -52,12 +53,70 @@ def test_core_registration_registers_curve_and_preserves_first_authority() -> No
     assert first.spec(CURVE_TYPE).decode(b"ignored") == "first"
 
 
+def test_curve_boundary_preserves_declared_dependencies_and_source_forms() -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_workers.boundary import ValueCodec
+
+    registry = make_registry()
+    codec = ValueCodec(registry)
+    curve = Curve(((2, -3), (-1, 4), (2, 7)), "linear")
+    wrapped = registry.wrap(CURVE_TYPE, curve)
+    assert value_asset_references({"curve": wrapped}, complete_registry=registry) == {}
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    ref = AssetRef(digest_bytes(b"curve-source"), "source.json", 12)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [ref.to_wire()]}
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == curve
+    assert received.fingerprint == wrapped.fingerprint
+    assert value_asset_references({"curve": received}, complete_registry=registry) == {
+        ref.digest: ref
+    }
+    payload = cast("dict[str, object]", wire["payload"])
+    oversized = Curve(tuple((index, -index) for index in range(4097)))
+    for encoded, expected in (
+        (b'{"points":[{"position":0,"value":1}]}', Curve(((0, 1),))),
+        (b"[]", Curve(())),
+        (registry.spec(CURVE_TYPE).encode(oversized), oversized),
+    ):
+        blobs[cast(int, payload["blob"])] = encoded
+        received, _ = codec.decode(wire, blobs, [])
+        assert received.resolve() == expected
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        b'{"points":[],"asset":{"digest":"hidden"}}',
+        b'{"points":[{"position":0,"value":1,"asset":"hidden"}]}',
+        b'{"points":[[0,{"asset":"hidden"}]]}',
+        b'{"points":[[false,1]]}',
+        b'{"points":[[0,NaN]]}',
+        b"not json",
+    ],
+)
+def test_curve_boundary_refuses_invalid_payload_before_exposure(encoded) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = make_registry()
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(registry.wrap(CURVE_TYPE, Curve(())), blobs, segments)
+    payload = cast("dict[str, object]", wire["payload"])
+    blobs[cast(int, payload["blob"])] = encoded
+    with pytest.raises(EncodedPayloadValidationError):
+        codec.decode(wire, blobs, [])
+
+
 def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -> None:
     registry = make_registry()
     with registry.registering_pack("mypack", ("mypack",)):
         registry.register("mypack.thing")
     assert registry.owner_of("mypack.thing") == "mypack"
-    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    assert registry.owner_of(CORE_INT) == "core"
     for claim in ("mypack", "mypack.child", "mypack-child"):
         with pytest.raises(ValueError, match="overlaps"):
             registry.claim_types("other", (claim,))
@@ -121,7 +180,7 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert "mypack.thing" not in registry
     assert registry.asset_decoder_for("list<mypack.thing>") is None
     assert registry.batch_merge_for("mypack.thing") is None
-    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    assert registry.owner_of(CORE_INT) == "core"
     assert registry.wrap(CORE_INT, 17).payload.load() == 17
     with registry.registering_pack("mypack", ("mypack",)):
         registry.register("mypack.thing")
@@ -150,14 +209,19 @@ def test_declared_asset_targets_survive_staging_without_granting_local_codecs() 
 
 
 def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
-    registry = make_registry()
-    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    registry = TypeRegistry()
+    assert registry.owner_of(CURVE_TYPE) == "core"
+    with registry.registering_pack("official-provider", (), allow_bare=True):
+        register_core_types(registry)
+    registry.declare_types("official-provider", (), (CURVE_TYPE,), allow_bare=True)
+    assert registry.owner_of(CURVE_TYPE) == "core"
     assert CURVE_TYPE in registry
-    with pytest.raises(ValueError, match="overlaps"):
-        registry.claim_types("another-official", (CURVE_TYPE,))
+    for pack in ("another-official", "dinkster-nodes-foundation"):
+        with pytest.raises(ValueError, match="overlaps"):
+            registry.claim_types(pack, (CURVE_TYPE,))
     registry.remove_pack_types("official-provider")
     registry.remove_pack_types("dinkster-nodes-foundation")
-    assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
+    assert registry.type_owners()[CURVE_TYPE] == "core"
     assert registry.wrap(CURVE_TYPE, {"points": [[2, 7]]}).resolve() == Curve(((2, 7),))
     assert registry.wrap(CORE_INT, 17).resolve() == 17
 
@@ -305,6 +369,97 @@ def test_core_types_use_comfy_socket_identities_without_legacy_aliases() -> None
     )
     legacy_type_ids = {f"core.{name}" for name in ("int", "float", "string", "combo", "boolean")}
     assert not legacy_type_ids & set(registry.type_ids())
+
+
+@pytest.mark.parametrize(
+    ("type_id", "item", "encoded"),
+    [
+        (CORE_INT, -(2**63), b"json:-9223372036854775808"),
+        (CORE_INT, 2**64 - 1, b"json:18446744073709551615"),
+        (CORE_FLOAT, 3, b"json:3"),
+        (CORE_FLOAT, -2.75, b"json:-2.75"),
+        (CORE_BOOLEAN, False, b"json:false"),
+        (CORE_COMBO, True, b"json:true"),
+        (CORE_COMBO, 2**53 - 1, b"json:9007199254740991"),
+        (CORE_STRING, "outside-menu", b'json:"outside-menu"'),
+        ("HISTOGRAM", [2, 0, 7], b"json:[2,0,7]"),
+        ("core.absent", None, b"json:null"),
+    ],
+)
+def test_core_primitive_dependencies_follow_declared_metadata(type_id, item, encoded) -> None:
+    from dinkster_assets import AssetRef, digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_workers.boundary import ValueCodec
+
+    registry = make_registry()
+    spec = registry.spec(type_id)
+    wrapped = registry.wrap(type_id, item)
+    assert spec.encode(wrapped.resolve()) == encoded
+    assert value_asset_references({"value": wrapped}, complete_registry=registry) == {}
+    codec = ValueCodec(registry)
+    blobs, segments = [], []
+    wire, _ = codec.encode(wrapped, blobs, segments)
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == item
+    assert type(received.resolve()) is type(item)
+    assert received.fingerprint == wrapped.fingerprint
+    assert value_asset_references({"value": received}, complete_registry=registry) == {}
+    validator = spec.validate_encoded
+    assert validator is not None
+    validator(encoded, {"asset_refs": []})
+    ref = AssetRef(digest_bytes(b"external"), "external.bin", 8)
+    blobs[cast(int, wire["metaBlob"])] = default_encode(
+        {**wrapped.meta.entries, "asset_refs": [ref.to_wire()]}
+    )
+    received, _ = codec.decode(wire, blobs, [])
+    assert received.resolve() == item
+    assert value_asset_references({"value": received}, complete_registry=registry) == {
+        ref.digest: ref
+    }
+
+
+@pytest.mark.parametrize(
+    ("type_id", "invalid"),
+    [
+        (CORE_INT, True),
+        (CORE_INT, 3.0),
+        (CORE_INT, {"asset": "hidden"}),
+        (CORE_FLOAT, True),
+        (CORE_FLOAT, float("inf")),
+        (CORE_FLOAT, float("nan")),
+        (CORE_FLOAT, [1.5]),
+        (CORE_BOOLEAN, 1),
+        (CORE_BOOLEAN, "true"),
+        ("core.absent", 0),
+        ("core.absent", {"asset": "hidden"}),
+    ],
+)
+def test_core_primitives_refuse_non_scalar_runtime_and_encoded_values(type_id, invalid) -> None:
+    registry = make_registry()
+    with pytest.raises((TypeError, ValueError)):
+        registry.wrap(type_id, invalid)
+    validator = registry.spec(type_id).validate_encoded
+    assert validator is not None
+    for encoded in (default_encode(invalid), b"pickle:unused", b"json: 3"):
+        with pytest.raises((TypeError, ValueError)):
+            validator(encoded, {})
+
+
+def test_core_string_rejects_embedded_payloads_and_noncanonical_wire() -> None:
+    registry = make_registry()
+    spec = registry.spec(CORE_STRING)
+    assert spec.asset_references_complete
+    assert spec.validate_encoded is not None
+    text = 'a "quoted" path'
+    assert registry.wrap(CORE_STRING, text).resolve() == text
+    assert spec.encode(text) == b'json:"a \\"quoted\\" path"'
+    spec.validate_encoded(spec.encode(text), {})
+    for invalid in (None, True, 7, {"digest": "not-a-scalar"}, ["text"]):
+        with pytest.raises(TypeError, match="STRING expects a string"):
+            registry.wrap(CORE_STRING, invalid)
+    for wire in (b"pickle:unused", b"json:null", b'json:{"asset":1}', b'json: "spaced"'):
+        with pytest.raises((TypeError, ValueError)):
+            spec.validate_encoded(wire, {})
 
 
 def test_core_combo_is_string_shaped_but_type_distinct() -> None:

@@ -19,9 +19,9 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_graph import Graph, GraphNode, graph_to_wire
-from dinkster_nodes_comfy.save_text import SaveText
 from dinkster_protocol import AssetFolderContext
 from dinkster_server import ServerLibrary, create_app
+from dinkster_text.save_text import SaveText
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 def test_save_text_schema_preserves_core_contract_and_appends_mount() -> None:
     schema = SaveText.schema()
-    assert schema.node_type == "SaveText"
+    assert schema.node_type == "dinkster.text.save_text"
     assert schema.display_name == "Save Text"
     assert schema.category == "text"
     assert tuple(spec.id for spec in schema.inputs) == (
@@ -123,28 +123,7 @@ def test_save_text_executes_through_the_ordinary_manifest(
 
     async def scenario() -> None:
         manifest = (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-        )
-        (tmp_path / "save_text_fixture.py").write_text(
-            "from dinkster_nodes_comfy.save_text import SaveText\n"
-            "from dinkster_nodes_comfy.device_routing import device_choices\n"
-            "NODES = (SaveText,)\n"
-            "def register_types(_registry):\n"
-            "    return None\n",
-            encoding="ascii",
-        )
-        fixture_manifest = tmp_path / "dinkster-pack.toml"
-        fixture_manifest.write_text(
-            manifest.read_text(encoding="ascii")
-            .replace("dinkster_nodes_comfy:COMFY_NODES", "save_text_fixture:NODES")
-            .replace(
-                "dinkster_nodes_comfy.device_routing:device_choices",
-                "save_text_fixture:device_choices",
-            )
-            .replace(
-                "dinkster_nodes_comfy:register_inference_types", "save_text_fixture:register_types"
-            ),
-            encoding="ascii",
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-text/dinkster-pack.toml"
         )
         composer = ServingComposer(
             worker_env={
@@ -153,11 +132,13 @@ def test_save_text_executes_through_the_ordinary_manifest(
             }
         )
         try:
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
+            )
             graph = Graph(
                 nodes={
                     "save": GraphNode(
-                        "SaveText",
+                        "dinkster.text.save_text",
                         {
                             "text": "manifest\n",
                             "filename_prefix": "manifest/%width%x%height%",
@@ -180,7 +161,7 @@ def test_save_text_executes_through_the_ordinary_manifest(
             alternate = Graph(
                 nodes={
                     "save": GraphNode(
-                        "SaveText",
+                        "dinkster.text.save_text",
                         {"text": "", "filename_prefix": "empty", "mount": "alternate"},
                     )
                 }
@@ -212,7 +193,9 @@ def test_save_text_executes_through_the_ordinary_manifest(
                         "clientId": "save-client",
                         "jobId": "native-save",
                         "project": "film",
-                        "graph": graph_to_wire(graph),
+                        "graph": graph_to_wire(
+                            Graph({"save": GraphNode("SaveText", graph.nodes["save"].inputs)})
+                        ),
                         "targets": ["save"],
                     },
                 )

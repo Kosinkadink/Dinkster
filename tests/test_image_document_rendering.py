@@ -13,13 +13,14 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_image.layer_document import FlattenLayers
+from dinkster_image.layer_io import LoadLayers
 from dinkster_image_document import (
     RENDERER_CONTRACT,
     decode_document,
     parse_selector,
     render_document,
 )
-from dinkster_nodes_media_io.image_document import RenderImageDocument
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
 from dinkster_server.library import ServerLibrary, add_library_routes
 from dinkster_server.preflight import asset_preflight
@@ -425,6 +426,147 @@ def test_render_endpoint_persists_output_and_provenance_cache(tmp_path: Path) ->
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("stage", ["render", "cached"])
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+def test_http_render_retains_produced_vault_until_work_settles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, stage: str
+) -> None:
+    import threading
+    from contextlib import closing
+
+    from aiohttp import ClientConnectionError, ClientResponse
+    from dinkster_assets.produced import ProducedAssetInventory
+    from dinkster_assets.scratch import claim_inactive_produced_vault, hold_produced_vault
+    from dinkster_image_document import InvalidDocument
+    from dinkster_server import image_document as endpoint
+    from dinkster_values import EncodedPayload, Value, ValueMeta
+    from dinkster_workers.produced_assets import ProducedAssetAuthority
+
+    async def scenario() -> None:
+        entered, release = threading.Event(), threading.Event()
+        finished = asyncio.Event()
+        handlers: list[asyncio.Task[object]] = []
+        original_handler = endpoint.handle_render
+
+        async def handler(request: web.Request) -> web.Response:
+            task = asyncio.current_task()
+            assert task is not None
+            handlers.append(task)
+            try:
+                return await original_handler(request)
+            finally:
+                finished.set()
+
+        def pause() -> None:
+            entered.set()
+            assert release.wait(10)
+            if outcome == "error":
+                raise InvalidDocument("render refused")
+
+        def render(*args):  # type: ignore[no-untyped-def]
+            if stage == "render":
+                pause()
+            return render_document(*args)
+
+        monkeypatch.setattr(endpoint, "handle_render", handler)
+        monkeypatch.setattr(endpoint, "render_document", render)
+        client, library = await _client(tmp_path)
+        response_task: asyncio.Task[ClientResponse] | None = None
+        source = _png([[(17, 83, 190, 255)]])
+        try:
+            uploaded = await client.post(
+                "/api/assets/media?scope=local&kind=media/image&name=source.png",
+                data=source,
+                headers={"Content-Type": "image/png"},
+            )
+            assert uploaded.status == 201
+            document = _canonical(
+                _document(
+                    1,
+                    1,
+                    {"l1": _layer("l1", "r0", 1, 1)},
+                    {"r0": _resource("r0", source, 1, 1)},
+                    ["l1"],
+                    next_ordinal=2,
+                )
+            )
+            digest = digest_bytes(document)
+            producer = AssetVault(tmp_path / "producer")
+            with producer.writer(digest) as writer:
+                writer.write(document)
+                writer.commit()
+            ref = AssetRef(digest, "document.json", len(document), media_type=MEDIA_TYPE)
+            value = Value(
+                "declared.document",
+                digest,
+                ValueMeta({"asset_refs": [ref.to_wire()]}),
+                EncodedPayload("declared.document", b"opaque", None),
+            )
+            with closing(hold_produced_vault(library.vault.root)):
+                ProducedAssetAuthority(library.vault, source=producer).capture({"out": value})
+            assert ProducedAssetInventory(library.vault.root).entries()[0].digest == digest
+            adopted = await client.post(
+                "/api/assets/image-document?scope=local",
+                data=document,
+                headers={"Content-Type": MEDIA_TYPE},
+            )
+            assert adopted.status == 201
+            if stage == "cached":
+                warm = await client.post(f"/api/assets/{digest}/render?scope=local", json={})
+                assert warm.status == 201
+                finished.clear()
+                handlers.clear()
+                original_put = library.store.put_derivation
+
+                def put_derivation(*args, **kwargs):  # type: ignore[no-untyped-def]
+                    pause()
+                    return original_put(*args, **kwargs)
+
+                monkeypatch.setattr(library.store, "put_derivation", put_derivation)
+            response_task = asyncio.create_task(
+                client.post(f"/api/assets/{digest}/render?scope=local", json={})
+            )
+            assert await asyncio.to_thread(entered.wait, 10)
+            with claim_inactive_produced_vault(library.vault.root) as inactive:
+                assert not inactive
+            if outcome == "cancel":
+                for _ in range(2):
+                    handlers[0].cancel()
+                    checkpoint = asyncio.Event()
+                    asyncio.get_running_loop().call_soon(checkpoint.set)
+                    await checkpoint.wait()
+                    assert not finished.is_set()
+                    with claim_inactive_produced_vault(library.vault.root) as inactive:
+                        assert not inactive
+            release.set()
+            await asyncio.wait_for(finished.wait(), 10)
+            with claim_inactive_produced_vault(library.vault.root) as inactive:
+                assert inactive
+            if outcome == "cancel":
+                with pytest.raises(ClientConnectionError):
+                    await response_task
+            else:
+                response = await response_task
+                expected = 201 if stage == "render" else 200
+                assert response.status == (expected if outcome == "success" else 400)
+                if outcome == "success":
+                    result = await response.json()
+                    output = await client.get(f"/api/assets/{result['asset']['digest']}")
+                    with Image.open(BytesIO(await output.read())) as image:
+                        assert image.convert("RGBA").getpixel((0, 0)) == (17, 83, 190, 255)
+                    with library.store.hold_asset_references() as roots:
+                        assert {digest, digest_bytes(source), result["asset"]["digest"]} <= roots
+            document_path = library.vault.resolve(digest)
+            assert document_path is not None and document_path.read_bytes() == document
+        finally:
+            release.set()
+            if response_task is not None:
+                await asyncio.gather(response_task, return_exceptions=True)
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_native_node_resolves_document_children_with_the_bound_resolver(tmp_path: Path) -> None:
     source = _png([[(90, 80, 70, 255)]])
     document = _document(
@@ -448,7 +590,8 @@ def test_native_node_resolves_document_children_with_the_bound_resolver(tmp_path
         media_type=MEDIA_TYPE,
         resolver=vault,
     )
-    output = RenderImageDocument.execute(document=reference)["image"]
+    layers = LoadLayers.execute(document=reference)["layers"]
+    output = FlattenLayers.execute(layers=layers)["image"]
     assert isinstance(output, np.ndarray)
     assert output.shape == (1, 1, 1, 3)
     assert np.allclose(output[0, 0, 0], [90 / 255, 80 / 255, 70 / 255])
@@ -520,8 +663,9 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
     from dinkster_caches import MemoryLRUCache
     from dinkster_engine import Engine, EventListener
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
-    from dinkster_nodes_image import AddLayer, FlattenLayers, register_image_types
-    from dinkster_nodes_media_io import LoadImage, register_media_types
+    from dinkster_image.compositor import AddLayer
+    from dinkster_image.ported.image_file_tools import LoadImage
+    from dinkster_image.types import register_image_types
     from dinkster_schema import build_node_types, build_schemas
     from dinkster_server import create_app
     from dinkster_values import TypeRegistry, register_core_types
@@ -538,7 +682,6 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
         register_image_types(registry)
         return Engine(
             schemas=schemas,
@@ -568,12 +711,12 @@ def test_render_api_and_flatten_node_rendition_are_byte_identical(
             asset = (await uploaded.json())["asset"]
             graph = Graph(
                 nodes={
-                    "load": GraphNode("dinkster.load_image", {"image": asset}),
+                    "load": GraphNode("dinkster.image.load_image", {"image": asset}),
                     "layers": GraphNode(
                         "dinkster.layers.add",
                         {
-                            "image": Link("load", "image"),
-                            "mask": Link("load", "mask"),
+                            "image": Link("load", "IMAGE"),
+                            "mask": Link("load", "MASK"),
                         },
                     ),
                     "flatten": GraphNode(

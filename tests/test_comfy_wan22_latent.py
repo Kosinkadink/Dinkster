@@ -10,14 +10,15 @@ from dinkster_api.v1 import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.wan22_latent import Wan22ImageToVideoLatent
+from dinkster_schema import claim_covers
+from dinkster_wan import NODES
+from dinkster_wan.wan22_latent import Wan22ImageToVideoLatent
 from dinkster_workers import load_manifest
 
 
 def test_wan22_schema_and_cold_native_discovery() -> None:
     schema = Wan22ImageToVideoLatent.schema()
-    assert schema.node_type == "Wan22ImageToVideoLatent"
+    assert schema.node_type == "dinkster.wan.wan22_image_to_video_latent"
     assert schema.category == "model/conditioning/wan"
     assert [i.id for i in schema.inputs] == [
         "vae",
@@ -40,6 +41,9 @@ def test_wan22_schema_and_cold_native_discovery() -> None:
     ]
     assert [(o.id, o.type) for o in schema.outputs] == [("LATENT", TypeExpr.concrete(LATENT_TYPE))]
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == manifest.namespaces
-    assert Wan22ImageToVideoLatent in COMFY_NODES
+    manifest = load_manifest("packages/dinkster-nodes-wan/dinkster-pack.toml")
+    assert all(
+        any(claim_covers(claim, n.schema().node_type) for claim in manifest.namespaces)
+        for n in NODES
+    )
+    assert NODES.count(Wan22ImageToVideoLatent) == 1

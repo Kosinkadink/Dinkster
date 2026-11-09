@@ -66,7 +66,10 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     if any(
         name != "uv.lock"
         and name not in tools_inputs
-        and not name.startswith("packages/dinkster-supervisor/")
+        and (
+            not name.startswith("packages/dinkster-supervisor/")
+            or name.startswith("packages/dinkster-supervisor/shared/")
+        )
         for name in changed
     ):
         return True
@@ -85,6 +88,19 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     return engine_lock(before) != engine_lock(after)
 
 
+def uses_engine_version(root: Path, path: Path) -> bool:
+    if project_metadata(path)[0] == "dinkster-supervisor":
+        return False
+    if (
+        path.parent.parent != root / "packages"
+        or not path.parent.name.startswith("dinkster-nodes-")
+        or path.parent.name in {"dinkster-nodes-dev", "dinkster-nodes-generation"}
+    ):
+        return True
+    manifests = [path.parent / "dinkster-pack.toml", *path.parent.glob("*_pack/dinkster-pack.toml")]
+    return not any(manifest.is_file() for manifest in manifests)
+
+
 def release_version(root: Path, tag: str) -> str:
     match = TAG_PATTERN.fullmatch(tag)
     if match is None:
@@ -93,7 +109,7 @@ def release_version(root: Path, tag: str) -> str:
     mismatches = [
         f"{name}={project_metadata(path)[1]}"
         for name, path in workspace_projects(root).items()
-        if name != "dinkster-supervisor" and project_metadata(path)[1] != version
+        if uses_engine_version(root, path) and project_metadata(path)[1] != version
     ]
     if mismatches:
         raise ValueError(
@@ -139,7 +155,7 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
             source.extractall(staged, filter="data")
         projects = workspace_projects(staged)
         versions = {
-            name: project_metadata(path)[1] if name == "dinkster-supervisor" else version
+            name: version if uses_engine_version(staged, path) else project_metadata(path)[1]
             for name, path in projects.items()
         }
         for name, path in projects.items():

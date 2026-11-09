@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+from .environment_history import prepare_entry, publish_entry, record_failed_restore
 from .environment_runtime import (
     engine_assignments,
     preserve_stopped_engine,
@@ -45,7 +46,7 @@ def previous_activation(root: Path, current: int) -> Journal | None:
     for path in sorted((root / "journal").glob("*.json"), reverse=True):
         journal = Journal.read(path)
         if (
-            journal.operation in {"update", "rollback", "repair"}
+            journal.operation in {"update", "rollback", "repair", "restore"}
             and journal.stage == "complete"
             and journal.target == current
             and journal.previous is not None
@@ -92,20 +93,18 @@ def begin_activation(
     operation: str,
     *,
     project_settings: dict[str, str] | None = None,
+    restored_from: int | None = None,
 ) -> Path:
     """Persist prior bindings before building; caller holds the project writer lock."""
-    if operation not in {"update", "rollback", "repair"}:
-        raise EnvironmentError("activation requires update, rollback or repair")
+    if operation not in {"update", "rollback", "repair", "restore"}:
+        raise EnvironmentError("activation requires update, rollback, repair or restore")
     previous = read_current(root)
     if previous is None or previous == target:
         raise EnvironmentError("activation requires distinct previous and target generations")
     if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
         raise EnvironmentError("incomplete environment operation requires recovery first")
     target_root = root / "generations" / str(target)
-    if operation == "rollback":
-        if Generation.read(target_root / "generation.json").number != target:
-            raise EnvironmentError("generation directory and recorded number disagree")
-    elif target_root.exists():
+    if target_root.exists():
         raise EnvironmentError("new generation target already exists")
     require_idle(root)
     bindings = engine_assignments(root, previous)
@@ -131,6 +130,7 @@ def begin_activation(
             "planned",
             bindings=tuple(bindings),
             project_settings=project_settings,
+            restored_from=restored_from,
         ).write(path)
         Journal.read(path)
         return path
@@ -142,7 +142,13 @@ def begin_activation(
 def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
     """Health-check every candidate before switching; preserve the old tree on failure."""
     journal = Journal.read(path)
-    if not journal.incomplete or journal.operation not in {"setup", "update", "rollback", "repair"}:
+    if not journal.incomplete or journal.operation not in {
+        "setup",
+        "update",
+        "rollback",
+        "repair",
+        "restore",
+    }:
         raise EnvironmentError("journal does not describe a pending generation activation")
     if read_current(root) != journal.previous:
         raise EnvironmentError("current changed after activation was planned")
@@ -151,6 +157,13 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         generation = Generation.read(target_root / "generation.json")
         if generation.number != journal.target or generation.drift(target_root):
             raise EnvironmentError("target generation is incomplete or has drift")
+        if journal.history_entry is None:
+            journal = replace(
+                journal,
+                history_entry=prepare_entry(
+                    root, target_root, operation=path.stem, reason=journal.operation
+                ),
+            )
         journal = replace(journal, stage="starting")
         journal.write(path)
         for binding in journal.bindings:
@@ -185,14 +198,18 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         replace(Journal.read(path), error=str(exc)).write(path)
         recover_activation(root, path)
         raise
+    assert journal.history_entry is not None
+    publish_entry(root, journal.history_entry)
 
 
 def recover_activation(root: Path, path: Path) -> None:
     """Restore state; caller holds project and any recorded registry/store locks."""
     journal = Journal.read(path)
     if not journal.incomplete:
+        if journal.stage == "complete" and journal.history_entry is not None:
+            publish_entry(root, journal.history_entry)
         return
-    if journal.operation not in {"setup", "update", "rollback", "repair"}:
+    if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
         raise EnvironmentError("journal operation does not support activation recovery")
     if (journal.previous is None) != (journal.operation == "setup"):
         raise EnvironmentError("journal previous generation does not match its operation")
@@ -220,8 +237,17 @@ def recover_activation(root: Path, path: Path) -> None:
                 tuple(cast("list[str]", binding["gpus"])),
             )
     target_root = root / "generations" / str(journal.target)
-    if journal.operation != "rollback" and target_root.exists():
+    if target_root.exists() and (
+        journal.operation != "rollback" or journal.restored_from is not None
+    ):
         shutil.rmtree(target_root)
     if journal.setup_registration is not None:
         restore_setup_registration(root, journal.setup_registration)
+    if journal.restored_from is not None:
+        record_failed_restore(
+            root,
+            path.stem,
+            journal.restored_from,
+            journal.error or "restore interrupted before successful activation",
+        )
     replace(journal, stage="rolled-back").write(path)

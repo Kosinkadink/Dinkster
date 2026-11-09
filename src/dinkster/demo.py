@@ -3,13 +3,10 @@
 Run 1 executes everything; run 2 is served entirely from cache; run 3 changes
 one literal and re-executes only the dirty suffix. The save node is
 non-idempotent and never cached. Engine events are printed as they arrive -
-the seed of dev mode (DESIGN 3.9). Run 4 shows dynamic inputs: an autogrow
-family elaborated from the document, growing the graph without a schema change.
-Run 5 shows dynamic outputs: document-stored output members flowing into
-dynamic inputs - the whole topology is known before anything executes.
-Run 6 shows parallelism: independent branches overlap and identical work
+the seed of dev mode (DESIGN 3.9). Run 4 shows parallelism: independent
+branches overlap and identical work
 coalesces (the delay nodes are io_bound - waits, not compute - so they are
-exempt from the default compute lane). Run 7 shows resource admission:
+exempt from the default compute lane). Run 5 shows resource admission:
 gpu-occupying nodes serialize on the default capacity-1 lane while io-bound
 nodes overlap freely.
 """
@@ -175,58 +172,7 @@ async def run_demo() -> None:
     result = await engine.run(graph, targets)
     print(f"  executed={list(result.executed)} cached={list(result.cached)}")
 
-    print("run 4: dynamic inputs - autogrow family, members from the document")
-    join_graph = Graph(
-        nodes={
-            "join": GraphNode(
-                "std.string.join",
-                {"pieces.first": "dinkster", "pieces.second": "elaborates", "separator": " "},
-            )
-        }
-    )
-    join = await engine.run(join_graph, ["join"])
-    print(f"  2 members -> {join.outputs['join']['text'].resolve()!r}")
-    join_graph = Graph(
-        nodes={
-            "join": GraphNode(
-                "std.string.join",
-                {
-                    "pieces.first": "dinkster",
-                    "pieces.second": "elaborates",
-                    "pieces.third": "dynamically",
-                    "separator": " ",
-                },
-            )
-        }
-    )
-    join = await engine.run(join_graph, ["join"])
-    print(
-        f"  3 members -> {join.outputs['join']['text'].resolve()!r} "
-        f"(executed={list(join.executed)}: new member set = new cache key)"
-    )
-
-    print("run 5: dynamic outputs - document-stored members, split feeding join")
-    split_graph = Graph(
-        nodes={
-            "split": GraphNode(
-                "std.string.split",
-                {"text": "dinkster plans dynamic topology upfront", "separator": " "},
-                output_members={"parts": ("a", "b", "c", "d", "e")},
-            ),
-            "rejoin": GraphNode(
-                "std.string.join",
-                {
-                    "pieces.x": Link("split", "parts.d"),
-                    "pieces.y": Link("split", "parts.e"),
-                    "separator": " ",
-                },
-            ),
-        }
-    )
-    rejoined = await engine.run(split_graph, ["rejoin"])
-    print(f"  parts.d + parts.e -> {rejoined.outputs['rejoin']['text'].resolve()!r}")
-
-    print("run 6: parallelism - independent branches overlap, identical work coalesces")
+    print("run 4: parallelism - independent branches overlap, identical work coalesces")
     fan = Graph(
         nodes={
             "a": GraphNode("dev.util.delay", {"value": "a", "seconds": 0.15}),
@@ -249,7 +195,7 @@ async def run_demo() -> None:
         f"{len(w1.cached) + len(w2.cached)} in {wall_ms:.0f}ms (single-flight)"
     )
 
-    print("run 7: resource admission - the gpu lane serializes, io-bound work overlaps")
+    print("run 5: resource admission - the gpu lane serializes, io-bound work overlaps")
     lanes = Graph(
         nodes={
             "g1": GraphNode("demo.gpu_delay", {"value": "g1", "seconds": 0.1}),

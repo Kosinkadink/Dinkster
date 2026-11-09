@@ -37,7 +37,8 @@ from dinkster_schema import (
 )
 from dinkster_values import TypeRegistry, Value, register_core_types
 from dinkster_workers import InProcessWorker
-from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
+from scaffold_nodes import SCAFFOLD_NODES as BASE_NODES
+from scaffold_nodes import register_scaffold_types
 
 from tests.async_scenarios import run_scenario
 
@@ -50,6 +51,61 @@ JOIN_SCHEMA = NodeSchema(
     input_families=(InputFamilySpec("pieces", STRING, min_members=1),),
     outputs=(OutputSpec("text", STRING),),
 )
+
+
+class JoinStrings(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "std.string.join",
+            inputs=JOIN_SCHEMA.inputs,
+            input_families=JOIN_SCHEMA.input_families,
+            outputs=JOIN_SCHEMA.outputs,
+        )
+
+    @classmethod
+    def execute(cls, *, separator: str, pieces: Mapping[str, str]) -> Mapping[str, object]:
+        return cls.outputs(text=separator.join(pieces.values()))
+
+
+class ConcatStrings(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "std.string.concat",
+            inputs=(
+                InputSpec("a", STRING),
+                InputSpec("b", STRING),
+                InputSpec("separator", STRING, default=" "),
+            ),
+            outputs=(OutputSpec("text", STRING),),
+        )
+
+    @classmethod
+    def execute(cls, *, a: str, b: str, separator: str) -> Mapping[str, object]:
+        return cls.outputs(text=a + separator + b)
+
+
+class SplitString(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "std.string.split",
+            inputs=(InputSpec("text", STRING), InputSpec("separator", STRING, default=" ")),
+            output_families=(OutputFamilySpec("parts", STRING, min_members=1),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, text: str, separator: str, output_spec: OutputInterface
+    ) -> Mapping[str, object]:
+        members = output_spec.family("parts")
+        pieces = text.split(separator, len(members) - 1)
+        pieces += [""] * (len(members) - len(pieces))
+        return cls.outputs(parts=dict(zip(members, pieces, strict=True)))
+
+
+SCAFFOLD_NODES = (*BASE_NODES, JoinStrings, ConcatStrings, SplitString)
 
 
 # --- elaboration is pure, stable, and order-preserving ---

@@ -59,6 +59,20 @@ from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from tests.async_scenarios import run_scenario
 
 
+class ListLength(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.list_length",
+            inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
+            outputs=(OutputSpec("length", TypeExpr.concrete(CORE_INT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, list: Sequence[object]) -> Mapping[str, object]:
+        return cls.outputs(length=len(list))
+
+
 def make_engine(
     events: list[EngineEvent] | None = None,
     *,
@@ -79,7 +93,7 @@ def make_engine(
 
     runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     return Engine(
-        schemas=build_schemas(SCAFFOLD_NODES),
+        schemas=build_schemas([*SCAFFOLD_NODES, ListLength]),
         registry=registry,
         worker=worker,
         pin_execution=lambda: runtime,
@@ -92,7 +106,7 @@ def make_engine(
 def InProcessWorkerFactory(registry: TypeRegistry):
     from dinkster_workers import InProcessWorker
 
-    return InProcessWorker(build_node_types(SCAFFOLD_NODES), registry)
+    return InProcessWorker(build_node_types([*SCAFFOLD_NODES, ListLength]), registry)
 
 
 def image_graph(ratio: float = 0.5) -> Graph:
@@ -128,6 +142,115 @@ def test_end_to_end_and_cache_behavior() -> None:
         assert set(third.cached) == {"g", "i"}
 
     run_scenario(scenario())
+
+
+@pytest.mark.parametrize("reuse", ["fresh", "cached", "coalesced"])
+def test_output_publication_is_awaited_before_descriptors(reuse: str) -> None:
+    async def scenario() -> None:
+        events: list[EngineEvent] = []
+        engine = make_engine(events)
+        graph = image_graph(ratio=0.25)
+        if reuse == "cached":
+            await engine.run(graph, ["s"])
+            events.clear()
+        entered = {name: asyncio.Event() for name in ("owner", "waiter")}
+        release = {name: asyncio.Event() for name in entered}
+
+        async def publish(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+            if node_id == "g":
+                assert outputs["image"].type_id == "dev.image"
+                entered[run_id].set()
+                await release[run_id].wait()
+
+        execution = replace(engine.pin_execution(), publish_outputs=publish)
+        tasks = [asyncio.create_task(engine.run(graph, ["s"], run_id="owner", execution=execution))]
+        if reuse == "coalesced":
+            tasks.append(
+                asyncio.create_task(engine.run(graph, ["s"], run_id="waiter", execution=execution))
+            )
+        try:
+            async with asyncio.timeout(10):
+                await entered["owner"].wait()
+                assert not any(
+                    e.node_id == "g" and e.kind in {"node_finished", "node_cached"} for e in events
+                )
+                release["owner"].set()
+                if reuse == "coalesced":
+                    await entered["waiter"].wait()
+                    assert not any(
+                        e.run_id == "waiter"
+                        and e.node_id == "g"
+                        and e.kind in {"node_finished", "node_cached"}
+                        for e in events
+                    )
+                    release["waiter"].set()
+                results = await asyncio.gather(*tasks)
+            assert all(
+                result.outputs["s"]["mean"].resolve() == pytest.approx(0.5) for result in results
+            )
+            if reuse == "cached":
+                assert results[0].executed == ()
+            if reuse == "coalesced":
+                assert results[1].cached
+                assert any(
+                    e.run_id == "waiter" and e.node_id == "g" and e.detail.get("coalesced") is True
+                    for e in events
+                )
+        finally:
+            for barrier in release.values():
+                barrier.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("reuse", ["fresh", "cached"])
+@pytest.mark.parametrize("outcome", ["refused", "cancelled"])
+def test_unpublished_outputs_never_escape_failed_or_cancelled_runs(
+    reuse: str, outcome: str
+) -> None:
+    async def scenario() -> None:
+        events: list[EngineEvent] = []
+        engine = make_engine(events)
+        graph = image_graph(ratio=0.25)
+        if reuse == "cached":
+            await engine.run(graph, ["s"])
+            events.clear()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def publish(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+            if node_id == "g":
+                entered.set()
+                await release.wait()
+                raise RuntimeError("publication refused")
+
+        execution = replace(engine.pin_execution(), publish_outputs=publish)
+        task = asyncio.create_task(engine.run(graph, ["s"], execution=execution))
+        try:
+            async with asyncio.timeout(10):
+                await entered.wait()
+                assert not any(e.kind in {"node_finished", "node_cached"} for e in events)
+                if outcome == "cancelled":
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                else:
+                    release.set()
+                    with pytest.RaisesGroup(
+                        pytest.RaisesExc(RuntimeError, match="publication refused")
+                    ):
+                        await task
+            assert not any(e.kind in {"node_finished", "node_cached"} for e in events)
+            recovered = await engine.run(graph, ["s"])
+            assert recovered.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
+            assert set(recovered.executed) | set(recovered.cached) == {"g", "i", "b", "s"}
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
 
 
 def test_no_cache_reexecutes_without_replacing_warm_cache_entries() -> None:
@@ -1171,11 +1294,9 @@ def test_non_idempotent_never_cached(tmp_path, monkeypatch) -> None:
 def test_default_inputs_applied() -> None:
     async def scenario() -> None:
         engine = make_engine()
-        graph = Graph(
-            nodes={"m": GraphNode("std.math.multiply_floats", {"a": 3.0})}  # b defaults to 1.0
-        )
+        graph = Graph(nodes={"m": GraphNode("dev.execution.add", {"value": 3})})
         result = await engine.run(graph, ["m"])
-        assert result.outputs["m"]["product"].resolve() == pytest.approx(3.0)
+        assert result.outputs["m"]["value"].resolve() == 4
 
     run_scenario(scenario())
 
@@ -1230,7 +1351,7 @@ def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
                 "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
                 # list<T>: a recursively concrete list stamp wraps children.
                 "l": GraphNode(
-                    "std.list.length",
+                    "test.list_length",
                     {"list": TypedLiteral("list<FLOAT>", [1.0, 2.0, 3.0])},
                 ),
                 # wildcard: the PreviewAny-shaped case that drove the form.
@@ -1624,13 +1745,13 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
 
     graph = Graph(
         nodes={
-            "x": GraphNode("std.math.add_ints", {"a": 3, "b": 0}),
-            "y": GraphNode("std.math.add_ints", {"a": 4, "b": 0}),
+            "x": GraphNode("dev.execution.value", {"value": 3}),
+            "y": GraphNode("dev.execution.value", {"value": 4}),
             "mk": GraphNode(
-                "std.list.make",
-                {"items.a": Link("x", "sum"), "items.b": Link("y", "sum")},
+                "dinkster.utilities.make_list",
+                {"items.a": Link("x", "value"), "items.b": Link("y", "value")},
             ),
-            "len": GraphNode("std.list.length", {"list": Link("mk", "list")}),
+            "len": GraphNode("test.list_length", {"list": Link("mk", "list")}),
         }
     )
 
@@ -1642,14 +1763,14 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
         engine = make_engine(events)
         await engine.run(graph, ["len"])
         fresh = summaries(events, "node_finished")
-        assert fresh["x"] == {"sum": {"typeId": "INT", "value": 3}}
+        assert fresh["x"] == {"value": {"typeId": "INT", "value": 3}}
         assert fresh["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
         assert fresh["len"] == {"length": {"typeId": "INT", "value": 2}}
 
         events.clear()
         await engine.run(graph, ["len"])  # everything cached
         hits = summaries(events, "node_cached")
-        assert hits["x"] == {"sum": {"typeId": "INT", "value": 3}}
+        assert hits["x"] == {"value": {"typeId": "INT", "value": 3}}
         assert hits["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
         assert hits["len"] == {"length": {"typeId": "INT", "value": 2}}
 
