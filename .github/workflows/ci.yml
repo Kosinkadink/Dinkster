@@ -155,7 +155,9 @@ jobs:
     if: always()
     name: format, lint, types and unit subset
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Hosted pytest has taken 24m21s before catalog export and frontend decode.
+    # Keep three times the exhausted 25-minute budget for the complete gate.
+    timeout-minutes: 75
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"

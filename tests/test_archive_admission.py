@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,33 @@ def test_service_fixture_probe_contract(name: str) -> None:
         else {"color.adjust": (1, "80d5efe19d0bd3ea8046438497b146d4870f67f1")}
     )
     assert all(item["role"] == "executing" for item in result.data["schemas"])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("times_out", [False, True])
+def test_executable_probe_retains_elapsed_time(tmp_path: Path, times_out: bool) -> None:
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    if times_out:
+        (root / "color_tools" / "__init__.py").write_text(
+            "import threading\nthreading.Event().wait()\n"
+        )
+    settings = ProbeSettings(probe_timeout_seconds=1 if times_out else 30)
+    started = time.monotonic()
+    result = run_executable_probe(root, settings=settings, require_isolation=False)
+    total = time.monotonic() - started
+    assert result.operator_details is not None
+    elapsed = result.operator_details["elapsedSeconds"]
+    assert isinstance(elapsed, float) and 0 < elapsed <= total
+    if times_out:
+        assert elapsed >= settings.probe_timeout_seconds
+        assert result.blocked
+        assert [(finding.code, finding.message) for finding in result.findings] == [
+            ("probe.timeout", f"Executable probe exceeded 1s (elapsed {elapsed:.6f}s).")
+        ]
+    else:
+        assert not result.blocked and result.data is not None
+        assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
 
 
 @pytest.mark.parametrize(
