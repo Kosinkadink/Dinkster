@@ -454,6 +454,77 @@ def test_default_pack_admission_uses_complete_version_history() -> None:
     assert "--published-sources .publication/sources/official-packs.lock" in command
 
 
+@pytest.mark.parametrize(
+    ("changed", "pull_request", "all_candidates"),
+    [
+        (".github/workflows/official-packs.yml", True, True),
+        (".github/workflows/default-pack-admission.yml", True, False),
+        ("packages/dinkster-text/dinkster-pack.toml", True, False),
+        (".github/workflows/official-packs.yml", False, False),
+    ],
+)
+def test_default_admission_workflow_selects_publication_candidates(
+    tmp_path: Path, changed: str, pull_request: bool, all_candidates: bool
+) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    base = subprocess.check_output(["git", "mktree"], cwd=tmp_path, input="", text=True).strip()
+    path = tmp_path / changed
+    path.parent.mkdir(parents=True)
+    path.write_text("changed\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    tree = subprocess.check_output(["git", "write-tree"], cwd=tmp_path, text=True).strip()
+    original = subprocess.check_output(["git", "cat-file", "-p", "HEAD"], cwd=ROOT, text=True)
+    metadata = "\n".join(
+        line for line in original.splitlines() if line.startswith(("author ", "committer "))
+    )
+    head = subprocess.check_output(
+        ["git", "hash-object", "-w", "-t", "commit", "--stdin"],
+        cwd=tmp_path,
+        input=f"tree {tree}\n{metadata}\n\nPublication fixture\n",
+        text=True,
+    ).strip()
+    subprocess.run(["git", "update-ref", "HEAD", head], cwd=tmp_path, check=True)
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
+    )
+    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    stub = """
+    uv() {
+      if [ "$4" = "-c" ]; then
+        echo development-engine
+      else
+        printf '%s\\0' "$@" > admission-arguments
+      fi
+    }
+    """
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
+    subprocess.run(
+        [bash, "-e", "-c", stub + command],
+        cwd=tmp_path,
+        env=os.environ
+        | {"CANDIDATE_BASE": base if pull_request else "", "PUBLISHED_VERSION": "1.2.3"},
+        check=True,
+    )
+    arguments = (tmp_path / "admission-arguments").read_bytes().decode().split("\0")[:-1]
+    assert arguments == [
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "scripts.check_default_pack_admission",
+        "--engine-version",
+        "development-engine" if pull_request else "1.2.3",
+        "--candidate-base" if pull_request else "--published-sources",
+        ("0" * 40 if all_candidates else base)
+        if pull_request
+        else ".publication/sources/official-packs.lock",
+    ]
+
+
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
