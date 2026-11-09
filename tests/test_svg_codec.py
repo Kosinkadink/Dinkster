@@ -192,6 +192,7 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
     async def scenario() -> None:
         (tmp_path / "svg_fixture.py").write_text(
             "from test_svg_codec import SvgConsumer, SvgSource\n"
+            "from dinkster_nodes_image import register_types\n"
             "NODES = (SvgSource, SvgConsumer)\n",
             encoding="ascii",
         )
@@ -199,7 +200,7 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
         fixture.write_text(
             '[pack]\nname="svg-fixture"\npublisher="dinkster"\n'
             'namespaces=["svg-fixture"]\n[pack.entry]\n'
-            'nodes="svg_fixture:NODES"\n',
+            'nodes="svg_fixture:NODES"\ntypes="svg_fixture:register_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
@@ -208,9 +209,7 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
             },
         )
         try:

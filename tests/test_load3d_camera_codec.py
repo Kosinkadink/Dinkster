@@ -303,6 +303,7 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
     async def scenario() -> None:
         (tmp_path / "load3d_camera_fixture.py").write_text(
             "from test_load3d_camera_codec import CameraConsumer, CameraSource\n"
+            "from dinkster_nodes_3d import register_types\n"
             "NODES = (CameraSource, CameraConsumer)\n",
             encoding="ascii",
         )
@@ -310,16 +311,14 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
         fixture.write_text(
             '[pack]\nname="load3d-camera-fixture"\npublisher="dinkster"\n'
             'namespaces=["load3d-camera-fixture"]\n[pack.entry]\n'
-            'nodes="load3d_camera_fixture:NODES"\n',
+            'nodes="load3d_camera_fixture:NODES"\ntypes="load3d_camera_fixture:register_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
             }
         )
         try:
@@ -368,6 +367,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
         for module, (node, namespace) in modules.items():
             (tmp_path / f"{module}.py").write_text(
                 f"from test_load3d_camera_codec import {node}\n"
+                "from dinkster_nodes_3d import register_types\n"
                 f"NODES = ({node},)\n",
                 encoding="ascii",
             )
@@ -375,7 +375,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
             manifest.write_text(
                 f'[pack]\nname="{module}"\npublisher="dinkster"\n'
                 f'namespaces=["{namespace}"]\n[pack.entry]\n'
-                f'nodes="{module}:NODES"\n',
+                f'nodes="{module}:NODES"\ntypes="{module}:register_types"\n',
                 encoding="ascii",
             )
             manifests[module] = manifest

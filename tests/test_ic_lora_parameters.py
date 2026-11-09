@@ -24,7 +24,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_ltx import register_types
 from dinkster_values import EncodedLatentTensor, encode_latent
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackInfo, PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 
@@ -154,23 +154,14 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
         source_root = Path(__file__).resolve().parents[1] / "packages"
         (tmp_path / f"{module}.py").write_text(
             "from test_ic_lora_parameters import ICLoRAParametersConsumer, ICLoRAParametersSource\n"
+            "from dinkster_nodes_ltx import register_types as register_ltx_types\n"
+            "def register_types(registry):\n"
+            "    with registry.registering_pack(\n"
+            "        'ic-lora-parameters-source', ('IC_LORA_PARAMETERS',), allow_bare=True\n"
+            "    ):\n"
+            "        register_ltx_types(registry)\n"
             "SOURCE_NODES = (ICLoRAParametersSource,)\n"
             "CONSUMER_NODES = (ICLoRAParametersConsumer,)\n",
-            encoding="ascii",
-        )
-        owner = tmp_path / "ic_lora_parameters_owner.py"
-        owner.write_text(
-            "from dinkster_inference_wire.ic_lora_parameters import register_ic_lora_parameters_type\n"
-            "def register_types(registry):\n"
-            "    return (register_ic_lora_parameters_type(registry),)\n"
-            "NODES = ()\n",
-            encoding="ascii",
-        )
-        owner_manifest = tmp_path / "owner-dinkster-pack.toml"
-        owner_manifest.write_text(
-            '[pack]\nname = "ic-lora-parameters-owner"\npublisher = "dinkster"\n'
-            'type-namespaces = ["IC_LORA_PARAMETERS"]\n[pack.entry]\n'
-            'nodes = "ic_lora_parameters_owner:NODES"\ntypes = "ic_lora_parameters_owner:register_types"\n',
             encoding="ascii",
         )
         source_manifest = tmp_path / "source-dinkster-pack.toml"
@@ -189,10 +180,16 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
                 "CONSUMER_NODES",
             ),
         ):
+            claims = (
+                'type-namespaces = ["IC_LORA_PARAMETERS"]\n'
+                if manifest == source_manifest
+                else '[pack.dependencies]\nic-lora-parameters-source = ">=0.1.0"\n'
+            )
             manifest.write_text(
-                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-                f'namespaces = ["{namespace}"]\n\n[pack.entry]\n'
-                f'nodes = "{module}:{nodes}"\n',
+                f'[pack]\nname = "{name}"\nversion = "0.1.0"\npublisher = "dinkster"\n'
+                'engine = ">=0.0.2.dev0,<0.1"\n'
+                f'namespaces = ["{namespace}"]\n{claims}\n[pack.entry]\n'
+                f'nodes = "{module}:{nodes}"\ntypes = "{module}:register_types"\n',
                 encoding="ascii",
             )
         composer = ServingComposer(
@@ -207,23 +204,26 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
             },
         )
         try:
-            await composer.add_pack(PackSpec(manifest=owner_manifest, in_process=True))
+            source_packs = {
+                "ic-lora-parameters-source": PackInfo("IC-LoRA source", version="0.1.0")
+            }
             if in_process:
                 specs = (
-                    PackSpec(manifest=source_manifest, in_process=True),
+                    PackSpec(manifest=source_manifest, in_process=True, packs=source_packs),
                     PackSpec(manifest=consumer_manifest, in_process=True),
                 )
             else:
                 specs = (
                     PackSpec(
                         manifest=source_manifest,
+                        packs=source_packs,
                         worker_group="ic-lora-producer",
-                        group_manifests=(owner_manifest, source_manifest),
+                        group_manifests=(source_manifest,),
                     ),
                     PackSpec(
                         manifest=consumer_manifest,
                         worker_group="ic-lora-consumer",
-                        group_manifests=(owner_manifest, consumer_manifest),
+                        group_manifests=(consumer_manifest,),
                     ),
                 )
             for spec in specs:

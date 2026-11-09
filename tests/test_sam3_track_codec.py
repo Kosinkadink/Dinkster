@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry
-from dinkster_values import LATENT_TYPE, EncodedLatentTensor, encode_latent
 from dinkster_nodes_vision_sam3 import register_types
+from dinkster_values import LATENT_TYPE, EncodedLatentTensor, encode_latent
 
 PACKED = EncodedLatentTensor("uint8", (2, 1, 1, 3), bytes((1, 128, 255, 85, 42, 16)))
 EMPTY = EncodedLatentTensor("uint8", (3, 0, 2, 4), b"")

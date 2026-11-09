@@ -782,7 +782,8 @@ def test_connected_type_mismatch_is_diagnosed_never_redispatched() -> None:
                 {"string_a": "he", "string_b": "llo", "delimiter": ""},
             ),
             "n": GraphNode(
-                "test.stylize", {"source": Link("c", "STRING"), "source.scale": 2.0},
+                "test.stylize",
+                {"source": Link("c", "STRING"), "source.scale": 2.0},
                 slot_variants={"source": "number"},
             ),
         }
