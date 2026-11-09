@@ -288,7 +288,6 @@ def publish_official_packs(
             public.add(pack.pack)
     result: list[dict[str, object]] = []
     candidates: dict[str, str] = {}
-    deadline = time.monotonic() + activation_timeout
     for pack in ordered if registry is not None else catalog.packs:
         locks = output / f"{pack.pack}-{pack.version}.json"
         row: dict[str, object] = {
@@ -308,7 +307,7 @@ def publish_official_packs(
                     dep,
                     selected[dep.pack].version if dep.pack in selected else None,
                     candidates.get(dep.pack),
-                    deadline,
+                    time.monotonic() + activation_timeout,
                 )
             try:
                 verdict = publish_release(
