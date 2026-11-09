@@ -59,6 +59,20 @@ from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from tests.async_scenarios import run_scenario
 
 
+class ListLength(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.list_length",
+            inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
+            outputs=(OutputSpec("length", TypeExpr.concrete(CORE_INT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, list: Sequence[object]) -> Mapping[str, object]:
+        return cls.outputs(length=len(list))
+
+
 def make_engine(
     events: list[EngineEvent] | None = None,
     *,
@@ -79,7 +93,7 @@ def make_engine(
 
     runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     return Engine(
-        schemas=build_schemas(SCAFFOLD_NODES),
+        schemas=build_schemas([*SCAFFOLD_NODES, ListLength]),
         registry=registry,
         worker=worker,
         pin_execution=lambda: runtime,
@@ -92,7 +106,7 @@ def make_engine(
 def InProcessWorkerFactory(registry: TypeRegistry):
     from dinkster_workers import InProcessWorker
 
-    return InProcessWorker(build_node_types(SCAFFOLD_NODES), registry)
+    return InProcessWorker(build_node_types([*SCAFFOLD_NODES, ListLength]), registry)
 
 
 def image_graph(ratio: float = 0.5) -> Graph:
@@ -1280,11 +1294,9 @@ def test_non_idempotent_never_cached(tmp_path, monkeypatch) -> None:
 def test_default_inputs_applied() -> None:
     async def scenario() -> None:
         engine = make_engine()
-        graph = Graph(
-            nodes={"m": GraphNode("std.math.multiply_floats", {"a": 3.0})}  # b defaults to 1.0
-        )
+        graph = Graph(nodes={"m": GraphNode("dev.execution.add", {"value": 3})})
         result = await engine.run(graph, ["m"])
-        assert result.outputs["m"]["product"].resolve() == pytest.approx(3.0)
+        assert result.outputs["m"]["value"].resolve() == 4
 
     run_scenario(scenario())
 
@@ -1339,7 +1351,7 @@ def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
                 "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
                 # list<T>: a recursively concrete list stamp wraps children.
                 "l": GraphNode(
-                    "std.list.length",
+                    "test.list_length",
                     {"list": TypedLiteral("list<FLOAT>", [1.0, 2.0, 3.0])},
                 ),
                 # wildcard: the PreviewAny-shaped case that drove the form.
@@ -1733,13 +1745,13 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
 
     graph = Graph(
         nodes={
-            "x": GraphNode("std.math.add_ints", {"a": 3, "b": 0}),
-            "y": GraphNode("std.math.add_ints", {"a": 4, "b": 0}),
+            "x": GraphNode("dev.execution.value", {"value": 3}),
+            "y": GraphNode("dev.execution.value", {"value": 4}),
             "mk": GraphNode(
-                "std.list.make",
-                {"items.a": Link("x", "sum"), "items.b": Link("y", "sum")},
+                "dinkster.utilities.make_list",
+                {"items.a": Link("x", "value"), "items.b": Link("y", "value")},
             ),
-            "len": GraphNode("std.list.length", {"list": Link("mk", "list")}),
+            "len": GraphNode("test.list_length", {"list": Link("mk", "list")}),
         }
     )
 
@@ -1751,14 +1763,14 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
         engine = make_engine(events)
         await engine.run(graph, ["len"])
         fresh = summaries(events, "node_finished")
-        assert fresh["x"] == {"sum": {"typeId": "INT", "value": 3}}
+        assert fresh["x"] == {"value": {"typeId": "INT", "value": 3}}
         assert fresh["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
         assert fresh["len"] == {"length": {"typeId": "INT", "value": 2}}
 
         events.clear()
         await engine.run(graph, ["len"])  # everything cached
         hits = summaries(events, "node_cached")
-        assert hits["x"] == {"sum": {"typeId": "INT", "value": 3}}
+        assert hits["x"] == {"value": {"typeId": "INT", "value": 3}}
         assert hits["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
         assert hits["len"] == {"length": {"typeId": "INT", "value": 2}}
 
