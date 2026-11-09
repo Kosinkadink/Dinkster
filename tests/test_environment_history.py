@@ -409,7 +409,9 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
         pack = tmp_path / name
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
-            HEALTHY_MANIFEST.replace("healthy", name)
+            HEALTHY_MANIFEST.replace("healthy-nodes", "healthy")
+            .replace('publisher = "dinkster"\n', "")
+            .replace("healthy", name)
             .replace(f"{name}_nodes:", f"{name}:")
             .replace("numpy>=1.26", "fixture-adopt==1.0")
             .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n')

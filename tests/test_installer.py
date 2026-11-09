@@ -276,7 +276,9 @@ def test_unsealed_generation_catalog_preparation(
         body = "raise RuntimeError('catalog import refused')\n" + body
     source = tmp_path / "source"
     source.mkdir()
-    (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST)
+    (source / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace("healthy-nodes", "healthy").replace('publisher = "dinkster"\n', "")
+    )
     (source / "healthy_nodes.py").write_text(body)
     archive = tmp_path / "healthy.zip"
     digest = build_artifact(source, archive)

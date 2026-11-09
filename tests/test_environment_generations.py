@@ -630,7 +630,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     for name in ("healthy", "other"):
         source = tmp_path / name
         source.mkdir()
-        manifest_text = HEALTHY_MANIFEST.replace("healthy", name)
+        manifest_text = (
+            HEALTHY_MANIFEST.replace("healthy-nodes", "healthy")
+            .replace('publisher = "dinkster"\n', "")
+            .replace("healthy", name)
+        )
         if problem == "custom":
             manifest_text = manifest_text.replace("numpy>=1.26", "stable-fixture>=1")
             if name == "healthy":
