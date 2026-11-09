@@ -21,7 +21,6 @@ from types import SimpleNamespace
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetVault, digest_bytes
 from dinkster_engine import EngineEvent, ExecutionError, ExecutionSelection
 from dinkster_graph import (
@@ -78,7 +77,6 @@ from dinkster.serve import merge_remote_budgets
 from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
-MEDIA_IO_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-media-io" / "dinkster-pack.toml"
 
 
 def remote_spec(host: str, port: int, tmp_path: Path, **overrides: object) -> RemoteSpec:
@@ -186,55 +184,6 @@ def test_add_remote_composes_surface_and_executes_remotely(tmp_path: Path) -> No
                     if event.kind in ("node_finished", "node_cached") and event.node_id == "c"
                 }
                 assert keys["hinted"] == keys["unhinted"]
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_add_remote_composes_full_media_pack_with_lazy_capture_choices(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    async def scenario() -> None:
-        monkeypatch.delenv("DINKSTER_AUDIO_CAPTURE_PROVIDER", raising=False)
-        monkeypatch.delenv("DINKSTER_VIDEO_CAPTURE_PROVIDER", raising=False)
-        proc, host, port = await start_service(MEDIA_IO_MANIFEST, tmp_path)
-        try:
-            composer = ServingComposer()
-            try:
-                await composer.add_remote(remote_spec(host, port, tmp_path, trust_reserved=True))
-                composition = composer.composition
-                choice_ids = {
-                    "dinkster.devices.audio_inputs",
-                    "dinkster.devices.video_inputs",
-                }
-                assert "dinkster.record_audio" in composition.schemas
-                assert "dinkster.webcam_capture" in composition.schemas
-                assert set(composition.lazy_choices) == choice_ids
-                assert {
-                    choice_id: composer._choice_owners[choice_id] for choice_id in choice_ids
-                } == dict.fromkeys(choice_ids, "box1")
-                for choice_id in choice_ids:
-                    assert await composition.lazy_choices[choice_id]() == ()
-
-                engine = composition.make_engine(on_event=lambda event: None)
-                graph = Graph(
-                    nodes={
-                        "empty": GraphNode(
-                            "dinkster.empty_audio",
-                            {"duration": 0.001, "sample_rate": 8_000, "channels": 1},
-                        )
-                    }
-                )
-                result = await engine.run(
-                    graph,
-                    ["empty"],
-                    execution=composer.place_execution(engine.pin_execution(), {"empty": "box1"}),
-                )
-                assert result.executed == ("empty",)
-                assert result.outputs["empty"]["audio"].type_id == AUDIO_TYPE
             finally:
                 await composer.close()
         finally:

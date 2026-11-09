@@ -69,7 +69,6 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "setup",
         "pack",
         "installs",
-        "port",
         "demo",
         "isolated-demo",
     ):

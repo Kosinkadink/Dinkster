@@ -63,7 +63,7 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
         ),
         (
             "dinkster.misc.models.empty_ar_video_latent",
-            "",
+            "EmptyARVideoLatent",
             "model/latent/autoregressive",
             (832, 480, 81, 1),
             (16, 16, 1, 1),

@@ -211,11 +211,6 @@ jobs:
       - name: Verify bounded VIDEO save memory
         if: matrix.os == 'linux' && matrix.run_checks
         run: uv run --locked pytest tests/test_video_conformance_tool.py::test_full_resolution_rss_gate -q -rx
-      - name: Verify bounded AUDIO trim and save memory
-        if: matrix.os == 'linux' && matrix.run_checks
-        run: |
-          mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
-          uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
       - run: >
           uv run python -m pytest -q ${{ matrix.pytest_args }}
           --ignore-glob=tests/test_environment_*.py
@@ -232,9 +227,9 @@ jobs:
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
           --cov=dinkster_api --cov=dinkster_assets
-          --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
-          --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
-          --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
+          --cov=dinkster_caches --cov=dinkster_engine
+          --cov=dinkster_graph --cov=dinkster_memory
+          --cov=dinkster_nodes_image
           --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
           --cov=dinkster_workers --cov-branch --cov-report=
         if: runner.os == 'Linux'
@@ -378,9 +373,9 @@ jobs:
             -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=0 `
             --case-shard-file tests/test_environment_generations.py `
             --cov=dinkster_api --cov=dinkster_assets `
-            --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
-            --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
-            --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io `
+            --cov=dinkster_caches --cov=dinkster_engine `
+            --cov=dinkster_graph --cov=dinkster_memory `
+            --cov=dinkster_nodes_image `
             --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values `
             --cov=dinkster_workers --cov-branch --cov-report=
           exit $LASTEXITCODE

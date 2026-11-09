@@ -28,7 +28,7 @@ def test_hunyuan_text_schemas() -> None:
         ),
         (
             "dinkster.hunyuan.text_encode_hunyuan_video_image_to_video",
-            "",
+            "TextEncodeHunyuanVideo_ImageToVideo",
             "model/conditioning/hunyuan video",
             (
                 ("clip", CLIP_TYPE),
