@@ -101,11 +101,14 @@ def run_selected_tests(
         tracked = subprocess.check_output(
             ["git", "-C", str(root), "ls-files", "-z"], text=True
         ).split("\0")
-        # Tests come from the engine; implementations and metadata come from wheels.
+        # Tests and build fixtures come from the engine; runtime bytes come from wheels.
         for name in filter(None, tracked):
             relative = Path(name)
             official = len(relative.parts) > 1 and relative.parts[1] in directories
-            if official and "tests" not in relative.parts:
+            test_metadata = relative.name == "pyproject.toml" or (
+                relative.name.startswith("draft-") and relative.suffix == ".json"
+            )
+            if official and "tests" not in relative.parts and not test_metadata:
                 continue
             source = root / relative
             destination = checkout / relative
@@ -122,17 +125,24 @@ def run_selected_tests(
             manifest = load_manifest(pack_manifest_path(destination))
             if manifest.name != pack.pack:
                 raise ValueError(f"selected test archive names {manifest.name}, not {pack.pack}")
-            # Checkout discovery uses these two files; execution uses the wheel's RECORD.
-            (package / "pyproject.toml").write_text(
-                f'[project]\nname = "{pack.pack}"\n', encoding="utf-8"
-            )
+            # Build configuration is engine test data, never installed. Runtime
+            # identity and implementation come from the wheel's RECORD and manifest.
             shutil.copy2(manifest.path, package / "dinkster-pack.toml")
             # Source-layout contract tests read resources beside the manifest.
-            # Their bytes must still come from the selected wheel, not the checkout.
+            # Keep Python modules inside their import package so cwd cannot shadow
+            # standard-library modules such as types in spawned workers.
             for resource in manifest.root.iterdir():
                 target = package / resource.name
-                if not target.exists():
-                    target.symlink_to(resource, target_is_directory=resource.is_dir())
+                if target.exists() or resource.suffix in {".py", ".pyc"}:
+                    continue
+                if resource.is_dir():
+                    shutil.copytree(
+                        resource,
+                        target,
+                        ignore=shutil.ignore_patterns("*.py", "*.pyc", "__pycache__"),
+                    )
+                else:
+                    shutil.copy2(resource, target)
             module_roots.append(str(destination))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(destination / entry.replace(".", "/"))

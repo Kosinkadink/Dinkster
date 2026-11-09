@@ -1235,8 +1235,8 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
             composition = composer.composition
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
-            assert composition.packs["dinkster-text"].version == "0.0.1"
-            assert composition.packs["dinkster-image"].version == "0.0.1"
+            assert composition.packs["dinkster-text"].version == "0.0.2"
+            assert composition.packs["dinkster-image"].version == "0.0.2"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )
@@ -1498,6 +1498,9 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     )
     checkout_module = engine / "packages/dinkster-nodes-image/src/dinkster_image"
     checkout_module.mkdir(parents=True)
+    (checkout_module.parent.parent / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster-image"\n'
+    )
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
     (tests / "test_image_nodes.py").write_text(
         "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
@@ -1530,6 +1533,10 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         "    pack_root = Path(__file__).parents[1] / 'packages/dinkster-nodes-image'\n"
         "    assert tomllib.loads((pack_root / 'pyproject.toml').read_text()) "
         "== {'project': {'name': 'dinkster-image'}}\n"
+        "    assert (pack_root / 'locales/en.json').read_text() == '{}'\n"
+        "    assert not (pack_root / 'locales').is_symlink()\n"
+        "    subprocess.run([sys.executable, '-c', 'from types import MappingProxyType'], "
+        "cwd=pack_root, check=True)\n"
         "    from dinkster.compose import default_pack_spec\n"
         "    info = default_pack_spec('dinkster-image').packs['dinkster-image']\n"
         "    assert info.version == '1.2.3'\n"
@@ -1662,6 +1669,9 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     )
     module = source / "dinkster_image"
     module.mkdir()
+    (module / "types.py").write_text("import json\n")
+    (module / "locales").mkdir()
+    (module / "locales/en.json").write_text("{}")
     value = 13 if problem in {"broken", "mixed-class", "shadowed", "class-shadow"} else 47
     (module / "__init__.py").write_text(
         ("import missing_selected_internal_dependency\n" if problem == "dependency" else "")
@@ -1741,6 +1751,9 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     )
     checkout_module = engine / "packages" / distribution / "src" / entry.replace(".", "/")
     checkout_module.mkdir(parents=True)
+    (checkout_module.parent.parent / "pyproject.toml").write_text(
+        f'[project]\nname = "{pack_id}"\n'
+    )
     (checkout_module / "__init__.py").write_text("VALUE = 17\n")
     if vision:
         tests = engine / "packages" / distribution / "tests"
