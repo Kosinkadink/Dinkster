@@ -16,18 +16,23 @@ from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import cast
 
+from dinkster_values.limits import (
+    PACK_WHEEL_ARCHIVE_LIMIT_BYTES,
+    PACK_WHEEL_EXPANDED_LIMIT_BYTES,
+    PACK_WHEEL_MANIFEST_LIMIT_BYTES,
+)
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from .manifest import PackManifest, load_manifest
 
 MANIFEST_FILENAME = "dinkster-pack.toml"
-MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = PACK_WHEEL_ARCHIVE_LIMIT_BYTES
 MAX_FILE_BYTES = MAX_ARCHIVE_BYTES
-MAX_EXPANDED_BYTES = 256 * 1024 * 1024
+MAX_EXPANDED_BYTES = PACK_WHEEL_EXPANDED_LIMIT_BYTES
 MAX_ENTRIES = 10_000
 MAX_PATH_BYTES = 512
-MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_MANIFEST_BYTES = PACK_WHEEL_MANIFEST_LIMIT_BYTES
 _SKIP_DIRS = frozenset(
     {
         ".git",

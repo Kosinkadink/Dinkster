@@ -246,7 +246,7 @@ def dinkster_imports(path: Path) -> set[str]:
 
 def workspace_package_names(packages: Path) -> set[str]:
     return {
-        path.name.replace("-", "_")
+        tomllib.loads((path / "pyproject.toml").read_text())["project"]["name"].replace("-", "_")
         for path in packages.iterdir()
         if path.is_dir()
         and path.name.startswith("dinkster-")
@@ -270,10 +270,10 @@ def test_every_package_is_governed() -> None:
 
 def test_workspace_package_discovery_ignores_stale_bytecode(tmp_path: Path) -> None:
     (tmp_path / "dinkster-real").mkdir()
-    (tmp_path / "dinkster-real/pyproject.toml").touch()
+    (tmp_path / "dinkster-real/pyproject.toml").write_text('[project]\nname = "dinkster-renamed"\n')
     (tmp_path / "dinkster-removed/src/dinkster_removed/__pycache__").mkdir(parents=True)
 
-    assert workspace_package_names(tmp_path) == {"dinkster_real"}
+    assert workspace_package_names(tmp_path) == {"dinkster_renamed"}
 
 
 def test_dependency_scan_includes_ungoverned_imports(tmp_path: Path) -> None:
@@ -308,10 +308,11 @@ def test_one_way_dependencies() -> None:
         if package in EXTERNAL_PACKAGES:
             continue
         root = EVIDENCE_ROOT if package == "dinkster_acceptance" else REPO_ROOT
-        src = root / "packages" / package.replace("_", "-") / "src" / package
-        if not src.exists():
+        sources = list((root / "packages").glob(f"*/src/{package}"))
+        if not sources:
             assert not allowed, f"metadata-only package {package} declares code dependencies"
             continue
+        (src,) = sources
         assert src.is_dir(), f"missing package source: {src}"
         for module in src.rglob("*.py"):
             checked += 1
@@ -377,7 +378,7 @@ def test_media_packages_share_comfyuis_pyav_runtime() -> None:
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     assert packages["av"]["version"] == "18.1.0"
-    for package in ("dinkster-audio", "dinkster-video", "dinkster-video-runtime"):
+    for package in ("dinkster-nodes-audio", "dinkster-nodes-video", "dinkster-video-runtime"):
         project = tomllib.loads(
             (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
         )

@@ -87,12 +87,13 @@ def write_pack(
     module bytes, so a marker bump is a new artifact digest - which is
     exactly what makes activation classify the pack as a reload."""
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / f"{name}_nodes.py").write_text(
+    (directory / name).mkdir(exist_ok=True)
+    (directory / name / "__init__.py").write_text(
         MODULE_TEMPLATE.format(name=name, marker=marker, surface=surface)
     )
     extension_table = (
         "\n[pack.extension]\n"
-        f'schema = "{name}_nodes:extension_registration"\n'
+        f'schema = "{name}:extension_registration"\n'
         'privileges = ["schema"]\n'
         'capabilities = ["routes"]\n'
         if extension
@@ -100,7 +101,7 @@ def write_pack(
     )
     (directory / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n\n'
-        f'[pack.entry]\nnodes = "{name}_nodes:NODES"\n' + extension_table
+        f'[pack.entry]\nnodes = "{name}:NODES"\n' + extension_table
     )
     return directory
 

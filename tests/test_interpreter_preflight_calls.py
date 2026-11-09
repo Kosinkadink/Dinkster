@@ -28,9 +28,13 @@ def _unexpected(*_args: object, **_kwargs: object) -> None:
 
 def _manifest(root: Path, name: str = "test-pack") -> Path:
     root.mkdir(parents=True, exist_ok=True)
+    package = root / name.replace("-", "_")
+    package.mkdir(exist_ok=True)
+    (package / "__init__.py").write_text("NODES = []\n")
     path = root / "dinkster-pack.toml"
     path.write_text(
-        f'[pack]\nname = "{name}"\n[pack.sandbox]\n[pack.entry]\nnodes = "nodes:NODES"\n'
+        f'[pack]\nname = "{name}"\n[pack.sandbox]\n[pack.entry]\n'
+        f'nodes = "{name.replace("-", "_")}:NODES"\n'
     )
     return path
 
