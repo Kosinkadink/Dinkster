@@ -45,8 +45,8 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
   tests/test_environment_generations.py::test_generation_retains_verified_engine_manifest \
-  tests/test_installer.py::test_http_registry_fetcher_uses_verified_download_ticket \
-  tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_ticket_size \
+  tests/test_installer.py::test_http_registry_fetcher_uses_verified_static_wheel \
+  tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_wheel_size \
   tests/test_installer.py::test_cli_restore_downloads_registry_sources \
   tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
   tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
@@ -68,7 +68,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
   tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
-  tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_zip \
+  tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_wheel \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_verified_wheel \
   tests/test_pack_wheel.py \
   tests/test_pack_archive.py::test_registry_archive_security_preserves_block_and_review \

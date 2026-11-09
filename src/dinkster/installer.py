@@ -188,7 +188,7 @@ def http_registry_fetcher(
             if artifact_digest(data) != entry.artifact_digest:
                 raise ValueError("wheel.digest-mismatch: bytes differ from locked release")
             return data
-        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError, InstallError) as exc:
             raise InstallError(
                 f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"
             ) from exc

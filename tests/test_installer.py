@@ -11,6 +11,7 @@ manifests live in the immutable store.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -2669,9 +2670,32 @@ def _download_ticket(entry: LockedPack, data: bytes) -> bytes:
     ).encode()
 
 
-def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> None:
-    """The fetcher acquires a ticket for the exact locked release and then
-    downloads bytes that the installer independently verifies."""
+def _static_release(entry: LockedPack, data: bytes) -> dict[str, object]:
+    filename = f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl"
+    sha256 = hashlib.sha256(data).hexdigest()
+    return {
+        "name": entry.pack,
+        "version": entry.version,
+        "publisher": entry.publisher,
+        "library": False,
+        "requires": [],
+        "engine": ">=0.0.2.dev0,<1",
+        "wheels": [
+            {
+                "filename": filename,
+                "sha256": sha256,
+                "url": f"wheels/{sha256}/{filename}",
+                "size": len(data),
+                "digest": entry.artifact_digest,
+                "tags": ["py3-none-any"],
+            }
+        ],
+        "installLocks": {},
+    }
+
+
+def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> None:
+    """Index and wheel requests stay under the static prefix with exact hash checks."""
     installer = make_installer(tmp_path)
     demo = write_pack(tmp_path / "demo", "demo")
     entry, archive = lock_local_pack(demo, installer.artifacts_dir)
@@ -2679,20 +2703,25 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
     release = replace(entry, source="registry", version="1.0.0")
 
     requests: list[tuple[str, str | None]] = []
-    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
-    artifact_path = f"/v1/artifacts/{release.artifact_digest}"
+    record = _static_release(release, data)
+    index_path = "/static/packs/index.json"
+    artifact_path = "/static/" + record["wheels"][0]["url"]
     server = _serve_artifacts(
-        {ticket_path: _download_ticket(release, data), artifact_path: data}, requests
+        {
+            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            artifact_path: data,
+        },
+        requests,
     )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fetch = http_registry_fetcher(endpoint + "/")  # trailing slash normalized
         assert fetch(release) == data
-        assert requests == [(ticket_path, None), (artifact_path, None)]
+        assert requests == [(index_path, None), (artifact_path, None)]
 
         authed = http_registry_fetcher(endpoint, token="s3cret")
         assert authed(release) == data
-        assert requests[-2:] == [(ticket_path, "Bearer s3cret"), (artifact_path, None)]
+        assert requests[-2:] == [(index_path, "Bearer s3cret"), (artifact_path, "Bearer s3cret")]
 
         missing = replace(release, artifact_digest="blake3:" + "0" * 64)
         with pytest.raises(InstallError, match=r"registry download of demo@1\.0\.0 .* failed"):
@@ -2721,32 +2750,31 @@ def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> 
         (3, False),
     ],
 )
-def test_http_registry_fetcher_rejects_invalid_ticket_size(size: object, malformed: bool) -> None:
+def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malformed: bool) -> None:
     release = LockedPack("demo", "1.0.0", "blake3:" + "1" * 64, "acme", ())
     data = b"ab"
-    ticket = json.loads(_download_ticket(release, data))
+    record = _static_release(release, data)
+    wheel = record["wheels"][0]
     if size == "missing":
-        del ticket["artifactSize"]
+        del wheel["size"]
     else:
-        ticket["artifactSize"] = size
-    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
+        wheel["size"] = size
+    index_path = "/static/packs/index.json"
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
-            ticket_path: json.dumps(ticket).encode(),
-            f"/v1/artifacts/{release.artifact_digest}": data,
+            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            "/static/" + wheel["url"]: data,
         },
         requests,
     )
     try:
-        reason = (
-            "artifactSize must be a nonnegative integer" if malformed else "archive size differs"
-        )
+        reason = "invalid wheel" if malformed else "wheel.hash-mismatch"
         with pytest.raises(InstallError, match=reason) as refusal:
             http_registry_fetcher(f"http://127.0.0.1:{server.server_port}")(release)
         assert "demo@1.0.0" in str(refusal.value)
         if malformed:
-            assert requests == [(ticket_path, None)]
+            assert requests == [(index_path, None)]
     finally:
         server.shutdown()
 
@@ -2779,11 +2807,11 @@ def test_cli_restore_downloads_registry_sources(
 
     requests: list[tuple[str, str | None]] = []
     locked = Lockfile.from_record_json(json.dumps(document["lockfile"])).packs[0]
-    ticket_path = f"/v1/packs/{locked.pack}/versions/{locked.version}/download-tickets"
-    artifact_path = f"/v1/artifacts/{locked.artifact_digest}"
-    server = _serve_artifacts(
-        {ticket_path: _download_ticket(locked, data), artifact_path: data}, requests
-    )
+    record = _static_release(locked, data)
+    index_path = "/static/packs/index.json"
+    index_data = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+    artifact_path = "/static/" + record["wheels"][0]["url"]
+    server = _serve_artifacts({index_path: index_data, artifact_path: data}, requests)
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fresh = tmp_path / "fresh-root"
@@ -2801,12 +2829,12 @@ def test_cli_restore_downloads_registry_sources(
         assert "re-acquire demo from registry" in out
         assert "re-acquired demo: digest verified" in out
         assert "activated generation 1" in out
-        assert requests == [(ticket_path, None), (artifact_path, None)]
+        assert requests == [(index_path, None), (artifact_path, None)]
 
         # a lying server: different bytes refuse, nothing activates
         lying = _serve_artifacts(
             {
-                ticket_path: _download_ticket(locked, data),
+                index_path: index_data,
                 artifact_path: b"x" * len(data),
             },
             [],
@@ -2824,7 +2852,7 @@ def test_cli_restore_downloads_registry_sources(
                     "--yes",
                     str(snap),
                 )
-            assert "refusing to" in capsys.readouterr().err
+            assert "wheel.hash-mismatch" in capsys.readouterr().err
             assert Installer(bad_root).current_lockfile() is None
         finally:
             lying.shutdown()
@@ -3388,6 +3416,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     files: dict[str, bytes] = {}
     entries = []
     expected = {}
+    releases = []
     for pack in ("demo", "z-other"):
         fault = problem if pack == "z-other" else None
         entry = LockedPack(
@@ -3404,9 +3433,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             "packages": [],
         }
         payload = json.dumps(lock).encode()
-        expected[pack] = payload
-        path = f"/v1/packs/{pack}/versions/1.2.3"
-        lock_path = path + "/locks/linux-cpu"
+        expected[pack] = lock
+        lock_path = "locks/" + artifact_digest(payload).replace(":", "/") + ".json"
         binding = {
             "baseId": "sha256:" + "2" * 64 if fault == "base" else base,
             "artifactDigest": "blake3:" + "c" * 64 if fault == "archive" else entry.artifact_digest,
@@ -3414,15 +3442,31 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             "size": len(payload) + 1 if fault == "size" else len(payload),
             "url": "https://other.test/lock" if fault == "url" else lock_path,
         }
-        files[path] = _release_record(
-            entry,
-            state="active",
-            artifact={"digest": "blake3:" + "e" * 64}
-            if fault == "release"
-            else {"digest": entry.artifact_digest},
-            installLocks={} if fault == "missing" else {"linux-cpu": binding},
+        filename = f"{pack.replace('-', '_')}-1.2.3-py3-none-any.whl"
+        releases.append(
+            {
+                "name": pack,
+                "version": "1.2.3",
+                "library": False,
+                "publisher": "acme",
+                "requires": [],
+                "wheels": [
+                    {
+                        "filename": filename,
+                        "sha256": "f" * 64,
+                        "url": f"wheels/{'f' * 64}/{filename}",
+                        "size": 12,
+                        "digest": "blake3:" + "e" * 64
+                        if fault == "release"
+                        else entry.artifact_digest,
+                        "tags": ["py3-none-any"],
+                    }
+                ],
+                "installLocks": {} if fault == "missing" else {"linux-cpu": binding},
+            }
         )
-        files[lock_path + "?baseId=sha256%3A" + "1" * 64] = payload
+        files["/static/" + lock_path] = payload
+    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": releases}).encode()
     server = _serve_artifacts(files, [])
     root = tmp_path / "project"
     root.mkdir()
@@ -3460,9 +3504,28 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             run_cli(*args)
             report = json.loads(capsys.readouterr().out)
             assert report["locks"] == [str(output / f"{pack}.pack-lock.json") for pack in expected]
-            for pack, payload in expected.items():
+            for pack, original_lock in expected.items():
                 path = output / f"{pack}.pack-lock.json"
-                assert path.read_bytes() == payload
+                filename = f"{pack.replace('-', '_')}-1.2.3-py3-none-any.whl"
+                endpoint = f"http://127.0.0.1:{server.server_port}"
+                assert json.loads(path.read_bytes()) == {
+                    **original_lock,
+                    "indexes": [endpoint + "/static/linux-cpu/simple/"],
+                    "packages": [
+                        {
+                            "name": pack,
+                            "version": "1.2.3",
+                            "wheels": [
+                                {
+                                    "filename": filename,
+                                    "sha256": "f" * 64,
+                                    "size": 12,
+                                    "url": endpoint + f"/static/wheels/{'f' * 64}/{filename}",
+                                }
+                            ],
+                        }
+                    ],
+                }
                 assert PackLock.read(path).pack == pack
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
