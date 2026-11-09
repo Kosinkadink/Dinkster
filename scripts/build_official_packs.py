@@ -186,7 +186,17 @@ def build(
                 check=True,
                 env={**os.environ, "SOURCE_DATE_EPOCH": "315532800"},
             )
-            shutil.copyfile(library_output / payload.name, payload)
+            # Match pack wheel containers across hosts and compression libraries.
+            # Member bytes, including RECORD hashes, remain the backend's output.
+            with (
+                zipfile.ZipFile(library_output / payload.name) as source,
+                zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_STORED) as target,
+            ):
+                for member in sorted(source.namelist()):
+                    info = zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0))
+                    info.create_system = 3
+                    info.external_attr = 0o644 << 16
+                    target.writestr(info, source.read(member))
             built_name, built_version, requirements = library_metadata(payload)
             if (built_name, built_version) != (name, library_version):
                 raise ValueError("official library wheel identity mismatch")

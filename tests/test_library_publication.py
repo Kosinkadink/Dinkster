@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 from dinkster_workers.boundary import PROTOCOL_VERSION
@@ -18,8 +19,12 @@ from scripts import prepare_official_publication as preparation
 
 
 @pytest.mark.parametrize("corrupt_source", [False, True])
+@pytest.mark.parametrize("native_zip_system", [0, 3])
 def test_library_preparation_and_native_locks_preserve_exact_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt_source: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    corrupt_source: bool,
+    native_zip_system: int,
 ) -> None:
     files = {
         "packages/helpers/pyproject.toml": (
@@ -94,6 +99,22 @@ def test_library_preparation_and_native_locks_preserve_exact_sources(
         "dinkster_test_helpers-0.0.1-py3-none-any.whl",
         "dinkster_test_consumer-0.0.1-py3-none-any.whl",
     }
+    run = subprocess.run
+
+    def native_build(command, **kwargs):
+        result = run(command, **kwargs)
+        if command[:2] == ["uv", "build"]:
+            directory = Path(command[command.index("--out-dir") + 1])
+            for path in directory.glob("*.whl"):
+                output = io.BytesIO()
+                with ZipFile(path) as source, ZipFile(output, "w") as target:
+                    for entry in source.infolist():
+                        entry.create_system = native_zip_system
+                        target.writestr(entry, source.read(entry))
+                path.write_bytes(output.getvalue())
+        return result
+
+    monkeypatch.setattr(subprocess, "run", native_build)
     if corrupt_source:
         (sources / "dinkster_test_helpers-0.0.1-py3-none-any.whl").write_bytes(b"wrong artifact")
     monkeypatch.setattr(native, "qualify", lambda *args: base)
