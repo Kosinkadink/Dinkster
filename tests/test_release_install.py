@@ -477,12 +477,15 @@ def test_default_admission_workflow_selects_publication_candidates(
     metadata = "\n".join(
         line for line in original.splitlines() if line.startswith(("author ", "committer "))
     )
-    head = subprocess.check_output(
-        ["git", "hash-object", "-w", "-t", "commit", "--stdin"],
-        cwd=tmp_path,
-        input=f"tree {tree}\n{metadata}\n\nPublication fixture\n",
-        text=True,
-    ).strip()
+    head = (
+        subprocess.check_output(
+            ["git", "hash-object", "-w", "-t", "commit", "--stdin"],
+            cwd=tmp_path,
+            input=f"tree {tree}\n{metadata}\n\nPublication fixture\n".encode(),
+        )
+        .decode("ascii")
+        .strip()
+    )
     subprocess.run(["git", "update-ref", "HEAD", head], cwd=tmp_path, check=True)
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
