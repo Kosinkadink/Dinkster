@@ -867,7 +867,7 @@ def main(argv: list[str] | None = None) -> None:
         "--allow-pack-install",
         action="store_true",
         default=os.environ.get("DINKSTER_ALLOW_PACK_INSTALL") == "1",
-        help="allow local human pack plan/apply requests for --install-root "
+        help="allow local human pack previews and terminal commands for --generation "
         "(also enabled by $DINKSTER_ALLOW_PACK_INSTALL=1)",
     )
     parser.add_argument(
@@ -1306,8 +1306,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.install_root or args.pack or args.watch_packs:
             parser.error("--generation cannot be combined with other pack sources or --watch-packs")
         args.no_default_packs = True
-    if args.allow_pack_install and not args.install_root:
-        parser.error("--allow-pack-install requires --install-root")
+    if args.allow_pack_install and args.generation is None:
+        parser.error("--allow-pack-install requires --generation")
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
     openai_values = (args.openai_base_url, args.openai_model, args.openai_api_key)
@@ -2100,10 +2100,8 @@ def main(argv: list[str] | None = None) -> None:
             # apply time; this endpoint only delivers it.
             install_busy = asyncio.Lock()
             add_activation_routes(app, composer, installer, busy=install_busy)
-            if args.allow_pack_install:
-                add_pack_install_routes(
-                    app, composer, installer, busy=install_busy, redactor=redactor
-                )
+        if args.allow_pack_install and args.generation is not None:
+            add_pack_install_routes(app, args.generation.parent.parent, redactor=redactor)
         watcher: PackWatcher | None = None
         if args.watch_packs:
             # Pack hot reload is a dev affordance: production installs
