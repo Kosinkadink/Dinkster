@@ -37,7 +37,7 @@ GOLDEN_CASES = cast("dict[str, object]", GOLDEN["cases"])
 HINT_GOLDEN_PATH = Path(__file__).parent / "goldens" / "hint_resize_controlnet_aux_59b1fc4.json"
 HINT_GOLDEN = cast("dict[str, object]", json.loads(HINT_GOLDEN_PATH.read_text(encoding="utf-8")))
 ALIAS_PATH = (
-    Path(__file__).parent.parent / "packages" / "dinkster-image" / "draft-comfy-aliases.json"
+    Path(__file__).parent.parent / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
 )
 
 

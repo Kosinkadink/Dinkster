@@ -16,7 +16,7 @@ from dinkster_schema import schema_from_wire, schema_to_wire, validate_replaceme
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
 
 ROOT = Path(__file__).parent.parent
-ALIAS_PATH = ROOT / "packages" / "dinkster-image" / "draft-comfy-aliases.json"
+ALIAS_PATH = ROOT / "packages" / "dinkster-nodes-image" / "draft-comfy-aliases.json"
 MODEL_TEST_REFERENCE_COMMIT = "e1c0e72eab86e9fd7ee794f623ebf0b8984ab7b6"
 DRAFT_TEST_REFERENCE_COMMIT = "728f58b22ccf6bb64c7e2b8ee38f35c69fbf4a75"
 DYNAMIC_ALIAS_IDS = frozenset(
@@ -804,14 +804,14 @@ def test_image_pack_excludes_draft_alias_registry_and_foundation_dependency() ->
     configuration = cast(
         "dict[str, Any]",
         tomllib.loads(
-            (ROOT / "packages" / "dinkster-image" / "pyproject.toml").read_text(encoding="utf-8")
+            (ROOT / "packages" / "dinkster-nodes-image" / "pyproject.toml").read_text(encoding="utf-8")
         ),
     )
     force_include = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
     assert "comfy-aliases.json" not in force_include
     assert "draft-comfy-aliases.json" not in force_include
     manifest = tomllib.loads(
-        (ROOT / "packages" / "dinkster-image" / "dinkster-pack.toml").read_text(encoding="utf-8")
+        (ROOT / "packages" / "dinkster-nodes-image" / "dinkster-pack.toml").read_text(encoding="utf-8")
     )
     assert "dinkster-nodes-foundation" not in manifest["pack"].get("dependencies", {})
 

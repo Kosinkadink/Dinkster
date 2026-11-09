@@ -47,7 +47,7 @@ from dinkster_values import (
 
 COMFY_REVISION = "c67885b1"
 REPO = Path(__file__).resolve().parent.parent
-OUT = REPO / "packages" / "dinkster-image" / "comfy-groups.json"
+OUT = REPO / "packages" / "dinkster-nodes-image" / "comfy-groups.json"
 
 # Historical source schema vocabulary is independent of current runtime types.
 SOURCE_IMAGE = "comfy.IMAGE"
