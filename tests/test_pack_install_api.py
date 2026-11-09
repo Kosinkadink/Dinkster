@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -112,25 +114,40 @@ def test_managed_preview_and_terminal_commands_never_apply(
             await composer.close()
 
     commands = run_scenario(scenario())
-    if os.name != "nt":
-        # Execute the copyable commands against a CLI double to check shell quoting
-        # and that apply uses the newly generated approval, not the HTTP preview.
-        cli = tmp_path / "dinkster-env"
-        cli.write_text(
-            "#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\n"
-            "args=sys.argv[1:]\nassert args[:2]==['--root', " + repr(str(project)) + "]\n"
-            "if args[2]=='packs-plan':\n"
-            " assert args[3]=='demo@1.0.0'\n"
-            " Path(args[args.index('--output')+1]).mkdir()\n"
-            " print(json.dumps({'approval':'sha256:new-cli-plan'}))\n"
-            "else:\n"
-            " assert args[2]=='packs-apply'\n"
-            " assert args[args.index('--approval')+1]=='sha256:new-cli-plan'\n"
+    # The native shell must surface planning failure, even with parseable output.
+    script = tmp_path / "cli.py"
+    script.write_text(
+        "import json,os,sys\nfrom pathlib import Path\n"
+        "args=sys.argv[1:]\nassert args[:2]==['--root', " + repr(str(project)) + "]\n"
+        "if args[2]=='packs-plan':\n"
+        " assert args[3]=='demo@1.0.0'\n"
+        " print(json.dumps({'approval':'sha256:new-cli-plan'}))\n"
+        " if os.environ.get('PLAN_EXIT'): sys.exit(int(os.environ['PLAN_EXIT']))\n"
+        " Path(args[args.index('--output')+1]).mkdir()\n"
+        "else:\n"
+        " assert args[2]=='packs-apply'\n"
+        " assert args[args.index('--approval')+1]=='sha256:new-cli-plan'\n"
+    )
+    if os.name == "nt":
+        (tmp_path / "dinkster-env.cmd").write_text(
+            f'@echo off\n"{sys.executable}" "%~dp0cli.py" %*\n'
         )
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        assert shell is not None, "Windows command coverage requires PowerShell"
+        arguments = [shell, "-NoProfile", "-NonInteractive", "-Command"]
+    else:
+        cli = tmp_path / "dinkster-env"
+        cli.write_text("#!/usr/bin/env python3\n" + script.read_text())
         cli.chmod(0o755)
-        env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
-        for command in commands:
-            subprocess.run(["sh", "-ec", command], env=env, check=True, capture_output=True)
+        arguments = ["sh", "-c"]
+    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
+    for command in commands:
+        subprocess.run([*arguments, command], env=env, check=True, capture_output=True)
+    failed = subprocess.run(
+        [*arguments, commands[0]], env={**env, "PLAN_EXIT": "17"}, capture_output=True
+    )
+    assert failed.returncode != 0
+    assert failed.stdout == b""
 
 
 @pytest.mark.parametrize("cancel", [1, 2, "shutdown"])

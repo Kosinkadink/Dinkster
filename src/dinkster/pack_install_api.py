@@ -88,7 +88,10 @@ def add_pack_install_routes(
                 + " ".join(map(quote, selections))
                 + " --output "
                 + quote(str(output))
-                + " --json | Tee-Object -FilePath "
+                + " --json > "
+                + quote(receipt)
+                + "; if ($LASTEXITCODE -ne 0) { throw 'Pack planning failed; do not apply.' }; "
+                + "Get-Content -Raw "
                 + quote(receipt),
                 command
                 + " packs-apply --input "
@@ -111,7 +114,9 @@ def add_pack_install_routes(
             + shlex.join(selections)
             + " --output "
             + shlex.quote(str(output))
-            + " --json | tee "
+            + " --json > "
+            + shlex.quote(receipt)
+            + " && cat "
             + shlex.quote(receipt),
             command
             + " packs-apply --input "
