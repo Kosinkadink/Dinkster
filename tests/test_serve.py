@@ -3426,6 +3426,7 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
         ),
     ],
 )
+@pytest.mark.timeout(360)
 def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
     monkeypatch: pytest.MonkeyPatch,
     failed_pack: str,
@@ -3452,7 +3453,8 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                async with asyncio.timeout(10):
+                # Full default composition under hosted coverage can exceed 120 s.
+                async with asyncio.timeout(300):
                     while True:
                         report = await (await client.get("/api/composition")).json()
                         entry = report["packs"][failed_pack]
@@ -3464,10 +3466,10 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
                         ):
                             observed.update(entry)
                             break
-                        await asyncio.sleep(0)
-                async with asyncio.timeout(10):
+                        await asyncio.sleep(0.05)
+                async with asyncio.timeout(300):
                     while "composing" in await (await client.get("/api/composition")).json():
-                        await asyncio.sleep(0)
+                        await asyncio.sleep(0.05)
                 nodes = await (await client.get("/api/nodes")).json()
                 assert missing_node not in nodes["nodes"]
                 assert nodes["nodes"][present_node]["pack"] == surviving_pack
@@ -3484,7 +3486,7 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
             finally:
                 await client.close()
 
-        run_scenario(inspect())
+        run_scenario(inspect(), timeout=330)
 
     monkeypatch.setattr(serve, "default_pack_spec", fail_one_default)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
