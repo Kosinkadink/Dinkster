@@ -362,7 +362,6 @@ def load_pack(
     # through dinkster_api.v1.declared_asset. The active context keeps tables
     # isolated when several manifests share this process.
     if import_from_pack_root:
-        root = str(manifest.root.resolve())
         entries = tuple(
             entry
             for entry in (
@@ -385,11 +384,9 @@ def load_pack(
                     f"in-process entry module {module_name!r} for pack {manifest.name!r} "
                     f"is already loaded from outside the pack root: {module_file}"
                 )
-        if root not in sys.path:
-            # In-process packs have no editable venv installation. Retain the
-            # root for lazy imports after composition; removal intentionally
-            # leaves imported modules resident for the serving lifetime.
-            sys.path.insert(0, root)
+        # Keep the import root available for lazy imports, using the same
+        # wheel package boundary as isolated workers.
+        add_pack_root_to_import_path(manifest, sys.path)
 
     install_declared_assets(manifest.name, manifest.assets, resolver_from_env())
 
