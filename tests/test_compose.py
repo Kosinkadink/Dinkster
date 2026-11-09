@@ -1113,7 +1113,9 @@ def test_default_pack_uses_embedded_wheel_artifact(
     archive = next(output.glob("*.whl"))
     unpack_artifact(archive, tmp_path / "site", artifact_digest(archive.read_bytes()))
     bundled = tmp_path / "site/dinkster_text/dinkster-pack.toml"
-    distribution = next(compose.importlib.metadata.distributions(path=[str(tmp_path / "site")]))
+    distribution = next(
+        iter(compose.importlib.metadata.distributions(path=[str(tmp_path / "site")]))
+    )
 
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution

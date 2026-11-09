@@ -28,8 +28,10 @@ from dinkster_workers.doctor import (
 
 HEALTHY_MANIFEST = """\
 [pack]
-name = "healthy"
+name = "healthy-nodes"
 namespaces = ["healthy"]
+type-namespaces = ["healthy"]
+publisher = "dinkster"
 requires = ["numpy>=1.26"]
 
 [pack.sandbox]
@@ -96,7 +98,9 @@ def write_pack(root: Path, manifest: str, module_name: str, source: str) -> Path
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / "dinkster-pack.toml"
     manifest_path.write_text(manifest)
-    (root / f"{module_name}.py").write_text(source)
+    package = root / module_name
+    package.mkdir()
+    (package / "__init__.py").write_text(source)
     return manifest_path
 
 
@@ -108,8 +112,8 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
     report = diagnose(manifest)
     assert report.ok, render_text(report)
-    assert report.pack_name == "healthy"
-    assert report.entry_path == str((manifest.parent / "healthy_nodes.py").resolve())
+    assert report.pack_name == "healthy-nodes"
+    assert report.entry_path == str((manifest.parent / "healthy_nodes/__init__.py").resolve())
     assert report.interpreter == str(Path(sys.executable).absolute())
     assert report.node_types == ("healthy.doubler", "healthy.tagger")
     payload = json.loads(report.to_json())
@@ -155,14 +159,14 @@ contributions = [
     by_code = {finding.code: finding for finding in report.findings}
     contribution = by_code["extension.contribution-unconsumed"]
     assert contribution.severity == "warning"
-    assert "pack 'healthy'" in contribution.message
+    assert "pack 'healthy-nodes'" in contribution.message
     assert "'workflowObserver'" in contribution.message
     assert (
         sum(finding.code == "extension.contribution-unconsumed" for finding in report.findings) == 1
     )
     capability = by_code["extension.capability-unconsumed"]
     assert capability.severity == "warning"
-    assert "pack 'healthy'" in capability.message
+    assert "pack 'healthy-nodes'" in capability.message
     assert "'filesystem'" in capability.message
 
 
@@ -493,10 +497,7 @@ def test_doctor_accepts_valid_locale_catalog(tmp_path: Path, exact_node: bool) -
     node_type = "healthy.doubler"
     if exact_node:
         node_type = "TextEncodeAceStepAudio1.5"
-        manifest = manifest.replace(
-            'name = "healthy"\n',
-            'name = "healthy"\npublisher = "dinkster"\n',
-        ).replace('["healthy"]', f'["healthy", "{node_type}"]')
+        manifest = manifest.replace('["healthy"]', f'["healthy", "{node_type}"]')
         source = source.replace("healthy.doubler", node_type)
     manifest_path = write_pack(tmp_path / "catalog-pack", manifest, "healthy_nodes", source)
     locales = manifest_path.parent / "locales"
@@ -745,8 +746,8 @@ def test_uncovered_node_type_is_an_error(tmp_path: Path) -> None:
     not cover healthy.* - the registry and composition both refuse this,
     so doctor says it first, naming the node type and the claims."""
     manifest = HEALTHY_MANIFEST.replace(
-        'name = "healthy"\nnamespaces = ["healthy"]\n',
-        'name = "healthy-pack"\npublisher = "dinkster"\n',
+        'name = "healthy-nodes"\nnamespaces = ["healthy"]\n',
+        'name = "healthy-pack"\n',
     )
     manifest_path = write_pack(tmp_path / "uncovered", manifest, "healthy_nodes", HEALTHY_NODES)
     report = diagnose(manifest_path)
@@ -779,7 +780,7 @@ def test_reserved_namespace_claim_warns(tmp_path: Path) -> None:
     it is not looking at a first-party pack)."""
     manifest = HEALTHY_MANIFEST.replace(
         'namespaces = ["healthy"]', 'namespaces = ["healthy", "std.extras"]'
-    ).replace('name = "healthy"\n', 'name = "healthy"\npublisher = "dinkster"\n')
+    )
     manifest_path = write_pack(tmp_path / "reserved", manifest, "healthy_nodes", HEALTHY_NODES)
     report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
     assert not any(f.severity == "error" for f in report.findings)
@@ -931,11 +932,11 @@ def test_cross_pack_implementation_import_is_an_error_but_own_module_is_allowed(
 
 def test_declared_pack_helpers_are_public_and_exactly_scoped(tmp_path: Path) -> None:
     source = (
-        "from dinkster_nodes_conditioning.conditioning import conditioning_set_values\n"
-        "from dinkster_nodes_conditioning.conditioning import _private\n"
-        "from dinkster_nodes_conditioning._private import helper\n"
-        "import dinkster_nodes_conditioning_extra\n"
-        "import dinkster_nodes_sampling\n" + HEALTHY_NODES
+        "from dinkster_conditioning.conditioning import conditioning_set_values\n"
+        "from dinkster_conditioning.conditioning import _private\n"
+        "from dinkster_conditioning._private import helper\n"
+        "import dinkster_conditioning_extra\n"
+        "import dinkster_sampling\n" + HEALTHY_NODES
     )
     manifest = write_pack(
         tmp_path / "dependent",
@@ -943,14 +944,18 @@ def test_declared_pack_helpers_are_public_and_exactly_scoped(tmp_path: Path) -> 
         "healthy_nodes",
         source,
     )
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
+    report = diagnose_static(
+        manifest.parent,
+        load_manifest(manifest),
+        published_packs=("dinkster-conditioning-extra", "dinkster-sampling"),
+    )
     private = [f for f in report.findings if f.code == "imports.private-module"]
     undeclared = [f for f in report.findings if f.code == "imports.pack-implementation"]
     assert len(private) == 2
     assert {f.location.rsplit(":", 1)[-1] for f in private} == {"2", "3"}
     assert {f.message for f in undeclared} == {
-        "imports dinkster_nodes_conditioning_extra",
-        "imports dinkster_nodes_sampling",
+        "imports dinkster_conditioning_extra",
+        "imports dinkster_sampling",
     }
 
 
@@ -997,7 +1002,7 @@ def test_import_time_pack_logging_is_structured_not_raw_output(
 ) -> None:
     source = (
         "from dinkster_api.v1 import pack_logger\n"
-        '_log = pack_logger("healthy")\n'
+        '_log = pack_logger("healthy-nodes")\n'
         '_log.info("registering %d nodes", 2)\n' + HEALTHY_NODES
     )
     manifest = write_pack(tmp_path / "logging", HEALTHY_MANIFEST, "healthy_nodes", source)
@@ -1031,7 +1036,7 @@ def test_logging_under_another_packs_origin_warns(tmp_path: Path) -> None:
 def test_raw_prints_still_warn_alongside_structured_logs(tmp_path: Path) -> None:
     source = (
         "from dinkster_api.v1 import pack_logger\n"
-        'pack_logger("healthy").info("fine")\n'
+        'pack_logger("healthy-nodes").info("fine")\n'
         'print("not fine")\n' + HEALTHY_NODES
     )
     manifest = write_pack(tmp_path / "mixed", HEALTHY_MANIFEST, "healthy_nodes", source)
@@ -1261,11 +1266,7 @@ NODES = [Slot]
 
 def test_empty_pack_warns(tmp_path: Path) -> None:
     source = HEALTHY_NODES + "\n\nNODES = []\n"
-    root = tmp_path / "empty"
-    (root / "healthy").mkdir(parents=True)
-    manifest = write_pack(
-        root, HEALTHY_MANIFEST.replace("healthy_nodes:", "healthy:"), "healthy/__init__", source
-    )
+    manifest = write_pack(tmp_path / "empty", HEALTHY_MANIFEST, "healthy_nodes", source)
     report = diagnose(manifest)
     assert "entry.no-nodes" in codes(report)
 
@@ -1278,12 +1279,8 @@ def test_catalog_driven_node_source_is_reported_without_hiding_entry_errors(
         "[pack]\n", '[pack]\nnode-source = "remote-gateway-catalog"\n'
     )
     source = 'raise RuntimeError("broken entry")\n' if broken else "NODES = []\n"
-    root = tmp_path / "dynamic"
-    (root / "healthy").mkdir(parents=True)
     manifest_text = manifest_text.replace('types = "healthy_nodes:register_types"\n', "")
-    manifest = write_pack(
-        root, manifest_text.replace("healthy_nodes:", "healthy:"), "healthy/__init__", source
-    )
+    manifest = write_pack(tmp_path / "dynamic", manifest_text, "healthy_nodes", source)
     report = diagnose(manifest)
     assert report.ok is not broken, render_text(report)
     assert json.loads(report.to_json())["nodeSource"] == "remote-gateway-catalog"
