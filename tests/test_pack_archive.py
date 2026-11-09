@@ -481,6 +481,246 @@ def test_official_publication_uses_selected_manifest_versions(
 
 
 @pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "unmarked",
+        "newly-marked",
+        "requires-pack",
+        "pack-requires-pack",
+        "manifest",
+        "library-rejected",
+    ],
+)
+def test_official_library_selection_and_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from scripts.select_official_packs import select_packs
+
+    files = {
+        "packages/helpers/pyproject.toml": (
+            '[project]\nname = "dinkster-test-helpers"\nversion = "0.0.1"\n'
+            'requires-python = ">=3.12"\n'
+            + (
+                'dependencies = ["dinkster-test-consumer>=0.0.1"]\n'
+                if problem == "requires-pack"
+                else ""
+            )
+            + '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+            '[tool.hatch.build.targets.wheel]\npackages = ["src/dinkster_test_helpers"]\n'
+            + ("" if problem == "unmarked" else "[tool.dinkster]\nofficial-library = true\n")
+        ),
+        "packages/helpers/src/dinkster_test_helpers/__init__.py": "VALUE = 17\n",
+        "packages/dinkster-nodes-test/pyproject.toml": (
+            '[project]\nname = "dinkster-test-consumer"\nversion = "0.0.1"\n'
+        ),
+        "packages/dinkster-nodes-test/dinkster-pack.toml": (
+            '[pack]\nname = "dinkster-test-consumer"\nversion = "0.0.1"\n'
+            'publisher = "dinkster"\nengine = ">=0.0.2,<0.1"\n'
+            'requires = ["dinkster-test-helpers>=0.0.1"]\n'
+            '[pack.entry]\nnodes = "dinkster_test_consumer:NODES"\n'
+        ),
+        "packages/dinkster-nodes-test/src/dinkster_test_consumer/__init__.py": "NODES = []\n",
+    }
+    if problem == "pack-requires-pack":
+        manifest_path = "packages/dinkster-nodes-test/dinkster-pack.toml"
+        files["packages/dinkster-nodes-supplier/dinkster-pack.toml"] = (
+            files[manifest_path]
+            .replace("dinkster-test-consumer", "dinkster-test-supplier")
+            .replace("dinkster_test_consumer", "dinkster_test_supplier")
+        )
+        files["packages/dinkster-nodes-supplier/pyproject.toml"] = (
+            '[project]\nname = "dinkster-test-supplier"\nversion = "0.0.1"\n'
+        )
+        files["packages/dinkster-nodes-supplier/src/dinkster_test_supplier/__init__.py"] = (
+            "NODES = []\n"
+        )
+        files[manifest_path] = files[manifest_path].replace(
+            'requires = ["dinkster-test-helpers>=0.0.1"]',
+            'requires = ["dinkster-test-supplier>=0.0.1"]',
+        )
+    if problem == "manifest":
+        files["packages/helpers/dinkster-pack.toml"] = files[
+            "packages/dinkster-nodes-test/dinkster-pack.toml"
+        ]
+    tracked = io.BytesIO()
+    with tarfile.open(fileobj=tracked, mode="w") as archive:
+        for name, text in files.items():
+            data = text.encode()
+            entry = tarfile.TarInfo(name)
+            entry.size = len(data)
+            archive.addfile(entry, io.BytesIO(data))
+
+    def git(command, **kwargs):
+        if "rev-parse" in command:
+            return "a" * 40
+        if "ls-tree" in command:
+            return ("\0".join(files) + "\0").encode()
+        if "show" in command:
+            content = files[command[-1].split(":", 1)[1]]
+            if problem == "newly-marked" and command[-1].startswith("b" * 40):
+                content = content.replace("official-library = true", "official-library = false")
+            return content.encode()
+        if "diff" in command:
+            return b"packages/helpers/src/dinkster_test_helpers/__init__.py\0"
+        if "archive" in command:
+            return tracked.getvalue()
+        raise AssertionError(command)
+
+    monkeypatch.setattr("scripts.build_official_packs.subprocess.check_output", git)
+    if problem == "manifest":
+        with pytest.raises(ValueError, match="node manifest"):
+            build_official_packs(tmp_path, tmp_path / "built")
+        with pytest.raises(ValueError, match="duplicates"):
+            select_packs(tmp_path, before="0" * 40)
+        return
+    expected = (
+        ("dinkster-test-consumer",)
+        + (() if problem == "unmarked" else ("dinkster-test-helpers",))
+        + (("dinkster-test-supplier",) if problem == "pack-requires-pack" else ())
+    )
+    assert select_packs(tmp_path, before="0" * 40) == expected
+    assert select_packs(tmp_path, before="b" * 40) == (
+        () if problem == "unmarked" else ("dinkster-test-helpers",)
+    )
+    assert select_packs(tmp_path, before="b" * 40, version_changes_only=True) == (
+        ("dinkster-test-helpers",) if problem == "newly-marked" else ()
+    )
+    if problem in {"requires-pack", "pack-requires-pack"}:
+        with pytest.raises(ValueError, match="wheel.requires-pack"):
+            build_official_packs(tmp_path, tmp_path / "built")
+        return
+    paths = build_official_packs(tmp_path, tmp_path / "built")
+    repeated = build_official_packs(tmp_path, tmp_path / "repeated")
+    assert {path.name: path.read_bytes() for path in paths} == {
+        path.name: path.read_bytes() for path in repeated
+    }
+    catalog = Lockfile.from_record_json(paths[-1].read_text())
+    assert tuple(pack.pack for pack in catalog.packs) == expected
+    if problem != "unmarked":
+        library = next(pack for pack in catalog.packs if pack.pack == "dinkster-test-helpers")
+        assert library.claims == ()
+        with zipfile.ZipFile(
+            tmp_path / "built/dinkster_test_helpers-0.0.1-py3-none-any.whl"
+        ) as wheel:
+            assert wheel.read("dinkster_test_helpers/__init__.py") == b"VALUE = 17\n"
+            assert not any(name.endswith("dinkster-pack.toml") for name in wheel.namelist())
+    if problem not in {None, "library-rejected"}:
+        return
+
+    import json
+
+    from dinkster_workers.pack_lock import PackLock
+    from test_installer import _serve_artifacts
+
+    from dinkster.registries import NamedRegistry, RegistryPublishError
+    from scripts.publish_official_packs import publish_official_packs
+
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    native = build_official_packs(
+        tmp_path,
+        tmp_path / "native",
+        packs=("dinkster-test-consumer",),
+        variant="linux-cpu",
+        python=Path(sys.executable),
+        constraints=constraints,
+    )
+    assert native[-1].read_bytes() == paths[-1].read_bytes()
+    lock = PackLock.read(tmp_path / "native/dinkster-test-consumer-0.0.1-linux-cpu.pack-lock.json")
+    assert [package.name for package in lock.packages] == ["dinkster-test-helpers"]
+    library_bytes = (tmp_path / "built/dinkster_test_helpers-0.0.1-py3-none-any.whl").read_bytes()
+    assert lock.packages[0].wheels[0].url == (
+        "https://registry.dinkster.org/static/wheels/"
+        + hashlib.sha256(library_bytes).hexdigest()
+        + "/dinkster_test_helpers-0.0.1-py3-none-any.whl"
+    )
+    base = {
+        "format": "dinkster.base/1",
+        "variant": "linux-cpu",
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "python": ".".join(map(str, sys.version_info[:3])),
+        "interpreter": {},
+        "wheels": [],
+        "replaces": [],
+        "workerProtocol": 11,
+        "nvidia": None,
+        "archive": {"format": "tar+zstd"},
+    }
+    identity = hashlib.sha256(
+        json.dumps(base, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    base["id"] = "sha256:" + identity
+    base["archive"]["parts"] = []
+    base_path = tmp_path / "base.json"
+    base_path.write_text(json.dumps(base))
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/base_bundles.json").write_text(json.dumps({"linux-cpu": identity}))
+    responses = {
+        f"/v1/publish/{name}/versions/0.0.1": json.dumps(
+            {"status": "queued", "candidateId": name}
+        ).encode()
+        for name in expected
+    }
+    server = _serve_artifacts(responses, [])
+    respond = vars(server.RequestHandlerClass)["respond"]
+    submitted = []
+
+    def registry_response(handler):
+        if handler.command == "POST":
+            name = handler.path.split("/")[3]
+            if name == "dinkster-test-consumer":
+                assert submitted == ["dinkster-test-helpers"]
+            submitted.append(name)
+            if problem == "library-rejected":
+                responses[f"/v1/publish/{name}"] = json.dumps(
+                    {
+                        "status": "rejected",
+                        "reason": "library refused",
+                        "findings": [{"code": "wheel.invalid", "message": "refused"}],
+                    }
+                ).encode()
+            else:
+                responses[f"/v1/packs/{name}/versions/0.0.1"] = json.dumps(
+                    {"packName": name, "version": "0.0.1", "state": "active"}
+                ).encode()
+        respond(handler)
+
+    monkeypatch.setattr(server.RequestHandlerClass, "respond", registry_response)
+    try:
+        if problem == "library-rejected":
+            with pytest.raises(RegistryPublishError, match="activation refused.*wheel.invalid"):
+                publish_official_packs(
+                    tmp_path,
+                    tmp_path / "built",
+                    [base_path],
+                    [path for path in native if path.name.endswith(".pack-lock.json")],
+                    tmp_path / "submitted",
+                    registry=NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
+                )
+            assert submitted == ["dinkster-test-helpers"]
+            return
+        result = publish_official_packs(
+            tmp_path,
+            tmp_path / "built",
+            [base_path],
+            [path for path in native if path.name.endswith(".pack-lock.json")],
+            tmp_path / "submitted",
+            registry=NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
+        )
+        assert (
+            [row["pack"] for row in result]
+            == submitted
+            == ["dinkster-test-helpers", "dinkster-test-consumer"]
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize(
     ("changed", "expected"),
     [
         (("src/dinkster/serve.py", "pyproject.toml"), ()),

@@ -8,19 +8,23 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from blake3 import blake3
-from dinkster_registry import LockedPack, Lockfile, unpack_artifact
+from dinkster_registry import LockedPack, Lockfile, artifact_digest, unpack_artifact
 from dinkster_workers import load_manifest
 from dinkster_workers.manifest import PackDependency
 from dinkster_workers.pack_lock import PackLock
 from dinkster_workers.pack_wheel import pack_manifest_path
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
+from scripts.build_official_packs import library_metadata
 from scripts.build_release import read_base_manifest
 
 
@@ -148,6 +152,18 @@ def publish_official_packs(
     catalog = Lockfile.from_record_json((sources / "official-packs.lock").read_text())
     if not catalog.packs:
         raise ValueError("official publication requires selected packs")
+    libraries = {}
+    for pack in catalog.packs:
+        archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        if artifact_digest(archive.read_bytes()) != pack.artifact_digest:
+            raise ValueError(f"official publication archive digest mismatch: {pack.pack}")
+        with zipfile.ZipFile(archive) as wheel:
+            if not any(Path(name).name == "dinkster-pack.toml" for name in wheel.namelist()):
+                name, version, requirements = library_metadata(archive)
+                if (name, version) != (pack.pack, pack.version) or pack.claims:
+                    raise ValueError(f"official library source identity mismatch: {pack.pack}")
+                libraries[pack.pack] = requirements
+    node_names = {pack.pack for pack in catalog.packs} - libraries.keys()
     dependencies: dict[str, tuple[PackDependency, ...]] = {}
     required = {
         f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
@@ -166,17 +182,32 @@ def publish_official_packs(
         staged.mkdir()
         for pack in catalog.packs:
             archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
-            extracted = unpack_artifact(archive, work / pack.pack, pack.artifact_digest)
-            manifest = load_manifest(pack_manifest_path(extracted))
-            dependencies[pack.pack] = manifest.dependencies
-            if (
-                pack.publisher != "dinkster"
-                or manifest.publisher != "dinkster"
-                or manifest.name != pack.pack
-                or manifest.compatibility is None
-                or manifest.compatibility.version != pack.version
-            ):
+            if pack.publisher != "dinkster":
                 raise ValueError(f"official publication source identity mismatch: {pack.pack}")
+            if pack.pack in libraries:
+                dependencies[pack.pack] = ()
+                requirements = libraries[pack.pack]
+            else:
+                extracted = unpack_artifact(archive, work / pack.pack, pack.artifact_digest)
+                manifest = load_manifest(pack_manifest_path(extracted))
+                dependencies[pack.pack] = manifest.dependencies
+                requirements = manifest.requires
+                if (
+                    manifest.publisher != "dinkster"
+                    or manifest.name != pack.pack
+                    or manifest.compatibility is None
+                    or manifest.compatibility.version != pack.version
+                ):
+                    raise ValueError(f"official publication source identity mismatch: {pack.pack}")
+            for value in requirements:
+                requirement = Requirement(value)
+                name = canonicalize_name(requirement.name)
+                if name in node_names:
+                    raise ValueError(f"wheel.requires-pack: {pack.pack} requires node pack {name}")
+                if name in libraries:
+                    if requirement.url:
+                        raise ValueError("official library dependencies must use version ranges")
+                    dependencies[pack.pack] += (PackDependency(name, str(requirement.specifier)),)
             bindings = {}
             for variant, base in sorted(bases.items()):
                 name = f"{pack.pack}-{pack.version}-{variant}.pack-lock.json"
@@ -217,7 +248,7 @@ def publish_official_packs(
     selected = {pack.pack: pack for pack in catalog.packs}
     ordered: list[LockedPack] = []
     pending = list(catalog.packs)
-    while pending and registry is not None:
+    while pending:
         pending_names = {pack.pack for pack in pending}
         ready = [
             pack

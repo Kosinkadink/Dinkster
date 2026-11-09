@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from dinkster_workers import load_manifest
 
-from scripts.build_official_packs import is_official_pack_manifest
+from scripts.build_official_packs import is_official_pack_manifest, official_library
 
 
 def publication_selection(root: Path, before: str) -> tuple[str, ...]:
@@ -69,10 +69,24 @@ def select_packs(
     )
     vision = PurePosixPath("packages/dinkster-nodes-vision")
     packs = {}
+    libraries = set()
     with tempfile.TemporaryDirectory(prefix="official-pack-selection-") as directory:
         manifest_path = Path(directory) / "dinkster-pack.toml"
         for name in tracked:
             path = PurePosixPath(name)
+            if path.name == "pyproject.toml" and len(path.parts) == 3:
+                project = tomllib.loads(
+                    subprocess.check_output(
+                        ["git", "-C", str(root), "show", f"{head}:{name}"]
+                    ).decode("utf-8")
+                )
+                if identity := official_library(project):
+                    library, version = identity
+                    if f"{path.parent}/dinkster-pack.toml" in tracked or library in packs:
+                        raise ValueError("official library duplicates a pack identity")
+                    libraries.add(library)
+                    packs[library] = (path.parent, path.parent, version)
+                continue
             if not is_official_pack_manifest(path):
                 continue
             manifest_path.write_bytes(
@@ -152,13 +166,17 @@ def select_packs(
         )
         for pack in tuple(selected):
             directory, _, version = packs[pack]
-            manifest = f"{directory}/dinkster-pack.toml"
+            manifest = f"{directory}/" + (
+                "pyproject.toml" if pack in libraries else "dinkster-pack.toml"
+            )
             if manifest in previous_paths:
                 previous = subprocess.check_output(
                     ["git", "-C", str(root), "show", f"{before}:{manifest}"]
                 )
                 old = tomllib.loads(previous.decode("utf-8"))
-                if old["pack"].get("version") == version:
+                if pack in libraries and official_library(old) is None:
+                    continue
+                if old["project" if pack in libraries else "pack"].get("version") == version:
                     selected.remove(pack)
     return tuple(sorted(selected))
 
