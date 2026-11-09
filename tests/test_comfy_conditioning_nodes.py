@@ -316,12 +316,12 @@ def test_registered_classes_have_exact_ids_atoms_and_ordered_interfaces() -> Non
         ("dinkster.conditioning.conditioning_zero_out", "Conditioning Zero Out", ("conditioning",)),
         (
             "dinkster.conditioning.conditioning_set_timestep_range",
-            "",
+            "ConditioningSetTimestepRange",
             ("conditioning", "start", "end"),
         ),
         (
             "dinkster.audio.models.conditioning_stable_audio",
-            "",
+            "ConditioningStableAudio",
             ("positive", "negative", "seconds_start", "seconds_total"),
         ),
     )

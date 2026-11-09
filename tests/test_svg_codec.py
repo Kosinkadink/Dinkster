@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     TypeExpr,
     TypeRegistry,
     materialize_svg,
-    register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_image import register_types
 from dinkster_values import (
     SVG_CODEC_MAGIC,
     SVG_CODEC_VERSION,
@@ -114,9 +114,9 @@ def test_svg_rejects_malformed_frames_and_metadata() -> None:
 
 def test_svg_registration_preserves_the_first_authority() -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(SVG_TYPE)
-    register_inference_types(registry)
+    register_types(registry)
     assert registry.spec(SVG_TYPE) is spec
     value = (b"<svg/>", b"", b"<svg/>")
     encoded = spec.encode(value)
@@ -128,13 +128,14 @@ def test_svg_registration_preserves_the_first_authority() -> None:
 def test_svg_public_type_registers_in_two_fresh_python_processes() -> None:
     script = """
 import sys
-from dinkster_api.v1 import SVG_TYPE, TypeRegistry, materialize_svg, register_inference_types
+from dinkster_api.v1 import SVG_TYPE, TypeRegistry, materialize_svg
+from dinkster_nodes_image import register_types
 from dinkster_values.builtin_types import SVG_TYPE as canonical
 
 assert SVG_TYPE is canonical
 registry = TypeRegistry()
-register_inference_types(registry)
-register_inference_types(registry)
+register_types(registry)
+register_types(registry)
 spec = registry.spec(SVG_TYPE)
 value = (b'<svg/>', b'', b'\\xff')
 encoded = spec.encode(value)
@@ -189,12 +190,9 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        native = (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-        )
         (tmp_path / "svg_fixture.py").write_text(
             "from test_svg_codec import SvgConsumer, SvgSource\n"
-            "from dinkster_api.v1 import register_inference_types\n"
+            "from dinkster_nodes_image import register_types\n"
             "NODES = (SvgSource, SvgConsumer)\n",
             encoding="ascii",
         )
@@ -202,29 +200,26 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
         fixture.write_text(
             '[pack]\nname="svg-fixture"\npublisher="dinkster"\n'
             'namespaces=["svg-fixture"]\n[pack.entry]\n'
-            'nodes="svg_fixture:NODES"\ntypes="svg_fixture:register_inference_types"\n',
+            'nodes="svg_fixture:NODES"\ntypes="svg_fixture:register_types"\n',
             encoding="ascii",
         )
-        manifests = (native, fixture)
         composer = ServingComposer(
             cache_mode="layered",
             cache_dir=tmp_path / "cache",
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(native.parent / "src"))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
             },
         )
         try:
-            for manifest in manifests:
+            for manifest in (fixture,):
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
                         in_process=in_process,
                         worker_group=None if in_process else "svg-fixture",
-                        group_manifests=() if in_process else manifests,
+                        group_manifests=() if in_process else (fixture,),
                     )
                 )
             graph = Graph(

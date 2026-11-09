@@ -1038,14 +1038,15 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
             "git",
             "check-attr",
             "-z",
+            "--stdin",
             "text",
             "eol",
             "--",
-            *(path.as_posix() for path in sorted(artifact_paths)),
         ],
         cwd=repo_root,
         check=True,
         capture_output=True,
+        input=b"".join(path.as_posix().encode("utf-8") + b"\0" for path in sorted(artifact_paths)),
     ).stdout.split(b"\0")
     attributes: dict[str, dict[str, str]] = {}
     for index in range(0, len(checked) - 1, 3):

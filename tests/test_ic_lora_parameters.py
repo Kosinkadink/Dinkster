@@ -19,12 +19,12 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     TypeRegistry,
-    register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_ltx import register_types
 from dinkster_values import EncodedLatentTensor, encode_latent
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackInfo, PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 
@@ -35,11 +35,11 @@ def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> No
         "tensor": EncodedLatentTensor("float16", (1, 2), b"\x00\x3c\x00\xc0"),
     }
     registry = TypeRegistry()
-    registered = register_inference_types(registry)
+    registered = register_types(registry)
     spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
 
     assert spec in registered
-    assert register_inference_types(registry) == registered
+    assert register_types(registry) == registered
     encoded = spec.encode(value)
     assert spec.decode(encoded) == value
     assert list(cast("Mapping[str, object]", spec.decode(encoded))) == list(value)
@@ -50,7 +50,7 @@ def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> No
 
 def test_ic_lora_parameters_rejects_non_mapping_and_invalid_frames() -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
     assert spec.validate_encoded is not None
 
@@ -66,7 +66,7 @@ def test_ic_lora_parameters_rejects_non_mapping_and_invalid_frames() -> None:
 @pytest.mark.parametrize("entry", ("ab", 12, None, {"a": 1}, ("a",), ("a", 1, 2)))
 def test_ic_lora_parameters_rejects_malformed_mapping_entries(entry: object) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
     assert spec.validate_encoded is not None
     payload = encode_latent({"samples": [entry]})
@@ -80,12 +80,11 @@ def test_ic_lora_parameters_public_registration_is_cold_and_idempotent() -> None
     script = "\n".join(
         (
             "import sys",
-            "from dinkster_api.v1 import (",
-            "    IC_LORA_PARAMETERS_TYPE, TypeRegistry, register_inference_types,",
-            ")",
+            "from dinkster_api.v1 import IC_LORA_PARAMETERS_TYPE, TypeRegistry",
+            "from dinkster_nodes_ltx import register_types",
             "registry = TypeRegistry()",
-            "first = register_inference_types(registry)",
-            "second = register_inference_types(registry)",
+            "first = register_types(registry)",
+            "second = register_types(registry)",
             "assert first == second",
             "spec = registry.spec(IC_LORA_PARAMETERS_TYPE)",
             "value = {'reference_downscale_factor': 2, 'extra': {'preserve': True}}",
@@ -155,7 +154,12 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
         source_root = Path(__file__).resolve().parents[1] / "packages"
         (tmp_path / f"{module}.py").write_text(
             "from test_ic_lora_parameters import ICLoRAParametersConsumer, ICLoRAParametersSource\n"
-            "from dinkster_api.v1 import register_inference_types\n"
+            "from dinkster_nodes_ltx import register_types as register_ltx_types\n"
+            "def register_types(registry):\n"
+            "    with registry.registering_pack(\n"
+            "        'ic-lora-parameters-source', ('IC_LORA_PARAMETERS',), allow_bare=True\n"
+            "    ):\n"
+            "        register_ltx_types(registry)\n"
             "SOURCE_NODES = (ICLoRAParametersSource,)\n"
             "CONSUMER_NODES = (ICLoRAParametersConsumer,)\n",
             encoding="ascii",
@@ -176,11 +180,16 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
                 "CONSUMER_NODES",
             ),
         ):
+            claims = (
+                'type-namespaces = ["IC_LORA_PARAMETERS"]\n'
+                if manifest == source_manifest
+                else '[pack.dependencies]\nic-lora-parameters-source = ">=0.1.0"\n'
+            )
             manifest.write_text(
-                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-                f'namespaces = ["{namespace}"]\n\n[pack.entry]\n'
-                f'nodes = "{module}:{nodes}"\n'
-                f'types = "{module}:register_inference_types"\n',
+                f'[pack]\nname = "{name}"\nversion = "0.1.0"\npublisher = "dinkster"\n'
+                'engine = ">=0.0.2.dev0,<0.1"\n'
+                f'namespaces = ["{namespace}"]\n{claims}\n[pack.entry]\n'
+                f'nodes = "{module}:{nodes}"\ntypes = "{module}:register_types"\n',
                 encoding="ascii",
             )
         composer = ServingComposer(
@@ -195,15 +204,19 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
             },
         )
         try:
+            source_packs = {
+                "ic-lora-parameters-source": PackInfo("IC-LoRA source", version="0.1.0")
+            }
             if in_process:
                 specs = (
-                    PackSpec(manifest=source_manifest, in_process=True),
+                    PackSpec(manifest=source_manifest, in_process=True, packs=source_packs),
                     PackSpec(manifest=consumer_manifest, in_process=True),
                 )
             else:
                 specs = (
                     PackSpec(
                         manifest=source_manifest,
+                        packs=source_packs,
                         worker_group="ic-lora-producer",
                         group_manifests=(source_manifest,),
                     ),

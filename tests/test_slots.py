@@ -25,6 +25,7 @@ from dinkster_graph import (
     validate,
 )
 from dinkster_graph.wire import GraphWireError
+from dinkster_nodes_text.text import StringConcatenate
 from dinkster_schema import (
     DynamicSlotSpec,
     ElaborationError,
@@ -773,13 +774,16 @@ def test_connected_type_mismatch_is_diagnosed_never_redispatched() -> None:
     # type disagrees gets the SAME advisory type-mismatch diagnostic as any
     # concrete input (the backend never silently re-dispatches to another
     # variant), because after elaboration the slot IS an ordinary input.
-    schemas = build_schemas(list(SCAFFOLD_NODES) + [Stylize])
+    schemas = build_schemas([*SCAFFOLD_NODES, StringConcatenate, Stylize])
     graph = Graph(
         nodes={
-            "c": GraphNode("std.string.concat", {"a": "he", "b": "llo", "separator": ""}),
+            "c": GraphNode(
+                "dinkster.text.string_concatenate",
+                {"string_a": "he", "string_b": "llo", "delimiter": ""},
+            ),
             "n": GraphNode(
                 "test.stylize",
-                {"source": Link("c", "text"), "source.scale": 2.0},
+                {"source": Link("c", "STRING"), "source.scale": 2.0},
                 slot_variants={"source": "number"},
             ),
         }

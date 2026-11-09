@@ -180,7 +180,7 @@ def test_normal_loader_forwards_metadata_and_revalidates_before_resident_lookup(
     assert events[1][1] == '{"purpose":"lora-weights","asset":["verified","digest"]}'
     assert events[2] == (
         "load",
-        "/verified/lora.safetensors",
+        str(Path("/verified/lora.safetensors")),
         {"safe_load": True, "return_metadata": True},
     )
     assert events[3][2] == {"lora_metadata": {"metadata": "kept"}}
@@ -217,7 +217,7 @@ def test_bypass_loader_uses_bypass_api_without_metadata(monkeypatch: pytest.Monk
     assert asset.local_path_calls == 1
     assert calls[1] == (
         "load",
-        "/local/lora.safetensors",
+        str(Path("/local/lora.safetensors")),
         {"safe_load": True, "return_metadata": False},
     )
     assert calls[2] == ("bypass", ("model", "clip", {"weights": 1}, -1.0, 0.25))

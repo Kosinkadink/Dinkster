@@ -26,7 +26,7 @@ from dinkster_server import STATE_KEY, create_app
 
 import dinkster.installer as installer_module
 from dinkster.activation import add_activation_routes, compute_plan
-from dinkster.compose import ServingComposer, default_pack_spec
+from dinkster.compose import ServingComposer
 from dinkster.installer import Installer, lock_local_pack
 from tests.async_scenarios import run_scenario
 
@@ -307,14 +307,13 @@ def test_activation_plan_and_apply_end_to_end(
     run_scenario(scenario())
 
 
-def test_activation_reuses_unchanged_in_process_default_packs(tmp_path: Path) -> None:
+def test_activation_adds_a_generation_to_an_empty_composition(tmp_path: Path) -> None:
     async def scenario() -> None:
         installer = make_installer(tmp_path)
         alpha = write_pack(tmp_path / "alpha", "alpha")
         composer = ServingComposer(worker_env={"PYTHONPATH": str(alpha)})
         client: TestClient | None = None
         try:
-            await composer.add_pack(default_pack_spec("dinkster-nodes-foundation"))
             composition = composer.composition
             app = create_app(
                 composition.make_engine,
@@ -336,19 +335,16 @@ def test_activation_reuses_unchanged_in_process_default_packs(tmp_path: Path) ->
             assert payload["rolledBack"] is False
 
             nodes = await (await client.get("/api/nodes")).json()
-            assert nodes["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
             assert nodes["nodes"]["alpha.echo"]["pack"] == "alpha"
             engine = composer.composition.make_engine(lambda _event: None)
             result = await engine.run(
                 Graph(
                     nodes={
-                        "add": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
                         "echo": GraphNode("alpha.echo", {"text": "live"}),
                     }
                 ),
-                ["add", "echo"],
+                ["echo"],
             )
-            assert result.outputs["add"]["sum"].resolve() == 5
             assert result.outputs["echo"]["out"].resolve() == "live-v1"
         finally:
             if client is not None:

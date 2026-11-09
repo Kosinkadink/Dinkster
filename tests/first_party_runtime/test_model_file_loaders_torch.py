@@ -307,7 +307,7 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
         checkout = Path(__file__).resolve().parents[2]
         module = f"model_file_loaders_fixture_{tmp_path.name.replace('-', '_')}"
         (tmp_path / f"{module}.py").write_text(
-            "from tests.first_party_runtime.test_model_file_loaders_torch import "
+            f"from {__name__} import "
             "HOST_NODES, _install_controlled_runtime\n"
             "from dinkster_api.v1 import register_inference_types\n"
             "_install_controlled_runtime()\n"

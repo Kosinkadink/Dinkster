@@ -66,7 +66,7 @@ def test_stable3d_interfaces() -> None:
         )
         assert schema_to_wire(node.schema())
     batched = STABLE3D_NODES[1].schema()
-    assert batched.display_name == ""
+    assert batched.display_name == "StableZero123_Conditioning_Batched"
     assert batched.inputs[-2].advanced and batched.inputs[-1].advanced
 
     angle_names = {

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry, register_inference_types
+from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry
+from dinkster_nodes_vision_sam3 import register_types
 from dinkster_values import LATENT_TYPE, EncodedLatentTensor, encode_latent
 
 PACKED = EncodedLatentTensor("uint8", (2, 1, 1, 3), bytes((1, 128, 255, 85, 42, 16)))
@@ -30,9 +31,9 @@ TRACKS = {
 )
 def test_sam3_public_codec_preserves_complete_structure(value: dict[str, object]) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
-    register_inference_types(registry)
+    register_types(registry)
     assert registry.spec(SAM3_TRACK_DATA_TYPE) is spec
     assert spec.validate_encoded is not None
     payload = spec.encode(value)
@@ -66,7 +67,7 @@ def test_sam3_fingerprint_includes_bytes_shape_dimensions_frames_and_scores(
     changed: dict[str, object],
 ) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
     assert spec.fingerprint is not None
     assert spec.fingerprint(TRACKS) != spec.fingerprint(changed)
@@ -89,7 +90,7 @@ def test_sam3_fingerprint_includes_bytes_shape_dimensions_frames_and_scores(
 )
 def test_sam3_rejects_malformed_payloads_in_every_codec_entry(value: dict[str, object]) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
     assert spec.validate_encoded is not None
     payload = encode_latent({"samples": value})

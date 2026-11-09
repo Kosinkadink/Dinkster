@@ -35,7 +35,7 @@ from dinkster_schema.wire import SCHEMA_WIRE_VERSION, schema_to_wire
 from dinkster_server import create_app
 from dinkster_workers.manifest import load_pack_templates
 
-from dinkster.compose import Composition, PackSpec, compose_serving
+from dinkster.compose import Composition, PackSpec, compose_serving, default_pack_ids
 from tests.async_scenarios import run_scenario
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -261,37 +261,8 @@ def test_gallery_explicit_pack_surface(
 
         async with defaults as plain:
             assert not any(t.startswith("dev.") for t in plain.schemas)
-            assert set(plain.choices) == {
-                "dinkster.detection.detect.providers",
-                "dinkster.detection.segment.providers",
-                "dinkster.detection.segment_text.providers",
-                "dinkster.detection.track.providers",
-                "dinkster.image.matte.providers",
-                "dinkster.image.upscale_model.providers",
-                "dinkster.preprocess.model_depth.providers",
-                "dinkster.preprocess.model_edges.providers",
-                "dinkster.preprocess.lineart_realistic.providers",
-                "dinkster.preprocess.lineart_anime.providers",
-                "dinkster.preprocess.lineart_manga.providers",
-                "dinkster.preprocess.anyline.providers",
-                "dinkster.preprocess.teed.providers",
-                "dinkster.preprocess.mlsd.providers",
-            }
-            assert set(plain.packs) == {
-                "dinkster-nodes-foundation",
-                "dinkster-image",
-                "dinkster-nodes-media-io",
-                "dinkster-nodes-remote",
-                "dinkster-vision-birefnet",
-                "dinkster-vision-depth-anything-v2",
-                "dinkster-vision-depth-anything-v3",
-                "dinkster-vision-detr",
-                "dinkster-vision-efficient-sam",
-                "dinkster-vision-hed",
-                "dinkster-vision-rtdetr",
-                "dinkster-vision-sam31",
-                "dinkster-vision-upscale",
-            }
+            assert plain.choices == {}
+            assert set(plain.packs) == set(default_pack_ids())
 
     runner.run(scenario())
 

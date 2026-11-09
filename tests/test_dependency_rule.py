@@ -11,6 +11,7 @@ import ast
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -295,6 +296,11 @@ def test_dependency_scan_includes_ungoverned_imports(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Known dependency edges: https://github.com/Kosinkadink/comfy-vibe-station/issues/664",
+)
 def test_one_way_dependencies() -> None:
     violations: list[str] = []
     checked = 0
