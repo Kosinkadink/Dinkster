@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_audio,
 )
-from dinkster_conditioning.conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
 

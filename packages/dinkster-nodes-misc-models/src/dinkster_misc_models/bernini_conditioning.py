@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_image,
 )
-from dinkster_conditioning.conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 
