@@ -1141,7 +1141,8 @@ def test_installed_pack_digest_includes_standard_sidecars(tmp_path: Path, filena
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n',
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n'
+        '[pack.entry]\nnodes = "test:NODES"\n',
         encoding="utf-8",
     )
     module = source / "test"
@@ -1173,7 +1174,8 @@ def test_installed_pack_digest_rejects_docs_symlinks(tmp_path: Path) -> None:
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n[pack.docs]\ndir = "docs"\n',
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n'
+        '[pack.entry]\nnodes = "test:NODES"\n[pack.docs]\ndir = "docs"\n',
         encoding="utf-8",
     )
     module = source / "test"
@@ -1199,7 +1201,8 @@ def test_installed_pack_digest_includes_locale_catalogs(tmp_path: Path) -> None:
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n',
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n'
+        '[pack.entry]\nnodes = "test:NODES"\n',
         encoding="utf-8",
     )
     module = source / "test"
@@ -1226,7 +1229,8 @@ def test_installed_pack_digest_rejects_locale_symlinks(tmp_path: Path) -> None:
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n',
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n'
+        '[pack.entry]\nnodes = "test:NODES"\n',
         encoding="utf-8",
     )
     module = source / "test"
