@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-sampling"
-version = "0.0.2"
+version = "0.0.3"
 description = "First-party Dinkster sampling nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,8 +9,7 @@ dependencies = [
     "numpy",
     "tqdm",
     "dinkster-inference==0.1.1",
-    "dinkster-latent>=0.0.1,<1",
-    "dinkster-conditioning>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -27,5 +26,4 @@ packages = ["src/dinkster_sampling"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-latent = { workspace = true }
-dinkster-conditioning = { workspace = true }
+dinkster-pack-helpers = { workspace = true }
